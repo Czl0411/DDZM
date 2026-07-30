@@ -1,6 +1,10 @@
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 dist/
 build/
 .worktrees/
+config.local.json
+data/
+browser_profile/

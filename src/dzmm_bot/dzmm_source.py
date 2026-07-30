@@ -1,5 +1,3 @@
-import hashlib
-
 from .models import ChatMessage
 
 
@@ -15,7 +13,7 @@ READ_MESSAGES_SCRIPT = """
   const texts = [...element.querySelectorAll(selectors.message_text)]
     .map((node) => node.innerText.trim()).filter(Boolean);
   return {
-    source_index: element.getAttribute('data-index') || '',
+    source_index: element.getAttribute('data-message-id') || element.getAttribute('data-id') || element.getAttribute('data-index') || '',
     position,
     sender: element.querySelector(selectors.sender)?.innerText?.trim() || '',
     text: texts[texts.length - 1] || '',
@@ -41,11 +39,7 @@ class DzmmMessageSource:
                 continue
             sender = str(row.get("sender") or "").strip()
             source_index = str(row.get("source_index") or "").strip()
-            messages.append(ChatMessage(self._message_id(source_index, row, sender, text), sender, text))
+            if not source_index:
+                continue
+            messages.append(ChatMessage(f"{self._group_key}:{source_index}", sender, text))
         return messages
-
-    def _message_id(self, source_index: str, row: dict, sender: str, text: str) -> str:
-        if source_index:
-            return f"{self._group_key}:{source_index}"
-        fallback = "|".join((self._group_key, str(row.get("position", "")), sender, text))
-        return f"{self._group_key}:fallback:{hashlib.sha256(fallback.encode()).hexdigest()[:24]}"

@@ -90,6 +90,17 @@ class BotServiceTests(unittest.TestCase):
         self.assertEqual(replies, 0)
         self.assertEqual(sender.sent, [("m-1", "测试开始")])
 
+    def test_sqlite_store_grants_a_message_claim_to_only_one_service(self):
+        self.assertIsNotNone(SQLiteSeenMessageStore)
+        with tempfile.TemporaryDirectory() as directory:
+            first = SQLiteSeenMessageStore(Path(directory) / "bot.db")
+            second = SQLiteSeenMessageStore(Path(directory) / "bot.db")
+            self.assertTrue(hasattr(first, "claim"))
+            self.assertTrue(first.claim("m-1"))
+            self.assertFalse(second.claim("m-1"))
+            first.release_claim("m-1")
+            self.assertTrue(second.claim("m-1"))
+
 
 if __name__ == "__main__":
     unittest.main()

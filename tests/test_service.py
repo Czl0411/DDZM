@@ -99,7 +99,10 @@ class BotServiceTests(unittest.TestCase):
             self.assertIsNotNone(first_token)
             self.assertIsNone(second.claim("m-1"))
             first.release_claim("m-1", first_token)
-            self.assertIsNotNone(second.claim("m-1"))
+            second_token = second.claim("m-1")
+            self.assertIsNotNone(second_token)
+            self.assertTrue(second.mark_seen("m-1", second_token))
+            self.assertIsNone(first.claim("m-1"))
 
     def test_stale_sqlite_worker_cannot_release_a_newer_claim(self):
         self.assertIsNotNone(SQLiteSeenMessageStore)

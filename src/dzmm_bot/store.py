@@ -28,7 +28,7 @@ class SQLiteSeenMessageStore:
             if connection.execute(
                 "select 1 from seen_messages where message_id = ?", (message_id,)
             ).fetchone():
-                return False
+                return None
             connection.execute(
                 "delete from message_claims where claimed_at < ?", (now - self._claim_ttl_seconds,)
             )

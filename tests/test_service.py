@@ -95,11 +95,29 @@ class BotServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             first = SQLiteSeenMessageStore(Path(directory) / "bot.db")
             second = SQLiteSeenMessageStore(Path(directory) / "bot.db")
-            self.assertTrue(hasattr(first, "claim"))
-            self.assertTrue(first.claim("m-1"))
-            self.assertFalse(second.claim("m-1"))
-            first.release_claim("m-1")
-            self.assertTrue(second.claim("m-1"))
+            first_token = first.claim("m-1")
+            self.assertIsNotNone(first_token)
+            self.assertIsNone(second.claim("m-1"))
+            first.release_claim("m-1", first_token)
+            self.assertIsNotNone(second.claim("m-1"))
+
+    def test_stale_sqlite_worker_cannot_release_a_newer_claim(self):
+        self.assertIsNotNone(SQLiteSeenMessageStore)
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "bot.db"
+            first = SQLiteSeenMessageStore(database_path, claim_ttl_seconds=1)
+            second = SQLiteSeenMessageStore(database_path, claim_ttl_seconds=1)
+            first_token = first.claim("m-1")
+            self.assertIsNotNone(first_token)
+            with __import__("sqlite3").connect(database_path) as connection:
+                connection.execute("update message_claims set claimed_at = 0 where message_id = 'm-1'")
+            second_token = second.claim("m-1")
+            self.assertIsNotNone(second_token)
+
+            first.release_claim("m-1", first_token)
+            self.assertIsNone(SQLiteSeenMessageStore(database_path).claim("m-1"))
+            self.assertFalse(first.mark_seen("m-1", first_token))
+            self.assertTrue(second.mark_seen("m-1", second_token))
 
 
 if __name__ == "__main__":

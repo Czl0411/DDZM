@@ -6,6 +6,7 @@
     "message_item": "div.pt-10.pb-4.px-2.flex-1.min-h-0.overflow-y-auto.overflow-x-hidden.relative > div > div",
     "sender": ".text-xs.font-medium.text-muted-foreground span",
     "message_text": "span.whitespace-pre-wrap.break-words.w-full, [class*='whitespace-pre-wrap']",
-    "self_message": ".items-end,.justify-end,.ml-auto"
+    "self_message": ".items-end,.justify-end,.ml-auto",
+    "message_id": ""
   }
 }

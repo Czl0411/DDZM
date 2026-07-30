@@ -1,3 +1,5 @@
+import json
+
 from .models import ChatMessage
 
 
@@ -6,20 +8,32 @@ DEFAULT_SELECTORS = {
     "sender": ".text-xs.font-medium.text-muted-foreground span",
     "message_text": "span.whitespace-pre-wrap.break-words.w-full, [class*='whitespace-pre-wrap']",
     "self_message": ".items-end,.justify-end,.ml-auto",
+    "message_id": "",
 }
 
 READ_MESSAGES_SCRIPT = """
-(selectors) => [...document.querySelectorAll(selectors.message_item)].slice(-50).map((element, position) => {
+(selectors) => {
+const rows = [...document.querySelectorAll(selectors.message_item)].map((element, position) => {
   const texts = [...element.querySelectorAll(selectors.message_text)]
     .map((node) => node.innerText.trim()).filter(Boolean);
+  const identityNode = selectors.message_id ? element.querySelector(selectors.message_id) : null;
   return {
-    source_index: element.getAttribute('data-message-id') || element.getAttribute('data-id') || element.getAttribute('data-index') || '',
+    source_index: element.getAttribute('data-message-id') || element.getAttribute('data-id') || element.getAttribute('data-index') || identityNode?.getAttribute('data-message-id') || identityNode?.getAttribute('data-id') || identityNode?.getAttribute('datetime') || identityNode?.innerText?.trim() || '',
     position,
     sender: element.querySelector(selectors.sender)?.innerText?.trim() || '',
     text: texts[texts.length - 1] || '',
     is_self: Boolean(element.querySelector(selectors.self_message)),
   };
-})
+});
+const occurrences = new Map();
+for (const row of rows) {
+  const base = JSON.stringify([row.sender, row.text]);
+  const occurrence = (occurrences.get(base) || 0) + 1;
+  occurrences.set(base, occurrence);
+  row.fallback_key = JSON.stringify([row.sender, row.text, occurrence]);
+}
+return rows.slice(-50);
+}
 """
 
 
@@ -31,6 +45,7 @@ class DzmmMessageSource:
 
     def read_new(self) -> list[ChatMessage]:
         messages = []
+        fallback_occurrences: dict[str, int] = {}
         for row in self._page.evaluate(READ_MESSAGES_SCRIPT, self._selectors):
             if row.get("is_self"):
                 continue
@@ -39,7 +54,15 @@ class DzmmMessageSource:
                 continue
             sender = str(row.get("sender") or "").strip()
             source_index = str(row.get("source_index") or "").strip()
-            if not source_index:
-                continue
-            messages.append(ChatMessage(f"{self._group_key}:{source_index}", sender, text))
+            if source_index:
+                message_id = f"{self._group_key}:stable:{source_index}"
+            else:
+                fallback_key = str(row.get("fallback_key") or "")
+                if not fallback_key:
+                    base = json.dumps([sender, text], ensure_ascii=False, separators=(",", ":"))
+                    occurrence = fallback_occurrences.get(base, 0) + 1
+                    fallback_occurrences[base] = occurrence
+                    fallback_key = json.dumps([sender, text, occurrence], ensure_ascii=False, separators=(",", ":"))
+                message_id = f"{self._group_key}:fallback:{fallback_key}"
+            messages.append(ChatMessage(message_id, sender, text))
         return messages

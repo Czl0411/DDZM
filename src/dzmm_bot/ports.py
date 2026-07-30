@@ -9,3 +9,9 @@ class MessageSource(Protocol):
 
 class MessageSender(Protocol):
     def send(self, message: ChatMessage, text: str) -> bool: ...
+
+
+class SeenMessageStore(Protocol):
+    def is_seen(self, message_id: str) -> bool: ...
+
+    def mark_seen(self, message_id: str) -> None: ...

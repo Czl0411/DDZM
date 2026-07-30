@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,11 @@ try:
 except ModuleNotFoundError:
     ChatMessage = None
     BotService = None
+
+try:
+    from dzmm_bot.store import SQLiteSeenMessageStore
+except ModuleNotFoundError:
+    SQLiteSeenMessageStore = None
 
 
 class StaticSource:
@@ -71,6 +77,18 @@ class BotServiceTests(unittest.TestCase):
         self.assertEqual(first_replies, 0)
         self.assertEqual(second_replies, 1)
         self.assertEqual(sender.sent, [("m-1", "测试开始"), ("m-1", "测试开始")])
+
+    def test_persistent_store_prevents_duplicate_reply_after_service_restart(self):
+        self.assertIsNotNone(SQLiteSeenMessageStore)
+        source = StaticSource([ChatMessage("m-1", "甲", "你好")])
+        sender = RecordingSender()
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteSeenMessageStore(Path(directory) / "bot.db")
+            BotService(source, sender, seen_store=store).run_once()
+            replies = BotService(source, sender, seen_store=store).run_once()
+
+        self.assertEqual(replies, 0)
+        self.assertEqual(sender.sent, [("m-1", "测试开始")])
 
 
 if __name__ == "__main__":

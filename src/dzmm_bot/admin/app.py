@@ -9,6 +9,7 @@ from fastapi import (
     FastAPI,
     Header,
     HTTPException,
+    Request,
     Response,
     WebSocket,
     status,
@@ -118,7 +119,7 @@ def create_app(
 
     @app.get("/login-console/")
     def login_console_index(
-        path: str | None = None,
+        request: Request,
         x_admin_token: Annotated[str | None, Header()] = None,
         dzmm_admin_session: Annotated[str | None, Cookie()] = None,
     ) -> Response:
@@ -129,7 +130,7 @@ def create_app(
             dzmm_admin_session,
         )
         _require_login_state(core, "auth_in_progress")
-        if path != _CONSOLE_PATH:
+        if request.query_params.getlist("path") != [_CONSOLE_PATH]:
             return RedirectResponse(_CONSOLE_URL, status_code=307)
         return _proxy_console_asset(console, "/vnc.html")
 

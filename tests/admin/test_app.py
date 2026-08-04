@@ -327,6 +327,24 @@ def test_console_root_forces_authenticated_novnc_websocket_path(
     assert response.url.params["path"] == "login-console/websockify"
 
 
+def test_console_root_redirects_duplicate_attacker_first_path(
+    client, headers, core, console
+):
+    client.post("/api/session", headers=headers)
+    core.login_state_value = "auth_in_progress"
+
+    response = client.get(
+        "/login-console/?path=attacker&path=login-console%2Fwebsockify",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers["location"] == (
+        "/login-console/?path=login-console%2Fwebsockify"
+    )
+    assert console.requests == []
+
+
 def test_console_assets_reject_session_when_auth_is_not_active(
     client, headers, core
 ):

@@ -13,6 +13,7 @@ from dzmm_bot.runtime.settings import Settings
 
 from .api_models import (
     AcceptedResponse,
+    AdminStatusResponse,
     ClaimRequest,
     CompleteWorkerCommandRequest,
     HealthResponse,
@@ -21,6 +22,7 @@ from .api_models import (
     InboundRequest,
     InboundResponse,
     OutboundClaimResponse,
+    QueueCountsResponse,
     SentRequest,
     WorkerCommandRequest,
     WorkerCommandResponse,
@@ -123,6 +125,17 @@ def create_app(
     ) -> HeartbeatResponse | None:
         record = _latest_heartbeat(repository)
         return None if record is None else _heartbeat_response(record)
+
+    @app.get("/internal/status", response_model=AdminStatusResponse)
+    def admin_status(
+        _: Annotated[None, Depends(authorize)],
+    ) -> AdminStatusResponse:
+        record = _latest_heartbeat(repository)
+        return AdminStatusResponse(
+            state="unknown" if record is None else record.login_state,
+            last_heartbeat=None if record is None else record.recorded_at,
+            queue_counts=QueueCountsResponse(**repository.queue_counts()),
+        )
 
     @app.post("/internal/worker-commands", response_model=WorkerCommandResponse)
     def enqueue_worker_command(

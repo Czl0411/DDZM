@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 
 @dataclass
@@ -33,12 +34,61 @@ class FakeConsole:
 
     def get(self, path):
         self.requests.append(path)
+        content = {
+            "/vnc.html": b'<script src="app/ui.js"></script>',
+            "/app/ui.js": b"export const ui = true;",
+        }.get(path, b"not found")
+        status_code = 200 if path in {"/vnc.html", "/app/ui.js"} else 404
         return httpx.Response(
-            200,
-            content=b"<html>noVNC</html>",
-            headers={"content-type": "text/html; charset=utf-8"},
+            status_code,
+            content=content,
+            headers={
+                "content-type": (
+                    "text/html; charset=utf-8"
+                    if path == "/vnc.html"
+                    else "text/javascript"
+                )
+            },
             request=httpx.Request("GET", f"http://127.0.0.1:16080{path}"),
         )
+
+
+class FakeUpstreamWebSocket:
+    def __init__(self):
+        self._frames = iter([b"server-frame"])
+        self.sent = []
+        self.subprotocol = "binary"
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._frames)
+        except StopIteration:
+            raise StopAsyncIteration
+
+    async def send(self, data):
+        self.sent.append(data)
+
+
+class FakeWebSocketConnection:
+    def __init__(self):
+        self.paths = []
+        self.upstream = FakeUpstreamWebSocket()
+
+    def connect(self, path, *, subprotocols=None):
+        self.paths.append((path, subprotocols))
+        upstream = self.upstream
+
+        class Connection:
+            async def __aenter__(self):
+                return upstream
+
+            async def __aexit__(self, *args):
+                return None
+
+        return Connection()
 
 
 @pytest.fixture
@@ -52,10 +102,22 @@ def console():
 
 
 @pytest.fixture
-def client(core, console):
+def websocket_connection():
+    return FakeWebSocketConnection()
+
+
+@pytest.fixture
+def client(core, console, websocket_connection):
     from dzmm_bot.admin.app import create_app
 
-    return TestClient(create_app("admin-secret", core, console_client=console))
+    return TestClient(
+        create_app(
+            "admin-secret",
+            core,
+            console_client=console,
+            websocket_connector=websocket_connection.connect,
+        )
+    )
 
 
 @pytest.fixture
@@ -72,6 +134,7 @@ def headers():
         ("post", "/api/worker/restart"),
         ("post", "/api/login/start"),
         ("post", "/api/login/finish"),
+        ("post", "/api/session"),
         ("get", "/login-console"),
     ],
 )
@@ -97,6 +160,61 @@ def test_status_returns_only_safe_operational_fields(client, headers):
     }
     assert "cookie" not in response.text.lower()
     assert "profile" not in response.text.lower()
+
+
+def test_concrete_core_client_uses_aggregate_status_endpoint():
+    from dzmm_bot.admin.core_client import CoreClient
+
+    def handle(request):
+        assert request.headers["X-Core-Token"] == "core-secret"
+        assert request.url.path == "/internal/status"
+        return httpx.Response(
+            200,
+            json={
+                "state": "auth_required",
+                "last_heartbeat": "2026-08-04T12:00:00Z",
+                "queue_counts": {
+                    "inbound_accepted": 3,
+                    "outbound_pending": 2,
+                    "worker_commands_pending": 1,
+                },
+            },
+        )
+
+    transport = httpx.MockTransport(handle)
+    http_client = httpx.Client(
+        base_url="http://127.0.0.1:18120",
+        headers={"X-Core-Token": "core-secret"},
+        transport=transport,
+    )
+
+    assert CoreClient("unused", "unused", client=http_client).status() == {
+        "state": "auth_required",
+        "last_heartbeat": "2026-08-04T12:00:00Z",
+        "queue_counts": {
+            "inbound_accepted": 3,
+            "outbound_pending": 2,
+            "worker_commands_pending": 1,
+        },
+    }
+
+
+def test_novnc_websocket_connector_targets_only_loopback():
+    from dzmm_bot.admin.core_client import NoVNCWebSocketConnector
+
+    calls = []
+    expected_connection = object()
+
+    def connect(uri, *, subprotocols=None):
+        calls.append((uri, subprotocols))
+        return expected_connection
+
+    connector = NoVNCWebSocketConnector(port=16080, connect=connect)
+
+    assert connector("/websockify", subprotocols=["binary"]) is expected_connection
+    assert calls == [
+        ("ws://127.0.0.1:16080/websockify", ["binary"]),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -161,8 +279,84 @@ def test_login_console_is_proxied_only_during_auth(
 
     assert blocked.status_code == 409
     assert allowed.status_code == 200
-    assert allowed.text == "<html>noVNC</html>"
+    assert 'src="app/ui.js"' in allowed.text
     assert console.requests == ["/vnc.html"]
+
+
+def test_admin_token_creates_httponly_console_session_without_url_secret(
+    client, headers
+):
+    response = client.post("/api/session", headers=headers)
+
+    assert response.status_code == 204
+    cookie = response.headers["set-cookie"]
+    assert "dzmm_admin_session=" in cookie
+    assert "HttpOnly" in cookie
+    assert "SameSite=strict" in cookie
+    assert "Path=/login-console" in cookie
+    assert "admin-secret" not in cookie
+    assert "admin-secret" not in response.headers.get("location", "")
+
+
+def test_console_session_authenticates_root_and_relative_assets(
+    client, headers, core, console
+):
+    client.post("/api/session", headers=headers)
+    core.login_state_value = "auth_in_progress"
+
+    root = client.get("/login-console")
+    asset = client.get("/login-console/app/ui.js")
+
+    assert root.status_code == 200
+    assert root.url.path == "/login-console/"
+    assert asset.status_code == 200
+    assert asset.text == "export const ui = true;"
+    assert console.requests == ["/vnc.html", "/app/ui.js"]
+
+
+def test_console_assets_reject_session_when_auth_is_not_active(
+    client, headers, core
+):
+    client.post("/api/session", headers=headers)
+    core.login_state_value = "ready"
+
+    assert client.get("/login-console/app/ui.js").status_code == 409
+
+
+def test_console_asset_proxy_preserves_upstream_not_found(client, headers, core):
+    client.post("/api/session", headers=headers)
+    core.login_state_value = "auth_in_progress"
+
+    response = client.get("/login-console/missing.js")
+
+    assert response.status_code == 404
+    assert response.text == "not found"
+
+
+def test_console_websocket_requires_session_and_active_auth(
+    client, headers, core, websocket_connection
+):
+    core.login_state_value = "auth_in_progress"
+    with pytest.raises(WebSocketDisconnect) as missing_session:
+        with client.websocket_connect("/login-console/websockify"):
+            pass
+    assert missing_session.value.code == 4401
+
+    client.post("/api/session", headers=headers)
+    core.login_state_value = "ready"
+    with pytest.raises(WebSocketDisconnect) as wrong_state:
+        with client.websocket_connect("/login-console/websockify"):
+            pass
+    assert wrong_state.value.code == 4409
+
+    core.login_state_value = "auth_in_progress"
+    with client.websocket_connect(
+        "/login-console/websockify", subprotocols=["binary"]
+    ) as websocket:
+        assert websocket.accepted_subprotocol == "binary"
+        assert websocket.receive_bytes() == b"server-frame"
+
+    assert websocket_connection.paths == [("/websockify", ["binary"])]
 
 
 def test_index_contains_status_fields_and_only_declared_actions(client):

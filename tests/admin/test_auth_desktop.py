@@ -8,15 +8,23 @@ import pytest
 class FakeProcess:
     def __init__(self, pid):
         self.pid = pid
+        self.returncode = None
 
 
 class ProcessFactory:
     def __init__(self):
         self.calls = []
+        self.processes = []
 
     async def __call__(self, *command, **kwargs):
         self.calls.append((command, kwargs))
-        return FakeProcess(3000 + len(self.calls))
+        process = FakeProcess(3000 + len(self.calls))
+        self.processes.append(process)
+        return process
+
+
+async def no_delay(_seconds):
+    return None
 
 
 def make_controller(tmp_path, process_factory, **overrides):
@@ -31,6 +39,9 @@ def make_controller(tmp_path, process_factory, **overrides):
         "process_factory": process_factory,
         "getpgid": lambda pid: pid + 100,
         "killpg": lambda pgid, sig: None,
+        "readiness_probe": lambda _pids: True,
+        "process_alive": lambda _pid: False,
+        "sleep": no_delay,
     }
     options.update(overrides)
     return AuthDesktopController(**options)
@@ -136,3 +147,115 @@ def test_controller_satisfies_the_browser_workers_synchronous_desktop_port(
 
     assert result is None
     assert len(factory.calls) == 5
+
+
+def test_start_waits_for_readiness_before_persisting_pid_metadata(tmp_path):
+    factory = ProcessFactory()
+    pid_file = tmp_path / "runtime" / "auth-desktop.json"
+    observations = []
+
+    def readiness_probe(pids):
+        observations.append((list(pids), pid_file.exists()))
+        return len(observations) == 2
+
+    controller = make_controller(
+        tmp_path,
+        factory,
+        readiness_probe=readiness_probe,
+        readiness_attempts=2,
+    )
+
+    controller.start()
+
+    assert observations == [
+        ([3001, 3002, 3003, 3004, 3005], False),
+        ([3001, 3002, 3003, 3004, 3005], False),
+    ]
+    assert pid_file.exists()
+
+
+def test_start_monitors_children_and_cleans_up_if_one_exits(tmp_path):
+    factory = ProcessFactory()
+    signals = []
+
+    def readiness_probe(_pids):
+        factory.processes[2].returncode = 1
+        return False
+
+    controller = make_controller(
+        tmp_path,
+        factory,
+        readiness_probe=readiness_probe,
+        killpg=lambda pgid, sig: signals.append((pgid, sig)),
+    )
+
+    with pytest.raises(RuntimeError, match="google-chrome exited"):
+        controller.start()
+
+    assert signals == [
+        (3105, signal.SIGTERM),
+        (3104, signal.SIGTERM),
+        (3103, signal.SIGTERM),
+        (3102, signal.SIGTERM),
+        (3101, signal.SIGTERM),
+    ]
+    assert not (tmp_path / "runtime" / "auth-desktop.json").exists()
+
+
+def test_stop_waits_then_escalates_and_keeps_metadata_until_children_exit(
+    tmp_path,
+):
+    factory = ProcessFactory()
+    pid_file = tmp_path / "runtime" / "auth-desktop.json"
+    pid_file.parent.mkdir()
+    pid_file.write_text(
+        json.dumps({"pids": [10, 20], "process_groups": [110, 120]})
+    )
+    alive = {10: True, 20: False}
+    observations = []
+    signals = []
+
+    def process_alive(pid):
+        observations.append(pid_file.exists())
+        return alive[pid]
+
+    def killpg(pgid, sig):
+        signals.append((pgid, sig))
+        if sig == signal.SIGKILL and pgid == 110:
+            alive[10] = False
+
+    controller = make_controller(
+        tmp_path,
+        factory,
+        process_alive=process_alive,
+        killpg=killpg,
+        shutdown_attempts=1,
+    )
+
+    controller.stop()
+
+    assert signals == [
+        (120, signal.SIGTERM),
+        (110, signal.SIGTERM),
+        (110, signal.SIGKILL),
+    ]
+    assert all(observations)
+    assert not pid_file.exists()
+
+
+def test_stop_retains_pid_metadata_when_process_survives_kill(tmp_path):
+    factory = ProcessFactory()
+    pid_file = tmp_path / "runtime" / "auth-desktop.json"
+    pid_file.parent.mkdir()
+    pid_file.write_text(json.dumps({"pids": [10], "process_groups": [110]}))
+    controller = make_controller(
+        tmp_path,
+        factory,
+        process_alive=lambda _pid: True,
+        shutdown_attempts=1,
+    )
+
+    with pytest.raises(RuntimeError, match="did not stop"):
+        controller.stop()
+
+    assert pid_file.exists()

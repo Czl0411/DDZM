@@ -1,6 +1,7 @@
-from typing import Protocol
+from typing import Callable, Protocol
 
 import httpx
+import websockets
 
 
 class AdminCorePort(Protocol):
@@ -26,13 +27,7 @@ class CoreClient:
         )
 
     def status(self) -> dict:
-        health = self._get("/healthz")
-        heartbeat = self._get("/internal/login-state")
-        return {
-            "state": "healthy" if health["database_available"] else "unhealthy",
-            "last_heartbeat": None if heartbeat is None else heartbeat["recorded_at"],
-            "queue_counts": {},
-        }
+        return self._get("/internal/status")
 
     def login_state(self) -> str | None:
         heartbeat = self._get("/internal/login-state")
@@ -64,3 +59,19 @@ class NoVNCClient:
 
     def get(self, path: str) -> httpx.Response:
         return self._client.get(path)
+
+
+class NoVNCWebSocketConnector:
+    def __init__(
+        self,
+        port: int = 16080,
+        *,
+        connect: Callable = websockets.connect,
+    ) -> None:
+        self._base_url = f"ws://127.0.0.1:{port}"
+        self._connect = connect
+
+    def __call__(self, path: str, *, subprotocols: list[str] | None = None):
+        return self._connect(
+            f"{self._base_url}{path}", subprotocols=subprotocols
+        )

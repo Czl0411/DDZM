@@ -137,6 +137,7 @@ def test_database_backed_identifiers_reject_more_than_255_characters(
         ("post", "/internal/outbound/00000000-0000-0000-0000-000000000000/sent"),
         ("post", "/internal/heartbeat"),
         ("get", "/internal/login-state"),
+        ("get", "/internal/status"),
         ("post", "/internal/worker-commands"),
         ("post", "/internal/worker-commands/claim"),
         (
@@ -283,6 +284,38 @@ def test_health_reports_database_unavailability_without_details(app_context):
     assert response.json() == {
         "database_available": False,
         "latest_worker_heartbeat_age_seconds": None,
+    }
+
+
+def test_internal_status_returns_real_queue_counts_and_latest_heartbeat(
+    app_context, headers, payload
+):
+    inbound = app_context.client.post(
+        "/internal/inbound", headers=headers, json=payload
+    ).json()
+    app_context.repository.enqueue_outbound(inbound["message_id"], "reply")
+    app_context.repository.enqueue_worker_command("pause_listening")
+    app_context.client.post(
+        "/internal/heartbeat",
+        headers=headers,
+        json={
+            "worker_id": "worker-a",
+            "login_state": "auth_required",
+            "recorded_at": NOW.isoformat(),
+        },
+    )
+
+    response = app_context.client.get("/internal/status", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "state": "auth_required",
+        "last_heartbeat": NOW.isoformat().replace("+00:00", "Z"),
+        "queue_counts": {
+            "inbound_accepted": 1,
+            "outbound_pending": 1,
+            "worker_commands_pending": 1,
+        },
     }
 
 

@@ -66,6 +66,18 @@ class HealthResponse(ApiModel):
     latest_worker_heartbeat_age_seconds: float | None
 
 
+class QueueCountsResponse(ApiModel):
+    inbound_accepted: int
+    outbound_pending: int
+    worker_commands_pending: int
+
+
+class AdminStatusResponse(ApiModel):
+    state: str
+    last_heartbeat: datetime | None
+    queue_counts: QueueCountsResponse
+
+
 WorkerCommandKind = Literal[
     "pause_listening",
     "resume_listening",

@@ -4,7 +4,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
@@ -241,3 +241,26 @@ class CoreRepository:
             if record is None:
                 raise RuntimeError("persisted worker heartbeat disappeared")
             return record
+
+    def queue_counts(self) -> dict[str, int]:
+        with self._session() as session:
+            return {
+                "inbound_accepted": session.scalar(
+                    select(func.count())
+                    .select_from(InboundRecord)
+                    .where(InboundRecord.status == "accepted")
+                )
+                or 0,
+                "outbound_pending": session.scalar(
+                    select(func.count())
+                    .select_from(OutboundRecord)
+                    .where(OutboundRecord.status == "pending")
+                )
+                or 0,
+                "worker_commands_pending": session.scalar(
+                    select(func.count())
+                    .select_from(WorkerCommandRecord)
+                    .where(WorkerCommandRecord.status == "pending")
+                )
+                or 0,
+            }

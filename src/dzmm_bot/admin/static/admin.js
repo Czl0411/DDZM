@@ -4,6 +4,16 @@ if (token) sessionStorage.setItem("dzmm-admin-token", token);
 const headers = {"X-Admin-Token": token || ""};
 const result = document.querySelector("#result");
 
+async function openConsole(event) {
+  event.preventDefault();
+  const response = await fetch("/api/session", {method: "POST", headers});
+  if (!response.ok) {
+    result.textContent = `Console authorization failed (${response.status})`;
+    return;
+  }
+  window.open("/login-console", "dzmm-login-console");
+}
+
 async function refresh() {
   const response = await fetch("/api/status", {headers});
   if (!response.ok) {
@@ -24,4 +34,5 @@ for (const button of document.querySelectorAll("button[data-action]")) {
   });
 }
 
+document.querySelector("#login-console").addEventListener("click", openConsole);
 refresh();

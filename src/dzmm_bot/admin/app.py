@@ -1,11 +1,21 @@
+import asyncio
 from pathlib import Path
-from secrets import compare_digest
-from typing import Annotated
+from secrets import compare_digest, token_urlsafe
+from typing import Annotated, Callable
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Response,
+    WebSocket,
+    status,
+)
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
-from .core_client import AdminCorePort, NoVNCClient
+from .core_client import AdminCorePort, NoVNCClient, NoVNCWebSocketConnector
 
 
 _ROOT = Path(__file__).parent
@@ -22,11 +32,14 @@ def create_app(
     core: AdminCorePort,
     *,
     console_client: NoVNCClient | None = None,
+    websocket_connector: Callable | None = None,
 ) -> FastAPI:
     if not admin_token:
         raise ValueError("admin_token must be nonempty")
     app = FastAPI()
     console = console_client or NoVNCClient()
+    connect_websocket = websocket_connector or NoVNCWebSocketConnector()
+    console_session: str | None = None
 
     def authorize(x_admin_token: Annotated[str | None, Header()] = None) -> None:
         if x_admin_token is None or not compare_digest(x_admin_token, admin_token):
@@ -53,6 +66,21 @@ def create_app(
         raw = core.status()
         return {key: raw.get(key) for key in _SAFE_STATUS_FIELDS}
 
+    @app.post("/api/session", status_code=status.HTTP_204_NO_CONTENT)
+    def create_console_session(
+        response: Response, _: Annotated[None, Depends(authorize)]
+    ) -> None:
+        nonlocal console_session
+        console_session = token_urlsafe(32)
+        response.set_cookie(
+            "dzmm_admin_session",
+            console_session,
+            httponly=True,
+            max_age=900,
+            path="/login-console",
+            samesite="strict",
+        )
+
     @app.post("/api/worker/{action}", status_code=status.HTTP_202_ACCEPTED)
     def worker_action(
         action: str, _: Annotated[None, Depends(authorize)]
@@ -74,15 +102,85 @@ def create_app(
 
     @app.get("/login-console")
     def login_console(
-        _: Annotated[None, Depends(authorize)],
+        x_admin_token: Annotated[str | None, Header()] = None,
+        dzmm_admin_session: Annotated[str | None, Cookie()] = None,
     ) -> Response:
-        _require_login_state(core, "auth_in_progress")
-        upstream = console.get("/vnc.html")
-        upstream.raise_for_status()
-        return Response(
-            content=upstream.content,
-            media_type=upstream.headers.get("content-type", "text/html"),
+        _authorize_console(
+            admin_token,
+            console_session,
+            x_admin_token,
+            dzmm_admin_session,
         )
+        _require_login_state(core, "auth_in_progress")
+        return RedirectResponse("/login-console/", status_code=307)
+
+    @app.get("/login-console/")
+    def login_console_index(
+        x_admin_token: Annotated[str | None, Header()] = None,
+        dzmm_admin_session: Annotated[str | None, Cookie()] = None,
+    ) -> Response:
+        _authorize_console(
+            admin_token,
+            console_session,
+            x_admin_token,
+            dzmm_admin_session,
+        )
+        _require_login_state(core, "auth_in_progress")
+        return _proxy_console_asset(console, "/vnc.html")
+
+    @app.get("/login-console/{asset_path:path}")
+    def login_console_asset(
+        asset_path: str,
+        x_admin_token: Annotated[str | None, Header()] = None,
+        dzmm_admin_session: Annotated[str | None, Cookie()] = None,
+    ) -> Response:
+        _authorize_console(
+            admin_token,
+            console_session,
+            x_admin_token,
+            dzmm_admin_session,
+        )
+        _require_login_state(core, "auth_in_progress")
+        if not asset_path or ".." in asset_path.split("/"):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "asset not found")
+        return _proxy_console_asset(console, f"/{asset_path}")
+
+    @app.websocket("/login-console/websockify")
+    async def login_console_websocket(websocket: WebSocket) -> None:
+        if not _console_session_matches(
+            console_session, websocket.cookies.get("dzmm_admin_session")
+        ):
+            await websocket.close(code=4401)
+            return
+        if core.login_state() != "auth_in_progress":
+            await websocket.close(code=4409)
+            return
+        offered_protocols = [
+            protocol.strip()
+            for protocol in websocket.headers.get(
+                "sec-websocket-protocol", ""
+            ).split(",")
+            if protocol.strip()
+        ]
+        async with connect_websocket(
+            "/websockify", subprotocols=offered_protocols or None
+        ) as upstream:
+            await websocket.accept(
+                subprotocol=getattr(upstream, "subprotocol", None)
+            )
+            downstream = asyncio.create_task(
+                _relay_to_upstream(websocket, upstream)
+            )
+            upstream_task = asyncio.create_task(
+                _relay_to_browser(upstream, websocket)
+            )
+            done, pending = await asyncio.wait(
+                (downstream, upstream_task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*done, *pending, return_exceptions=True)
 
     return app
 
@@ -93,3 +191,57 @@ def _require_login_state(core: AdminCorePort, expected: str) -> None:
             status.HTTP_409_CONFLICT,
             f"login state must be {expected}",
         )
+
+
+def _authorize_console(
+    admin_token: str,
+    active_session: str | None,
+    supplied_token: str | None,
+    supplied_session: str | None,
+) -> None:
+    token_matches = supplied_token is not None and compare_digest(
+        supplied_token, admin_token
+    )
+    if not token_matches and not _console_session_matches(
+        active_session, supplied_session
+    ):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unauthorized")
+
+
+def _console_session_matches(
+    active_session: str | None, supplied_session: str | None
+) -> bool:
+    return (
+        active_session is not None
+        and supplied_session is not None
+        and compare_digest(active_session, supplied_session)
+    )
+
+
+def _proxy_console_asset(console: NoVNCClient, path: str) -> Response:
+    upstream = console.get(path)
+    return Response(
+        content=upstream.content,
+        media_type=upstream.headers.get("content-type", "application/octet-stream"),
+        status_code=upstream.status_code,
+    )
+
+
+async def _relay_to_upstream(websocket: WebSocket, upstream) -> None:
+    while True:
+        event = await websocket.receive()
+        if event["type"] == "websocket.disconnect":
+            return
+        data = event.get("bytes")
+        if data is None:
+            data = event.get("text")
+        if data is not None:
+            await upstream.send(data)
+
+
+async def _relay_to_browser(upstream, websocket: WebSocket) -> None:
+    async for data in upstream:
+        if isinstance(data, bytes):
+            await websocket.send_bytes(data)
+        else:
+            await websocket.send_text(data)

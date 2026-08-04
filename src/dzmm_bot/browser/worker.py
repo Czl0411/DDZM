@@ -41,6 +41,14 @@ class BrowserWorker:
         self._auth_loss_reported = False
         self._auth_backoff = 1
 
+    @property
+    def login_state(self) -> LoginState:
+        return self._login_state
+
+    @property
+    def browser_stopped(self) -> bool:
+        return self._gateway is None
+
     def run_once(self) -> None:
         now = self._clock()
         command = self._core.claim_command(

@@ -86,6 +86,20 @@ def test_login_state_uses_navigation_without_platform_selectors(tmp_path):
     assert session.login_state() is LoginState.READY
 
 
+def test_missing_login_url_requires_authentication(tmp_path):
+    session = BrowserSession(
+        tmp_path / "profile",
+        None,
+        playwright_factory=lambda: FakePlaywright(
+            FakeChromium(FakeContext("about:blank"))
+        ),
+    )
+
+    session.start_headless()
+
+    assert session.login_state() is LoginState.AUTH_REQUIRED
+
+
 def test_stop_releases_browser_and_playwright(tmp_path):
     context = FakeContext("https://chat.example/room")
     playwright = FakePlaywright(FakeChromium(context))

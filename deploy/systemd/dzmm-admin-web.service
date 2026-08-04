@@ -1,0 +1,13 @@
+[Unit]
+Description=DZMM Admin Web
+After=network-online.target dzmm-core.service
+
+[Service]
+User=dzmm
+WorkingDirectory=/opt/dzmm/current
+EnvironmentFile=/etc/dzmm/dzmm.env
+ExecStart=/opt/dzmm/venv/bin/python -m uvicorn dzmm_bot.admin.app:create_app_from_environment --factory --host 0.0.0.0 --port 18090
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

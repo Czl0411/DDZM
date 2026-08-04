@@ -16,7 +16,14 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
-from .core_client import AdminCorePort, NoVNCClient, NoVNCWebSocketConnector
+from dzmm_bot.runtime.settings import Settings
+
+from .core_client import (
+    AdminCorePort,
+    CoreClient,
+    NoVNCClient,
+    NoVNCWebSocketConnector,
+)
 
 
 _ROOT = Path(__file__).parent
@@ -28,6 +35,20 @@ _WORKER_COMMANDS = {
 }
 _CONSOLE_PATH = "login-console/websockify"
 _CONSOLE_URL = "/login-console/?path=login-console%2Fwebsockify"
+
+
+def create_app_from_environment() -> FastAPI:
+    settings = Settings.from_environment()
+    if settings.admin_token is None:
+        raise ValueError("DZMM_ADMIN_TOKEN must be set and nonempty")
+    return create_app(
+        settings.admin_token,
+        CoreClient(
+            f"http://127.0.0.1:{settings.core_api_port}", settings.core_token
+        ),
+        console_client=NoVNCClient(settings.novnc_port),
+        websocket_connector=NoVNCWebSocketConnector(settings.novnc_port),
+    )
 
 
 def create_app(

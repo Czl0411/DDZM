@@ -29,7 +29,7 @@ class Settings:
             core_token=core_token,
             admin_token=admin_token,
             browser_profile=browser_profile,
-            login_url=_optional("DZMM_LOGIN_URL"),
+            login_url=_optional("DZMM_LOGIN_URL", empty_as_none=True),
             core_api_port=_port("DZMM_CORE_API_PORT", 18120),
             browser_cdp_port=_port("DZMM_BROWSER_CDP_PORT", 19222),
             admin_web_port=_port("DZMM_ADMIN_WEB_PORT", 18090),
@@ -44,9 +44,11 @@ def _required(name: str) -> str:
     return value
 
 
-def _optional(name: str) -> str | None:
+def _optional(name: str, *, empty_as_none: bool = False) -> str | None:
     value = os.environ.get(name)
     if value == "":
+        if empty_as_none:
+            return None
         raise ValueError(f"{name} must be nonempty when set")
     return value
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=DZMM Core
+After=network-online.target postgresql.service
+
+[Service]
+User=dzmm
+WorkingDirectory=/opt/dzmm/current
+EnvironmentFile=/etc/dzmm/dzmm.env
+ExecStart=/opt/dzmm/venv/bin/python -m uvicorn dzmm_bot.core.app:create_app_from_environment --factory --host 127.0.0.1 --port 18120
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

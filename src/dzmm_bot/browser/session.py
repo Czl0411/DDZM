@@ -87,7 +87,7 @@ class _PlaywrightGateway:
         if not self._context.pages:
             return False
         if self._login_url is None:
-            return True
+            return False
         return _location(self._context.pages[0].url) != _location(self._login_url)
 
     def close(self) -> None:

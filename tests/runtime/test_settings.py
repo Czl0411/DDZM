@@ -35,3 +35,11 @@ def test_settings_rejects_empty_secret_and_relative_browser_profile(monkeypatch)
 
     with pytest.raises(ValueError, match="DZMM_BROWSER_PROFILE"):
         Settings.from_environment()
+
+
+def test_settings_treats_an_empty_login_url_as_not_configured(monkeypatch):
+    monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm:x@localhost/dzmm")
+    monkeypatch.setenv("DZMM_CORE_TOKEN", "core-token")
+    monkeypatch.setenv("DZMM_LOGIN_URL", "")
+
+    assert Settings.from_environment().login_url is None

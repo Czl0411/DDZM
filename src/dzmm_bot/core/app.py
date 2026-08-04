@@ -27,6 +27,7 @@ from .api_models import (
     WorkerCommandRequest,
     WorkerCommandResponse,
 )
+from .database import create_session_factory
 from .repository import CoreRepository
 from .schema import WorkerCommandRecord, WorkerInstanceRecord
 from .service import CoreService
@@ -39,6 +40,14 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
         port=settings.core_api_port,
     )
     return Server(config)
+
+
+def create_app_from_environment() -> FastAPI:
+    settings = Settings.from_environment()
+    return create_app(
+        CoreRepository(create_session_factory(settings.database_url)),
+        settings.core_token,
+    )
 
 
 def create_app(

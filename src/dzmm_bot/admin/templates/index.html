@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DZMM Admin</title>
+  </head>
+  <body>
+    <main>
+      <h1>DZMM Admin</h1>
+      <dl>
+        <dt>State</dt><dd id="state">unknown</dd>
+        <dt>Last heartbeat</dt><dd id="last-heartbeat">unknown</dd>
+        <dt>Queue counts</dt><dd id="queue-counts">unknown</dd>
+      </dl>
+      <section aria-label="Worker controls">
+        <button data-action="/api/worker/start">Start listening</button>
+        <button data-action="/api/worker/stop">Stop listening</button>
+        <button data-action="/api/worker/restart">Restart browser</button>
+      </section>
+      <section aria-label="Login controls">
+        <button data-action="/api/login/start">Start human login</button>
+        <button data-action="/api/login/finish">Finish human login</button>
+        <a href="/login-console">Open login console</a>
+      </section>
+      <p id="result" role="status"></p>
+    </main>
+    <script src="/static/admin.js"></script>
+  </body>
+</html>

@@ -14,6 +14,7 @@ class ChildProcess(Protocol):
 
 ProcessFactory = Callable[..., Awaitable[ChildProcess]]
 ReadinessProbe = Callable[[list[int]], bool]
+XReadinessProbe = Callable[[int], bool]
 AsyncSleep = Callable[[float], Awaitable[None]]
 
 
@@ -30,8 +31,10 @@ class AuthDesktopController:
         process_factory: ProcessFactory = asyncio.create_subprocess_exec,
         getpgid: Callable[[int], int] = os.getpgid,
         killpg: Callable[[int, int], None] = os.killpg,
+        x_readiness_probe: XReadinessProbe | None = None,
         readiness_probe: ReadinessProbe | None = None,
         process_alive: Callable[[int], bool] | None = None,
+        process_group_alive: Callable[[int], bool] | None = None,
         sleep: AsyncSleep = asyncio.sleep,
         readiness_attempts: int = 100,
         shutdown_attempts: int = 50,
@@ -46,6 +49,11 @@ class AuthDesktopController:
         self._getpgid = getpgid
         self._killpg = killpg
         self._process_alive = process_alive or _pid_alive
+        self._process_group_alive = process_group_alive or _group_alive
+        self._x_readiness_probe = x_readiness_probe or (
+            lambda pid: self._process_alive(pid)
+            and Path("/tmp/.X11-unix/X99").exists()
+        )
         self._readiness_probe = readiness_probe or (
             lambda pids: _desktop_ready(
                 pids, self._process_alive, self._novnc_port
@@ -114,7 +122,16 @@ class AuthDesktopController:
             groups: list[int] = []
             processes: list[tuple[str, ChildProcess]] = []
             try:
-                for command, options in commands:
+                x_command, x_options = commands[0]
+                x_process = await self._process_factory(
+                    *x_command, start_new_session=True, **x_options
+                )
+                pids.append(x_process.pid)
+                groups.append(self._getpgid(x_process.pid))
+                processes.append((x_command[0], x_process))
+                await self._wait_for_x(x_process)
+
+                for command, options in commands[1:]:
                     process = await self._process_factory(
                         *command, start_new_session=True, **options
                     )
@@ -127,7 +144,7 @@ class AuthDesktopController:
                 )
                 self._pid_file.chmod(0o600)
             except Exception:
-                await self._terminate(pids, groups)
+                await self._terminate(groups)
                 raise
 
     def stop(self) -> None:
@@ -142,8 +159,18 @@ class AuthDesktopController:
             groups = state["process_groups"]
             if len(pids) != len(groups):
                 raise RuntimeError("invalid authentication desktop PID metadata")
-            await self._terminate(pids, groups)
+            await self._terminate(groups)
             self._pid_file.unlink()
+
+    async def _wait_for_x(self, process: ChildProcess) -> None:
+        for _ in range(self._readiness_attempts):
+            self._raise_for_exited_child([("Xvfb", process)])
+            if self._x_readiness_probe(process.pid):
+                self._raise_for_exited_child([("Xvfb", process)])
+                return
+            await self._sleep(0.1)
+        self._raise_for_exited_child([("Xvfb", process)])
+        raise RuntimeError("Xvfb did not become ready")
 
     async def _wait_until_ready(
         self,
@@ -168,29 +195,34 @@ class AuthDesktopController:
             if returncode is not None:
                 raise RuntimeError(f"{name} exited during startup ({returncode})")
 
-    async def _terminate(self, pids: list[int], groups: list[int]) -> None:
+    async def _terminate(self, groups: list[int]) -> None:
         self._signal_groups(groups, signal.SIGTERM)
-        remaining = await self._wait_for_exit(pids)
+        remaining = await self._wait_for_groups(groups)
         if remaining:
-            remaining_groups = [
-                group for pid, group in zip(pids, groups) if pid in remaining
-            ]
-            self._signal_groups(remaining_groups, signal.SIGKILL)
-            remaining = await self._wait_for_exit(remaining)
+            self._signal_groups(remaining, signal.SIGKILL)
+            remaining = await self._wait_for_groups(remaining)
         if remaining:
             raise RuntimeError(
-                "authentication desktop processes did not stop: "
-                + ", ".join(str(pid) for pid in remaining)
+                "authentication desktop process groups did not stop: "
+                + ", ".join(str(group) for group in remaining)
             )
 
-    async def _wait_for_exit(self, pids: list[int]) -> list[int]:
-        remaining = list(pids)
+    async def _wait_for_groups(self, groups: list[int]) -> list[int]:
+        remaining = list(groups)
         for _ in range(self._shutdown_attempts):
-            remaining = [pid for pid in remaining if self._process_alive(pid)]
+            remaining = [
+                group
+                for group in remaining
+                if self._process_group_alive(group)
+            ]
             if not remaining:
                 return []
             await self._sleep(0.1)
-        return [pid for pid in remaining if self._process_alive(pid)]
+        return [
+            group
+            for group in remaining
+            if self._process_group_alive(group)
+        ]
 
     def _signal_groups(self, groups: list[int], sig: int) -> None:
         for group in reversed(groups):
@@ -203,6 +235,16 @@ class AuthDesktopController:
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _group_alive(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
     except ProcessLookupError:
         return False
     except PermissionError:

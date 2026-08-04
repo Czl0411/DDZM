@@ -309,9 +309,22 @@ def test_console_session_authenticates_root_and_relative_assets(
 
     assert root.status_code == 200
     assert root.url.path == "/login-console/"
+    assert root.url.params["path"] == "login-console/websockify"
     assert asset.status_code == 200
     assert asset.text == "export const ui = true;"
     assert console.requests == ["/vnc.html", "/app/ui.js"]
+
+
+def test_console_root_forces_authenticated_novnc_websocket_path(
+    client, headers, core
+):
+    client.post("/api/session", headers=headers)
+    core.login_state_value = "auth_in_progress"
+
+    response = client.get("/login-console/?path=websockify")
+
+    assert response.status_code == 200
+    assert response.url.params["path"] == "login-console/websockify"
 
 
 def test_console_assets_reject_session_when_auth_is_not_active(

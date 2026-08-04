@@ -39,8 +39,10 @@ def make_controller(tmp_path, process_factory, **overrides):
         "process_factory": process_factory,
         "getpgid": lambda pid: pid + 100,
         "killpg": lambda pgid, sig: None,
+        "x_readiness_probe": lambda _pid: True,
         "readiness_probe": lambda _pids: True,
         "process_alive": lambda _pid: False,
+        "process_group_alive": lambda _pgid: False,
         "sleep": no_delay,
     }
     options.update(overrides)
@@ -174,6 +176,38 @@ def test_start_waits_for_readiness_before_persisting_pid_metadata(tmp_path):
     assert pid_file.exists()
 
 
+def test_start_waits_for_xvfb_before_spawning_desktop_children(tmp_path):
+    factory = ProcessFactory()
+    observations = []
+
+    def x_readiness_probe(pid):
+        observations.append(
+            (pid, [call[0][0] for call in factory.calls])
+        )
+        return len(observations) == 2
+
+    controller = make_controller(
+        tmp_path,
+        factory,
+        x_readiness_probe=x_readiness_probe,
+        readiness_attempts=2,
+    )
+
+    controller.start()
+
+    assert observations == [
+        (3001, ["Xvfb"]),
+        (3001, ["Xvfb"]),
+    ]
+    assert [call[0][0] for call in factory.calls] == [
+        "Xvfb",
+        "fluxbox",
+        "google-chrome",
+        "x11vnc",
+        "websockify",
+    ]
+
+
 def test_start_monitors_children_and_cleans_up_if_one_exits(tmp_path):
     factory = ProcessFactory()
     signals = []
@@ -211,23 +245,23 @@ def test_stop_waits_then_escalates_and_keeps_metadata_until_children_exit(
     pid_file.write_text(
         json.dumps({"pids": [10, 20], "process_groups": [110, 120]})
     )
-    alive = {10: True, 20: False}
+    alive = {110: True, 120: False}
     observations = []
     signals = []
 
-    def process_alive(pid):
+    def process_group_alive(pgid):
         observations.append(pid_file.exists())
-        return alive[pid]
+        return alive[pgid]
 
     def killpg(pgid, sig):
         signals.append((pgid, sig))
         if sig == signal.SIGKILL and pgid == 110:
-            alive[10] = False
+            alive[110] = False
 
     controller = make_controller(
         tmp_path,
         factory,
-        process_alive=process_alive,
+        process_group_alive=process_group_alive,
         killpg=killpg,
         shutdown_attempts=1,
     )
@@ -251,7 +285,7 @@ def test_stop_retains_pid_metadata_when_process_survives_kill(tmp_path):
     controller = make_controller(
         tmp_path,
         factory,
-        process_alive=lambda _pid: True,
+        process_group_alive=lambda _pgid: True,
         shutdown_attempts=1,
     )
 
@@ -259,3 +293,35 @@ def test_stop_retains_pid_metadata_when_process_survives_kill(tmp_path):
         controller.stop()
 
     assert pid_file.exists()
+
+
+def test_stop_escalates_when_group_descendant_survives_dead_leader(tmp_path):
+    factory = ProcessFactory()
+    pid_file = tmp_path / "runtime" / "auth-desktop.json"
+    pid_file.parent.mkdir()
+    pid_file.write_text(json.dumps({"pids": [10], "process_groups": [110]}))
+    group_alive = True
+    signals = []
+
+    def killpg(pgid, sig):
+        nonlocal group_alive
+        signals.append((pgid, sig))
+        if sig == signal.SIGKILL:
+            group_alive = False
+
+    controller = make_controller(
+        tmp_path,
+        factory,
+        process_alive=lambda _pid: False,
+        process_group_alive=lambda _pgid: group_alive,
+        killpg=killpg,
+        shutdown_attempts=1,
+    )
+
+    controller.stop()
+
+    assert signals == [
+        (110, signal.SIGTERM),
+        (110, signal.SIGKILL),
+    ]
+    assert not pid_file.exists()

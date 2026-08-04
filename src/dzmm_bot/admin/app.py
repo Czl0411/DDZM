@@ -25,6 +25,8 @@ _WORKER_COMMANDS = {
     "stop": "pause_listening",
     "restart": "restart_browser",
 }
+_CONSOLE_PATH = "login-console/websockify"
+_CONSOLE_URL = "/login-console/?path=login-console%2Fwebsockify"
 
 
 def create_app(
@@ -112,10 +114,11 @@ def create_app(
             dzmm_admin_session,
         )
         _require_login_state(core, "auth_in_progress")
-        return RedirectResponse("/login-console/", status_code=307)
+        return RedirectResponse(_CONSOLE_URL, status_code=307)
 
     @app.get("/login-console/")
     def login_console_index(
+        path: str | None = None,
         x_admin_token: Annotated[str | None, Header()] = None,
         dzmm_admin_session: Annotated[str | None, Cookie()] = None,
     ) -> Response:
@@ -126,6 +129,8 @@ def create_app(
             dzmm_admin_session,
         )
         _require_login_state(core, "auth_in_progress")
+        if path != _CONSOLE_PATH:
+            return RedirectResponse(_CONSOLE_URL, status_code=307)
         return _proxy_console_asset(console, "/vnc.html")
 
     @app.get("/login-console/{asset_path:path}")

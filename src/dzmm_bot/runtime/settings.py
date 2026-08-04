@@ -1,0 +1,55 @@
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Settings:
+    database_url: str
+    core_token: str
+    admin_token: str | None
+    browser_profile: Path
+    login_url: str | None
+    core_api_port: int
+    browser_cdp_port: int
+    admin_web_port: int
+    novnc_port: int
+
+    @classmethod
+    def from_environment(cls) -> "Settings":
+        database_url = _required("DZMM_DATABASE_URL")
+        core_token = _required("DZMM_CORE_TOKEN")
+        admin_token = _optional("DZMM_ADMIN_TOKEN")
+        browser_profile = Path(os.environ.get("DZMM_BROWSER_PROFILE", "/var/lib/dzmm/browser"))
+        if not browser_profile.is_absolute():
+            raise ValueError("DZMM_BROWSER_PROFILE must be an absolute path")
+
+        return cls(
+            database_url=database_url,
+            core_token=core_token,
+            admin_token=admin_token,
+            browser_profile=browser_profile,
+            login_url=_optional("DZMM_LOGIN_URL"),
+            core_api_port=_port("DZMM_CORE_API_PORT", 18120),
+            browser_cdp_port=_port("DZMM_BROWSER_CDP_PORT", 19222),
+            admin_web_port=_port("DZMM_ADMIN_WEB_PORT", 18090),
+            novnc_port=_port("DZMM_NOVNC_PORT", 16080),
+        )
+
+
+def _required(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise ValueError(f"{name} must be set and nonempty")
+    return value
+
+
+def _optional(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value == "":
+        raise ValueError(f"{name} must be nonempty when set")
+    return value
+
+
+def _port(name: str, default: int) -> int:
+    return int(os.environ.get(name, default))

@@ -98,7 +98,7 @@ Commit: `git add pyproject.toml src/dzmm_bot/runtime tests/runtime && git commit
 - Test: `tests/core/test_service.py`
 
 **Interfaces:**
-- Produces: `CoreRepository.accept_inbound(message)`, `CoreRepository.claim_outbound(worker_id, now, lease_seconds)`, `CoreRepository.confirm_sent(message_id, platform_sent_id)`, and `CoreService.receive_inbound(message)`.
+- Produces: `CoreRepository.accept_inbound(message)`, `CoreRepository.claim_outbound(worker_id, now, lease_seconds)`, `CoreRepository.confirm_sent(message_id, platform_sent_id)`, `CoreRepository.claim_worker_command(worker_id, now, lease_seconds)`, and `CoreService.receive_inbound(message)`.
 - Consumes: contracts from Task 1 and a SQLAlchemy session factory.
 
 - [ ] **Step 1: Write the failing idempotency and lease tests**
@@ -115,6 +115,12 @@ def test_expired_lease_can_be_claimed_once_by_another_worker(repository, outboun
     assert repository.claim_outbound("a", now, 30).id == outbound.id
     assert repository.claim_outbound("b", now + timedelta(seconds=31), 30).id == outbound.id
     assert repository.claim_outbound("c", now + timedelta(seconds=32), 30) is None
+
+def test_worker_command_is_claimed_once_then_acknowledged(repository, now):
+    command = repository.enqueue_worker_command("start_auth")
+    claimed = repository.claim_worker_command("worker-a", now, 30)
+    repository.complete_worker_command(claimed.id, "succeeded", now)
+    assert repository.claim_worker_command("worker-b", now, 30) is None
 ```
 
 - [ ] **Step 2: Run focused tests to verify failure**
@@ -125,7 +131,7 @@ Expected: FAIL because repository and migrations are absent.
 
 - [ ] **Step 3: Create the first Alembic revision**
 
-Create tables `inbound_messages`, `outbound_messages`, `worker_instances`, `login_sessions`, and `audit_events`. Add a unique index on `inbound_messages.platform_message_id`; add a partial/compound query index for pending and expired outbound leases. Store timestamps in UTC.
+Create tables `inbound_messages`, `outbound_messages`, `worker_instances`, `worker_commands`, `login_sessions`, and `audit_events`. Add a unique index on `inbound_messages.platform_message_id`; add partial/compound query indexes for pending and expired outbound and worker-command leases. Store timestamps in UTC.
 
 - [ ] **Step 4: Implement transactional core operations**
 
@@ -167,6 +173,9 @@ Commit: `git add alembic.ini migrations src/dzmm_bot/core tests/core && git comm
   - `POST /internal/outbound/{id}/sent`
   - `POST /internal/heartbeat`
   - `GET /internal/login-state`
+  - `POST /internal/worker-commands`
+  - `POST /internal/worker-commands/claim`
+  - `POST /internal/worker-commands/{id}/complete`
 - Consumes: `X-Core-Token` and service methods from Task 2.
 
 - [ ] **Step 1: Write failing HTTP authorization tests**
@@ -188,7 +197,7 @@ Expected: FAIL because the ASGI app is absent.
 
 - [ ] **Step 3: Implement only the listed endpoints**
 
-Validate input with Pydantic. Make `/healthz` report database availability and latest worker heartbeat age without leaking configuration or secrets. The API binds to `127.0.0.1:18120` only.
+Validate input with Pydantic. Permit only `pause_listening`, `resume_listening`, `restart_browser`, `start_auth`, and `finish_auth` command kinds. Make `/healthz` report database availability and latest worker heartbeat age without leaking configuration or secrets. The API binds to `127.0.0.1:18120` only.
 
 - [ ] **Step 4: Verify and commit**
 
@@ -237,9 +246,9 @@ Expected: FAIL because browser modules are absent.
 
 Define a `ChatGateway` protocol: `read_new() -> list[InboundMessage]`, `send(text) -> str`, `is_authenticated() -> bool`, and `close() -> None`. The Playwright gateway is configured by `DZMM_LOGIN_URL` but does not contain platform-specific selectors until the platform page is supplied. The worker owns a profile path and launches CDP only on `127.0.0.1:19222`.
 
-- [ ] **Step 4: Implement heartbeat, backoff, and auth-required transition**
+- [ ] **Step 4: Implement heartbeat, backoff, authentication transition, and commands**
 
-On authentication loss, stop polling, set `auth_required` through the core API, emit one audit event, and sleep with bounded exponential backoff. Do not enqueue replies or reset profile data.
+The Worker process always heartbeats and polls commands. `pause_listening` stops only message polling; `resume_listening` resumes it; `restart_browser` recreates only the browser session; `start_auth` stops the headless session and starts the manual desktop; `finish_auth` stops that desktop and recreates headless Chrome. On authentication loss, stop message polling, set `auth_required` through the core API, emit one audit event, and sleep with bounded exponential backoff. Do not enqueue replies or reset profile data.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -290,7 +299,7 @@ Expected: FAIL because admin modules are absent.
 
 - [ ] **Step 3: Implement minimal admin HTML and proxy endpoints**
 
-Serve one status page with explicit state, last heartbeat, queue counts, and buttons for the listed actions. Use `X-Admin-Token` in a password-gated browser session. Do not render credentials, profile paths, raw cookies, or raw inbound message history.
+Serve one status page with explicit state, last heartbeat, queue counts, and buttons for the listed actions. Each button must submit the corresponding durable core command; it cannot signal the Browser Worker directly. Use `X-Admin-Token` in a password-gated browser session. Do not render credentials, profile paths, raw cookies, or raw inbound message history.
 
 - [ ] **Step 4: Implement authentication desktop process control**
 

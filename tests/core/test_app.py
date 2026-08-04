@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -73,6 +74,28 @@ def test_internal_inbound_is_idempotent(client, headers, payload):
     assert second.status_code == 200
     assert second.json()["accepted"] is False
     assert second.json()["message_id"] == first.json()["message_id"]
+
+
+def test_core_server_factory_enforces_local_settings_port(app_context):
+    from dzmm_bot.core.app import create_server
+    from dzmm_bot.runtime.settings import Settings
+
+    settings = Settings(
+        database_url="postgresql+psycopg://dzmm@localhost/dzmm",
+        core_token="test-core-token",
+        admin_token=None,
+        browser_profile=Path("/var/lib/dzmm/browser"),
+        login_url=None,
+        core_api_port=18120,
+        browser_cdp_port=19222,
+        admin_web_port=18090,
+        novnc_port=16080,
+    )
+
+    server = create_server(app_context.repository, settings)
+
+    assert server.config.host == "127.0.0.1"
+    assert server.config.port == settings.core_api_port
 
 
 def test_database_backed_identifiers_reject_more_than_255_characters(

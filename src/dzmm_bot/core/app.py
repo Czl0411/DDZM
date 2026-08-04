@@ -6,8 +6,10 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from uvicorn import Config, Server
 
 from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
+from dzmm_bot.runtime.settings import Settings
 
 from .api_models import (
     AcceptedResponse,
@@ -26,6 +28,15 @@ from .api_models import (
 from .repository import CoreRepository
 from .schema import WorkerCommandRecord, WorkerInstanceRecord
 from .service import CoreService
+
+
+def create_server(repository: CoreRepository, settings: Settings) -> Server:
+    config = Config(
+        create_app(repository, settings.core_token),
+        host="127.0.0.1",
+        port=settings.core_api_port,
+    )
+    return Server(config)
 
 
 def create_app(

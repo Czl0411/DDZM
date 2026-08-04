@@ -75,7 +75,7 @@ class InboundMessage:
     received_at: datetime
 ```
 
-Define `OutboundMessage` with a stable UUID, `inbound_message_id`, text, status, lease expiry, attempt count, and optional platform sent ID.
+Define `OutboundMessage` with a stable UUID, `inbound_message_id`, text, status, lease owner, random lease token, lease expiry, attempt count, and optional platform sent ID.
 
 - [ ] **Step 5: Run focused tests and commit**
 
@@ -98,7 +98,7 @@ Commit: `git add pyproject.toml src/dzmm_bot/runtime tests/runtime && git commit
 - Test: `tests/core/test_service.py`
 
 **Interfaces:**
-- Produces: `CoreRepository.accept_inbound(message)`, `CoreRepository.claim_outbound(worker_id, now, lease_seconds)`, `CoreRepository.confirm_sent(message_id, platform_sent_id)`, `CoreRepository.claim_worker_command(worker_id, now, lease_seconds)`, and `CoreService.receive_inbound(message)`.
+- Produces: `CoreRepository.accept_inbound(message)`, `CoreRepository.claim_outbound(worker_id, now, lease_seconds)`, `CoreRepository.confirm_sent(message_id, worker_id, lease_token, platform_sent_id, now)`, `CoreRepository.claim_worker_command(worker_id, now, lease_seconds)`, `CoreRepository.complete_worker_command(command_id, worker_id, lease_token, status, now)`, and `CoreService.receive_inbound(message)`.
 - Consumes: contracts from Task 1 and a SQLAlchemy session factory.
 
 - [ ] **Step 1: Write the failing idempotency and lease tests**
@@ -119,8 +119,14 @@ def test_expired_lease_can_be_claimed_once_by_another_worker(repository, outboun
 def test_worker_command_is_claimed_once_then_acknowledged(repository, now):
     command = repository.enqueue_worker_command("start_auth")
     claimed = repository.claim_worker_command("worker-a", now, 30)
-    repository.complete_worker_command(claimed.id, "succeeded", now)
+    assert repository.complete_worker_command(claimed.id, "worker-a", claimed.lease_token, "succeeded", now) is True
     assert repository.claim_worker_command("worker-b", now, 30) is None
+
+def test_stale_outbound_confirmation_is_rejected(repository, outbound, now):
+    first = repository.claim_outbound("a", now, 30)
+    second = repository.claim_outbound("b", now + timedelta(seconds=31), 30)
+    assert repository.confirm_sent(outbound.id, "a", first.lease_token, "p-1", now + timedelta(seconds=31)) is False
+    assert repository.confirm_sent(outbound.id, "b", second.lease_token, "p-2", now + timedelta(seconds=32)) is True
 ```
 
 - [ ] **Step 2: Run focused tests to verify failure**
@@ -131,7 +137,7 @@ Expected: FAIL because repository and migrations are absent.
 
 - [ ] **Step 3: Create the first Alembic revision**
 
-Create tables `inbound_messages`, `outbound_messages`, `worker_instances`, `worker_commands`, `login_sessions`, and `audit_events`. Add a unique index on `inbound_messages.platform_message_id`; add partial/compound query indexes for pending and expired outbound and worker-command leases. Store timestamps in UTC.
+Create tables `inbound_messages`, `outbound_messages`, `worker_instances`, `worker_commands`, `login_sessions`, and `audit_events`. Add `lease_token` to outbound and worker-command rows. Add a unique index on `inbound_messages.platform_message_id`; add partial/compound query indexes for pending and expired outbound and worker-command leases. Store timestamps in UTC.
 
 - [ ] **Step 4: Implement transactional core operations**
 
@@ -150,7 +156,7 @@ All command-handler writes and `enqueue_outbound` must share the same database t
 
 - [ ] **Step 5: Add migration and repository integration tests**
 
-Start an ephemeral PostgreSQL database only when `TEST_DATABASE_URL` is set; otherwise mark integration tests skipped. Assert uniqueness, atomic enqueue, lease expiry, confirmation, and worker heartbeat persistence.
+Start an ephemeral PostgreSQL database only when `TEST_DATABASE_URL` is set; otherwise mark integration tests skipped. Assert uniqueness, atomic enqueue, lease expiry, stale confirmation rejection, and worker heartbeat persistence.
 
 - [ ] **Step 6: Run tests and commit**
 

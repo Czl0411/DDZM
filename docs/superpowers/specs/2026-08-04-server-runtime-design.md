@@ -57,9 +57,9 @@ Worker 不能直接读写 PostgreSQL，不能自行结算指令，也不能绕�
 新建独立 PostgreSQL 数据库和角色，不使用服务器中现有应用数据库。初始表包括：
 
 - `inbound_messages`：平台消息 ID 唯一约束、收到时间、原始内容、处理状态。
-- `outbound_messages`：回复内容、关联入站消息、状态、发送 lease、重试次数与最终平台发送 ID。
+- `outbound_messages`：回复内容、关联入站消息、状态、发送 lease、lease 令牌、重试次数与最终平台发送 ID。
 - `worker_instances`：心跳、版本、浏览器状态和最近错误。
-- `worker_commands`：由核心持久化的浏览器控制命令、领取 lease、执行结果和审计关联。
+- `worker_commands`：由核心持久化的浏览器控制命令、领取 lease、lease 令牌、执行结果和审计关联。
 - `login_sessions`：状态机记录，不保存明文密码。
 - `audit_events`：管理操作、登录切换、Worker 异常和人工恢复记录。
 
@@ -68,7 +68,7 @@ Worker 不能直接读写 PostgreSQL，不能自行结算指令，也不能绕�
 1. Worker 读取平台消息，并以平台稳定消息 ID 提交核心。
 2. 核心在一个数据库事务中插入入站消息；唯一冲突表示已经处理，直接返回。
 3. 核心执行指令，在同一事务中写入经济/玩法变化与一条待发送出站消息。
-4. Worker 以带 lease 的原子领取方式领取出站消息；发送成功后回执。崩溃后的过期 lease 可以安全重试。
+4. Worker 以带 lease 和随机 lease 令牌的原子领取方式领取出站消息；发送成功回执必须匹配 Worker 身份、令牌且 lease 未过期。崩溃后的过期 lease 可以安全重试。
 5. 管理 Web 的监听、重启浏览器和登录请求都先写为 `worker_commands`；Worker 领取并回执，不能由管理端直接控制 Chrome。
 6. 查询类命令和发送失败不会重复产生经济流水。
 

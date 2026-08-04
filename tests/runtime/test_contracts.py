@@ -28,6 +28,8 @@ def test_outbound_message_has_stable_uuid_and_delivery_defaults():
 
     assert isinstance(outbound.id, UUID)
     assert outbound.status == "pending"
+    assert outbound.lease_worker_id is None
+    assert outbound.lease_token is None
     assert outbound.lease_expires_at is None
     assert outbound.attempt_count == 0
     assert outbound.platform_sent_id is None

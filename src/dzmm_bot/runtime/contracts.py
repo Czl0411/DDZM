@@ -24,6 +24,8 @@ class OutboundMessage:
     text: str
     id: UUID = field(default_factory=uuid4)
     status: str = "pending"
+    lease_worker_id: str | None = None
+    lease_token: UUID | None = None
     lease_expires_at: datetime | None = None
     attempt_count: int = 0
     platform_sent_id: str | None = None

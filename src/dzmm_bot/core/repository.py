@@ -4,7 +4,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
@@ -115,28 +115,40 @@ class CoreRepository:
                 return None
             record.status = "leased"
             record.lease_worker_id = worker_id
+            record.lease_token = uuid4()
             record.lease_expires_at = now + timedelta(seconds=lease_seconds)
             record.attempt_count += 1
             session.flush()
             return record
 
     def confirm_sent(
-        self, message_id: UUID | str, platform_sent_id: str
-    ) -> OutboundRecord:
+        self,
+        message_id: UUID | str,
+        worker_id: str,
+        lease_token: UUID | str,
+        platform_sent_id: str,
+        now: datetime,
+    ) -> bool:
         with self._session() as session:
-            record = session.scalar(
-                select(OutboundRecord)
-                .where(OutboundRecord.id == UUID(str(message_id)))
-                .with_for_update()
+            confirmed_id = session.scalar(
+                update(OutboundRecord)
+                .where(
+                    OutboundRecord.id == UUID(str(message_id)),
+                    OutboundRecord.status == "leased",
+                    OutboundRecord.lease_worker_id == worker_id,
+                    OutboundRecord.lease_token == UUID(str(lease_token)),
+                    OutboundRecord.lease_expires_at > now,
+                )
+                .values(
+                    status="sent",
+                    platform_sent_id=platform_sent_id,
+                    lease_worker_id=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                )
+                .returning(OutboundRecord.id)
             )
-            if record is None:
-                raise ValueError(f"unknown outbound message: {message_id}")
-            record.status = "sent"
-            record.platform_sent_id = platform_sent_id
-            record.lease_worker_id = None
-            record.lease_expires_at = None
-            session.flush()
-            return record
+            return confirmed_id is not None
 
     def enqueue_worker_command(self, command: str) -> WorkerCommandRecord:
         with self._session() as session:
@@ -166,27 +178,39 @@ class CoreRepository:
                 return None
             record.status = "leased"
             record.lease_worker_id = worker_id
+            record.lease_token = uuid4()
             record.lease_expires_at = now + timedelta(seconds=lease_seconds)
             session.flush()
             return record
 
     def complete_worker_command(
-        self, command_id: UUID | str, status: str, now: datetime
-    ) -> WorkerCommandRecord:
+        self,
+        command_id: UUID | str,
+        worker_id: str,
+        lease_token: UUID | str,
+        status: str,
+        now: datetime,
+    ) -> bool:
         with self._session() as session:
-            record = session.scalar(
-                select(WorkerCommandRecord)
-                .where(WorkerCommandRecord.id == UUID(str(command_id)))
-                .with_for_update()
+            completed_id = session.scalar(
+                update(WorkerCommandRecord)
+                .where(
+                    WorkerCommandRecord.id == UUID(str(command_id)),
+                    WorkerCommandRecord.status == "leased",
+                    WorkerCommandRecord.lease_worker_id == worker_id,
+                    WorkerCommandRecord.lease_token == UUID(str(lease_token)),
+                    WorkerCommandRecord.lease_expires_at > now,
+                )
+                .values(
+                    status=status,
+                    completed_at=now,
+                    lease_worker_id=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                )
+                .returning(WorkerCommandRecord.id)
             )
-            if record is None:
-                raise ValueError(f"unknown worker command: {command_id}")
-            record.status = status
-            record.completed_at = now
-            record.lease_worker_id = None
-            record.lease_expires_at = None
-            session.flush()
-            return record
+            return completed_id is not None
 
     def record_worker_heartbeat(
         self, heartbeat: WorkerHeartbeat

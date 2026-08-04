@@ -63,25 +63,164 @@ def test_expired_lease_can_be_claimed_once_by_another_worker(
     assert repository.claim_outbound("c", now + timedelta(seconds=32), 30) is None
 
 
-def test_confirmed_outbound_is_not_claimed_again(repository, inbound, now):
+def test_confirmed_outbound_is_not_claimed_again(
+    repository, session_factory, inbound, now
+):
+    from dzmm_bot.core.schema import OutboundRecord
+
     stored, _ = repository.accept_inbound(inbound)
     outbound = repository.enqueue_outbound(stored.id, "reply")
-    repository.claim_outbound("worker-a", now, 30)
+    claimed = repository.claim_outbound("worker-a", now, 30)
 
-    confirmed = repository.confirm_sent(outbound.id, "sent-1")
+    confirmed = repository.confirm_sent(
+        outbound.id, "worker-a", claimed.lease_token, "sent-1", now
+    )
 
-    assert confirmed.status == "sent"
-    assert confirmed.platform_sent_id == "sent-1"
+    assert confirmed is True
+    with session_factory() as session:
+        persisted = session.get(OutboundRecord, outbound.id)
+        assert persisted.status == "sent"
+        assert persisted.platform_sent_id == "sent-1"
     assert repository.claim_outbound("worker-b", now + timedelta(seconds=31), 30) is None
+
+
+def test_stale_outbound_confirmation_is_rejected_after_reclaim(
+    repository, session_factory, inbound, now
+):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    stored, _ = repository.accept_inbound(inbound)
+    outbound = repository.enqueue_outbound(stored.id, "reply")
+    first = repository.claim_outbound("worker-a", now, 30)
+    second = repository.claim_outbound("worker-b", now + timedelta(seconds=31), 30)
+
+    assert second.lease_token != first.lease_token
+    assert (
+        repository.confirm_sent(
+            outbound.id,
+            "worker-a",
+            first.lease_token,
+            "sent-by-a",
+            now + timedelta(seconds=31),
+        )
+        is False
+    )
+    assert (
+        repository.confirm_sent(
+            outbound.id,
+            "worker-b",
+            second.lease_token,
+            "sent-by-b",
+            now + timedelta(seconds=32),
+        )
+        is True
+    )
+    with session_factory() as session:
+        persisted = session.get(OutboundRecord, outbound.id)
+        assert persisted.platform_sent_id == "sent-by-b"
+
+
+def test_outbound_confirmation_requires_owner_token_and_live_lease(
+    repository, inbound, now
+):
+    stored, _ = repository.accept_inbound(inbound)
+    outbound = repository.enqueue_outbound(stored.id, "reply")
+    claimed = repository.claim_outbound("worker-a", now, 30)
+
+    assert (
+        repository.confirm_sent(
+            outbound.id, "worker-b", claimed.lease_token, "sent-1", now
+        )
+        is False
+    )
+    assert (
+        repository.confirm_sent(
+            outbound.id, "worker-a", uuid4(), "sent-1", now
+        )
+        is False
+    )
+    assert (
+        repository.confirm_sent(
+            outbound.id,
+            "worker-a",
+            claimed.lease_token,
+            "sent-1",
+            now + timedelta(seconds=30),
+        )
+        is False
+    )
 
 
 def test_worker_command_is_claimed_once_then_acknowledged(repository, now):
     command = repository.enqueue_worker_command("start_auth")
     claimed = repository.claim_worker_command("worker-a", now, 30)
-    repository.complete_worker_command(claimed.id, "succeeded", now)
+    completed = repository.complete_worker_command(
+        claimed.id, "worker-a", claimed.lease_token, "succeeded", now
+    )
 
     assert claimed.id == command.id
+    assert completed is True
     assert repository.claim_worker_command("worker-b", now + timedelta(seconds=31), 30) is None
+
+
+def test_stale_worker_command_completion_is_rejected_after_reclaim(repository, now):
+    command = repository.enqueue_worker_command("start_auth")
+    first = repository.claim_worker_command("worker-a", now, 30)
+    second = repository.claim_worker_command(
+        "worker-b", now + timedelta(seconds=31), 30
+    )
+
+    assert second.lease_token != first.lease_token
+    assert (
+        repository.complete_worker_command(
+            command.id,
+            "worker-a",
+            first.lease_token,
+            "succeeded",
+            now + timedelta(seconds=31),
+        )
+        is False
+    )
+    assert (
+        repository.complete_worker_command(
+            command.id,
+            "worker-b",
+            second.lease_token,
+            "succeeded",
+            now + timedelta(seconds=32),
+        )
+        is True
+    )
+
+
+def test_worker_command_completion_requires_owner_token_and_live_lease(
+    repository, now
+):
+    command = repository.enqueue_worker_command("start_auth")
+    claimed = repository.claim_worker_command("worker-a", now, 30)
+
+    assert (
+        repository.complete_worker_command(
+            command.id, "worker-b", claimed.lease_token, "succeeded", now
+        )
+        is False
+    )
+    assert (
+        repository.complete_worker_command(
+            command.id, "worker-a", uuid4(), "succeeded", now
+        )
+        is False
+    )
+    assert (
+        repository.complete_worker_command(
+            command.id,
+            "worker-a",
+            claimed.lease_token,
+            "succeeded",
+            now + timedelta(seconds=30),
+        )
+        is False
+    )
 
 
 def test_worker_heartbeat_is_persisted(repository, now):
@@ -143,6 +282,12 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
     assert "ix_worker_commands_claim" in {
         index["name"] for index in inspector.get_indexes("worker_commands")
     }
+    assert "lease_token" in {
+        column["name"] for column in inspector.get_columns("outbound_messages")
+    }
+    assert "lease_token" in {
+        column["name"] for column in inspector.get_columns("worker_commands")
+    }
 
 
 def test_postgres_enforces_uniqueness_and_atomic_enqueue(
@@ -171,13 +316,31 @@ def test_postgres_enforces_uniqueness_and_atomic_enqueue(
     assert duplicate.id == first.id
 
     outbound = repository.enqueue_outbound(first.id, "reply")
-    assert repository.claim_outbound("worker-a", now, 30).id == outbound.id
-    assert (
-        repository.claim_outbound("worker-b", now + timedelta(seconds=31), 30).id
-        == outbound.id
-    )
+    first_claim = repository.claim_outbound("worker-a", now, 30)
+    assert first_claim.id == outbound.id
+    claimed = repository.claim_outbound("worker-b", now + timedelta(seconds=31), 30)
+    assert claimed.id == outbound.id
     assert repository.claim_outbound("worker-c", now + timedelta(seconds=32), 30) is None
-    repository.confirm_sent(outbound.id, "sent-1")
+    assert (
+        repository.confirm_sent(
+            outbound.id,
+            "worker-a",
+            first_claim.lease_token,
+            "stale-send",
+            now + timedelta(seconds=31),
+        )
+        is False
+    )
+    assert (
+        repository.confirm_sent(
+            outbound.id,
+            "worker-b",
+            claimed.lease_token,
+            "sent-1",
+            now + timedelta(seconds=32),
+        )
+        is True
+    )
     assert repository.claim_outbound("worker-c", now + timedelta(seconds=62), 30) is None
 
     heartbeat = repository.record_worker_heartbeat(

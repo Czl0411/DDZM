@@ -48,10 +48,14 @@ def create_worker(settings: Settings) -> BrowserWorker:
 
 
 def _playwright_chromium_executable() -> str:
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as playwright:
-        return playwright.chromium.executable_path
+    executables = sorted(
+        Path.home().glob(
+            ".cache/ms-playwright/chromium-*/chrome-linux64/chrome"
+        )
+    )
+    if not executables:
+        raise RuntimeError("Playwright Chromium is not installed")
+    return str(executables[-1])
 
 
 if __name__ == "__main__":

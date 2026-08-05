@@ -91,6 +91,7 @@ class AuthDesktopController:
                         self._browser_executable,
                         f"--user-data-dir={self._profile_dir}",
                         "--no-first-run",
+                        "--no-sandbox",
                         "--disable-dev-shm-usage",
                         *(tuple([self._login_url]) if self._login_url else ()),
                     ),

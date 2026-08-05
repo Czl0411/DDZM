@@ -83,6 +83,7 @@ def test_start_spawns_isolated_desktop_and_loopback_novnc(tmp_path):
     assert all(call[1]["start_new_session"] is True for call in factory.calls)
     chrome = commands[2]
     assert f"--user-data-dir={tmp_path / 'profile'}" in chrome
+    assert "--no-sandbox" in chrome
     assert "https://chat.example/login" in chrome
     x11vnc = commands[3]
     assert "-localhost" in x11vnc

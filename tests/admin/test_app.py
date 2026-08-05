@@ -274,7 +274,11 @@ def client(core, console, websocket_connection, admin_repository):
 
 @pytest.fixture
 def headers():
-    return {"X-Admin-Token": "admin-secret"}
+    return {
+        "X-Admin-Token": "admin-secret",
+        "Idempotency-Key": "test-request",
+        "If-Match": "0",
+    }
 
 
 @pytest.mark.parametrize(
@@ -315,6 +319,7 @@ def test_regular_admin_authenticates_but_cannot_manage_administrators(
     )
 
     assert login.status_code == 200
+    assert login.json()["account_id"]
     session_headers = {"X-Admin-Session": login.json()["session_token"]}
     assert client.get("/api/status", headers=session_headers).status_code == 200
     assert client.get("/api/admins", headers=session_headers).status_code == 403
@@ -340,6 +345,24 @@ def test_super_admin_creates_an_account_once_for_a_retried_request(client, heade
     assert [account["username"] for account in client.get("/api/admins", headers=headers).json()] == ["bob"]
 
 
+def test_super_admin_retries_account_update_without_repeating_side_effects(
+    client, headers, admin_repository
+):
+    account = admin_repository.create_account("bob", "strong-password")
+    request_headers = {**headers, "Idempotency-Key": "disable-bob"}
+
+    first = client.patch(
+        f"/api/admins/{account.id}", headers=request_headers, json={"active": False}
+    )
+    second = client.patch(
+        f"/api/admins/{account.id}", headers=request_headers, json={"active": False}
+    )
+
+    assert first.status_code == 200
+    assert second.json() == first.json()
+    assert second.json()["active"] is False
+
+
 def test_any_admin_can_cancel_manual_login(client, admin_repository, core):
     admin_repository.create_account("alice", "strong-password")
     core.manual_login_lease = {
@@ -351,7 +374,10 @@ def test_any_admin_can_cancel_manual_login(client, admin_repository, core):
         "/api/auth/login", json={"username": "alice", "password": "strong-password"}
     ).json()["session_token"]
 
-    response = client.post("/api/login/cancel", headers={"X-Admin-Session": session_token})
+    response = client.post(
+        "/api/login/cancel",
+        headers={"X-Admin-Session": session_token, "Idempotency-Key": "cancel-login"},
+    )
 
     assert response.status_code == 202
     assert core.commands[-1] == "cancel_auth"
@@ -479,7 +505,25 @@ def test_admin_proxies_game_settings(client, headers, core):
 
     assert initial.json()["currency_name"] == "摸鱼币"
     assert updated.json()["currency_name"] == "工分"
+    assert updated.json()["version"] == 1
     assert core.game_settings["checkin_reward"] == 7
+
+
+def test_admin_rejects_stale_configuration_write(client, headers):
+    first = client.patch(
+        "/api/game/settings",
+        headers=headers,
+        json={"currency_name": "工分", "onboarding_bonus": 3, "checkin_reward": 7},
+    )
+    second = client.patch(
+        "/api/game/settings",
+        headers={**headers, "Idempotency-Key": "stale-settings"},
+        json={"currency_name": "银元", "onboarding_bonus": 3, "checkin_reward": 7},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["detail"]["version"] == 1
 
 
 def test_admin_proxies_activity_settings(client, headers, core):
@@ -733,12 +777,23 @@ def test_login_console_is_proxied_only_during_auth(
 ):
     blocked = client.get("/login-console", headers=headers)
     core.login_state_value = "auth_in_progress"
-    allowed = client.get("/login-console", headers=headers)
+    assign_super_login_lease(core)
+    client.post("/api/session", headers=headers)
+    allowed = client.get("/login-console")
 
-    assert blocked.status_code == 409
+    assert blocked.status_code == 401
     assert allowed.status_code == 200
     assert 'src="app/ui.js"' in allowed.text
     assert console.requests == ["/vnc.html"]
+
+
+def test_console_rejects_token_without_current_console_session(client, headers, core):
+    core.login_state_value = "auth_in_progress"
+    assign_super_login_lease(core)
+
+    response = client.get("/login-console", headers=headers)
+
+    assert response.status_code == 401
 
 
 def test_admin_token_creates_httponly_console_session_without_url_secret(

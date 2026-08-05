@@ -505,6 +505,7 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         "admin_accounts",
         "admin_sessions",
         "admin_idempotency_records",
+        "admin_config_revisions",
         "manual_login_leases",
     } <= set(inspector.get_table_names())
     assert "ux_inbound_messages_platform_message_id" in {

@@ -1,4 +1,8 @@
 let token = sessionStorage.getItem("dzmm-admin-token") || "";
+let adminSession = sessionStorage.getItem("dzmm-admin-session") || "";
+let identity = JSON.parse(sessionStorage.getItem("dzmm-admin-identity") || "null");
+let loginLease = null;
+let configurationVersion = null;
 let currentState = "unknown";
 let consoleLoading = false;
 let refreshLoading = false;
@@ -12,6 +16,7 @@ const pageSize = 20;
 const loginScreen = document.querySelector("#login-screen");
 const dashboard = document.querySelector("#dashboard");
 const loginForm = document.querySelector("#login-form");
+const accountLoginForm = document.querySelector("#account-login-form");
 const loginError = document.querySelector("#login-error");
 const result = document.querySelector("#result");
 const stateElement = document.querySelector("#state");
@@ -34,7 +39,7 @@ const activityRuleInputs = document.querySelector("#activity-rule-inputs");
 const incomeReportTimeInputs = document.querySelector("#income-report-time-inputs");
 
 function headers() {
-  return {"X-Admin-Token": token};
+  return token ? {"X-Admin-Token": token} : {"X-Admin-Session": adminSession};
 }
 
 function setResult(message, type = "") {
@@ -46,6 +51,36 @@ function setAuthenticated(authenticated) {
   loginScreen.hidden = authenticated;
   dashboard.hidden = !authenticated;
   document.querySelector(".topbar-meta").hidden = !authenticated;
+  document.querySelector("#nav-admins").hidden = !authenticated || identity?.role !== "super_admin";
+  document.querySelector("#current-identity").textContent = authenticated ? `${identity?.username || "管理员"} · ${identity?.role === "super_admin" ? "超级管理员" : "管理员"}` : "";
+}
+
+function actorId() {
+  return identity?.role === "super_admin" ? "super_admin" : identity?.account_id || "";
+}
+
+function configurationHeaders() {
+  return configurationVersion === null ? {} : {"If-Match": String(configurationVersion)};
+}
+
+function idempotencyKey() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function ownsLoginLease() {
+  return Boolean(loginLease && loginLease.operator_id === actorId());
+}
+
+function clearAuthentication() {
+  token = "";
+  adminSession = "";
+  identity = null;
+  loginLease = null;
+  sessionStorage.removeItem("dzmm-admin-token");
+  sessionStorage.removeItem("dzmm-admin-session");
+  sessionStorage.removeItem("dzmm-admin-identity");
+  setAuthenticated(false);
 }
 
 function formatHeartbeat(value) {
@@ -91,12 +126,14 @@ function renderActivitySettings(settings) {
 
 async function loadSettings() {
   gameSettings = await requestGame("/api/game/settings");
+  configurationVersion = gameSettings.version;
   renderSettings(gameSettings);
   return gameSettings;
 }
 
 async function loadActivitySettings() {
   activitySettings = await requestGame("/api/game/activity-settings");
+  configurationVersion = activitySettings.version;
   renderActivitySettings(activitySettings);
   return activitySettings;
 }
@@ -150,9 +187,13 @@ function loadTemplateScenario() {
 }
 
 async function requestGame(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const mutationHeaders = method === "GET" || method === "HEAD"
+    ? {}
+    : {"Idempotency-Key": idempotencyKey()};
   const response = await fetch(path, {
     ...options,
-    headers: {...headers(), ...(options.headers || {})},
+    headers: {...headers(), ...mutationHeaders, ...(options.headers || {})},
   });
   if (!response.ok) throw new Error(await responseError(response));
   return response.json();
@@ -165,6 +206,7 @@ async function responseError(response) {
     if (Array.isArray(detail)) {
       return detail.map((item) => item.msg).filter(Boolean).join("；") || String(response.status);
     }
+    if (detail && typeof detail === "object") return String(detail.message || response.status);
     return String(detail || response.status);
   } catch (_) {
     return body.trim() || String(response.status);
@@ -221,6 +263,13 @@ async function loadShop(page = shopPage) {
   renderPagination(document.querySelector("#shop-pagination"), items, "件物品", loadShop);
 }
 
+async function loadAdministrators() {
+  const accounts = await requestGame("/api/admins");
+  document.querySelector("#admin-account-list").innerHTML = accounts.map((account) => `
+    <article class="data-row"><div><b>${escapeHtml(account.username)}</b><small>${account.active ? "可登录，可运营" : "已停用，所有会话已失效"}</small></div>
+    <div class="command-actions"><button class="secondary" data-admin-action="toggle" data-admin-id="${account.id}" data-admin-active="${account.active}" type="button">${account.active ? "停用" : "启用"}</button><button class="secondary" data-admin-action="password" data-admin-id="${account.id}" type="button">重置密码</button><button class="danger-button" data-admin-action="delete" data-admin-id="${account.id}" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有普通管理员账号。</p>";
+}
+
 function showView(view) {
   for (const element of document.querySelectorAll(".dashboard-view")) {
     element.hidden = element.id !== `${view}-view`;
@@ -240,6 +289,7 @@ async function loadGameView(view) {
     }
     if (view === "commands") {
       const commands = await requestGame("/api/game/commands");
+      configurationVersion = commands[0]?.version ?? configurationVersion;
       document.querySelector("#command-list").innerHTML = commands.map((command) => `
         <article class="command-card">
           <div class="command-heading"><div><b>${escapeHtml(command.command)}</b><small>${escapeHtml(command.description)}</small></div>
@@ -251,7 +301,9 @@ async function loadGameView(view) {
     if (view === "employees") {
       return loadEmployees();
     }
-    return loadShop();
+    if (view === "shop") return loadShop();
+    if (identity?.role !== "super_admin") throw new Error("仅超级管理员可管理账号");
+    return loadAdministrators();
   } catch (error) {
     setResult(`数据读取失败（${error.message}）`, "error");
   }
@@ -260,15 +312,17 @@ async function loadGameView(view) {
 function updateControls(state) {
   const isRequired = state === "auth_required";
   const isProgress = state === "auth_in_progress";
-  document.querySelector("#start-login").disabled = !isRequired;
-  document.querySelector("#open-login-console").disabled = !isProgress;
-  document.querySelector("#finish-login").disabled = !isProgress;
+  const hasLease = Boolean(loginLease);
+  document.querySelector("#start-login").disabled = !isRequired || hasLease;
+  document.querySelector("#open-login-console").disabled = !isProgress || !ownsLoginLease();
+  document.querySelector("#finish-login").disabled = !isProgress || !ownsLoginLease();
+  document.querySelector("#cancel-login").disabled = !hasLease;
   document.querySelector("#restart-browser").disabled = isProgress;
   document.querySelector("#step-required").classList.toggle("active", isRequired);
   document.querySelector("#step-console").classList.toggle("active", isProgress);
   document.querySelector("#step-finish").classList.toggle("active", state === "ready");
   loginStep.textContent = isProgress ? "验证进行中" : isRequired ? "需要登录" : state === "ready" ? "已登录" : "等待开始";
-  if (!isProgress) {
+  if (!isProgress || !ownsLoginLease()) {
     consolePanel.hidden = true;
     consoleFrame.removeAttribute("src");
   }
@@ -284,21 +338,33 @@ function renderStatus(status) {
   document.querySelector("#queue-total").textContent = String(queue.inbound_accepted || 0);
   document.querySelector("#queue-counts").textContent = Object.entries(queue).map(([key, value]) => `${key}: ${value}`).join(" · ") || "队列为空";
   updateControls(currentState);
-  if (currentState === "auth_in_progress" && !consoleFrame.getAttribute("src")) {
-    void openConsole();
+}
+
+function renderLoginLease() {
+  const leaseElement = document.querySelector("#login-lease");
+  if (!loginLease) {
+    leaseElement.textContent = "当前没有人工登录操作。";
+  } else {
+    const seconds = Math.max(0, Math.ceil((new Date(loginLease.expires_at).getTime() - Date.now()) / 1000));
+    leaseElement.textContent = `当前由 ${loginLease.operator_name} 操作，剩余 ${seconds} 秒。${ownsLoginLease() ? " 你可完成或终止本次登录。" : " 任何管理员均可终止本次登录。"}`;
   }
+  updateControls(currentState);
+  if (currentState === "auth_in_progress" && ownsLoginLease() && !consoleFrame.getAttribute("src")) void openConsole();
+}
+
+async function refreshLoginLease() {
+  loginLease = await requestGame("/api/login/lease");
+  renderLoginLease();
 }
 
 async function refresh() {
-  if (!token || refreshLoading) return;
+  if ((!token && !adminSession) || refreshLoading) return;
   refreshLoading = true;
   try {
     const response = await fetch("/api/status", {headers: headers()});
     if (response.status === 401) {
-      token = "";
-      sessionStorage.removeItem("dzmm-admin-token");
-      setAuthenticated(false);
-      loginError.textContent = "管理员 Token 无效，请重新输入。";
+      clearAuthentication();
+      loginError.textContent = "登录已失效，请重新登录。";
       return;
     }
     if (!response.ok) {
@@ -306,6 +372,7 @@ async function refresh() {
       return;
     }
     renderStatus(await response.json());
+    await refreshLoginLease();
     setResult("状态已更新", "success");
   } catch (error) {
     setResult(`状态读取失败（${error.message}）`, "error");
@@ -318,8 +385,7 @@ async function submitAction(button) {
   const busyLabel = button.id === "start-login" ? "启动中…" : button.id === "restart-browser" ? "重启中…" : "提交中…";
   try {
     await runMutation(button, busyLabel, async () => {
-      const response = await fetch(button.dataset.action, {method: "POST", headers: headers()});
-      if (!response.ok) throw new Error(await responseError(response));
+      await requestGame(button.dataset.action, {method: "POST"});
       if (button.id === "start-login") {
         setResult("正在启动安全登录桌面…", "success");
         if (await waitForLoginDesktop()) await openConsole();
@@ -371,22 +437,63 @@ loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   token = document.querySelector("#admin-token").value.trim();
   if (!token) return;
+  adminSession = "";
+  identity = {account_id: null, username: "超级管理员", role: "super_admin"};
   sessionStorage.setItem("dzmm-admin-token", token);
+  sessionStorage.removeItem("dzmm-admin-session");
+  sessionStorage.setItem("dzmm-admin-identity", JSON.stringify(identity));
   loginError.textContent = "";
   setAuthenticated(true);
   await refresh();
 });
 
-document.querySelector("#logout").addEventListener("click", () => {
-  token = "";
-  sessionStorage.removeItem("dzmm-admin-token");
+accountLoginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  try {
+    await runMutation(button, "登录中…", async () => {
+      const response = await fetch("/api/auth/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(values)});
+      if (!response.ok) throw new Error(await responseError(response));
+      const login = await response.json();
+      token = "";
+      adminSession = login.session_token;
+      identity = {account_id: login.account_id, username: login.username, role: login.role};
+      sessionStorage.removeItem("dzmm-admin-token");
+      sessionStorage.setItem("dzmm-admin-session", adminSession);
+      sessionStorage.setItem("dzmm-admin-identity", JSON.stringify(identity));
+      loginError.textContent = "";
+      setAuthenticated(true);
+      await refresh();
+    });
+  } catch (error) {
+    loginError.textContent = `登录失败：${error.message}`;
+  }
+});
+
+document.querySelector("#logout").addEventListener("click", async () => {
+  if (adminSession) await fetch("/api/auth/logout", {method: "POST", headers: headers()});
+  clearAuthentication();
   loginForm.reset();
-  setAuthenticated(false);
+  accountLoginForm.reset();
 });
 document.querySelector("#refresh").addEventListener("click", async (event) => {
   await runMutation(event.currentTarget, "刷新中…", refresh);
 });
 document.querySelector("#open-login-console").addEventListener("click", openConsole);
+document.querySelector("#cancel-login").addEventListener("click", async (event) => {
+  try {
+    await runMutation(event.currentTarget, "终止中…", async () => {
+      await requestGame("/api/login/cancel", {method: "POST"});
+      consolePanel.hidden = true;
+      consoleFrame.removeAttribute("src");
+      await refresh();
+    });
+    setResult("人工登录已终止，浏览器将恢复常驻 Worker。", "success");
+  } catch (error) {
+    setResult(`终止失败（${error.message}）`, "error");
+  }
+});
 document.querySelector("#edit-settings").addEventListener("click", () => void openSettingsModal());
 document.querySelector("#edit-activity-settings").addEventListener("click", () => void openActivitySettingsModal());
 for (const button of document.querySelectorAll("button[data-action]")) {
@@ -400,11 +507,12 @@ document.querySelector("#command-list").addEventListener("click", async (event) 
   if (button) {
     try {
       await runMutation(button, button.dataset.enabled === "true" ? "启用中…" : "停用中…", async () => {
-        await requestGame("/api/game/commands", {
+        const updated = await requestGame("/api/game/commands", {
           method: "PATCH",
-          headers: {"Content-Type": "application/json"},
+          headers: {"Content-Type": "application/json", ...configurationHeaders()},
           body: JSON.stringify({command: button.dataset.command, enabled: button.dataset.enabled === "true"}),
         });
+        configurationVersion = updated.version;
         await loadGameView("commands");
       });
       setResult("指令状态已更新", "success");
@@ -435,15 +543,16 @@ templateModal.addEventListener("click", async (event) => {
   const button = event.target;
   try {
     await runMutation(button, "保存中…", async () => {
-      await requestGame("/api/game/command-templates", {
+      const updated = await requestGame("/api/game/command-templates", {
         method: "PATCH",
-        headers: {"Content-Type": "application/json"},
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
         body: JSON.stringify({
           command: templateModal.dataset.command,
           scenario: templateModalScenario.value,
           template: templateModalInput.value,
         }),
       });
+      configurationVersion = updated.version;
       closeTemplateModal();
       await loadGameView("commands");
     });
@@ -463,13 +572,14 @@ settingsModal.addEventListener("click", async (event) => {
     await runMutation(button, "保存中…", async () => {
       gameSettings = await requestGame("/api/game/settings", {
         method: "PATCH",
-        headers: {"Content-Type": "application/json"},
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
         body: JSON.stringify({
           currency_name: settingsCurrencyName.value.trim(),
           onboarding_bonus: Number(settingsOnboardingBonus.value),
           checkin_reward: Number(settingsCheckinReward.value),
         }),
       });
+      configurationVersion = gameSettings.version;
       renderSettings(gameSettings);
       closeSettingsModal();
     });
@@ -509,9 +619,10 @@ activitySettingsModal.addEventListener("click", async (event) => {
     await runMutation(button, "保存中…", async () => {
       activitySettings = await requestGame("/api/game/activity-settings", {
         method: "PATCH",
-        headers: {"Content-Type": "application/json"},
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
         body: JSON.stringify({rules, report_times}),
       });
+      configurationVersion = activitySettings.version;
       renderActivitySettings(activitySettings);
       closeActivitySettingsModal();
     });
@@ -545,8 +656,68 @@ document.querySelector("#item-form").addEventListener("submit", async (event) =>
   }
 });
 
-setAuthenticated(Boolean(token));
-if (token) {
-  refresh();
+document.querySelector("#admin-account-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  try {
+    await runMutation(button, "创建中…", async () => {
+      await requestGame("/api/admins", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(values),
+      });
+      event.currentTarget.reset();
+      await loadAdministrators();
+    });
+    setResult("管理员账号已创建", "success");
+  } catch (error) {
+    setResult(`创建失败（${error.message}）`, "error");
+  }
+});
+
+document.querySelector("#admin-account-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-admin-action]");
+  if (!button) return;
+  const {adminAction, adminId, adminActive} = button.dataset;
+  let body;
+  let method = "PATCH";
+  if (adminAction === "toggle") body = {active: adminActive !== "true"};
+  if (adminAction === "password") {
+    const password = window.prompt("输入新密码（至少 8 位）");
+    if (password === null) return;
+    body = {password};
+  }
+  if (adminAction === "delete") {
+    if (!window.confirm("确定删除该管理员账号？该操作会使其所有会话立即失效。")) return;
+    method = "DELETE";
+  }
+  try {
+    await runMutation(button, adminAction === "delete" ? "删除中…" : "保存中…", async () => {
+      await requestGame(`/api/admins/${adminId}`, {
+        method,
+        ...(body ? {headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : {}),
+      });
+      await loadAdministrators();
+    });
+    setResult("管理员账号已更新", "success");
+  } catch (error) {
+    setResult(`更新失败（${error.message}）`, "error");
+  }
+});
+
+async function restoreIdentity() {
+  if (identity || (!token && !adminSession)) return;
+  const response = await fetch("/api/auth/me", {headers: headers()});
+  if (!response.ok) return;
+  identity = await response.json();
+  sessionStorage.setItem("dzmm-admin-identity", JSON.stringify(identity));
+  setAuthenticated(true);
+}
+
+setAuthenticated(Boolean(token || adminSession));
+if (token || adminSession) {
+  void restoreIdentity().then(refresh);
   window.setInterval(refresh, 10000);
 }
+window.setInterval(renderLoginLease, 1000);

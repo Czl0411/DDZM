@@ -355,7 +355,7 @@ class AdminIdempotencyRecord(Base):
     __table_args__ = (UniqueConstraint("actor_key", "key_hash"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    actor_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_key: Mapped[str] = mapped_column(String(160), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status_code: Mapped[int | None] = mapped_column(Integer)
     response_body: Mapped[dict[str, Any] | None] = mapped_column(
@@ -365,3 +365,10 @@ class AdminIdempotencyRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
+
+
+class AdminConfigRevisionRecord(Base):
+    __tablename__ = "admin_config_revisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

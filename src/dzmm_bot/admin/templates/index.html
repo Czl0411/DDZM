@@ -15,6 +15,7 @@
         </a>
         <div class="topbar-meta">
           <span class="connection"><i></i>核心服务已连接</span>
+          <span id="current-identity" class="current-identity"></span>
           <button id="logout" class="text-button" type="button">退出登录</button>
         </div>
       </header>
@@ -24,7 +25,15 @@
           <div class="login-card">
             <p class="eyebrow">受保护的管理入口</p>
             <h1 id="login-title">进入 DZMM 控制台</h1>
-            <p>使用管理员 Token 查看服务状态，并启动人工登录流程。</p>
+            <p>管理员使用个人账号登录；超级管理员使用 Token 管理账号与系统。</p>
+            <form id="account-login-form">
+              <label for="admin-username">管理员账号</label>
+              <input id="admin-username" name="username" autocomplete="username" required>
+              <label for="admin-password">密码</label>
+              <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+              <button class="primary" type="submit">管理员登录</button>
+            </form>
+            <p class="login-divider">或使用超级管理员 Token</p>
             <form id="login-form">
               <label for="admin-token">管理员 Token</label>
               <input id="admin-token" name="token" type="password" autocomplete="current-password" required>
@@ -51,6 +60,7 @@
               <button id="nav-commands" class="nav-item" data-view="commands" type="button">指令库</button>
               <button id="nav-employees" class="nav-item" data-view="employees" type="button">员工</button>
               <button id="nav-shop" class="nav-item" data-view="shop" type="button">物品与商店</button>
+              <button id="nav-admins" class="nav-item" data-view="admins" type="button" hidden>管理员</button>
             </nav>
             <div class="dashboard-views">
               <section id="overview-view" class="dashboard-view">
@@ -90,7 +100,9 @@
                 <button id="start-login" class="primary" data-action="/api/login/start" type="button">开始人工登录</button>
                 <button id="open-login-console" class="secondary" type="button">重新加载登录桌面</button>
                 <button id="finish-login" class="secondary" data-action="/api/login/finish" type="button">完成登录</button>
+                <button id="cancel-login" class="danger-button" type="button" disabled>终止本次登录</button>
               </div>
+              <p id="login-lease" class="muted">当前没有人工登录操作。</p>
               <section id="login-console-panel" class="login-console" hidden aria-labelledby="login-console-title">
                 <div>
                   <p class="eyebrow">安全隔离桌面</p>
@@ -165,6 +177,18 @@
                 </form>
                 <div id="shop-list" class="data-list"></div>
                 <nav id="shop-pagination" class="pagination" aria-label="物品分页"></nav>
+              </section>
+
+              <section id="admins-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">超级管理员</p>
+                <h2>管理员账号</h2>
+                <p class="muted">普通管理员可运营机器人并中断人工登录；账号权限由超级管理员统一管理。</p>
+                <form id="admin-account-form" class="item-form">
+                  <input name="username" maxlength="32" placeholder="管理员账号" required>
+                  <input name="password" type="password" minlength="8" placeholder="初始密码（至少 8 位）" required>
+                  <button class="primary" type="submit">新增管理员</button>
+                </form>
+                <div id="admin-account-list" class="data-list"></div>
               </section>
             </div>
           </div>

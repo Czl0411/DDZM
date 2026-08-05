@@ -1,16 +1,20 @@
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import scrypt, sha256
 from hmac import compare_digest
 from secrets import token_bytes, token_urlsafe
+from typing import TypeVar
 from uuid import UUID
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from dzmm_bot.core.schema import (
     AdminAccountRecord,
+    AdminConfigRevisionRecord,
     AdminIdempotencyRecord,
     AdminSessionRecord,
 )
@@ -29,6 +33,15 @@ class AdminIdentity:
 
 class IdempotencyInProgressError(RuntimeError):
     pass
+
+
+class ConfigVersionConflictError(RuntimeError):
+    def __init__(self, current_version: int) -> None:
+        self.current_version = current_version
+        super().__init__("configuration was updated by another administrator")
+
+
+T = TypeVar("T")
 
 
 class AdminRepository:
@@ -139,19 +152,21 @@ class AdminRepository:
         self, actor_key: str, key: str, now: datetime
     ) -> tuple[int, dict] | None:
         key_hash = _digest(key)
-        with self._session_factory.begin() as session:
-            session.execute(
-                delete(AdminIdempotencyRecord).where(
-                    AdminIdempotencyRecord.expires_at <= now
+        try:
+            with self._session_factory.begin() as session:
+                session.execute(
+                    delete(AdminIdempotencyRecord).where(
+                        AdminIdempotencyRecord.expires_at <= now
+                    )
                 )
-            )
-            record = session.scalar(
-                select(AdminIdempotencyRecord).where(
-                    AdminIdempotencyRecord.actor_key == actor_key,
-                    AdminIdempotencyRecord.key_hash == key_hash,
+                record = session.scalar(
+                    select(AdminIdempotencyRecord).where(
+                        AdminIdempotencyRecord.actor_key == actor_key,
+                        AdminIdempotencyRecord.key_hash == key_hash,
+                    )
                 )
-            )
-            if record is None:
+                if record is not None:
+                    return _idempotency_result(record)
                 session.add(
                     AdminIdempotencyRecord(
                         actor_key=actor_key,
@@ -159,10 +174,19 @@ class AdminRepository:
                         expires_at=now + _IDEMPOTENCY_TTL,
                     )
                 )
+                session.flush()
                 return None
-            if record.status_code is None or record.response_body is None:
-                raise IdempotencyInProgressError("request is already in progress")
-            return record.status_code, record.response_body
+        except IntegrityError:
+            with self._session_factory.begin() as session:
+                record = session.scalar(
+                    select(AdminIdempotencyRecord).where(
+                        AdminIdempotencyRecord.actor_key == actor_key,
+                        AdminIdempotencyRecord.key_hash == key_hash,
+                    )
+                )
+                if record is None:
+                    raise
+                return _idempotency_result(record)
 
     def complete_idempotency_key(
         self,
@@ -195,6 +219,31 @@ class AdminRepository:
                 )
             )
 
+    def config_version(self) -> int:
+        with self._session_factory.begin() as session:
+            record = session.get(AdminConfigRevisionRecord, 1)
+            if record is None:
+                record = AdminConfigRevisionRecord(id=1, version=0)
+                session.add(record)
+                session.flush()
+            return record.version
+
+    def update_configuration(
+        self, expected_version: int, operation: Callable[[], T]
+    ) -> tuple[T, int]:
+        with self._session_factory.begin() as session:
+            record = session.get(AdminConfigRevisionRecord, 1, with_for_update=True)
+            if record is None:
+                record = AdminConfigRevisionRecord(id=1, version=0)
+                session.add(record)
+                session.flush()
+            if record.version != expected_version:
+                raise ConfigVersionConflictError(record.version)
+            result = operation()
+            record.version += 1
+            session.flush()
+            return result, record.version
+
 
 def _hash_password(password: str) -> str:
     salt = token_bytes(16)
@@ -217,6 +266,12 @@ def _password_matches(stored: str, password: str) -> bool:
 
 def _digest(value: str) -> str:
     return sha256(value.encode()).hexdigest()
+
+
+def _idempotency_result(record: AdminIdempotencyRecord) -> tuple[int, dict] | None:
+    if record.status_code is None or record.response_body is None:
+        raise IdempotencyInProgressError("request is already in progress")
+    return record.status_code, record.response_body
 
 
 def _encode(value: bytes) -> str:

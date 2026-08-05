@@ -24,6 +24,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .brand b { color: var(--accent); }
 .brand-mark { display: grid; width: 31px; height: 31px; place-items: center; color: white; border-radius: 9px; background: linear-gradient(135deg, #7a6cff, #4a3dd8); }
 .topbar-meta { display: flex; gap: 22px; align-items: center; }
+.current-identity { color: #363f55; font-size: 13px; font-weight: 700; }
 .connection { color: var(--muted); font-size: 13px; }
 .connection i { display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: var(--success); }
 .text-button { color: var(--muted); background: transparent; }
@@ -36,6 +37,7 @@ h1 { margin-bottom: 9px; font-size: 30px; letter-spacing: -.04em; }
 h2 { margin-bottom: 0; font-size: 19px; letter-spacing: -.025em; }
 h3 { margin-bottom: 6px; font-size: 15px; }
 .login-card > p:not(.eyebrow) { color: var(--muted); }
+.login-divider { margin: 22px 0 12px; text-align: center; font-size: 13px; }
 form { display: grid; gap: 9px; margin-top: 27px; }
 label { font-size: 13px; font-weight: 700; }
 input { width: 100%; padding: 12px 13px; border: 1px solid #cfd6e4; border-radius: 9px; outline-color: var(--accent); }

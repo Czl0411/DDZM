@@ -41,7 +41,7 @@ def upgrade() -> None:
     op.create_table(
         "admin_idempotency_records",
         sa.Column("id", uuid_type, nullable=False),
-        sa.Column("actor_key", sa.String(length=64), nullable=False),
+        sa.Column("actor_key", sa.String(length=160), nullable=False),
         sa.Column("key_hash", sa.String(length=64), nullable=False),
         sa.Column("status_code", sa.Integer(), nullable=True),
         sa.Column("response_body", json_type, nullable=True),

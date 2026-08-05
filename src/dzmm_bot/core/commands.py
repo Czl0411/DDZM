@@ -7,7 +7,7 @@ from .repository import CoreRepository
 
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
-_COMMANDS = {"/入职", "/我的物品", "/打卡", "/余额", "/商店", "/帮助"}
+_COMMANDS = {"/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助"}
 
 
 class GroupCommandHandler:
@@ -19,6 +19,8 @@ class GroupCommandHandler:
         if not content:
             return None
         command = content.split(maxsplit=1)[0]
+        if command == "/me":
+            command = "/我"
         if command not in _COMMANDS:
             return None
         self._repository.ensure_command_definitions()
@@ -31,6 +33,8 @@ class GroupCommandHandler:
             return self._check_in(message.sender_platform_id, received_at)
         if command == "/余额":
             return self._balance(message.sender_platform_id, received_at)
+        if command == "/我":
+            return self._me(message.sender_platform_id, received_at)
         if command == "/我的物品":
             return self._inventory(message.sender_platform_id, received_at)
         if command == "/商店":
@@ -88,6 +92,25 @@ class GroupCommandHandler:
             "shown",
             received_at,
             {"{昵称}": employee.display_name, "{余额}": employee.balance},
+        )
+
+    def _me(self, platform_id: str, received_at) -> str:
+        employee = self._repository.find_user(platform_id)
+        if employee is None:
+            return self._reply("/我", "not_joined", received_at)
+        activity = self._repository.personal_activity(platform_id, received_at)
+        if activity is None:
+            raise RuntimeError("employee disappeared")
+        return self._reply(
+            "/我",
+            "shown",
+            received_at,
+            {
+                "{昵称}": employee.display_name,
+                "{余额}": employee.balance,
+                "{活跃等级}": f"LV{activity.level}",
+                "{今日收益}": self._repository.today_income(employee.id, received_at),
+            },
         )
 
     def _inventory(self, platform_id: str, received_at) -> str:

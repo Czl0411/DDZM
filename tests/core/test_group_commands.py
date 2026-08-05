@@ -139,6 +139,29 @@ def test_balance_inventory_and_shop_require_employee_and_return_persisted_data()
     assert _latest_reply(factory) == "总监事小卖部：\n工位午睡券（5 摸鱼币，库存 3）"
 
 
+def test_me_alias_shows_balance_level_and_today_income_without_count():
+    service, repository, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    repository.set_game_settings("摸鱼币", 3, 5)
+
+    _receive(service, "join", "platform-xiaoming", "/入职 小明", received_at)
+    _receive(
+        service,
+        "activity",
+        "platform-xiaoming",
+        "一二三四五六七八九十",
+        received_at,
+    )
+    _receive(service, "me", "platform-xiaoming", "/me", received_at)
+
+    reply = _latest_reply(factory)
+    assert "小明" in reply
+    assert "3 摸鱼币" in reply
+    assert "LV1" in reply
+    assert "今日收益：3 摸鱼币" in reply
+    assert "10" not in reply
+
+
 def test_disabled_command_does_not_reply_or_change_data():
     from dzmm_bot.core.schema import UserRecord
 

@@ -64,6 +64,24 @@ def test_duplicate_message_does_not_invoke_handler_twice(session_factory, inboun
     assert handler.calls == 1
 
 
+def test_service_records_an_accepted_joined_message_once(session_factory):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.service import CoreService
+
+    repository = CoreRepository(session_factory)
+    received_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
+    repository.create_user("sender-1", "小明", received_at, 0)
+    service = CoreService(repository)
+    message = InboundMessage(
+        "platform-activity-1", "sender-1", "一二三四五六七八九十", received_at
+    )
+
+    service.receive_inbound(message)
+    service.receive_inbound(message)
+
+    assert repository.personal_activity("sender-1", received_at).level == 1
+
+
 def test_enqueue_failure_rolls_back_inbound(session_factory, inbound):
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import InboundRecord, WorkerCommandRecord

@@ -245,6 +245,7 @@ def test_database_backed_identifiers_reject_more_than_255_characters(
         ("post", "/internal/heartbeat"),
         ("get", "/internal/login-state"),
         ("get", "/internal/status"),
+        ("patch", "/internal/game/command-templates"),
         ("post", "/internal/worker-commands"),
         ("post", "/internal/worker-commands/claim"),
         (

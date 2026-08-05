@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -154,6 +155,52 @@ def test_custom_checkin_template_receives_current_balance_and_reward():
     _receive(service, "checkin", "platform-xiaoming", "/打卡", received_at)
 
     assert _latest_reply(factory) == "小明 今日 +5，余额 5"
+
+
+def test_template_date_uses_the_beijing_calendar_date():
+    service, repository, factory = _service()
+    repository.set_reply_template("/余额", "shown", "{日期} {昵称}")
+
+    _receive(
+        service,
+        "join",
+        "platform-xiaoming",
+        "/入职 小明",
+        datetime(2026, 8, 5, 15, 59, tzinfo=UTC),
+    )
+    _receive(
+        service,
+        "balance",
+        "platform-xiaoming",
+        "/余额",
+        datetime(2026, 8, 5, 16, 1, tzinfo=UTC),
+    )
+
+    assert _latest_reply(factory) == "2026-08-06 小明"
+
+
+def test_invalid_persisted_template_falls_back_after_checkin_awards_balance():
+    from dzmm_bot.core.schema import CommandReplyTemplateRecord, UserRecord
+
+    service, _, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _receive(service, "join", "platform-xiaoming", "/入职 小明", received_at)
+
+    with factory() as session:
+        template = session.scalar(
+            select(CommandReplyTemplateRecord).where(
+                CommandReplyTemplateRecord.command == "/打卡",
+                CommandReplyTemplateRecord.scenario == "checked_in",
+            )
+        )
+        template.template = "{商店列表}"
+        session.commit()
+
+    _receive(service, "checkin", "platform-xiaoming", "/打卡", received_at)
+
+    assert _latest_reply(factory) == "打卡成功，领取 5 摸鱼币。当前余额：5 摸鱼币。"
+    with factory() as session:
+        assert session.scalar(select(UserRecord)).balance == 5
 
 
 def test_help_lists_only_enabled_commands_and_uses_its_template():

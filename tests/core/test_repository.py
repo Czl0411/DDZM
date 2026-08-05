@@ -293,6 +293,7 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         "login_sessions",
         "audit_events",
         "command_definitions",
+        "command_reply_templates",
         "users",
         "daily_checkins",
         "items",
@@ -313,6 +314,19 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
     assert "lease_token" in {
         column["name"] for column in inspector.get_columns("worker_commands")
     }
+    assert {"command", "scenario"} in {
+        set(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("command_reply_templates")
+    }
+    with engine.connect() as connection:
+        template_count = connection.scalar(
+            text("SELECT count(*) FROM command_reply_templates")
+        )
+        help_command = connection.scalar(
+            text("SELECT command FROM command_definitions WHERE command = '/帮助'")
+        )
+    assert template_count == 13
+    assert help_command == "/帮助"
 
 
 def test_postgres_enforces_uniqueness_and_atomic_enqueue(

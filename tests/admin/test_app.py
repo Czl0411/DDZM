@@ -29,6 +29,7 @@ class FakeCore:
     )
     employees: list[dict] = field(default_factory=list)
     items: list[dict] = field(default_factory=list)
+    template_error: bool = False
 
     def status(self):
         return {
@@ -55,6 +56,10 @@ class FakeCore:
         return record
 
     def set_game_command_template(self, command, scenario, template):
+        if self.template_error:
+            request = httpx.Request("PATCH", "http://core/internal/game/command-templates")
+            response = httpx.Response(422, text="invalid template", request=request)
+            raise httpx.HTTPStatusError("invalid template", request=request, response=response)
         record = next(item for item in self.command_definitions if item["command"] == command)
         reply = next(item for item in record["templates"] if item["scenario"] == scenario)
         reply["template"] = template
@@ -179,6 +184,7 @@ def headers():
         ("post", "/api/login/start"),
         ("post", "/api/login/finish"),
         ("post", "/api/session"),
+        ("patch", "/api/game/command-templates"),
         ("get", "/login-console"),
     ],
 )
@@ -252,6 +258,23 @@ def test_admin_relay_rejects_a_template_without_required_fields(client, headers)
     )
 
     assert response.status_code == 422
+
+
+def test_admin_relay_forwards_core_template_validation_failure(client, headers, core):
+    core.template_error = True
+
+    response = client.patch(
+        "/api/game/command-templates",
+        headers=headers,
+        json={
+            "command": "/打卡",
+            "scenario": "checked_in",
+            "template": "{商店列表}",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid template"}
 
 
 def test_command_library_serves_template_editor_controls(client):

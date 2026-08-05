@@ -1,0 +1,173 @@
+from collections import deque
+from collections.abc import Callable
+from datetime import UTC, datetime
+from threading import Event
+from typing import Any
+from urllib.parse import parse_qs, urlsplit
+from uuid import uuid4
+from zoneinfo import ZoneInfo
+
+from dzmm_bot.runtime.contracts import InboundMessage
+
+
+class AikdaSocketGateway:
+    def __init__(
+        self,
+        chat_url: str,
+        *,
+        token_provider: Callable[[], str],
+        request: Callable[[str, dict[str, Any] | None], dict[str, Any]],
+        socket_factory: Callable[[], Any] | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
+    ) -> None:
+        parsed = urlsplit(chat_url)
+        chatroom_id = parse_qs(parsed.query).get("c", [None])[0]
+        if not parsed.scheme or not parsed.netloc or not chatroom_id:
+            raise ValueError("chat_url must contain an absolute URL with c query parameter")
+        self.chatroom_id = chatroom_id
+        self._origin = f"{parsed.scheme}://{parsed.netloc}"
+        self._token_provider = token_provider
+        self._request = request
+        self._socket_factory = socket_factory or _socket_client
+        self._clock = clock
+        self._socket = None
+        self._bot_id: str | None = None
+        self._authenticated = False
+        self._joined = Event()
+        self._reconcile_needed = True
+        self._pending: deque[InboundMessage] = deque()
+        self._seen_ids: set[str] = set()
+
+    def read_new(self) -> list[InboundMessage]:
+        self._ensure_connected()
+        if self._reconcile_needed:
+            self._reconcile_history()
+        messages = sorted(self._pending, key=lambda message: message.received_at)
+        self._pending.clear()
+        return messages
+
+    def send(self, text: str) -> str:
+        self._ensure_connected()
+        if not text.strip():
+            raise ValueError("text must be nonempty")
+        message_id = str(uuid4())
+        message = {
+            "message_id": message_id,
+            "sent_by": self._bot_id,
+            "chatroom_id": self.chatroom_id,
+            "sent_at": _utc_iso(self._clock()),
+            "content": {"type": "text", "text": text},
+        }
+        acknowledgement = self._socket.call(
+            "message:send",
+            {"chatroomId": self.chatroom_id, "message": message},
+            timeout=10,
+        )
+        if not acknowledgement or acknowledgement.get("success") is not True:
+            error = acknowledgement.get("error", "message acknowledgement failed") if acknowledgement else "message acknowledgement failed"
+            raise RuntimeError(error)
+        return message_id
+
+    def is_authenticated(self) -> bool:
+        try:
+            self._ensure_connected()
+        except Exception:
+            self._authenticated = False
+        return self._authenticated
+
+    def close(self) -> None:
+        if self._socket is not None:
+            self._socket.disconnect()
+        self._authenticated = False
+
+    def _ensure_connected(self) -> None:
+        if self._socket is not None and self._socket.connected and self._joined.is_set():
+            self._authenticated = True
+            return
+        profile = self._request("user.getMe")
+        bot_id = profile.get("id")
+        if not bot_id:
+            raise RuntimeError("bot identity unavailable")
+        token = self._token_provider()
+        if not token:
+            raise RuntimeError("socket token unavailable")
+        self._bot_id = bot_id
+        if self._socket is None:
+            self._socket = self._socket_factory()
+            self._socket.on("message:new", self._on_message)
+            self._socket.on("message:joined", self._on_joined)
+            self._socket.on("disconnect", self._on_disconnect)
+        self._joined.clear()
+        self._socket.connect(
+            self._origin,
+            socketio_path="ws/matching",
+            auth={"token": token},
+            transports=["websocket", "polling"],
+        )
+        if not self._joined.wait(timeout=10):
+            self._socket.disconnect()
+            raise RuntimeError("socket join timed out")
+        self._authenticated = True
+        self._reconcile_needed = True
+
+    def _reconcile_history(self) -> None:
+        payload = self._request("chatroom.getMessages", {"chatroomId": self.chatroom_id})
+        for message in payload.get("messages", []):
+            self._accept_message(self.chatroom_id, message)
+        self._reconcile_needed = False
+
+    def _on_message(self, payload: dict[str, Any]) -> None:
+        message = payload.get("message")
+        if isinstance(message, dict):
+            self._accept_message(payload.get("chatroomId"), message)
+
+    def _on_joined(self, _payload: dict[str, Any]) -> None:
+        self._joined.set()
+
+    def _on_disconnect(self) -> None:
+        self._authenticated = False
+        self._joined.clear()
+        self._reconcile_needed = True
+
+    def _accept_message(self, chatroom_id: str | None, message: dict[str, Any]) -> None:
+        if chatroom_id != self.chatroom_id or message.get("sent_by") == self._bot_id:
+            return
+        content = message.get("content")
+        message_id = message.get("message_id")
+        sent_by = message.get("sent_by")
+        sent_at = message.get("sent_at")
+        if (
+            not isinstance(content, dict)
+            or content.get("type") != "text"
+            or not isinstance(content.get("text"), str)
+            or not isinstance(message_id, str)
+            or not isinstance(sent_by, str)
+            or not isinstance(sent_at, str)
+            or message_id in self._seen_ids
+        ):
+            return
+        self._seen_ids.add(message_id)
+        self._pending.append(
+            InboundMessage(
+                message_id,
+                sent_by,
+                content["text"],
+                _shanghai_time(sent_at),
+            )
+        )
+
+
+def _socket_client():
+    import socketio
+
+    return socketio.Client(reconnection=True)
+
+
+def _shanghai_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+        ZoneInfo("Asia/Shanghai")
+    )
+
+
+def _utc_iso(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")

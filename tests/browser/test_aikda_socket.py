@@ -1,0 +1,196 @@
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from dzmm_bot.browser.aikda_socket import AikdaSocketGateway
+from dzmm_bot.runtime.contracts import InboundMessage
+
+
+NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+TARGET_URL = "https://www.aikda.com/chat?c=room-1"
+
+
+class FakeSocket:
+    def __init__(self):
+        self.handlers = {}
+        self.connected = False
+        self.joined = False
+        self.connect_calls = []
+        self.call_result = {"success": True}
+        self.calls = []
+        self.message_after_join = None
+
+    def on(self, event, handler):
+        self.handlers[event] = handler
+
+    def connect(self, origin, **kwargs):
+        self.connect_calls.append((origin, kwargs))
+        self.connected = True
+        handler = self.handlers.get("message:joined")
+        if handler is not None:
+            handler({"syncMode": "http"})
+            self.joined = True
+        if self.message_after_join is not None:
+            self.handlers["message:new"](self.message_after_join)
+
+    def call(self, event, payload, timeout):
+        if not self.joined:
+            raise RuntimeError("server join was not completed")
+        self.calls.append((event, payload, timeout))
+        return self.call_result
+
+    def disconnect(self):
+        self.connected = False
+
+    def trigger(self, event, payload):
+        self.handlers[event](payload)
+
+
+class FakeRequest:
+    def __init__(self, messages=None):
+        self.messages = messages or []
+        self.calls = []
+
+    def __call__(self, procedure, payload=None):
+        self.calls.append((procedure, payload))
+        if procedure == "user.getMe":
+            return {"id": "bot-1"}
+        if procedure == "chatroom.getMessages":
+            return {"messages": self.messages}
+        raise AssertionError(f"unexpected procedure {procedure}")
+
+
+def message(message_id, sent_by, text, sent_at="2026-08-05T04:00:00Z"):
+    return {
+        "message_id": message_id,
+        "sent_by": sent_by,
+        "sent_at": sent_at,
+        "content": {"type": "text", "text": text},
+    }
+
+
+@pytest.fixture
+def gateway():
+    socket = FakeSocket()
+    request = FakeRequest()
+    gateway = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "short-lived-token",
+        request=request,
+        socket_factory=lambda: socket,
+        clock=lambda: NOW,
+    )
+    return gateway, socket, request
+
+
+def test_live_target_room_text_event_is_read_once(gateway):
+    """Fails if the event handler does not retain a target-room text message."""
+    adapter, socket, _ = gateway
+    assert adapter.read_new() == []
+
+    socket.trigger(
+        "message:new",
+        {"chatroomId": "room-1", "message": message("m-1", "u-1", "/余额")},
+    )
+
+    assert adapter.read_new() == [
+        InboundMessage(
+            "m-1",
+            "u-1",
+            "/余额",
+            datetime(2026, 8, 5, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+    ]
+    assert adapter.read_new() == []
+
+
+def test_self_and_other_room_events_are_ignored(gateway):
+    """Fails if the bot replies to itself or another room's traffic."""
+    adapter, socket, _ = gateway
+    adapter.read_new()
+
+    socket.trigger(
+        "message:new",
+        {"chatroomId": "room-1", "message": message("m-self", "bot-1", "/余额")},
+    )
+    socket.trigger(
+        "message:new",
+        {"chatroomId": "room-2", "message": message("m-other", "u-1", "/余额")},
+    )
+
+    assert adapter.read_new() == []
+
+
+def test_self_message_arriving_during_connection_is_ignored(gateway):
+    """Fails if identity is unavailable while the initial socket event arrives."""
+    adapter, socket, _ = gateway
+    socket.message_after_join = {
+        "chatroomId": "room-1",
+        "message": message("m-self", "bot-1", "/余额"),
+    }
+
+    assert adapter.read_new() == []
+
+
+def test_history_reconciles_unseen_text_messages_in_timestamp_order():
+    """Fails if reconnect history is ignored or returned in API order."""
+    socket = FakeSocket()
+    request = FakeRequest(
+        [
+            message("m-2", "u-2", "/打卡", "2026-08-05T04:00:01Z"),
+            message("m-1", "u-1", "/余额", "2026-08-05T04:00:00Z"),
+        ]
+    )
+    adapter = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "short-lived-token",
+        request=request,
+        socket_factory=lambda: socket,
+        clock=lambda: NOW,
+    )
+
+    assert [item.platform_message_id for item in adapter.read_new()] == ["m-1", "m-2"]
+
+
+def test_send_requires_successful_ack(gateway):
+    """Fails if a send is reported before Aikda acknowledges it."""
+    adapter, socket, _ = gateway
+
+    platform_message_id = adapter.send("余额：5 摸鱼币")
+
+    assert platform_message_id == socket.calls[0][1]["message"]["message_id"]
+    assert socket.calls == [
+        (
+            "message:send",
+            {
+                "chatroomId": "room-1",
+                "message": {
+                    "message_id": platform_message_id,
+                    "sent_by": "bot-1",
+                    "chatroom_id": "room-1",
+                    "sent_at": "2026-08-05T12:00:00Z",
+                    "content": {"type": "text", "text": "余额：5 摸鱼币"},
+                },
+            },
+            10,
+        )
+    ]
+
+
+def test_send_waits_for_server_join_before_emitting(gateway):
+    """Fails if the gateway sends before Aikda marks the socket joined."""
+    adapter, socket, _ = gateway
+
+    adapter.send("余额：5 摸鱼币")
+
+    assert socket.joined is True
+
+
+def test_send_raises_when_ack_rejects_message(gateway):
+    """Fails if an Aikda rejection is incorrectly confirmed as delivered."""
+    adapter, socket, _ = gateway
+    socket.call_result = {"success": False, "error": "rejected"}
+
+    with pytest.raises(RuntimeError, match="rejected"):
+        adapter.send("余额：5 摸鱼币")

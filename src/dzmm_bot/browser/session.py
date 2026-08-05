@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 from dzmm_bot.runtime.contracts import InboundMessage, LoginState
 from dzmm_bot.dzmm_source import DzmmMessageSource
 
+from .aikda_socket import AikdaSocketGateway
+
 
 class ChatGateway(Protocol):
     def read_new(self) -> list[InboundMessage]: ...
@@ -28,6 +30,7 @@ class BrowserSession:
         chat_url: str | None = None,
         cdp_port: int = 19222,
         playwright_factory: Callable | None = None,
+        socket_factory: Callable | None = None,
     ) -> None:
         if cdp_port != 19222:
             raise ValueError("browser CDP port must be the isolated port 19222")
@@ -36,6 +39,7 @@ class BrowserSession:
         self.chat_url = chat_url
         self.cdp_port = cdp_port
         self._playwright_factory = playwright_factory or _start_playwright
+        self._socket_factory = socket_factory
         self._playwright = None
         self._context = None
         self._gateway = None
@@ -50,7 +54,7 @@ class BrowserSession:
         )
         self._context = browser.contexts[0]
         self._attached = True
-        self._gateway = _PlaywrightGateway(self._context, self.login_url)
+        self._gateway = self._new_gateway()
         self._open_group_chat()
         return self._gateway
 
@@ -78,18 +82,48 @@ class BrowserSession:
         )
         if self.login_url and page.url == "about:blank":
             page.goto(self.login_url)
-        self._gateway = _PlaywrightGateway(self._context, self.login_url)
+        self._gateway = self._new_gateway()
         self._open_group_chat()
         return self._gateway
 
     def _open_group_chat(self) -> None:
         if self.chat_url is None or self._gateway is None:
             return
-        if not self._gateway.is_authenticated():
+        if not self._page_is_authenticated():
             return
-        page = self._gateway._active_page()
+        page = self._active_page()
         if page.url != self.chat_url:
             page.goto(self.chat_url)
+
+    def _new_gateway(self) -> ChatGateway:
+        if self.chat_url is None:
+            return _PlaywrightGateway(self._context, self.login_url)
+        return AikdaSocketGateway(
+            self.chat_url,
+            token_provider=self._token,
+            request=self._request,
+            socket_factory=self._socket_factory,
+        )
+
+    def _token(self) -> str:
+        return self._active_page().evaluate(_TOKEN_SCRIPT)
+
+    def _request(self, procedure: str, payload: dict | None = None) -> dict:
+        return self._active_page().evaluate(
+            _TRPC_SCRIPT,
+            {"procedure": procedure, "payload": payload},
+        )
+
+    def _active_page(self):
+        return next(
+            (page for page in self._context.pages if "/chat" in page.url),
+            self._context.pages[0],
+        )
+
+    def _page_is_authenticated(self) -> bool:
+        if not self._context.pages or self.login_url is None:
+            return False
+        return _location(self._active_page().url) != _location(self.login_url)
 
     def stop(self) -> None:
         if self._context is not None and not self._attached:
@@ -158,3 +192,26 @@ def _start_playwright():
     from playwright.sync_api import sync_playwright
 
     return sync_playwright().start()
+
+
+_TOKEN_SCRIPT = """async () => {
+  const response = await fetch('/api/auth/token');
+  const body = await response.json();
+  if (!response.ok || !body.access_token) {
+    throw new Error('Aikda access token unavailable');
+  }
+  return body.access_token;
+}"""
+
+
+_TRPC_SCRIPT = """async ({ procedure, payload }) => {
+  const input = { json: payload ?? null };
+  const response = await fetch(
+    `/api/trpc/${procedure}?input=${encodeURIComponent(JSON.stringify(input))}`
+  );
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(`Aikda ${procedure} request failed`);
+  }
+  return body?.result?.data?.json ?? body?.json ?? body?.[0]?.result?.data?.json;
+}"""

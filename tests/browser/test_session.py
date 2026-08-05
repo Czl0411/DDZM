@@ -33,6 +33,29 @@ class FakePage:
         self.pressed.append(key)
 
 
+class FakeSocket:
+    def __init__(self):
+        self.handlers = {}
+        self.connected = False
+        self.connect_calls = []
+        self.calls = []
+
+    def on(self, event, handler):
+        self.handlers[event] = handler
+
+    def connect(self, origin, **kwargs):
+        self.connect_calls.append((origin, kwargs))
+        self.connected = True
+        self.handlers["message:joined"]({"syncMode": "http"})
+
+    def call(self, event, payload, timeout):
+        self.calls.append((event, payload, timeout))
+        return {"success": True}
+
+    def disconnect(self):
+        self.connected = False
+
+
 class FakeContext:
     def __init__(self, url):
         self.pages = [FakePage(url)]
@@ -183,25 +206,32 @@ def test_stop_releases_browser_and_playwright(tmp_path):
     assert playwright.stopped is True
 
 
-def test_gateway_reads_and_sends_platform_messages(tmp_path):
-    page = FakePage(
-        "https://chat.example/room",
-        rows=[{"source_index": "42", "sender": "甲", "text": "你好", "is_self": False}],
+def test_configured_session_uses_socket_gateway_instead_of_dom_chat_controls(tmp_path):
+    page = FakePage("https://chat.example/chat")
+    socket = FakeSocket()
+    page.evaluate = lambda script, arg=None: (
+        "short-lived-token"
+        if "api/auth/token" in script
+        else {"id": "bot-1"}
+        if arg["procedure"] == "user.getMe"
+        else {"messages": []}
     )
     session = BrowserSession(
         tmp_path / "profile",
         "https://chat.example/login",
-        playwright_factory=lambda: FakePlaywright(FakeChromium(FakeContext(page.url))),
+        chat_url="https://chat.example/chat?c=group-1",
+        playwright_factory=lambda: FakePlaywright(
+            FakeChromium(type("Context", (), {"pages": [page], "close": lambda self: None})())
+        ),
+        socket_factory=lambda: socket,
     )
-    session._playwright_factory = lambda: FakePlaywright(FakeChromium(type("Context", (), {"pages": [page], "close": lambda self: None})()))
     gateway = session.start_headless()
 
-    messages = gateway.read_new()
+    assert gateway.is_authenticated()
     platform_id = gateway.send("hello")
 
-    assert messages[0].platform_message_id == "main:stable:42"
-    assert messages[0].sender_platform_id == "甲"
-    assert messages[0].content == "你好"
-    assert page.filled == ["hello"]
-    assert page.pressed == ["Enter"]
-    assert platform_id.startswith("dzmm:")
+    assert page.url == "https://chat.example/chat?c=group-1"
+    assert socket.connect_calls[0][1]["auth"] == {"token": "short-lived-token"}
+    assert socket.calls[0][0] == "message:send"
+    assert platform_id == socket.calls[0][1]["message"]["message_id"]
+    assert page.filled == []

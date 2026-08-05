@@ -200,13 +200,13 @@ git commit -m "fix: preserve delivery guarantees for socket gateway"
 **Files:**
 - Modify only if deployment needs a declared dependency update: `pyproject.toml`
 
-- [ ] **Step 1: Run package and test verification**
+- [x] **Step 1: Run package and test verification**
 
 Run: `python -m pip install -e '.[test]' && pytest -q`
 
 Expected: package installs and all tests pass.
 
-- [ ] **Step 2: Deploy code and migrate normally**
+- [x] **Step 2: Deploy code and migrate normally**
 
 Run the existing release deployment script, then restart only `dzmm-core` and
 `dzmm-admin-web` first. Confirm the remote browser worker remains attached to

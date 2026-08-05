@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from secrets import compare_digest, token_urlsafe
 from typing import Annotated, Callable
+from uuid import UUID
 
 from fastapi import (
     Cookie,
@@ -15,9 +16,12 @@ from fastapi import (
     WebSocket,
     status,
 )
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from httpx import HTTPStatusError
+from sqlalchemy.exc import IntegrityError
 
+from dzmm_bot.core.database import create_session_factory
+from dzmm_bot.core.schema import beijing_now
 from dzmm_bot.runtime.settings import Settings
 
 from .core_client import (
@@ -26,6 +30,7 @@ from .core_client import (
     NoVNCClient,
     NoVNCWebSocketConnector,
 )
+from .repository import AdminIdentity, AdminRepository, IdempotencyInProgressError
 
 
 _ROOT = Path(__file__).parent
@@ -48,6 +53,7 @@ def create_app_from_environment() -> FastAPI:
         CoreClient(
             f"http://127.0.0.1:{settings.core_api_port}", settings.core_token
         ),
+        repository=AdminRepository(create_session_factory(settings.database_url)),
         console_client=NoVNCClient(settings.novnc_port),
         websocket_connector=NoVNCWebSocketConnector(settings.novnc_port),
     )
@@ -57,6 +63,7 @@ def create_app(
     admin_token: str,
     core: AdminCorePort,
     *,
+    repository: AdminRepository,
     console_client: NoVNCClient | None = None,
     websocket_connector: Callable | None = None,
 ) -> FastAPI:
@@ -67,9 +74,53 @@ def create_app(
     connect_websocket = websocket_connector or NoVNCWebSocketConnector()
     console_session: str | None = None
 
-    def authorize(x_admin_token: Annotated[str | None, Header()] = None) -> None:
-        if x_admin_token is None or not compare_digest(x_admin_token, admin_token):
+    def authorize(
+        x_admin_token: Annotated[str | None, Header()] = None,
+        x_admin_session: Annotated[str | None, Header()] = None,
+    ) -> AdminIdentity:
+        if x_admin_token is not None and x_admin_session is not None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unauthorized")
+        if x_admin_token is not None and compare_digest(x_admin_token, admin_token):
+            return AdminIdentity(None, "超级管理员", "super_admin")
+        if x_admin_session is not None:
+            identity = repository.resolve_session(x_admin_session, beijing_now())
+            if identity is not None:
+                return identity
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unauthorized")
+
+    def require_super_admin(
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> AdminIdentity:
+        if identity.role != "super_admin":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "super admin required")
+        return identity
+
+    def idempotent_response(
+        identity: AdminIdentity,
+        idempotency_key: str | None,
+        operation: Callable[[], tuple[int, dict]],
+    ) -> JSONResponse:
+        if not idempotency_key:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Idempotency-Key is required")
+        actor_key = "super_admin" if identity.account_id is None else str(identity.account_id)
+        try:
+            replay = repository.reserve_idempotency_key(
+                actor_key, idempotency_key, beijing_now()
+            )
+        except IdempotencyInProgressError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error))
+        if replay is not None:
+            status_code, body = replay
+            return JSONResponse(body, status_code=status_code)
+        try:
+            status_code, body = operation()
+        except Exception:
+            repository.release_idempotency_key(actor_key, idempotency_key)
+            raise
+        repository.complete_idempotency_key(
+            actor_key, idempotency_key, status_code, body, beijing_now()
+        )
+        return JSONResponse(body, status_code=status_code)
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> FileResponse:
@@ -88,6 +139,106 @@ def create_app(
     @app.get("/healthz")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.post("/api/auth/login")
+    def admin_login(request: dict) -> dict:
+        username = request.get("username")
+        password = request.get("password")
+        if not isinstance(username, str) or not isinstance(password, str):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid login")
+        account = repository.authenticate(username, password)
+        if account is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
+        return {
+            "session_token": repository.create_session(account.id, beijing_now()),
+            "username": account.username,
+            "role": "admin",
+        }
+
+    @app.get("/api/auth/me")
+    def admin_identity(
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
+        return {"username": identity.username, "role": identity.role}
+
+    @app.post("/api/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+    def admin_logout(
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        x_admin_session: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        if identity.account_id is not None and x_admin_session is not None:
+            repository.revoke_session(x_admin_session)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/api/admins")
+    def admin_accounts(
+        _: Annotated[AdminIdentity, Depends(require_super_admin)],
+    ) -> list[dict]:
+        return [
+            {
+                "id": str(account.id),
+                "username": account.username,
+                "active": account.active,
+                "created_at": account.created_at,
+            }
+            for account in repository.list_accounts()
+        ]
+
+    @app.post("/api/admins", status_code=status.HTTP_201_CREATED)
+    def create_admin_account(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(require_super_admin)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> JSONResponse:
+        username = request.get("username")
+        password = request.get("password")
+        if not isinstance(username, str) or not isinstance(password, str):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid administrator")
+        username = username.strip()
+        if not 1 <= len(username) <= 32 or len(password) < 8:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid administrator")
+
+        def operation() -> tuple[int, dict]:
+            try:
+                account = repository.create_account(username, password)
+            except IntegrityError:
+                raise HTTPException(status.HTTP_409_CONFLICT, "administrator already exists")
+            return 201, {
+                "id": str(account.id),
+                "username": account.username,
+                "active": account.active,
+            }
+
+        return idempotent_response(identity, idempotency_key, operation)
+
+    @app.patch("/api/admins/{account_id}")
+    def update_admin_account(
+        account_id: UUID,
+        request: dict,
+        _: Annotated[AdminIdentity, Depends(require_super_admin)],
+    ) -> dict:
+        if "active" in request:
+            if not isinstance(request["active"], bool):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid administrator")
+            account = repository.set_account_active(account_id, request["active"])
+        elif "password" in request and isinstance(request["password"], str):
+            if len(request["password"]) < 8:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid administrator")
+            account = repository.reset_password(account_id, request["password"])
+        else:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid administrator")
+        if account is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "administrator not found")
+        return {"id": str(account.id), "username": account.username, "active": account.active}
+
+    @app.delete("/api/admins/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_admin_account(
+        account_id: UUID,
+        _: Annotated[AdminIdentity, Depends(require_super_admin)],
+    ) -> Response:
+        if not repository.delete_account(account_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "administrator not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/api/status")
     def operational_status(
@@ -190,9 +341,12 @@ def create_app(
 
     @app.post("/api/session", status_code=status.HTTP_204_NO_CONTENT)
     def create_console_session(
-        response: Response, _: Annotated[None, Depends(authorize)]
+        response: Response, identity: Annotated[AdminIdentity, Depends(authorize)]
     ) -> None:
         nonlocal console_session
+        lease = core.get_manual_login_lease()
+        if lease is None or lease["operator_id"] != _actor_id(identity):
+            raise HTTPException(status.HTTP_409_CONFLICT, "manual login is not owned by actor")
         console_session = token_urlsafe(32)
         response.set_cookie(
             "dzmm_admin_session",
@@ -212,15 +366,33 @@ def create_app(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown action")
         return core.enqueue_command(command)
 
+    @app.get("/api/login/lease")
+    def login_lease(
+        _: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict | None:
+        return core.get_manual_login_lease()
+
     @app.post("/api/login/start", status_code=status.HTTP_202_ACCEPTED)
-    def login_start(_: Annotated[None, Depends(authorize)]) -> dict:
+    def login_start(
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
         _require_login_state(core, "auth_required")
-        return core.enqueue_command("start_auth")
+        return _relay_core(
+            lambda: core.start_manual_login(_actor_id(identity), identity.username)
+        )
 
     @app.post("/api/login/finish", status_code=status.HTTP_202_ACCEPTED)
-    def login_finish(_: Annotated[None, Depends(authorize)]) -> dict:
+    def login_finish(
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
         _require_login_state(core, "auth_in_progress")
-        return core.enqueue_command("finish_auth")
+        return _relay_core(
+            lambda: core.finish_manual_login(_actor_id(identity), identity.username)
+        )
+
+    @app.post("/api/login/cancel", status_code=status.HTTP_202_ACCEPTED)
+    def login_cancel(_: Annotated[AdminIdentity, Depends(authorize)]) -> dict:
+        return _relay_core(core.cancel_manual_login)
 
     @app.get("/login-console")
     def login_console(
@@ -316,6 +488,17 @@ def _require_login_state(core: AdminCorePort, expected: str) -> None:
             status.HTTP_409_CONFLICT,
             f"login state must be {expected}",
         )
+
+
+def _actor_id(identity: AdminIdentity) -> str:
+    return "super_admin" if identity.account_id is None else str(identity.account_id)
+
+
+def _relay_core(operation: Callable[[], dict]) -> dict:
+    try:
+        return operation()
+    except HTTPStatusError as error:
+        raise HTTPException(error.response.status_code, error.response.text)
 
 
 def _authorize_console(

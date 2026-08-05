@@ -4,6 +4,9 @@ from html.parser import HTMLParser
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from starlette.websockets import WebSocketDisconnect
 
 
@@ -16,6 +19,14 @@ def _page(items, page, page_size):
         "page_size": page_size,
         "total": total,
         "pages": (total + page_size - 1) // page_size,
+    }
+
+
+def assign_super_login_lease(core):
+    core.manual_login_lease = {
+        "operator_id": "super_admin",
+        "operator_name": "超级管理员",
+        "expires_at": "2026-08-05T12:03:00+08:00",
     }
 
 
@@ -64,6 +75,7 @@ class FakeCore:
             "report_times": ["12:00", "16:00", "20:00", "23:59"],
         }
     )
+    manual_login_lease: dict | None = None
 
     def status(self):
         return {
@@ -76,6 +88,34 @@ class FakeCore:
 
     def login_state(self):
         return self.login_state_value
+
+    def get_manual_login_lease(self):
+        return self.manual_login_lease
+
+    def start_manual_login(self, operator_id, operator_name):
+        self.manual_login_lease = {
+            "operator_id": operator_id,
+            "operator_name": operator_name,
+            "expires_at": "2026-08-05T12:03:00+08:00",
+        }
+        self.commands.append("start_auth")
+        return self.manual_login_lease
+
+    def finish_manual_login(self, operator_id, operator_name):
+        if self.manual_login_lease is None or self.manual_login_lease["operator_id"] != operator_id:
+            request = httpx.Request("POST", "http://core/internal/admin/login/finish")
+            response = httpx.Response(409, text="manual login is not owned by actor", request=request)
+            raise httpx.HTTPStatusError("forbidden", request=request, response=response)
+        self.manual_login_lease = None
+        self.commands.append("finish_auth")
+        return {"accepted": True}
+
+    def cancel_manual_login(self):
+        cancelled = self.manual_login_lease is not None
+        self.manual_login_lease = None
+        if cancelled:
+            self.commands.append("cancel_auth")
+        return {"accepted": cancelled}
 
     def enqueue_command(self, command):
         self.commands.append(command)
@@ -204,13 +244,28 @@ def websocket_connection():
 
 
 @pytest.fixture
-def client(core, console, websocket_connection):
+def admin_repository():
+    from dzmm_bot.admin.repository import AdminRepository
+    from dzmm_bot.core.schema import Base
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return AdminRepository(sessionmaker(engine, expire_on_commit=False))
+
+
+@pytest.fixture
+def client(core, console, websocket_connection, admin_repository):
     from dzmm_bot.admin.app import create_app
 
     return TestClient(
         create_app(
             "admin-secret",
             core,
+            repository=admin_repository,
             console_client=console,
             websocket_connector=websocket_connection.connect,
         )
@@ -248,6 +303,75 @@ def test_health_is_public_and_discloses_no_configuration(client):
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_regular_admin_authenticates_but_cannot_manage_administrators(
+    client, admin_repository
+):
+    admin_repository.create_account("alice", "strong-password")
+
+    login = client.post(
+        "/api/auth/login", json={"username": "alice", "password": "strong-password"}
+    )
+
+    assert login.status_code == 200
+    session_headers = {"X-Admin-Session": login.json()["session_token"]}
+    assert client.get("/api/status", headers=session_headers).status_code == 200
+    assert client.get("/api/admins", headers=session_headers).status_code == 403
+
+
+def test_super_admin_creates_an_account_once_for_a_retried_request(client, headers):
+    request_headers = {**headers, "Idempotency-Key": "create-bob"}
+
+    first = client.post(
+        "/api/admins",
+        headers=request_headers,
+        json={"username": "bob", "password": "strong-password"},
+    )
+    second = client.post(
+        "/api/admins",
+        headers=request_headers,
+        json={"username": "bob", "password": "strong-password"},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert second.json() == first.json()
+    assert [account["username"] for account in client.get("/api/admins", headers=headers).json()] == ["bob"]
+
+
+def test_any_admin_can_cancel_manual_login(client, admin_repository, core):
+    admin_repository.create_account("alice", "strong-password")
+    core.manual_login_lease = {
+        "operator_id": "super_admin",
+        "operator_name": "超级管理员",
+        "expires_at": "2026-08-05T12:03:00+08:00",
+    }
+    session_token = client.post(
+        "/api/auth/login", json={"username": "alice", "password": "strong-password"}
+    ).json()["session_token"]
+
+    response = client.post("/api/login/cancel", headers={"X-Admin-Session": session_token})
+
+    assert response.status_code == 202
+    assert core.commands[-1] == "cancel_auth"
+
+
+def test_only_login_operator_can_open_console(client, admin_repository, core):
+    account = admin_repository.create_account("alice", "strong-password")
+    core.manual_login_lease = {
+        "operator_id": "super_admin",
+        "operator_name": "超级管理员",
+        "expires_at": "2026-08-05T12:03:00+08:00",
+    }
+    session_token = client.post(
+        "/api/auth/login", json={"username": "alice", "password": "strong-password"}
+    ).json()["session_token"]
+
+    response = client.post("/api/session", headers={"X-Admin-Session": session_token})
+
+    assert response.status_code == 409
+    assert account.username == "alice"
 
 
 def test_admin_dashboard_serves_its_login_and_style_assets(client):
@@ -592,6 +716,11 @@ def test_login_finish_creates_only_durable_command_during_auth(
     client, headers, core
 ):
     core.login_state_value = "auth_in_progress"
+    core.manual_login_lease = {
+        "operator_id": "super_admin",
+        "operator_name": "超级管理员",
+        "expires_at": "2026-08-05T12:03:00+08:00",
+    }
 
     response = client.post("/api/login/finish", headers=headers)
 
@@ -613,8 +742,13 @@ def test_login_console_is_proxied_only_during_auth(
 
 
 def test_admin_token_creates_httponly_console_session_without_url_secret(
-    client, headers
+    client, headers, core
 ):
+    core.manual_login_lease = {
+        "operator_id": "super_admin",
+        "operator_name": "超级管理员",
+        "expires_at": "2026-08-05T12:03:00+08:00",
+    }
     response = client.post("/api/session", headers=headers)
 
     assert response.status_code == 204
@@ -630,6 +764,11 @@ def test_admin_token_creates_httponly_console_session_without_url_secret(
 def test_console_session_authenticates_root_and_relative_assets(
     client, headers, core, console
 ):
+    core.manual_login_lease = {
+        "operator_id": "super_admin",
+        "operator_name": "超级管理员",
+        "expires_at": "2026-08-05T12:03:00+08:00",
+    }
     client.post("/api/session", headers=headers)
     core.login_state_value = "auth_in_progress"
 
@@ -647,6 +786,7 @@ def test_console_session_authenticates_root_and_relative_assets(
 def test_console_root_forces_authenticated_novnc_websocket_path(
     client, headers, core
 ):
+    assign_super_login_lease(core)
     client.post("/api/session", headers=headers)
     core.login_state_value = "auth_in_progress"
 
@@ -659,6 +799,7 @@ def test_console_root_forces_authenticated_novnc_websocket_path(
 def test_console_root_redirects_duplicate_attacker_first_path(
     client, headers, core, console
 ):
+    assign_super_login_lease(core)
     client.post("/api/session", headers=headers)
     core.login_state_value = "auth_in_progress"
 
@@ -677,6 +818,7 @@ def test_console_root_redirects_duplicate_attacker_first_path(
 def test_console_assets_reject_session_when_auth_is_not_active(
     client, headers, core
 ):
+    assign_super_login_lease(core)
     client.post("/api/session", headers=headers)
     core.login_state_value = "ready"
 
@@ -684,6 +826,7 @@ def test_console_assets_reject_session_when_auth_is_not_active(
 
 
 def test_console_asset_proxy_preserves_upstream_not_found(client, headers, core):
+    assign_super_login_lease(core)
     client.post("/api/session", headers=headers)
     core.login_state_value = "auth_in_progress"
 
@@ -702,6 +845,7 @@ def test_console_websocket_requires_session_and_active_auth(
             pass
     assert missing_session.value.code == 4401
 
+    assign_super_login_lease(core)
     client.post("/api/session", headers=headers)
     core.login_state_value = "ready"
     with pytest.raises(WebSocketDisconnect) as wrong_state:

@@ -89,6 +89,14 @@ class AdminRepository:
                 return None
             return AdminIdentity(account.id, account.username, "admin")
 
+    def revoke_session(self, token: str) -> None:
+        with self._session_factory.begin() as session:
+            session.execute(
+                delete(AdminSessionRecord).where(
+                    AdminSessionRecord.token_hash == _digest(token)
+                )
+            )
+
     def set_account_active(self, account_id: UUID, active: bool) -> AdminAccountRecord | None:
         with self._session_factory.begin() as session:
             record = session.get(AdminAccountRecord, account_id)
@@ -176,6 +184,16 @@ class AdminRepository:
             record.status_code = status_code
             record.response_body = response_body
             record.expires_at = now + _IDEMPOTENCY_TTL
+
+    def release_idempotency_key(self, actor_key: str, key: str) -> None:
+        with self._session_factory.begin() as session:
+            session.execute(
+                delete(AdminIdempotencyRecord).where(
+                    AdminIdempotencyRecord.actor_key == actor_key,
+                    AdminIdempotencyRecord.key_hash == _digest(key),
+                    AdminIdempotencyRecord.status_code.is_(None),
+                )
+            )
 
 
 def _hash_password(password: str) -> str:

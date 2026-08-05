@@ -317,6 +317,20 @@ def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):
     assert items.json()["items"][0]["name"] == "午休券20"
 
 
+def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
+    page = client.get("/").text
+    script = client.get("/static/admin.js").text
+
+    assert 'id="employee-pagination"' in page
+    assert 'id="shop-pagination"' in page
+    assert "runMutation" in script
+    assert "renderPagination" in script
+    assert "/api/game/users?page=${page}&page_size=${pageSize}" in script
+    assert "/api/game/items?page=${page}&page_size=${pageSize}" in script
+    assert '"保存中…"' in script
+    assert '"上架中…"' in script
+
+
 def test_admin_accepts_the_browser_item_form_json_body(client, headers):
     response = client.post(
         "/api/game/items",

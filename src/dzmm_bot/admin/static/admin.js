@@ -1,8 +1,13 @@
 let token = sessionStorage.getItem("dzmm-admin-token") || "";
 let currentState = "unknown";
 let consoleLoading = false;
+let refreshLoading = false;
 let gameSettings = null;
 let activitySettings = null;
+let employeePage = 1;
+let shopPage = 1;
+
+const pageSize = 20;
 
 const loginScreen = document.querySelector("#login-screen");
 const dashboard = document.querySelector("#dashboard");
@@ -149,8 +154,71 @@ async function requestGame(path, options = {}) {
     ...options,
     headers: {...headers(), ...(options.headers || {})},
   });
-  if (!response.ok) throw new Error(String(response.status));
+  if (!response.ok) throw new Error(await responseError(response));
   return response.json();
+}
+
+async function responseError(response) {
+  const body = await response.text();
+  try {
+    const detail = JSON.parse(body).detail;
+    if (Array.isArray(detail)) {
+      return detail.map((item) => item.msg).filter(Boolean).join("；") || String(response.status);
+    }
+    return String(detail || response.status);
+  } catch (_) {
+    return body.trim() || String(response.status);
+  }
+}
+
+async function runMutation(button, busyLabel, operation) {
+  if (button.dataset.busy === "true") return;
+  const label = button.textContent;
+  button.dataset.busy = "true";
+  button.disabled = true;
+  button.textContent = busyLabel;
+  try {
+    return await operation();
+  } finally {
+    delete button.dataset.busy;
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+function renderPagination(container, pageData, unit, onPageChange) {
+  if (!pageData.total) {
+    container.hidden = true;
+    container.innerHTML = "";
+    return;
+  }
+  const start = (pageData.page - 1) * pageData.page_size + 1;
+  const end = Math.min(pageData.page * pageData.page_size, pageData.total);
+  container.hidden = false;
+  container.innerHTML = `<small>显示 ${start}–${end} 条，共 ${pageData.total} ${unit}</small>
+    <button class="secondary" data-page="${pageData.page - 1}" type="button" ${pageData.page <= 1 ? "disabled" : ""}>上一页</button>
+    <button class="secondary" data-page="${pageData.page + 1}" type="button" ${pageData.page >= pageData.pages ? "disabled" : ""}>下一页</button>`;
+  for (const button of container.querySelectorAll("button[data-page]")) {
+    button.addEventListener("click", () => void onPageChange(Number(button.dataset.page)));
+  }
+}
+
+async function loadEmployees(page = employeePage) {
+  const settings = gameSettings || await loadSettings();
+  const employees = await requestGame(`/api/game/users?page=${page}&page_size=${pageSize}`);
+  employeePage = employees.page;
+  document.querySelector("#employee-list").innerHTML = employees.items.map((employee) => `
+    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
+  renderPagination(document.querySelector("#employee-pagination"), employees, "位员工", loadEmployees);
+}
+
+async function loadShop(page = shopPage) {
+  const settings = gameSettings || await loadSettings();
+  const items = await requestGame(`/api/game/items?page=${page}&page_size=${pageSize}`);
+  shopPage = items.page;
+  document.querySelector("#shop-list").innerHTML = items.items.map((item) => `
+    <article class="data-row"><div><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.description)}</small></div><strong>${item.price} ${escapeHtml(settings.currency_name)} · 库存 ${item.stock}</strong></article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
+  renderPagination(document.querySelector("#shop-pagination"), items, "件物品", loadShop);
 }
 
 function showView(view) {
@@ -181,16 +249,9 @@ async function loadGameView(view) {
       return;
     }
     if (view === "employees") {
-      const settings = gameSettings || await loadSettings();
-      const employees = await requestGame("/api/game/users");
-      document.querySelector("#employee-list").innerHTML = employees.map((employee) => `
-        <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
-      return;
+      return loadEmployees();
     }
-    const settings = gameSettings || await loadSettings();
-    const items = await requestGame("/api/game/items");
-    document.querySelector("#shop-list").innerHTML = items.map((item) => `
-      <article class="data-row"><div><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.description)}</small></div><strong>${item.price} ${escapeHtml(settings.currency_name)} · 库存 ${item.stock}</strong></article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
+    return loadShop();
   } catch (error) {
     setResult(`数据读取失败（${error.message}）`, "error");
   }
@@ -229,40 +290,49 @@ function renderStatus(status) {
 }
 
 async function refresh() {
-  if (!token) return;
-  const response = await fetch("/api/status", {headers: headers()});
-  if (response.status === 401) {
-    token = "";
-    sessionStorage.removeItem("dzmm-admin-token");
-    setAuthenticated(false);
-    loginError.textContent = "管理员 Token 无效，请重新输入。";
-    return;
+  if (!token || refreshLoading) return;
+  refreshLoading = true;
+  try {
+    const response = await fetch("/api/status", {headers: headers()});
+    if (response.status === 401) {
+      token = "";
+      sessionStorage.removeItem("dzmm-admin-token");
+      setAuthenticated(false);
+      loginError.textContent = "管理员 Token 无效，请重新输入。";
+      return;
+    }
+    if (!response.ok) {
+      setResult(`状态读取失败（${await responseError(response)}）`, "error");
+      return;
+    }
+    renderStatus(await response.json());
+    setResult("状态已更新", "success");
+  } catch (error) {
+    setResult(`状态读取失败（${error.message}）`, "error");
+  } finally {
+    refreshLoading = false;
   }
-  if (!response.ok) {
-    setResult(`状态读取失败（${response.status}）`, "error");
-    return;
-  }
-  renderStatus(await response.json());
-  setResult("状态已更新", "success");
 }
 
 async function submitAction(button) {
-  button.disabled = true;
-  const response = await fetch(button.dataset.action, {method: "POST", headers: headers()});
-  if (response.ok) {
-    if (button.id === "start-login") {
-      setResult("正在启动安全登录桌面…", "success");
-      if (await waitForLoginDesktop()) {
-        await openConsole();
+  const busyLabel = button.id === "start-login" ? "启动中…" : button.id === "restart-browser" ? "重启中…" : "提交中…";
+  try {
+    await runMutation(button, busyLabel, async () => {
+      const response = await fetch(button.dataset.action, {method: "POST", headers: headers()});
+      if (!response.ok) throw new Error(await responseError(response));
+      if (button.id === "start-login") {
+        setResult("正在启动安全登录桌面…", "success");
+        if (await waitForLoginDesktop()) await openConsole();
+      } else {
+        setResult("操作指令已发送，正在等待 Worker 响应。", "success");
+        window.setTimeout(refresh, 800);
       }
-    } else {
-      setResult("操作指令已发送，正在等待 Worker 响应。", "success");
-      window.setTimeout(refresh, 800);
-    }
-  } else {
-    setResult(`操作被拒绝（${response.status}）`, "error");
+    });
+  } catch (error) {
+    setResult(`操作失败（${error.message}）`, "error");
+  } finally {
+    updateControls(currentState);
   }
-  window.setTimeout(() => updateControls(currentState), 200);
 }
 
 async function waitForLoginDesktop() {
@@ -279,17 +349,22 @@ async function waitForLoginDesktop() {
 async function openConsole() {
   if (consoleLoading || consoleFrame.getAttribute("src")) return;
   consoleLoading = true;
-  const response = await fetch("/api/session", {method: "POST", headers: headers()});
-  if (!response.ok) {
-    setResult(`登录控制台授权失败（${response.status}）`, "error");
+  const button = document.querySelector("#open-login-console");
+  try {
+    await runMutation(button, "加载中…", async () => {
+      const response = await fetch("/api/session", {method: "POST", headers: headers()});
+      if (!response.ok) throw new Error(await responseError(response));
+      consoleFrame.src = "/login-console";
+      consolePanel.hidden = false;
+      consolePanel.scrollIntoView({behavior: "smooth", block: "start"});
+      setResult("登录桌面已就绪，请在下方完成验证。", "success");
+    });
+  } catch (error) {
+    setResult(`登录控制台授权失败（${error.message}）`, "error");
+  } finally {
     consoleLoading = false;
-    return;
+    updateControls(currentState);
   }
-  consoleFrame.src = "/login-console";
-  consolePanel.hidden = false;
-  consoleLoading = false;
-  consolePanel.scrollIntoView({behavior: "smooth", block: "start"});
-  setResult("登录桌面已就绪，请在下方完成验证。", "success");
 }
 
 loginForm.addEventListener("submit", async (event) => {
@@ -308,7 +383,9 @@ document.querySelector("#logout").addEventListener("click", () => {
   loginForm.reset();
   setAuthenticated(false);
 });
-document.querySelector("#refresh").addEventListener("click", refresh);
+document.querySelector("#refresh").addEventListener("click", async (event) => {
+  await runMutation(event.currentTarget, "刷新中…", refresh);
+});
 document.querySelector("#open-login-console").addEventListener("click", openConsole);
 document.querySelector("#edit-settings").addEventListener("click", () => void openSettingsModal());
 document.querySelector("#edit-activity-settings").addEventListener("click", () => void openActivitySettingsModal());
@@ -322,12 +399,14 @@ document.querySelector("#command-list").addEventListener("click", async (event) 
   const button = event.target.closest("button[data-command][data-enabled]");
   if (button) {
     try {
-      await requestGame("/api/game/commands", {
-        method: "PATCH",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({command: button.dataset.command, enabled: button.dataset.enabled === "true"}),
+      await runMutation(button, button.dataset.enabled === "true" ? "启用中…" : "停用中…", async () => {
+        await requestGame("/api/game/commands", {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({command: button.dataset.command, enabled: button.dataset.enabled === "true"}),
+        });
+        await loadGameView("commands");
       });
-      await loadGameView("commands");
       setResult("指令状态已更新", "success");
     } catch (error) {
       setResult(`更新失败（${error.message}）`, "error");
@@ -353,18 +432,21 @@ templateModal.addEventListener("click", async (event) => {
     return;
   }
   if (event.target.id !== "save-template-modal") return;
+  const button = event.target;
   try {
-    await requestGame("/api/game/command-templates", {
-      method: "PATCH",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        command: templateModal.dataset.command,
-        scenario: templateModalScenario.value,
-        template: templateModalInput.value,
-      }),
+    await runMutation(button, "保存中…", async () => {
+      await requestGame("/api/game/command-templates", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          command: templateModal.dataset.command,
+          scenario: templateModalScenario.value,
+          template: templateModalInput.value,
+        }),
+      });
+      closeTemplateModal();
+      await loadGameView("commands");
     });
-    closeTemplateModal();
-    await loadGameView("commands");
     setResult("回复模板已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
@@ -376,18 +458,21 @@ settingsModal.addEventListener("click", async (event) => {
     return;
   }
   if (event.target.id !== "save-settings-modal") return;
+  const button = event.target;
   try {
-    gameSettings = await requestGame("/api/game/settings", {
-      method: "PATCH",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        currency_name: settingsCurrencyName.value.trim(),
-        onboarding_bonus: Number(settingsOnboardingBonus.value),
-        checkin_reward: Number(settingsCheckinReward.value),
-      }),
+    await runMutation(button, "保存中…", async () => {
+      gameSettings = await requestGame("/api/game/settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          currency_name: settingsCurrencyName.value.trim(),
+          onboarding_bonus: Number(settingsOnboardingBonus.value),
+          checkin_reward: Number(settingsCheckinReward.value),
+        }),
+      });
+      renderSettings(gameSettings);
+      closeSettingsModal();
     });
-    renderSettings(gameSettings);
-    closeSettingsModal();
     setResult("经济规则已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
@@ -419,14 +504,17 @@ activitySettingsModal.addEventListener("click", async (event) => {
     setResult("请至少保留一个不重复的推送时段", "error");
     return;
   }
+  const button = event.target;
   try {
-    activitySettings = await requestGame("/api/game/activity-settings", {
-      method: "PATCH",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({rules, report_times}),
+    await runMutation(button, "保存中…", async () => {
+      activitySettings = await requestGame("/api/game/activity-settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({rules, report_times}),
+      });
+      renderActivitySettings(activitySettings);
+      closeActivitySettingsModal();
     });
-    renderActivitySettings(activitySettings);
-    closeActivitySettingsModal();
     setResult("日活跃度规则已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
@@ -440,14 +528,17 @@ document.addEventListener("keydown", (event) => {
 document.querySelector("#item-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(event.currentTarget));
+  const button = event.currentTarget.querySelector("button[type=submit]");
   try {
-    await requestGame("/api/game/items", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({...values, price: Number(values.price), stock: Number(values.stock)}),
+    await runMutation(button, "上架中…", async () => {
+      await requestGame("/api/game/items", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({...values, price: Number(values.price), stock: Number(values.stock)}),
+      });
+      event.currentTarget.reset();
+      await loadShop(shopPage);
     });
-    event.currentTarget.reset();
-    await loadGameView("shop");
     setResult("物品已上架", "success");
   } catch (error) {
     setResult(`上架失败（${error.message}）`, "error");

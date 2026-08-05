@@ -118,6 +118,22 @@ class ItemResponse(ApiModel):
     enabled: bool
 
 
+class PaginatedUsersResponse(ApiModel):
+    items: list[UserResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
+class PaginatedItemsResponse(ApiModel):
+    items: list[ItemResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
 class CreateItemRequest(ApiModel):
     name: str = Field(min_length=1, max_length=64)
     description: str = Field(min_length=1)

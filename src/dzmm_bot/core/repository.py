@@ -818,6 +818,21 @@ class CoreRepository:
                 session.scalars(select(UserRecord).order_by(UserRecord.joined_at))
             )
 
+    def list_users_page(
+        self, page: int, page_size: int
+    ) -> tuple[list[UserRecord], int]:
+        with self._session() as session:
+            total = int(session.scalar(select(func.count()).select_from(UserRecord)) or 0)
+            users = list(
+                session.scalars(
+                    select(UserRecord)
+                    .order_by(UserRecord.joined_at.desc(), UserRecord.id.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            return users, total
+
     def add_item(
         self, name: str, description: str, price: int, stock: int
     ) -> ItemRecord:
@@ -842,6 +857,23 @@ class CoreRepository:
                     .order_by(ItemRecord.price, ItemRecord.name)
                 )
             )
+
+    def list_active_items_page(
+        self, page: int, page_size: int
+    ) -> tuple[list[ItemRecord], int]:
+        with self._session() as session:
+            query = select(ItemRecord).where(ItemRecord.enabled.is_(True))
+            total = int(
+                session.scalar(select(func.count()).select_from(query.subquery())) or 0
+            )
+            items = list(
+                session.scalars(
+                    query.order_by(ItemRecord.created_at.desc(), ItemRecord.id.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            return items, total
 
     def list_user_items(self, user_id: UUID) -> list[tuple[str, int]]:
         with self._session() as session:

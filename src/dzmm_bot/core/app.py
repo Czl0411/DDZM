@@ -3,7 +3,7 @@ from secrets import compare_digest
 from typing import Annotated, Callable
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from uvicorn import Config, Server
@@ -36,6 +36,8 @@ from .api_models import (
     SetActivitySettingsRequest,
     SetGameSettingsRequest,
     ItemResponse,
+    PaginatedItemsResponse,
+    PaginatedUsersResponse,
     UserResponse,
     WorkerCommandRequest,
     WorkerCommandResponse,
@@ -230,25 +232,43 @@ def create_app(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _template_response(definition, record)
 
-    @app.get("/internal/game/users", response_model=list[UserResponse])
+    @app.get("/internal/game/users", response_model=PaginatedUsersResponse)
     def game_users(
         _: Annotated[None, Depends(authorize)],
-    ) -> list[UserResponse]:
-        return [
-            UserResponse(
-                platform_id=record.platform_id,
-                display_name=record.display_name,
-                balance=record.balance,
-                joined_at=record.joined_at,
-            )
-            for record in repository.list_users()
-        ]
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> PaginatedUsersResponse:
+        records, total = repository.list_users_page(page, page_size)
+        return PaginatedUsersResponse(
+            items=[
+                UserResponse(
+                    platform_id=record.platform_id,
+                    display_name=record.display_name,
+                    balance=record.balance,
+                    joined_at=record.joined_at,
+                )
+                for record in records
+            ],
+            page=page,
+            page_size=page_size,
+            total=total,
+            pages=(total + page_size - 1) // page_size,
+        )
 
-    @app.get("/internal/game/items", response_model=list[ItemResponse])
+    @app.get("/internal/game/items", response_model=PaginatedItemsResponse)
     def game_items(
         _: Annotated[None, Depends(authorize)],
-    ) -> list[ItemResponse]:
-        return [_item_response(record) for record in repository.list_active_items()]
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> PaginatedItemsResponse:
+        records, total = repository.list_active_items_page(page, page_size)
+        return PaginatedItemsResponse(
+            items=[_item_response(record) for record in records],
+            page=page,
+            page_size=page_size,
+            total=total,
+            pages=(total + page_size - 1) // page_size,
+        )
 
     @app.post(
         "/internal/game/items", response_model=ItemResponse, status_code=201

@@ -297,6 +297,45 @@ def test_activity_counts_joined_non_command_text_without_whitespace(repository, 
     assert repository.personal_activity("u1", now).level == 1
 
 
+def test_user_page_returns_newest_records_and_total(repository, now):
+    for index in range(21):
+        repository.create_user(
+            f"u-{index}", f"员工{index}", now + timedelta(minutes=index), 0
+        )
+
+    users, total = repository.list_users_page(1, 20)
+    final_page, final_total = repository.list_users_page(2, 20)
+
+    assert total == 21
+    assert [user.display_name for user in users] == [
+        f"员工{index}" for index in range(20, 0, -1)
+    ]
+    assert final_total == 21
+    assert [user.display_name for user in final_page] == ["员工0"]
+
+
+def test_item_page_returns_newest_records_and_total(repository, session_factory, now):
+    from dzmm_bot.core.schema import ItemRecord
+
+    with session_factory.begin() as session:
+        for index in range(21):
+            session.add(
+                ItemRecord(
+                    name=f"物品{index}",
+                    description="说明",
+                    price=index,
+                    stock=1,
+                    enabled=True,
+                    created_at=now + timedelta(minutes=index),
+                )
+            )
+
+    items, total = repository.list_active_items_page(2, 20)
+
+    assert total == 21
+    assert [item.name for item in items] == ["物品0"]
+
+
 def test_daily_jobs_backfill_current_day_history_and_legacy_checkin_income(
     repository, session_factory
 ):

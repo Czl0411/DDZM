@@ -124,17 +124,52 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
         "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助"
     }
     assert disabled.json()["enabled"] is False
-    assert employees.json() == []
+    assert employees.json() == {
+        "items": [],
+        "page": 1,
+        "page_size": 20,
+        "total": 0,
+        "pages": 0,
+    }
     assert created_item.status_code == 201
-    assert items.json() == [
-        {
-            "name": "工位午睡券",
-            "description": "眯十分钟。",
-            "price": 5,
-            "stock": 3,
-            "enabled": True,
-        }
-    ]
+    assert items.json() == {
+        "items": [
+            {
+                "name": "工位午睡券",
+                "description": "眯十分钟。",
+                "price": 5,
+                "stock": 3,
+                "enabled": True,
+            }
+        ],
+        "page": 1,
+        "page_size": 20,
+        "total": 1,
+        "pages": 1,
+    }
+
+
+def test_game_management_returns_paginated_employees_and_items(
+    app_context, client, headers
+):
+    for index in range(21):
+        app_context.repository.create_user(
+            f"u-{index}", f"员工{index}", NOW + timedelta(minutes=index), 0
+        )
+        app_context.repository.add_item(f"物品{index}", "说明", index, 1)
+
+    employees = client.get("/internal/game/users?page=2&page_size=20", headers=headers)
+    items = client.get("/internal/game/items?page=2&page_size=20", headers=headers)
+
+    assert employees.status_code == 200
+    assert employees.json()["page"] == 2
+    assert employees.json()["page_size"] == 20
+    assert employees.json()["total"] == 21
+    assert employees.json()["pages"] == 2
+    assert len(employees.json()["items"]) == 1
+    assert items.status_code == 200
+    assert items.json()["total"] == 21
+    assert len(items.json()["items"]) == 1
 
 
 def test_game_settings_can_be_read_and_updated(client, headers):

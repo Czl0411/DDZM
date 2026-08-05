@@ -29,6 +29,10 @@ class AdminCorePort(Protocol):
 
     def set_game_settings(self, settings: dict) -> dict: ...
 
+    def get_activity_settings(self) -> dict: ...
+
+    def set_activity_settings(self, settings: dict) -> dict: ...
+
 
 class CoreClient:
     def __init__(
@@ -94,6 +98,14 @@ class CoreClient:
 
     def set_game_settings(self, settings: dict) -> dict:
         response = self._client.patch("/internal/game/settings", json=settings)
+        response.raise_for_status()
+        return response.json()
+
+    def get_activity_settings(self) -> dict:
+        return self._get("/internal/game/activity-settings")
+
+    def set_activity_settings(self, settings: dict) -> dict:
+        response = self._client.patch("/internal/game/activity-settings", json=settings)
         response.raise_for_status()
         return response.json()
 

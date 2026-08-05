@@ -38,6 +38,19 @@ class FakeCore:
             "reset_time_label": "北京时间 00:00",
         }
     )
+    activity_settings: dict = field(
+        default_factory=lambda: {
+            "rules": [
+                {
+                    "level": level,
+                    "character_threshold": level * 10,
+                    "reward": level,
+                }
+                for level in range(1, 11)
+            ],
+            "report_times": ["12:00", "16:00", "20:00", "23:59"],
+        }
+    )
 
     def status(self):
         return {
@@ -90,6 +103,13 @@ class FakeCore:
     def set_game_settings(self, settings):
         self.game_settings = {**settings, "reset_time_label": "北京时间 00:00"}
         return self.game_settings
+
+    def get_activity_settings(self):
+        return self.activity_settings
+
+    def set_activity_settings(self, settings):
+        self.activity_settings = settings
+        return self.activity_settings
 
 
 class FakeConsole:
@@ -201,6 +221,8 @@ def headers():
         ("post", "/api/session"),
         ("patch", "/api/game/command-templates"),
         ("get", "/api/game/settings"),
+        ("get", "/api/game/activity-settings"),
+        ("patch", "/api/game/activity-settings"),
         ("get", "/login-console"),
     ],
 )
@@ -263,6 +285,31 @@ def test_admin_proxies_game_settings(client, headers, core):
     assert initial.json()["currency_name"] == "摸鱼币"
     assert updated.json()["currency_name"] == "工分"
     assert core.game_settings["checkin_reward"] == 7
+
+
+def test_admin_proxies_activity_settings(client, headers, core):
+    initial = client.get("/api/game/activity-settings", headers=headers)
+    updated = client.patch(
+        "/api/game/activity-settings",
+        headers=headers,
+        json={
+            "rules": core.activity_settings["rules"],
+            "report_times": ["09:30", "18:00"],
+        },
+    )
+
+    assert initial.json()["report_times"] == ["12:00", "16:00", "20:00", "23:59"]
+    assert updated.json()["report_times"] == ["09:30", "18:00"]
+
+
+def test_admin_page_exposes_activity_settings_modal(client):
+    page = client.get("/").text
+    script = client.get("/static/admin.js").text
+
+    assert 'id="edit-activity-settings"' in page
+    assert 'id="activity-settings-modal"' in page
+    assert "openActivitySettingsModal" in script
+    assert "/api/game/activity-settings" in script
 
 
 def test_admin_relay_updates_a_command_template(client, headers, core):

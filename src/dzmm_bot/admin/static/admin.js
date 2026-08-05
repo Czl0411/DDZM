@@ -2,6 +2,7 @@ let token = sessionStorage.getItem("dzmm-admin-token") || "";
 let currentState = "unknown";
 let consoleLoading = false;
 let gameSettings = null;
+let activitySettings = null;
 
 const loginScreen = document.querySelector("#login-screen");
 const dashboard = document.querySelector("#dashboard");
@@ -23,6 +24,9 @@ const settingsModal = document.querySelector("#settings-modal");
 const settingsCurrencyName = document.querySelector("#settings-currency-name");
 const settingsOnboardingBonus = document.querySelector("#settings-onboarding-bonus");
 const settingsCheckinReward = document.querySelector("#settings-checkin-reward");
+const activitySettingsModal = document.querySelector("#activity-settings-modal");
+const activityRuleInputs = document.querySelector("#activity-rule-inputs");
+const incomeReportTimeInputs = document.querySelector("#income-report-time-inputs");
 
 function headers() {
   return {"X-Admin-Token": token};
@@ -62,6 +66,10 @@ function closeSettingsModal() {
   settingsModal.hidden = true;
 }
 
+function closeActivitySettingsModal() {
+  activitySettingsModal.hidden = true;
+}
+
 function renderSettings(settings) {
   document.querySelector("#settings-card").innerHTML = `
     <article><span>货币名称</span><strong>${escapeHtml(settings.currency_name)}</strong><small>余额、打卡和商店的计价单位</small></article>
@@ -69,10 +77,23 @@ function renderSettings(settings) {
     <article><span>每日打卡奖励</span><strong>${settings.checkin_reward}</strong><small>${escapeHtml(settings.reset_time_label)} 重置</small></article>`;
 }
 
+function renderActivitySettings(settings) {
+  document.querySelector("#activity-settings-card").innerHTML = `
+    <article><span>活跃等级</span><strong>LV1–LV10</strong><small>按累计有效字数结算</small></article>
+    <article><span>最高每日奖励</span><strong>${settings.rules.at(-1).reward}</strong><small>达到最高等级后自动入账</small></article>
+    <article><span>收益榜推送</span><strong>${settings.report_times.length} 个时段</strong><small>${escapeHtml(settings.report_times.join(" · "))}（北京时间）</small></article>`;
+}
+
 async function loadSettings() {
   gameSettings = await requestGame("/api/game/settings");
   renderSettings(gameSettings);
   return gameSettings;
+}
+
+async function loadActivitySettings() {
+  activitySettings = await requestGame("/api/game/activity-settings");
+  renderActivitySettings(activitySettings);
+  return activitySettings;
 }
 
 async function openSettingsModal() {
@@ -82,6 +103,20 @@ async function openSettingsModal() {
   settingsCheckinReward.value = settings.checkin_reward;
   settingsModal.hidden = false;
   settingsCurrencyName.focus();
+}
+
+function renderActivitySettingsInputs() {
+  activityRuleInputs.innerHTML = activitySettings.rules.map((rule) => `
+    <div class="activity-rule-row"><b>LV${rule.level}</b><label>累计字数<input data-activity-threshold type="number" min="0" value="${rule.character_threshold}"></label><label>奖励<input data-activity-reward type="number" min="0" max="999" value="${rule.reward}"></label></div>`).join("");
+  incomeReportTimeInputs.innerHTML = activitySettings.report_times.map((reportTime) => `
+    <div class="income-report-time-row"><input data-income-report-time type="time" value="${escapeHtml(reportTime)}"><button class="text-button" data-remove-income-report-time type="button">删除</button></div>`).join("");
+}
+
+async function openActivitySettingsModal() {
+  const settings = activitySettings || await loadActivitySettings();
+  activitySettings = settings;
+  renderActivitySettingsInputs();
+  activitySettingsModal.hidden = false;
 }
 
 function openTemplateModal(button) {
@@ -132,7 +167,7 @@ async function loadGameView(view) {
   try {
     if (view === "overview") return refresh();
     if (view === "settings") {
-      await loadSettings();
+      await Promise.all([loadSettings(), loadActivitySettings()]);
       return;
     }
     if (view === "commands") {
@@ -276,6 +311,7 @@ document.querySelector("#logout").addEventListener("click", () => {
 document.querySelector("#refresh").addEventListener("click", refresh);
 document.querySelector("#open-login-console").addEventListener("click", openConsole);
 document.querySelector("#edit-settings").addEventListener("click", () => void openSettingsModal());
+document.querySelector("#edit-activity-settings").addEventListener("click", () => void openActivitySettingsModal());
 for (const button of document.querySelectorAll("button[data-action]")) {
   button.addEventListener("click", () => submitAction(button));
 }
@@ -357,9 +393,49 @@ settingsModal.addEventListener("click", async (event) => {
     setResult(`保存失败（${error.message}）`, "error");
   }
 });
+activitySettingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-activity-settings-modal]")) {
+    closeActivitySettingsModal();
+    return;
+  }
+  if (event.target.closest("[data-remove-income-report-time]")) {
+    activitySettings.report_times.splice([...incomeReportTimeInputs.querySelectorAll("[data-remove-income-report-time]")].indexOf(event.target.closest("[data-remove-income-report-time]")), 1);
+    renderActivitySettingsInputs();
+    return;
+  }
+  if (event.target.id === "add-income-report-time") {
+    activitySettings.report_times.push("12:00");
+    renderActivitySettingsInputs();
+    return;
+  }
+  if (event.target.id !== "save-activity-settings-modal") return;
+  const rules = [...activityRuleInputs.querySelectorAll(".activity-rule-row")].map((row, index) => ({
+    level: index + 1,
+    character_threshold: Number(row.querySelector("[data-activity-threshold]").value),
+    reward: Number(row.querySelector("[data-activity-reward]").value),
+  }));
+  const report_times = [...incomeReportTimeInputs.querySelectorAll("[data-income-report-time]")].map((input) => input.value);
+  if (!report_times.length || new Set(report_times).size !== report_times.length || report_times.some((value) => !value)) {
+    setResult("请至少保留一个不重复的推送时段", "error");
+    return;
+  }
+  try {
+    activitySettings = await requestGame("/api/game/activity-settings", {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({rules, report_times}),
+    });
+    renderActivitySettings(activitySettings);
+    closeActivitySettingsModal();
+    setResult("日活跃度规则已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !templateModal.hidden) closeTemplateModal();
   if (event.key === "Escape" && !settingsModal.hidden) closeSettingsModal();
+  if (event.key === "Escape" && !activitySettingsModal.hidden) closeActivitySettingsModal();
 });
 document.querySelector("#item-form").addEventListener("submit", async (event) => {
   event.preventDefault();

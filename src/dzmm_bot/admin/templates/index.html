@@ -110,6 +110,15 @@
                   <button id="edit-settings" class="primary" type="button">编辑经济规则</button>
                 </div>
                 <div id="settings-card" class="settings-card" aria-live="polite"></div>
+                <hr>
+                <div class="panel-heading">
+                  <div>
+                    <h2>日活跃度</h2>
+                    <p class="muted">配置等级门槛、每日奖励与今日收益榜推送时段。</p>
+                  </div>
+                  <button id="edit-activity-settings" class="primary" type="button">编辑日活跃度</button>
+                </div>
+                <div id="activity-settings-card" class="settings-card" aria-live="polite"></div>
               </section>
             </article>
 
@@ -206,6 +215,27 @@
         <div class="template-modal-actions">
           <button class="secondary" data-close-settings-modal type="button">取消</button>
           <button id="save-settings-modal" class="primary" type="button">保存设置</button>
+        </div>
+      </section>
+    </div>
+    <div id="activity-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="activity-settings-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-activity-settings-modal></div>
+      <section class="template-modal-card activity-settings-modal-card">
+        <div class="template-modal-heading">
+          <div>
+            <p class="eyebrow">玩法配置</p>
+            <h2 id="activity-settings-modal-title">编辑日活跃度</h2>
+            <p class="muted">玩家只看到等级；累计字数仅用于运营配置。所有时间均为北京时间。</p>
+          </div>
+          <button class="text-button" data-close-activity-settings-modal type="button" aria-label="关闭日活跃度窗口">关闭</button>
+        </div>
+        <div id="activity-rule-inputs" class="activity-rule-inputs"></div>
+        <label>今日收益榜推送时段</label>
+        <div id="income-report-time-inputs" class="income-report-time-inputs"></div>
+        <button id="add-income-report-time" class="secondary" type="button">添加推送时段</button>
+        <div class="template-modal-actions">
+          <button class="secondary" data-close-activity-settings-modal type="button">取消</button>
+          <button id="save-activity-settings-modal" class="primary" type="button">保存设置</button>
         </div>
       </section>
     </div>

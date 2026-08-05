@@ -74,7 +74,14 @@ input { width: 100%; padding: 12px 13px; border: 1px solid #cfd6e4; border-radiu
 .template-modal-heading { align-items: start; }
 .template-modal-heading p { margin-bottom: 0; }
 .template-modal-card textarea, .template-modal-card select { width: 100%; min-height: 42px; padding: 10px 12px; color: var(--ink); border: 1px solid #cfd6e4; border-radius: 8px; outline-color: var(--accent); }
+.template-modal-card input { width: 100%; min-height: 42px; padding: 10px 12px; color: var(--ink); border: 1px solid #cfd6e4; border-radius: 8px; outline-color: var(--accent); }
 .template-modal-card textarea { min-height: 150px; resize: vertical; }
+.activity-settings-modal-card { width: min(100%, 760px); max-height: calc(100vh - 40px); overflow: auto; }
+.activity-rule-inputs, .income-report-time-inputs { display: grid; gap: 10px; }
+.activity-rule-row { display: grid; grid-template-columns: 72px 1fr 1fr; gap: 10px; align-items: end; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbff; }
+.activity-rule-row label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
+.income-report-time-row { display: flex; gap: 10px; align-items: center; }
+.income-report-time-row input { width: 150px; }
 .item-form { grid-template-columns: 1fr 1.4fr 100px 100px auto; align-items: end; margin-top: 22px; }
 .status-card, .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 5px 20px rgba(25,36,61,.025); }
 .status-card { min-height: 140px; padding: 23px; }

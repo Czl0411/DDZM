@@ -156,6 +156,25 @@ def create_app(
         except HTTPStatusError as error:
             raise HTTPException(error.response.status_code, error.response.text)
 
+    @app.get("/api/game/activity-settings")
+    def activity_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return core.get_activity_settings()
+
+    @app.patch("/api/game/activity-settings")
+    def set_activity_settings(
+        request: dict, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        if not isinstance(request.get("rules"), list) or not isinstance(
+            request.get("report_times"), list
+        ):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        try:
+            return core.set_activity_settings(
+                {"rules": request["rules"], "report_times": request["report_times"]}
+            )
+        except HTTPStatusError as error:
+            raise HTTPException(error.response.status_code, error.response.text)
+
     @app.post("/api/session", status_code=status.HTTP_204_NO_CONTENT)
     def create_console_session(
         response: Response, _: Annotated[None, Depends(authorize)]

@@ -286,6 +286,66 @@ def test_system_outbound_can_be_claimed(repository, now):
     assert claimed.inbound_message_id is None
 
 
+def test_activity_counts_joined_non_command_text_without_whitespace(repository, now):
+    repository.create_user("u1", "小明", now, 0)
+
+    repository.record_activity("u1", now, "你 好\n！")
+    repository.record_activity("u1", now, "/我")
+    repository.record_activity("unknown", now, "一二三四五六七八九十")
+    repository.record_activity("u1", now, "甲乙丙丁戊己庚")
+
+    assert repository.personal_activity("u1", now).level == 1
+
+
+def test_activity_settings_reject_non_increasing_thresholds(repository):
+    from dzmm_bot.core.repository import ActivityLevelRule
+
+    with pytest.raises(ValueError, match="门槛"):
+        repository.set_activity_settings(
+            [ActivityLevelRule(level, 10, level) for level in range(1, 11)],
+            ["12:00"],
+        )
+
+
+def test_activity_settlement_is_once_and_negative_does_not_reduce_today_income(
+    repository,
+):
+    from dzmm_bot.core.schema import BEIJING
+
+    yesterday = datetime(2026, 8, 5, 23, 59, tzinfo=BEIJING)
+    today = datetime(2026, 8, 6, 0, 0, tzinfo=BEIJING)
+    user, _ = repository.create_user("u1", "小明", yesterday, 0)
+    repository.record_activity("u1", yesterday, "一二三四五六七八九十")
+
+    repository.run_daily_jobs(today)
+    repository.record_balance_change(
+        user.id, -4, "penalty", datetime(2026, 8, 6, 1, 0, tzinfo=BEIJING)
+    )
+
+    assert repository.find_user("u1").balance == -3
+    assert repository.today_income(
+        user.id, datetime(2026, 8, 6, 2, 0, tzinfo=BEIJING)
+    ) == 1
+    repository.run_daily_jobs(today + timedelta(minutes=1))
+    assert repository.find_user("u1").balance == -3
+
+
+def test_due_income_report_is_queued_once_and_empty_slot_is_skipped(repository, now):
+    from dzmm_bot.core.schema import BEIJING
+
+    repository.run_daily_jobs(datetime(2026, 8, 5, 12, 0, tzinfo=BEIJING))
+    assert repository.claim_outbound("worker-a", now, 30) is None
+
+    repository.create_user(
+        "u1", "小明", datetime(2026, 8, 5, 13, 0, tzinfo=BEIJING), 3
+    )
+    repository.run_daily_jobs(datetime(2026, 8, 5, 16, 0, tzinfo=BEIJING))
+
+    assert repository.claim_outbound("worker-a", now, 30).text.startswith("今日收益榜")
+    repository.run_daily_jobs(datetime(2026, 8, 5, 16, 1, tzinfo=BEIJING))
+    assert repository.claim_outbound("worker-b", now, 30) is None
+
+
 @pytest.mark.parametrize(
     "currency_name,onboarding_bonus,checkin_reward",
     [("", 0, 5), (" " * 13, 0, 5), ("工分", -1, 5), ("工分", 0, 1000)],

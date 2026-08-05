@@ -3,9 +3,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import re
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
@@ -15,10 +16,15 @@ from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
 from .reply_templates import TEMPLATE_DEFINITIONS, validate_template
 from .schema import (
     ActivityLevelRuleRecord,
+    ActivityRewardSettlementRecord,
+    BalanceTransactionRecord,
+    BEIJING,
     CommandDefinitionRecord,
     CommandReplyTemplateRecord,
+    DailyActivityRecord,
     DailyCheckinRecord,
     GameSettingsRecord,
+    IncomeReportDeliveryRecord,
     IncomeReportScheduleRecord,
     InboundRecord,
     ItemRecord,
@@ -59,6 +65,12 @@ class ActivityLevelRule:
 class ActivitySettings:
     rules: list[ActivityLevelRule]
     report_times: list[str]
+
+
+@dataclass(frozen=True)
+class PersonalActivity:
+    level: int
+    reward: int
 
 
 _COMMAND_DEFINITIONS = (
@@ -337,6 +349,291 @@ class CoreRepository:
             report_times=report_times,
         )
 
+    def set_activity_settings(
+        self, rules: list[ActivityLevelRule], report_times: list[str]
+    ) -> ActivitySettings:
+        if len(rules) != 10 or [rule.level for rule in rules] != list(range(1, 11)):
+            raise ValueError("活跃度规则必须包含 LV1 至 LV10")
+        thresholds = [rule.character_threshold for rule in rules]
+        if any(
+            not isinstance(threshold, int) or threshold < 0
+            for threshold in thresholds
+        ) or thresholds != sorted(thresholds) or len(set(thresholds)) != len(thresholds):
+            raise ValueError("字数门槛必须为严格递增的非负整数")
+        if any(
+            not isinstance(rule.reward, int) or not 0 <= rule.reward <= 999
+            for rule in rules
+        ):
+            raise ValueError("活跃度奖励需在 0 至 999 之间")
+        if not report_times or len(set(report_times)) != len(report_times):
+            raise ValueError("收益榜推送时段不能为空且不能重复")
+        if any(
+            re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", report_time) is None
+            for report_time in report_times
+        ):
+            raise ValueError("收益榜推送时段必须为 HH:MM")
+        with self._session() as session:
+            session.execute(delete(ActivityLevelRuleRecord))
+            session.add_all(
+                [
+                    ActivityLevelRuleRecord(
+                        level=rule.level,
+                        character_threshold=rule.character_threshold,
+                        reward=rule.reward,
+                    )
+                    for rule in rules
+                ]
+            )
+            session.execute(delete(IncomeReportScheduleRecord))
+            session.add_all(
+                [IncomeReportScheduleRecord(report_time=report_time) for report_time in report_times]
+            )
+        return self.get_activity_settings()
+
+    def record_activity(
+        self, platform_id: str, received_at: datetime, content: str
+    ) -> None:
+        if content.lstrip().startswith("/"):
+            return
+        character_count = len("".join(content.split()))
+        if not character_count:
+            return
+        activity_date = received_at.astimezone(BEIJING).date()
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return
+            values = {
+                "id": uuid4(),
+                "user_id": user.id,
+                "activity_date": activity_date,
+                "character_count": character_count,
+            }
+            dialect_name = session.get_bind().dialect.name
+            if dialect_name == "postgresql":
+                statement = postgresql_insert(DailyActivityRecord).values(**values)
+            elif dialect_name == "sqlite":
+                statement = sqlite_insert(DailyActivityRecord).values(**values)
+            else:
+                raise ValueError(f"unsupported database dialect: {dialect_name}")
+            session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[
+                        DailyActivityRecord.user_id,
+                        DailyActivityRecord.activity_date,
+                    ],
+                    set_={
+                        "character_count": DailyActivityRecord.character_count
+                        + character_count
+                    },
+                )
+            )
+
+    def personal_activity(
+        self, platform_id: str, now: datetime
+    ) -> PersonalActivity | None:
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return None
+            record = session.scalar(
+                select(DailyActivityRecord).where(
+                    DailyActivityRecord.user_id == user.id,
+                    DailyActivityRecord.activity_date == now.astimezone(BEIJING).date(),
+                )
+            )
+            character_count = 0 if record is None else record.character_count
+        settings = self.get_activity_settings()
+        matching_rules = [
+            rule
+            for rule in settings.rules
+            if rule.character_threshold <= character_count
+        ]
+        if not matching_rules:
+            return PersonalActivity(level=0, reward=0)
+        rule = matching_rules[-1]
+        return PersonalActivity(level=rule.level, reward=rule.reward)
+
+    def _apply_balance_change(
+        self, user: UserRecord, amount: int, source: str, occurred_at: datetime
+    ) -> None:
+        if amount == 0:
+            return
+        user.balance += amount
+        session = self._active_session.get()
+        if session is None:
+            raise RuntimeError("balance change requires an active transaction")
+        session.add(
+            BalanceTransactionRecord(
+                user_id=user.id,
+                amount=amount,
+                source=source,
+                occurred_at=occurred_at,
+            )
+        )
+
+    def record_balance_change(
+        self, user_id: UUID, amount: int, source: str, occurred_at: datetime
+    ) -> None:
+        with self.transaction():
+            with self._session() as session:
+                user = session.get(UserRecord, user_id)
+                if user is None:
+                    raise ValueError("员工不存在")
+                self._apply_balance_change(user, amount, source, occurred_at)
+
+    def today_income(self, user_id: UUID, now: datetime) -> int:
+        start = now.astimezone(BEIJING).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end = start + timedelta(days=1)
+        with self._session() as session:
+            income = session.scalar(
+                select(func.coalesce(func.sum(BalanceTransactionRecord.amount), 0)).where(
+                    BalanceTransactionRecord.user_id == user_id,
+                    BalanceTransactionRecord.amount > 0,
+                    BalanceTransactionRecord.occurred_at >= start,
+                    BalanceTransactionRecord.occurred_at < end,
+                )
+            )
+            return int(income)
+
+    def run_daily_jobs(self, now: datetime) -> None:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            self._settle_activity_rewards(now)
+            self._enqueue_due_income_reports(now)
+
+    def _settle_activity_rewards(self, now: datetime) -> None:
+        settings = self.get_activity_settings()
+        with self._session() as session:
+            activities = list(
+                session.scalars(
+                    select(DailyActivityRecord).where(
+                        DailyActivityRecord.activity_date < now.date()
+                    )
+                )
+            )
+            dialect_name = session.get_bind().dialect.name
+            for activity in activities:
+                matching_rules = [
+                    rule
+                    for rule in settings.rules
+                    if rule.character_threshold <= activity.character_count
+                ]
+                level = 0 if not matching_rules else matching_rules[-1].level
+                reward = 0 if not matching_rules else matching_rules[-1].reward
+                values = {
+                    "id": uuid4(),
+                    "user_id": activity.user_id,
+                    "activity_date": activity.activity_date,
+                    "level": level,
+                    "reward": reward,
+                    "settled_at": now,
+                }
+                if dialect_name == "postgresql":
+                    statement = postgresql_insert(ActivityRewardSettlementRecord).values(
+                        **values
+                    )
+                elif dialect_name == "sqlite":
+                    statement = sqlite_insert(ActivityRewardSettlementRecord).values(
+                        **values
+                    )
+                else:
+                    raise ValueError(f"unsupported database dialect: {dialect_name}")
+                settlement_id = session.scalar(
+                    statement.on_conflict_do_nothing(
+                        index_elements=[
+                            ActivityRewardSettlementRecord.user_id,
+                            ActivityRewardSettlementRecord.activity_date,
+                        ]
+                    ).returning(ActivityRewardSettlementRecord.id)
+                )
+                if settlement_id is None:
+                    continue
+                user = session.get(UserRecord, activity.user_id)
+                if user is None:
+                    raise RuntimeError("employee disappeared")
+                self._apply_balance_change(user, reward, "activity_reward", now)
+
+    def _enqueue_due_income_reports(self, now: datetime) -> None:
+        settings = self.get_activity_settings()
+        current_time = now.strftime("%H:%M")
+        with self._session() as session:
+            for report_time in settings.report_times:
+                if report_time > current_time:
+                    continue
+                existing = session.scalar(
+                    select(IncomeReportDeliveryRecord).where(
+                        IncomeReportDeliveryRecord.report_date == now.date(),
+                        IncomeReportDeliveryRecord.report_time == report_time,
+                    )
+                )
+                if existing is not None:
+                    continue
+                rankings = self._income_rankings(session, now)
+                if not rankings:
+                    session.add(
+                        IncomeReportDeliveryRecord(
+                            report_date=now.date(),
+                            report_time=report_time,
+                            status="skipped",
+                        )
+                    )
+                    continue
+                outbound = OutboundRecord(
+                    inbound_message_id=None,
+                    text=self._income_report_text(rankings, report_time),
+                )
+                session.add(outbound)
+                session.flush()
+                session.add(
+                    IncomeReportDeliveryRecord(
+                        report_date=now.date(),
+                        report_time=report_time,
+                        status="queued",
+                        outbound_message_id=outbound.id,
+                    )
+                )
+
+    def _income_rankings(self, session: Session, now: datetime) -> list[tuple[str, int]]:
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        income = func.sum(BalanceTransactionRecord.amount).label("income")
+        return [
+            (display_name, int(total))
+            for display_name, total in session.execute(
+                select(UserRecord.display_name, income)
+                .join(
+                    BalanceTransactionRecord,
+                    BalanceTransactionRecord.user_id == UserRecord.id,
+                )
+                .where(
+                    BalanceTransactionRecord.amount > 0,
+                    BalanceTransactionRecord.occurred_at >= start,
+                    BalanceTransactionRecord.occurred_at < end,
+                )
+                .group_by(UserRecord.id, UserRecord.display_name)
+                .order_by(income.desc(), UserRecord.id)
+                .limit(10)
+            )
+        ]
+
+    def _income_report_text(
+        self, rankings: list[tuple[str, int]], report_time: str
+    ) -> str:
+        currency_name = self.get_game_settings().currency_name
+        lines = [f"今日收益榜（{report_time}）"]
+        lines.extend(
+            f"{index}. {display_name}：{income} {currency_name}"
+            for index, (display_name, income) in enumerate(rankings, start=1)
+        )
+        return "\n".join(lines)
+
     def set_game_settings(
         self, currency_name: str, onboarding_bonus: int, checkin_reward: int
     ) -> GameSettingsRecord:
@@ -367,53 +664,58 @@ class CoreRepository:
     def create_user(
         self, platform_id: str, display_name: str, joined_at: datetime, initial_balance: int
     ) -> tuple[UserRecord, bool]:
-        with self._session() as session:
-            existing = session.scalar(
-                select(UserRecord).where(UserRecord.platform_id == platform_id)
-            )
-            if existing is not None:
-                return existing, False
-            record = UserRecord(
-                platform_id=platform_id,
-                display_name=display_name,
-                balance=initial_balance,
-                joined_at=joined_at,
-            )
-            session.add(record)
-            session.flush()
-            return record, True
+        with self.transaction():
+            with self._session() as session:
+                existing = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if existing is not None:
+                    return existing, False
+                record = UserRecord(
+                    platform_id=platform_id,
+                    display_name=display_name,
+                    balance=0,
+                    joined_at=joined_at,
+                )
+                session.add(record)
+                session.flush()
+                self._apply_balance_change(
+                    record, initial_balance, "onboarding", joined_at
+                )
+                return record, True
 
     def check_in(self, user: UserRecord, checked_in_at: datetime, reward: int) -> bool:
-        with self._session() as session:
-            employee = session.get(UserRecord, user.id)
-            if employee is None:
-                raise RuntimeError("employee disappeared")
-            values = {
-                "id": uuid4(),
-                "user_id": employee.id,
-                "checkin_date": checked_in_at.date(),
-                "checked_in_at": checked_in_at,
-            }
-            dialect_name = session.get_bind().dialect.name
-            if dialect_name == "postgresql":
-                statement = postgresql_insert(DailyCheckinRecord).values(**values)
-            elif dialect_name == "sqlite":
-                statement = sqlite_insert(DailyCheckinRecord).values(**values)
-            else:
-                raise ValueError(f"unsupported database dialect: {dialect_name}")
-            inserted_id = session.scalar(
-                statement.on_conflict_do_nothing(
-                    index_elements=[
-                        DailyCheckinRecord.user_id,
-                        DailyCheckinRecord.checkin_date,
-                    ]
-                ).returning(DailyCheckinRecord.id)
-            )
-            if inserted_id is None:
-                return False
-            employee.balance += reward
-            session.flush()
-            return True
+        with self.transaction():
+            with self._session() as session:
+                employee = session.get(UserRecord, user.id)
+                if employee is None:
+                    raise RuntimeError("employee disappeared")
+                values = {
+                    "id": uuid4(),
+                    "user_id": employee.id,
+                    "checkin_date": checked_in_at.date(),
+                    "checked_in_at": checked_in_at,
+                }
+                dialect_name = session.get_bind().dialect.name
+                if dialect_name == "postgresql":
+                    statement = postgresql_insert(DailyCheckinRecord).values(**values)
+                elif dialect_name == "sqlite":
+                    statement = sqlite_insert(DailyCheckinRecord).values(**values)
+                else:
+                    raise ValueError(f"unsupported database dialect: {dialect_name}")
+                inserted_id = session.scalar(
+                    statement.on_conflict_do_nothing(
+                        index_elements=[
+                            DailyCheckinRecord.user_id,
+                            DailyCheckinRecord.checkin_date,
+                        ]
+                    ).returning(DailyCheckinRecord.id)
+                )
+                if inserted_id is None:
+                    return False
+                self._apply_balance_change(employee, reward, "checkin", checked_in_at)
+                session.flush()
+                return True
 
     def list_users(self) -> list[UserRecord]:
         with self._session() as session:

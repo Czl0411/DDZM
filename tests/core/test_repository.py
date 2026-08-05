@@ -438,6 +438,27 @@ def test_template_validation_rejects_a_variable_unavailable_to_its_scenario():
         validate_template("/余额", "shown", "{商店列表}")
 
 
+def test_manual_login_lease_is_exclusive_and_expires(repository):
+    from dzmm_bot.core.repository import ManualLoginBusyError
+    from dzmm_bot.core.schema import BEIJING
+
+    now = datetime(2026, 8, 5, 12, tzinfo=BEIJING)
+    lease = repository.start_manual_login("alice-id", "alice", now)
+
+    assert lease.operator_name == "alice"
+    with pytest.raises(ManualLoginBusyError):
+        repository.start_manual_login("bob-id", "bob", now)
+
+    start = repository.claim_worker_command("worker", now, 30)
+    assert start.command == "start_auth"
+    assert repository.complete_worker_command(
+        start.id, "worker", start.lease_token, "completed", now
+    )
+    assert repository.manual_login_lease(now + timedelta(seconds=181)) is None
+    command = repository.claim_worker_command("worker", now + timedelta(seconds=181), 30)
+    assert command.command == "cancel_auth"
+
+
 @pytest.fixture
 def migrated_postgres_url():
     database_url = os.environ.get("TEST_DATABASE_URL")
@@ -484,6 +505,7 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         "admin_accounts",
         "admin_sessions",
         "admin_idempotency_records",
+        "manual_login_leases",
     } <= set(inspector.get_table_names())
     assert "ux_inbound_messages_platform_message_id" in {
         index["name"] for index in inspector.get_indexes("inbound_messages")

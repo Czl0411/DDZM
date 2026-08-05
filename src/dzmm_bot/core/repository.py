@@ -28,6 +28,7 @@ from .schema import (
     IncomeReportScheduleRecord,
     InboundRecord,
     ItemRecord,
+    ManualLoginLeaseRecord,
     OutboundRecord,
     UserItemRecord,
     UserRecord,
@@ -71,6 +72,21 @@ class ActivitySettings:
 class PersonalActivity:
     level: int
     reward: int
+
+
+@dataclass(frozen=True)
+class ManualLoginLease:
+    operator_id: str
+    operator_name: str
+    expires_at: datetime
+
+
+class ManualLoginBusyError(RuntimeError):
+    pass
+
+
+class ManualLoginOwnerError(RuntimeError):
+    pass
 
 
 _COMMAND_DEFINITIONS = (
@@ -960,6 +976,75 @@ class CoreRepository:
             )
             return confirmed_id is not None
 
+    def start_manual_login(
+        self, operator_id: str, operator_name: str, now: datetime
+    ) -> ManualLoginLease:
+        with self.transaction():
+            self._expire_manual_login_lease(now)
+            with self._session() as session:
+                current = session.scalar(
+                    select(ManualLoginLeaseRecord)
+                    .where(ManualLoginLeaseRecord.id == 1)
+                    .with_for_update()
+                )
+                if current is not None:
+                    raise ManualLoginBusyError("manual login is already active")
+                record = ManualLoginLeaseRecord(
+                    id=1,
+                    operator_id=operator_id,
+                    operator_name=operator_name,
+                    expires_at=now + timedelta(minutes=3),
+                )
+                session.add(record)
+                self.enqueue_worker_command("start_auth")
+                session.flush()
+                return ManualLoginLease(
+                    record.operator_id, record.operator_name, record.expires_at
+                )
+
+    def finish_manual_login(self, operator_id: str, now: datetime) -> None:
+        with self.transaction():
+            self._expire_manual_login_lease(now)
+            with self._session() as session:
+                current = session.get(ManualLoginLeaseRecord, 1)
+                if current is None or current.operator_id != operator_id:
+                    raise ManualLoginOwnerError("manual login is not owned by actor")
+                session.delete(current)
+                self.enqueue_worker_command("finish_auth")
+
+    def cancel_manual_login(self, now: datetime) -> bool:
+        with self.transaction():
+            self._expire_manual_login_lease(now)
+            with self._session() as session:
+                current = session.get(ManualLoginLeaseRecord, 1)
+                if current is None:
+                    return False
+                session.delete(current)
+                self.enqueue_worker_command("cancel_auth")
+                return True
+
+    def manual_login_lease(self, now: datetime) -> ManualLoginLease | None:
+        with self.transaction():
+            self._expire_manual_login_lease(now)
+            with self._session() as session:
+                record = session.get(ManualLoginLeaseRecord, 1)
+                if record is None:
+                    return None
+                return ManualLoginLease(
+                    record.operator_id, record.operator_name, record.expires_at
+                )
+
+    def _expire_manual_login_lease(self, now: datetime) -> None:
+        with self._session() as session:
+            current = session.scalar(
+                select(ManualLoginLeaseRecord)
+                .where(ManualLoginLeaseRecord.id == 1)
+                .with_for_update()
+            )
+            if current is not None and current.expires_at <= now:
+                session.delete(current)
+                self.enqueue_worker_command("cancel_auth")
+
     def enqueue_worker_command(self, command: str) -> WorkerCommandRecord:
         with self._session() as session:
             record = WorkerCommandRecord(command=command)
@@ -1025,32 +1110,34 @@ class CoreRepository:
     def record_worker_heartbeat(
         self, heartbeat: WorkerHeartbeat
     ) -> WorkerInstanceRecord:
-        with self._session() as session:
-            values = dict(
-                id=uuid4(),
-                worker_id=heartbeat.worker_id,
-                login_state=heartbeat.login_state.value,
-                recorded_at=heartbeat.recorded_at,
-            )
-            dialect_name = session.get_bind().dialect.name
-            if dialect_name == "postgresql":
-                statement = postgresql_insert(WorkerInstanceRecord).values(**values)
-            elif dialect_name == "sqlite":
-                statement = sqlite_insert(WorkerInstanceRecord).values(**values)
-            else:
-                raise ValueError(f"unsupported database dialect: {dialect_name}")
-            upsert = statement.on_conflict_do_update(
-                index_elements=[WorkerInstanceRecord.worker_id],
-                set_={
-                    "login_state": statement.excluded.login_state,
-                    "recorded_at": statement.excluded.recorded_at,
-                },
-            ).returning(WorkerInstanceRecord.id)
-            record_id = session.scalar(upsert)
-            record = session.get(WorkerInstanceRecord, record_id)
-            if record is None:
-                raise RuntimeError("persisted worker heartbeat disappeared")
-            return record
+        with self.transaction():
+            self._expire_manual_login_lease(heartbeat.recorded_at)
+            with self._session() as session:
+                values = dict(
+                    id=uuid4(),
+                    worker_id=heartbeat.worker_id,
+                    login_state=heartbeat.login_state.value,
+                    recorded_at=heartbeat.recorded_at,
+                )
+                dialect_name = session.get_bind().dialect.name
+                if dialect_name == "postgresql":
+                    statement = postgresql_insert(WorkerInstanceRecord).values(**values)
+                elif dialect_name == "sqlite":
+                    statement = sqlite_insert(WorkerInstanceRecord).values(**values)
+                else:
+                    raise ValueError(f"unsupported database dialect: {dialect_name}")
+                upsert = statement.on_conflict_do_update(
+                    index_elements=[WorkerInstanceRecord.worker_id],
+                    set_={
+                        "login_state": statement.excluded.login_state,
+                        "recorded_at": statement.excluded.recorded_at,
+                    },
+                ).returning(WorkerInstanceRecord.id)
+                record_id = session.scalar(upsert)
+                record = session.get(WorkerInstanceRecord, record_id)
+                if record is None:
+                    raise RuntimeError("persisted worker heartbeat disappeared")
+                return record
 
     def queue_counts(self) -> dict[str, int]:
         with self._session() as session:

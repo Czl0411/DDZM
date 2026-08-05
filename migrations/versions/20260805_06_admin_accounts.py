@@ -50,9 +50,18 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("actor_key", "key_hash"),
     )
+    op.create_table(
+        "manual_login_leases",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("operator_id", sa.String(length=64), nullable=False),
+        sa.Column("operator_name", sa.String(length=32), nullable=False),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_table("manual_login_leases")
     op.drop_table("admin_idempotency_records")
     op.drop_table("admin_sessions")
     op.drop_table("admin_accounts")

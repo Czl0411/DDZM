@@ -174,12 +174,24 @@ class DailyJobsRequest(ApiModel):
     now: AwareDatetime
 
 
+class ManualLoginActorRequest(ApiModel):
+    operator_id: str = Field(min_length=1, max_length=64)
+    operator_name: str = Field(min_length=1, max_length=32)
+
+
+class ManualLoginLeaseResponse(ApiModel):
+    operator_id: str
+    operator_name: str
+    expires_at: datetime
+
+
 WorkerCommandKind = Literal[
     "pause_listening",
     "resume_listening",
     "restart_browser",
     "start_auth",
     "finish_auth",
+    "cancel_auth",
 ]
 
 

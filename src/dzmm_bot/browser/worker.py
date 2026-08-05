@@ -154,6 +154,12 @@ class BrowserWorker:
                 self._auth_loss_reported = False
                 self._auth_backoff = 1
                 self._manual_auth_confirmed = True
+            elif command.command == "cancel_auth":
+                self._desktop.stop()
+                self._gateway = None
+                self._login_state = LoginState.AUTH_REQUIRED
+                self._listening = True
+                self._manual_auth_confirmed = False
             else:
                 raise ValueError(f"unsupported worker command: {command.command}")
         except Exception:

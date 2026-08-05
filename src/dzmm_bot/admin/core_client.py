@@ -9,6 +9,14 @@ class AdminCorePort(Protocol):
 
     def login_state(self) -> str | None: ...
 
+    def get_manual_login_lease(self) -> dict | None: ...
+
+    def start_manual_login(self, operator_id: str, operator_name: str) -> dict: ...
+
+    def finish_manual_login(self, operator_id: str, operator_name: str) -> dict: ...
+
+    def cancel_manual_login(self) -> dict: ...
+
     def enqueue_command(self, command: str) -> dict: ...
 
     def list_game_commands(self) -> list[dict]: ...
@@ -54,6 +62,20 @@ class CoreClient:
     def login_state(self) -> str | None:
         heartbeat = self._get("/internal/login-state")
         return None if heartbeat is None else heartbeat["login_state"]
+
+    def get_manual_login_lease(self) -> dict | None:
+        return self._get("/internal/admin/login/lease")
+
+    def start_manual_login(self, operator_id: str, operator_name: str) -> dict:
+        return self._post_manual_login("start", operator_id, operator_name)
+
+    def finish_manual_login(self, operator_id: str, operator_name: str) -> dict:
+        return self._post_manual_login("finish", operator_id, operator_name)
+
+    def cancel_manual_login(self) -> dict:
+        response = self._client.post("/internal/admin/login/cancel")
+        response.raise_for_status()
+        return response.json()
 
     def enqueue_command(self, command: str) -> dict:
         response = self._client.post(
@@ -115,6 +137,16 @@ class CoreClient:
 
     def _get(self, path: str, params: dict | None = None):
         response = self._client.get(path, params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def _post_manual_login(
+        self, action: str, operator_id: str, operator_name: str
+    ) -> dict:
+        response = self._client.post(
+            f"/internal/admin/login/{action}",
+            json={"operator_id": operator_id, "operator_name": operator_name},
+        )
         response.raise_for_status()
         return response.json()
 

@@ -28,6 +28,8 @@ from .api_models import (
     HeartbeatResponse,
     InboundRequest,
     InboundResponse,
+    ManualLoginActorRequest,
+    ManualLoginLeaseResponse,
     OutboundClaimResponse,
     QueueCountsResponse,
     SentRequest,
@@ -44,7 +46,13 @@ from .api_models import (
 )
 from .database import create_session_factory
 from .commands import GroupCommandHandler
-from .repository import ActivityLevelRule, CoreRepository
+from .repository import (
+    ActivityLevelRule,
+    CoreRepository,
+    ManualLoginBusyError,
+    ManualLoginLease,
+    ManualLoginOwnerError,
+)
 from .reply_templates import definitions_for_command, template_definition
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
@@ -339,6 +347,52 @@ def create_app(
         repository.run_daily_jobs(request.now)
         return AcceptedResponse(accepted=True)
 
+    @app.get(
+        "/internal/admin/login/lease",
+        response_model=ManualLoginLeaseResponse | None,
+    )
+    def manual_login_lease(
+        _: Annotated[None, Depends(authorize)],
+    ) -> ManualLoginLeaseResponse | None:
+        lease = repository.manual_login_lease(clock())
+        return None if lease is None else _manual_login_lease_response(lease)
+
+    @app.post(
+        "/internal/admin/login/start", response_model=ManualLoginLeaseResponse
+    )
+    def start_manual_login(
+        request: ManualLoginActorRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> ManualLoginLeaseResponse:
+        try:
+            lease = repository.start_manual_login(
+                request.operator_id, request.operator_name, clock()
+            )
+        except ManualLoginBusyError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error))
+        return _manual_login_lease_response(lease)
+
+    @app.post(
+        "/internal/admin/login/finish", response_model=AcceptedResponse
+    )
+    def finish_manual_login(
+        request: ManualLoginActorRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        try:
+            repository.finish_manual_login(request.operator_id, clock())
+        except ManualLoginOwnerError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error))
+        return AcceptedResponse(accepted=True)
+
+    @app.post(
+        "/internal/admin/login/cancel", response_model=AcceptedResponse
+    )
+    def cancel_manual_login(
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.cancel_manual_login(clock()))
+
     @app.post("/internal/worker-commands", response_model=WorkerCommandResponse)
     def enqueue_worker_command(
         request: WorkerCommandRequest, _: Annotated[None, Depends(authorize)]
@@ -412,6 +466,14 @@ def _heartbeat_response(record: WorkerInstanceRecord) -> HeartbeatResponse:
         worker_id=record.worker_id,
         login_state=record.login_state,
         recorded_at=record.recorded_at,
+    )
+
+
+def _manual_login_lease_response(lease: ManualLoginLease) -> ManualLoginLeaseResponse:
+    return ManualLoginLeaseResponse(
+        operator_id=lease.operator_id,
+        operator_name=lease.operator_name,
+        expires_at=lease.expires_at,
     )
 
 

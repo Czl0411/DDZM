@@ -104,6 +104,26 @@ def test_heartbeat_response_uses_beijing_time(client, headers):
     assert response.json()["recorded_at"] == "2026-08-04T20:00:00+08:00"
 
 
+def test_manual_login_api_allows_one_operator_and_any_cancellation(client, headers):
+    started = client.post(
+        "/internal/admin/login/start",
+        headers=headers,
+        json={"operator_id": "alice-id", "operator_name": "alice"},
+    )
+    blocked = client.post(
+        "/internal/admin/login/start",
+        headers=headers,
+        json={"operator_id": "bob-id", "operator_name": "bob"},
+    )
+    cancelled = client.post("/internal/admin/login/cancel", headers=headers)
+
+    assert started.status_code == 200
+    assert started.json()["operator_name"] == "alice"
+    assert blocked.status_code == 409
+    assert cancelled.status_code == 200
+    assert client.get("/internal/admin/login/lease", headers=headers).json() is None
+
+
 def test_game_management_lists_commands_employees_and_shop_items(client, headers):
     commands = client.get("/internal/game/commands", headers=headers)
     disabled = client.patch(

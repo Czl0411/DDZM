@@ -204,6 +204,21 @@ def test_lifecycle_commands_touch_only_the_expected_processes(
     assert (desktop.starts, desktop.stops) == (desktop_starts, desktop_stops)
 
 
+def test_cancel_auth_closes_desktop_and_restores_the_persisted_browser(context):
+    worker, _, session, desktop, core, _ = context
+    core.commands = [
+        WorkerCommand(COMMAND_ID, "start_auth", LEASE),
+        WorkerCommand(UUID(int=4), "cancel_auth", UUID(int=5)),
+    ]
+
+    worker.run_once()
+    worker.run_once()
+
+    assert (desktop.starts, desktop.stops) == (1, 1)
+    assert (session.starts, session.stops) == (1, 1)
+    assert worker.login_state is LoginState.READY
+
+
 def test_authentication_loss_transitions_once_and_backs_off_bounded(context):
     worker, gateway, _, _, core, sleeps = context
     gateway.authenticated = False

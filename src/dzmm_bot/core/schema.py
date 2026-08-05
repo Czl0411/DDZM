@@ -301,6 +301,15 @@ class LoginSessionRecord(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
 
 
+class ManualLoginLeaseRecord(Base):
+    __tablename__ = "manual_login_leases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    operator_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    operator_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class AuditEventRecord(Base):
     __tablename__ = "audit_events"
 

@@ -140,6 +140,42 @@ def test_full_random_event_sends_a_frozen_formal_opening(
     assert latest_outbound.text.endswith("咖啡洒了一桌，主持人正在组织抢救。")
 
 
+def test_full_random_event_renders_role_variables(repository, session_factory):
+    from dzmm_bot.core.schema import BEIJING, RandomEventRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "茶水间",
+        "今天的公司茶水间随机事件来啦，快点加入吧。",
+        ["{主持}端着咖啡走进茶水间，对{员工}说开始。"],
+        3,
+        1,
+        [("主持", 1), ("员工", 2)],
+    )
+    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_user("u2", "小红", now, 0)
+    repository.create_user("u3", "小李", now, 0)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+
+    assert repository.join_random_event("u1", "主持", now) == "joined"
+    assert repository.join_random_event("u2", "员工", now + timedelta(seconds=1)) == "joined"
+    assert repository.join_random_event("u3", "员工", now + timedelta(seconds=2)) == "started"
+
+    with session_factory() as session:
+        event = session.scalar(select(RandomEventRecord))
+
+    assert event.formal_opening_text == "小明端着咖啡走进茶水间，对小红、小李说开始。"
+
+
+def test_scene_rejects_unknown_formal_opening_role(repository):
+    with pytest.raises(ValueError, match="不存在的角色变量"):
+        repository.create_random_event_scene(
+            "茶水间", "快点加入吧。", ["{未知}来了。"], 1, 1, [("主持", 1)]
+        )
+
+
 def test_in_progress_random_event_classifies_observer_parentheses(repository):
     from dzmm_bot.core.schema import BEIJING
 

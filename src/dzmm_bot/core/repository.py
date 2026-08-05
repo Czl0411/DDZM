@@ -68,6 +68,7 @@ _DEFAULT_RANDOM_EVENT_COUNT = 1
 _DEFAULT_RANDOM_EVENT_MINIMUM_INTERVAL_MINUTES = 60
 _DEFAULT_RANDOM_EVENT_SIGNUP_TIMEOUT_MINUTES = 15
 _DEFAULT_RANDOM_EVENT_REMINDER_INTERVAL_MINUTES = 5
+_ROLE_VARIABLE = re.compile(r"\{([^{}]*\S[^{}]*)\}")
 
 
 @dataclass(frozen=True)
@@ -864,6 +865,9 @@ class CoreRepository:
                 session.flush()
                 if self._random_event_is_full(session, event.id):
                     event.state = "in_progress"
+                    event.formal_opening_text = _render_random_event_formal_opening(
+                        session, event
+                    )
                     schedule = session.get(RandomEventScheduleRecord, event.schedule_id)
                     if schedule is not None:
                         schedule.status = "in_progress"
@@ -1975,7 +1979,45 @@ def _validate_random_event_scene(
         raise ValueError("席位角色和人数无效")
     if len({rule.role for rule in rules}) != len(rules):
         raise ValueError("席位角色不能重复")
+    _validate_formal_opening_variables(
+        normalized_openings, {rule.role for rule in rules}
+    )
     return rules, normalized_openings
+
+
+def _validate_formal_opening_variables(openings: list[str], roles: set[str]) -> None:
+    unknown = {
+        match.group(1)
+        for opening in openings
+        for match in _ROLE_VARIABLE.finditer(opening)
+    } - roles
+    if unknown:
+        raise ValueError(
+            f"正式剧情开场白包含不存在的角色变量：{'、'.join(sorted(unknown))}"
+        )
+
+
+def _render_random_event_formal_opening(
+    session: Session, event: RandomEventRecord
+) -> str:
+    names_by_role: dict[str, list[str]] = {}
+    for role, display_name in session.execute(
+        select(RandomEventParticipantRecord.role, UserRecord.display_name)
+        .join(UserRecord, UserRecord.id == RandomEventParticipantRecord.user_id)
+        .where(
+            RandomEventParticipantRecord.event_id == event.id,
+            RandomEventParticipantRecord.left_at.is_(None),
+        )
+        .order_by(
+            RandomEventParticipantRecord.joined_at,
+            RandomEventParticipantRecord.id,
+        )
+    ):
+        names_by_role.setdefault(role, []).append(display_name)
+    return _ROLE_VARIABLE.sub(
+        lambda match: "、".join(names_by_role.get(match.group(1), [])),
+        event.formal_opening_text,
+    )
 
 
 def _is_parenthesized_observer_message(content: str) -> bool:

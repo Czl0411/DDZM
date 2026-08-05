@@ -592,7 +592,7 @@ document.querySelector("#cancel-login").addEventListener("click", async (event) 
 document.querySelector("#edit-settings").addEventListener("click", () => void openSettingsModal());
 document.querySelector("#edit-activity-settings").addEventListener("click", () => void openActivitySettingsModal());
 document.querySelector("#edit-random-event-settings").addEventListener("click", () => void openRandomEventSettingsModal());
-document.querySelector("#create-random-event-scene").addEventListener("click", openRandomEventSceneModal);
+document.querySelector("#create-random-event-scene").addEventListener("click", () => openRandomEventSceneModal());
 document.querySelector("#refresh-random-events").addEventListener("click", async (event) => {
   try {
     await runMutation(event.currentTarget, "刷新中…", loadRandomEvents);
@@ -778,6 +778,12 @@ randomEventSceneModal.addEventListener("click", async (event) => {
     return;
   }
   if (event.target.id !== "save-random-event-scene") return;
+  const name = document.querySelector("#random-event-scene-name").value.trim();
+  const openingText = document.querySelector("#random-event-scene-opening").value.trim();
+  if (!name || !openingText) {
+    setResult("请填写场景名称和开场文案", "error");
+    return;
+  }
   const seats = [...randomEventSceneSeats.querySelectorAll(".scene-seat-row")].map((row) => ({
     role: row.querySelector("[data-random-event-role]").value.trim(),
     capacity: Number(row.querySelector("[data-random-event-capacity]").value),
@@ -795,8 +801,8 @@ randomEventSceneModal.addEventListener("click", async (event) => {
         {
         method: sceneId ? "PUT" : "POST", headers: {"Content-Type": "application/json", ...configurationHeaders()},
         body: JSON.stringify({
-          name: document.querySelector("#random-event-scene-name").value.trim(),
-          opening_text: document.querySelector("#random-event-scene-opening").value.trim(),
+          name,
+          opening_text: openingText,
           target_rounds: Number(document.querySelector("#random-event-scene-rounds").value),
           reward: Number(document.querySelector("#random-event-scene-reward").value), seats,
           ...(sceneId ? {enabled: randomEventSceneModal.dataset.enabled === "true"} : {}),

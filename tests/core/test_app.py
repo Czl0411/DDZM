@@ -672,3 +672,20 @@ def test_random_event_settings_are_available_through_internal_api(client, header
 
     assert response.status_code == 200
     assert response.json()["events_per_day"] == 2
+
+
+def test_random_event_scene_is_created_through_internal_api(client, headers):
+    response = client.post(
+        "/internal/game/random-events/scenes",
+        headers=headers,
+        json={
+            "name": "茶水间",
+            "opening_text": "咖啡机突然发出一声巨响。",
+            "reward": 4,
+            "target_rounds": 10,
+            "seats": [{"role": "员工", "capacity": 2}],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["seats"] == [{"role": "员工", "capacity": 2}]

@@ -530,6 +530,7 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert "/api/game/items?page=${page}&page_size=${pageSize}" in script
     assert '"保存中…"' in script
     assert '"上架中…"' in script
+    assert "请填写场景名称和开场文案" in script
 
 
 def test_admin_accepts_the_browser_item_form_json_body(client, headers):

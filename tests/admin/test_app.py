@@ -7,6 +7,18 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 
+def _page(items, page, page_size):
+    total = len(items)
+    start = (page - 1) * page_size
+    return {
+        "items": items[start : start + page_size],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "pages": (total + page_size - 1) // page_size,
+    }
+
+
 @dataclass
 class FakeCore:
     login_state_value: str = "ready"
@@ -87,11 +99,11 @@ class FakeCore:
         reply["template"] = template
         return reply
 
-    def list_game_users(self):
-        return self.employees
+    def list_game_users(self, page, page_size):
+        return _page(self.employees, page, page_size)
 
-    def list_game_items(self):
-        return self.items
+    def list_game_items(self, page, page_size):
+        return _page(self.items, page, page_size)
 
     def create_game_item(self, item):
         item = {**item, "enabled": True}
@@ -273,6 +285,36 @@ def test_admin_dashboard_exposes_game_navigation_and_proxies_game_data(
     assert commands.json()[0]["command"] == "/打卡"
     assert disabled.json()["enabled"] is False
     assert item.status_code == 201
+
+
+def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):
+    core.employees = [
+        {
+            "platform_id": f"user-{index}",
+            "display_name": f"员工{index}",
+            "balance": 5,
+            "joined_at": "2026-08-05T09:00:00+08:00",
+        }
+        for index in range(21)
+    ]
+    core.items = [
+        {
+            "name": f"午休券{index}",
+            "description": "可安心休息十分钟。",
+            "price": 5,
+            "stock": 1,
+            "enabled": True,
+        }
+        for index in range(21)
+    ]
+
+    employees = client.get("/api/game/users?page=2&page_size=20", headers=headers)
+    items = client.get("/api/game/items?page=2&page_size=20", headers=headers)
+
+    assert employees.json()["page"] == 2
+    assert employees.json()["items"][0]["display_name"] == "员工20"
+    assert items.json()["page_size"] == 20
+    assert items.json()["items"][0]["name"] == "午休券20"
 
 
 def test_admin_accepts_the_browser_item_form_json_body(client, headers):

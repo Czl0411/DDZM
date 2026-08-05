@@ -19,9 +19,9 @@ class AdminCorePort(Protocol):
         self, command: str, scenario: str, template: str
     ) -> dict: ...
 
-    def list_game_users(self) -> list[dict]: ...
+    def list_game_users(self, page: int, page_size: int) -> dict: ...
 
-    def list_game_items(self) -> list[dict]: ...
+    def list_game_items(self, page: int, page_size: int) -> dict: ...
 
     def create_game_item(self, item: dict) -> dict: ...
 
@@ -82,11 +82,15 @@ class CoreClient:
         response.raise_for_status()
         return response.json()
 
-    def list_game_users(self) -> list[dict]:
-        return self._get("/internal/game/users")
+    def list_game_users(self, page: int, page_size: int) -> dict:
+        return self._get(
+            "/internal/game/users", params={"page": page, "page_size": page_size}
+        )
 
-    def list_game_items(self) -> list[dict]:
-        return self._get("/internal/game/items")
+    def list_game_items(self, page: int, page_size: int) -> dict:
+        return self._get(
+            "/internal/game/items", params={"page": page, "page_size": page_size}
+        )
 
     def create_game_item(self, item: dict) -> dict:
         response = self._client.post("/internal/game/items", json=item)
@@ -109,8 +113,8 @@ class CoreClient:
         response.raise_for_status()
         return response.json()
 
-    def _get(self, path: str):
-        response = self._client.get(path)
+    def _get(self, path: str, params: dict | None = None):
+        response = self._client.get(path, params=params)
         response.raise_for_status()
         return response.json()
 

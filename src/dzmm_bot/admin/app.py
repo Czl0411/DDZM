@@ -9,6 +9,7 @@ from fastapi import (
     FastAPI,
     Header,
     HTTPException,
+    Query,
     Request,
     Response,
     WebSocket,
@@ -124,12 +125,20 @@ def create_app(
             raise HTTPException(error.response.status_code, error.response.text)
 
     @app.get("/api/game/users")
-    def game_users(_: Annotated[None, Depends(authorize)]) -> list[dict]:
-        return core.list_game_users()
+    def game_users(
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        return core.list_game_users(page, page_size)
 
     @app.get("/api/game/items")
-    def game_items(_: Annotated[None, Depends(authorize)]) -> list[dict]:
-        return core.list_game_items()
+    def game_items(
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        return core.list_game_items(page, page_size)
 
     @app.post("/api/game/items", status_code=status.HTTP_201_CREATED)
     async def create_game_item(

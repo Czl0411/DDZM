@@ -132,4 +132,3 @@ def downgrade() -> None:
     op.drop_table("daily_activities")
     op.drop_table("income_report_schedules")
     op.drop_table("activity_level_rules")
-

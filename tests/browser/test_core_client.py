@@ -32,4 +32,3 @@ def test_core_client_runs_daily_jobs():
         "path": "/internal/daily-jobs/run",
         "payload": {"now": now.isoformat()},
     }
-

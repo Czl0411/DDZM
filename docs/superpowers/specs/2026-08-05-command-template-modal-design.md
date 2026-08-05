@@ -2,16 +2,16 @@
 
 ## Goal
 
-Keep the command library compact by moving reply-template editing into a
-single modal dialog.
+Keep the command library compact by moving all reply-template scenario details
+and editing into a single modal dialog.
 
 ## Scope
 
-- Each template scenario shows a short current-template preview and an
-  **编辑** button in the command library.
-- Clicking **编辑** opens one modal for that command and scenario.
-- The modal contains the editable multiline template, its allowed variable
-  buttons, **取消**, and **保存**.
+- Each command shows only its name, description, enable/disable control, and
+  one **配置回复** button in the command library.
+- Clicking **配置回复** opens one modal for that command.
+- The modal contains a scenario selector, the selected scenario's multiline
+  template, its allowed variable buttons, **取消**, and **保存**.
 - Saving uses the existing protected template endpoint. On success, the modal
   closes, the command list reloads, and the existing success message appears.
 - Cancelling, clicking the backdrop, or pressing Escape closes the modal
@@ -24,8 +24,9 @@ variables, API contracts, or the command enable/disable control.
 
 ## Verification
 
-- Static admin UI test asserts that the editor controls are rendered inside a
-  modal and that save requests keep the existing endpoint and payload.
+- Static admin UI test asserts that the command page exposes only the command
+  editor trigger while the scenario selector and editor controls are rendered
+  inside the modal. Save requests keep the existing endpoint and payload.
 - Existing core and admin API tests remain unchanged and pass.
 - Manual check: open one editor, insert a variable, save, and confirm the
   modal closes and the preview updates.

@@ -2,22 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move command reply-template editing from the command-library cards into a save-and-close modal.
+**Goal:** Move all command reply-template scenario details and editing from the command-library cards into a save-and-close modal.
 
-**Architecture:** Keep the existing `/api/game/command-templates` request unchanged. Render a compact scenario preview and an edit trigger in each command card; store the selected command, scenario, template, and variables in the modal's DOM fields. The modal alone owns variable insertion and save/cancel/close behavior.
+**Architecture:** Keep the existing `/api/game/command-templates` request unchanged. Render only one command-level **配置回复** trigger in each command card; carry that command's template scenarios into the modal and use its selector to load the selected template and allowed variables. The modal alone owns variable insertion and save/cancel/close behavior.
 
 **Tech Stack:** FastAPI static HTML, vanilla JavaScript, CSS, pytest TestClient asset tests.
 
 ## Global Constraints
 
 - Do not change reply-template data, validation, variables, API contracts, or group-command behavior.
-- Save success must close the modal and reload the command-library preview.
+- Save success must close the modal and reload the command-library card.
 - Escape, backdrop click, and cancel must close without saving.
 - Use the existing protected `PATCH /api/game/command-templates` endpoint and payload.
 
 ---
 
-### Task 1: Render and operate the command-template modal
+### Task 1: Render and operate the command-level template modal
 
 **Files:**
 - Modify: `src/dzmm_bot/admin/templates/index.html`
@@ -27,17 +27,18 @@
 
 **Interfaces:**
 - Consumes: command API template values `{scenario, label, template, variables}`.
-- Produces: a modal with `#template-modal`, `#template-modal-input`, and a save control that sends `{command, scenario, template}` to `PATCH /api/game/command-templates`.
+- Produces: a modal with `#template-modal`, `#template-modal-scenario`, `#template-modal-input`, and a save control that sends `{command, scenario, template}` to `PATCH /api/game/command-templates`.
 
 - [x] **Step 1: Write the failing UI asset test**
 
 ```python
-def test_command_library_uses_a_modal_template_editor(client):
+def test_command_library_keeps_template_scenarios_inside_a_modal(client):
     page = client.get("/")
     script = client.get("/static/admin.js")
 
     assert 'id="template-modal"' in page.text
-    assert "data-edit-template" in script.text
+    assert 'id="template-modal-scenario"' in page.text
+    assert "data-command-templates" in script.text
     assert "closeTemplateModal" in script.text
 ```
 
@@ -45,7 +46,7 @@ def test_command_library_uses_a_modal_template_editor(client):
 
 Run: `.venv/bin/python -m pytest -q tests/admin/test_app.py::test_command_library_uses_a_modal_template_editor`
 
-Expected: FAIL because the modal and modal controller do not exist.
+Expected: FAIL because the scenario selector and command-level modal trigger do not exist.
 
 - [x] **Step 3: Implement the minimal modal UI**
 
@@ -55,19 +56,20 @@ function closeTemplateModal() {
 }
 
 function openTemplateModal(button) {
-  templateModal.dataset.command = button.dataset.templateCommand;
-  templateModal.dataset.scenario = button.dataset.templateScenario;
-  templateInput.value = button.dataset.template;
+  templateModal.dataset.command = button.dataset.command;
+  templateModal.dataset.templates = button.dataset.commandTemplates;
+  templateModalScenario.value = JSON.parse(button.dataset.commandTemplates)[0].scenario;
+  loadTemplateScenario();
   templateModal.hidden = false;
   templateInput.focus();
 }
 ```
 
-Replace inline textareas and save buttons with a preview plus
-`data-edit-template` trigger. Put the textarea, variable buttons, cancel, and
-save controls in `#template-modal`; its save handler performs the existing
-request, calls `closeTemplateModal()`, reloads `commands`, and reports the
-existing success message.
+Replace all inline scenario sections with one `data-command-templates` trigger.
+Put the scenario selector, textarea, variable buttons, cancel, and save
+controls in `#template-modal`; its save handler performs the existing request,
+calls `closeTemplateModal()`, reloads `commands`, and reports the existing
+success message.
 
 - [x] **Step 4: Run the focused test to verify it passes**
 

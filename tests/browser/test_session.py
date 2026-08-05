@@ -111,6 +111,21 @@ def test_session_attaches_to_the_existing_desktop_browser(tmp_path):
     assert chromium.calls == [{"cdp_url": "http://127.0.0.1:19222"}]
 
 
+def test_attached_desktop_opens_configured_group_chat(tmp_path):
+    context = FakeContext("https://chat.example/chat")
+    chromium = FakeChromium(context)
+    session = BrowserSession(
+        tmp_path / "profile",
+        "https://chat.example/login",
+        chat_url="https://chat.example/chat?c=group-1",
+        playwright_factory=lambda: FakePlaywright(chromium),
+    )
+
+    session.attach_existing()
+
+    assert context.pages[0].url == "https://chat.example/chat?c=group-1"
+
+
 def test_headless_session_prefers_a_restored_page_over_a_blank_page(tmp_path):
     context = FakeContext("about:blank")
     context.pages.append(FakePage("https://chat.example/room"))

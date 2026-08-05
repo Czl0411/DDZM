@@ -43,3 +43,11 @@ def test_settings_treats_an_empty_login_url_as_not_configured(monkeypatch):
     monkeypatch.setenv("DZMM_LOGIN_URL", "")
 
     assert Settings.from_environment().login_url is None
+
+
+def test_settings_reads_configured_group_chat_url(monkeypatch):
+    monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
+    monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")
+    monkeypatch.setenv("DZMM_CHAT_URL", "https://chat.example/chat?c=group-1")
+
+    assert Settings.from_environment().chat_url == "https://chat.example/chat?c=group-1"

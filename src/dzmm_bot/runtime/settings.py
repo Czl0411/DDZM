@@ -14,6 +14,7 @@ class Settings:
     browser_cdp_port: int
     admin_web_port: int
     novnc_port: int
+    chat_url: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -34,6 +35,7 @@ class Settings:
             browser_cdp_port=_port("DZMM_BROWSER_CDP_PORT", 19222),
             admin_web_port=_port("DZMM_ADMIN_WEB_PORT", 18090),
             novnc_port=_port("DZMM_NOVNC_PORT", 16080),
+            chat_url=_optional("DZMM_CHAT_URL", empty_as_none=True),
         )
 
 

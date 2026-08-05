@@ -24,6 +24,7 @@ def create_worker(settings: Settings) -> BrowserWorker:
     session = BrowserSession(
         settings.browser_profile,
         settings.login_url,
+        chat_url=settings.chat_url,
         cdp_port=settings.browser_cdp_port,
     )
     worker: BrowserWorker

@@ -25,6 +25,7 @@ class BrowserSession:
         profile_path: Path,
         login_url: str | None,
         *,
+        chat_url: str | None = None,
         cdp_port: int = 19222,
         playwright_factory: Callable | None = None,
     ) -> None:
@@ -32,6 +33,7 @@ class BrowserSession:
             raise ValueError("browser CDP port must be the isolated port 19222")
         self.profile_path = profile_path
         self.login_url = login_url
+        self.chat_url = chat_url
         self.cdp_port = cdp_port
         self._playwright_factory = playwright_factory or _start_playwright
         self._playwright = None
@@ -49,6 +51,7 @@ class BrowserSession:
         self._context = browser.contexts[0]
         self._attached = True
         self._gateway = _PlaywrightGateway(self._context, self.login_url)
+        self._open_group_chat()
         return self._gateway
 
     def start_headless(self) -> ChatGateway:
@@ -76,7 +79,17 @@ class BrowserSession:
         if self.login_url and page.url == "about:blank":
             page.goto(self.login_url)
         self._gateway = _PlaywrightGateway(self._context, self.login_url)
+        self._open_group_chat()
         return self._gateway
+
+    def _open_group_chat(self) -> None:
+        if self.chat_url is None or self._gateway is None:
+            return
+        if not self._gateway.is_authenticated():
+            return
+        page = self._gateway._active_page()
+        if page.url != self.chat_url:
+            page.goto(self.chat_url)
 
     def stop(self) -> None:
         if self._context is not None and not self._attached:

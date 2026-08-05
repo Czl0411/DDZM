@@ -45,9 +45,17 @@ class BrowserSession:
             args=[
                 "--remote-debugging-address=127.0.0.1",
                 f"--remote-debugging-port={self.cdp_port}",
+                "--restore-last-session",
             ],
         )
-        page = self._context.pages[0]
+        page = next(
+            (
+                restored
+                for restored in self._context.pages
+                if restored.url != "about:blank"
+            ),
+            self._context.pages[0],
+        )
         if self.login_url and page.url == "about:blank":
             page.goto(self.login_url)
         self._gateway = _PlaywrightGateway(self._context, self.login_url)

@@ -10,6 +10,9 @@ class FakePage:
     def __init__(self, url):
         self.url = url
 
+    def goto(self, url):
+        self.url = url
+
 
 class FakeContext:
     def __init__(self, url):
@@ -61,6 +64,7 @@ def test_headless_session_uses_owned_profile_and_loopback_cdp(tmp_path):
             "args": [
                 "--remote-debugging-address=127.0.0.1",
                 "--remote-debugging-port=19222",
+                "--restore-last-session",
             ],
         }
     ]
@@ -69,6 +73,20 @@ def test_headless_session_uses_owned_profile_and_loopback_cdp(tmp_path):
 def test_session_rejects_nonstandard_cdp_port(tmp_path):
     with pytest.raises(ValueError, match="19222"):
         BrowserSession(tmp_path / "profile", None, cdp_port=9222)
+
+
+def test_headless_session_prefers_a_restored_page_over_a_blank_page(tmp_path):
+    context = FakeContext("about:blank")
+    context.pages.append(FakePage("https://chat.example/room"))
+    session = BrowserSession(
+        tmp_path / "profile",
+        "https://chat.example/login",
+        playwright_factory=lambda: FakePlaywright(FakeChromium(context)),
+    )
+
+    session.start_headless()
+
+    assert session.login_state() is LoginState.READY
 
 
 def test_login_state_uses_navigation_without_platform_selectors(tmp_path):

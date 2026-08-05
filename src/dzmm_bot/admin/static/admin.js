@@ -1,5 +1,6 @@
 let token = sessionStorage.getItem("dzmm-admin-token") || "";
 let currentState = "unknown";
+let consoleLoading = false;
 
 const loginScreen = document.querySelector("#login-screen");
 const dashboard = document.querySelector("#dashboard");
@@ -62,6 +63,9 @@ function renderStatus(status) {
   document.querySelector("#queue-total").textContent = String(total);
   document.querySelector("#queue-counts").textContent = Object.entries(queue).map(([key, value]) => `${key}: ${value}`).join(" · ") || "队列为空";
   updateControls(currentState);
+  if (currentState === "auth_in_progress" && !consoleFrame.getAttribute("src")) {
+    void openConsole();
+  }
 }
 
 async function refresh() {
@@ -113,13 +117,17 @@ async function waitForLoginDesktop() {
 }
 
 async function openConsole() {
+  if (consoleLoading || consoleFrame.getAttribute("src")) return;
+  consoleLoading = true;
   const response = await fetch("/api/session", {method: "POST", headers: headers()});
   if (!response.ok) {
     setResult(`登录控制台授权失败（${response.status}）`, "error");
+    consoleLoading = false;
     return;
   }
   consoleFrame.src = "/login-console";
   consolePanel.hidden = false;
+  consoleLoading = false;
   consolePanel.scrollIntoView({behavior: "smooth", block: "start"});
   setResult("登录桌面已就绪，请在下方完成验证。", "success");
 }

@@ -120,7 +120,7 @@ def test_activity_counts_joined_non_command_text_without_whitespace(repository, 
     repository.record_activity("u1", now, "你 好\n！")
     repository.record_activity("u1", now, "/我")
     repository.record_activity("unknown", now, "一二三四五六七八九十")
-    repository.record_activity("u1", now, "再来六个字呀")
+    repository.record_activity("u1", now, "甲乙丙丁戊己庚")
 
     assert repository.personal_activity("u1", now).level == 1
 

@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
+import logging
 from time import sleep as default_sleep
 from typing import Protocol
 
@@ -7,6 +8,9 @@ from dzmm_bot.runtime.contracts import LoginState
 
 from .core_client import CorePort, WorkerCommand
 from .session import BrowserSession, ChatGateway
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ManualDesktop(Protocol):
@@ -141,6 +145,7 @@ class BrowserWorker:
             else:
                 raise ValueError(f"unsupported worker command: {command.command}")
         except Exception:
+            _LOGGER.exception("worker command failed: %s", command.command)
             status = "failed"
         self._core.complete_command(
             command.id,

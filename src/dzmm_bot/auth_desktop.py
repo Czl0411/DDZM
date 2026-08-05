@@ -65,10 +65,11 @@ class AuthDesktopController:
         self._readiness_attempts = readiness_attempts
         self._shutdown_attempts = shutdown_attempts
         self.lock = asyncio.Lock()
+        self._loop = asyncio.new_event_loop()
         self._pid_file = runtime_dir / "auth-desktop.json"
 
     def start(self) -> None:
-        asyncio.run(self._start())
+        self._loop.run_until_complete(self._start())
 
     async def _start(self) -> None:
         async with self.lock:
@@ -150,7 +151,7 @@ class AuthDesktopController:
                 raise
 
     def stop(self) -> None:
-        asyncio.run(self._stop())
+        self._loop.run_until_complete(self._stop())
 
     async def _stop(self) -> None:
         async with self.lock:

@@ -150,6 +150,15 @@ def test_controller_exposes_one_asyncio_lock_for_lifecycle(tmp_path):
     assert isinstance(controller.lock, asyncio.Lock)
 
 
+def test_controller_keeps_its_event_loop_alive_while_desktop_is_running(tmp_path):
+    factory = ProcessFactory()
+    controller = make_controller(tmp_path, factory)
+
+    controller.start()
+
+    assert not controller._loop.is_closed()
+
+
 def test_controller_satisfies_the_browser_workers_synchronous_desktop_port(
     tmp_path,
 ):

@@ -29,7 +29,7 @@
 - Consumes: command API template values `{scenario, label, template, variables}`.
 - Produces: a modal with `#template-modal`, `#template-modal-input`, and a save control that sends `{command, scenario, template}` to `PATCH /api/game/command-templates`.
 
-- [ ] **Step 1: Write the failing UI asset test**
+- [x] **Step 1: Write the failing UI asset test**
 
 ```python
 def test_command_library_uses_a_modal_template_editor(client):
@@ -41,13 +41,13 @@ def test_command_library_uses_a_modal_template_editor(client):
     assert "closeTemplateModal" in script.text
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `.venv/bin/python -m pytest -q tests/admin/test_app.py::test_command_library_uses_a_modal_template_editor`
 
 Expected: FAIL because the modal and modal controller do not exist.
 
-- [ ] **Step 3: Implement the minimal modal UI**
+- [x] **Step 3: Implement the minimal modal UI**
 
 ```javascript
 function closeTemplateModal() {
@@ -69,13 +69,13 @@ save controls in `#template-modal`; its save handler performs the existing
 request, calls `closeTemplateModal()`, reloads `commands`, and reports the
 existing success message.
 
-- [ ] **Step 4: Run the focused test to verify it passes**
+- [x] **Step 4: Run the focused test to verify it passes**
 
 Run: `.venv/bin/python -m pytest -q tests/admin/test_app.py::test_command_library_uses_a_modal_template_editor`
 
 Expected: PASS.
 
-- [ ] **Step 5: Run the affected suite and commit**
+- [x] **Step 5: Run the affected suite and commit**
 
 Run: `.venv/bin/python -m pytest -q tests/admin/test_app.py && git diff --check`
 

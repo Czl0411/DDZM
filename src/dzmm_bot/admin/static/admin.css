@@ -59,14 +59,21 @@ input { width: 100%; padding: 12px 13px; border: 1px solid #cfd6e4; border-radiu
 .data-row small { margin-top: 3px; color: var(--muted); }
 .data-row strong { white-space: nowrap; font-size: 14px; }
 .command-card { display: grid; gap: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; }
-.command-heading, .template-actions, .template-heading { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.command-heading, .template-actions, .template-heading, .template-modal-heading, .template-modal-actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
 .command-heading b, .command-heading small, .template-heading b, .template-heading small { display: block; }
 .command-heading small, .template-heading small { margin-top: 3px; color: var(--muted); }
 .template-list { display: grid; gap: 10px; }
-.template-editor { display: grid; gap: 10px; padding: 14px; border-radius: 10px; background: #f8f9fd; border: 1px solid #e9ecf4; }
-.template-editor textarea { width: 100%; min-height: 76px; resize: vertical; padding: 10px 12px; color: var(--ink); border: 1px solid #cfd6e4; border-radius: 8px; outline-color: var(--accent); background: #fff; }
+.template-preview { display: grid; gap: 10px; padding: 14px; border-radius: 10px; background: #f8f9fd; border: 1px solid #e9ecf4; }
+.template-preview-text { margin: 0; color: #3a465c; white-space: pre-wrap; }
+.template-actions small { color: var(--muted); }
 .variable-pills { display: flex; gap: 6px; flex-wrap: wrap; }
 .variable-pill { padding: 5px 8px; color: var(--accent-dark); border: 1px solid #dcd7ff; border-radius: 999px; background: #f0eeff; font-size: 12px; }
+.template-modal { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; }
+.template-modal-backdrop { position: absolute; inset: 0; background: rgba(24, 34, 53, .42); }
+.template-modal-card { position: relative; z-index: 1; display: grid; gap: 14px; width: min(100%, 640px); padding: 26px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+.template-modal-heading { align-items: start; }
+.template-modal-heading p { margin-bottom: 0; }
+.template-modal-card textarea { width: 100%; min-height: 150px; resize: vertical; padding: 10px 12px; color: var(--ink); border: 1px solid #cfd6e4; border-radius: 8px; outline-color: var(--accent); }
 .item-form { grid-template-columns: 1fr 1.4fr 100px 100px auto; align-items: end; margin-top: 22px; }
 .status-card, .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 5px 20px rgba(25,36,61,.025); }
 .status-card { min-height: 140px; padding: 23px; }

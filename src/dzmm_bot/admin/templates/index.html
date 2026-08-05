@@ -119,7 +119,7 @@
               <section id="commands-view" class="dashboard-view panel" hidden>
                 <p class="eyebrow">玩法配置</p>
                 <h2>指令库</h2>
-                <p class="muted">关闭的指令不会回复，也不会产生业务数据；回复模板可立即保存生效。</p>
+                <p class="muted">关闭的指令不会回复，也不会产生业务数据；点击编辑可修改回复模板。</p>
                 <div id="command-list" class="data-list"></div>
               </section>
 
@@ -147,6 +147,26 @@
           <p id="result" class="result" role="status" aria-live="polite"></p>
         </section>
       </main>
+    </div>
+    <div id="template-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="template-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-template-modal></div>
+      <section class="template-modal-card">
+        <div class="template-modal-heading">
+          <div>
+            <p class="eyebrow">回复模板</p>
+            <h2 id="template-modal-title">编辑回复</h2>
+            <p id="template-modal-context" class="muted"></p>
+          </div>
+          <button class="text-button" data-close-template-modal type="button" aria-label="关闭编辑窗口">关闭</button>
+        </div>
+        <label for="template-modal-input">回复内容</label>
+        <textarea id="template-modal-input" rows="7" maxlength="2000"></textarea>
+        <div id="template-modal-variables" class="variable-pills" aria-label="可插入变量"></div>
+        <div class="template-modal-actions">
+          <button class="secondary" data-close-template-modal type="button">取消</button>
+          <button id="save-template-modal" class="primary" type="button">保存</button>
+        </div>
+      </section>
     </div>
     <script src="/static/admin.js"></script>
   </body>

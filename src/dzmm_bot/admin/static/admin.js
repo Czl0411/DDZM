@@ -12,6 +12,11 @@ const stateHelp = document.querySelector("#state-help");
 const loginStep = document.querySelector("#login-step");
 const consolePanel = document.querySelector("#login-console-panel");
 const consoleFrame = document.querySelector("#login-console-frame");
+const templateModal = document.querySelector("#template-modal");
+const templateModalTitle = document.querySelector("#template-modal-title");
+const templateModalContext = document.querySelector("#template-modal-context");
+const templateModalInput = document.querySelector("#template-modal-input");
+const templateModalVariables = document.querySelector("#template-modal-variables");
 
 function headers() {
   return {"X-Admin-Token": token};
@@ -39,6 +44,25 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;",
   })[character]);
+}
+
+function closeTemplateModal() {
+  templateModal.hidden = true;
+  delete templateModal.dataset.command;
+  delete templateModal.dataset.scenario;
+}
+
+function openTemplateModal(button) {
+  templateModal.dataset.command = button.dataset.templateCommand;
+  templateModal.dataset.scenario = button.dataset.templateScenario;
+  templateModalTitle.textContent = `编辑 ${button.dataset.templateCommand} 回复`;
+  templateModalContext.textContent = `${button.dataset.templateLabel} · ${button.dataset.templateScenario}`;
+  templateModalInput.value = button.dataset.template;
+  templateModalVariables.innerHTML = JSON.parse(button.dataset.templateVariables)
+    .map((variable) => `<button class="variable-pill" data-variable="${escapeHtml(variable)}" type="button">${escapeHtml(variable)}</button>`)
+    .join("");
+  templateModal.hidden = false;
+  templateModalInput.focus();
 }
 
 async function requestGame(path, options = {}) {
@@ -70,11 +94,11 @@ async function loadGameView(view) {
           <div class="command-heading"><div><b>${escapeHtml(command.command)}</b><small>${escapeHtml(command.description)}</small></div>
           <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></div>
           <div class="template-list">${command.templates.map((template) => `
-            <section class="template-editor">
+            <section class="template-preview">
               <div class="template-heading"><b>${escapeHtml(template.label)}</b><small>${escapeHtml(template.scenario)}</small></div>
-              <textarea data-template-input="true" rows="3" maxlength="2000" aria-label="${escapeHtml(command.command)} ${escapeHtml(template.label)} 回复模板">${escapeHtml(template.template)}</textarea>
-              <div class="template-actions"><div class="variable-pills">${template.variables.map((variable) => `<button class="variable-pill" data-variable="${escapeHtml(variable)}" type="button">${escapeHtml(variable)}</button>`).join("")}</div>
-              <button class="secondary" data-template-command="${escapeHtml(command.command)}" data-template-scenario="${escapeHtml(template.scenario)}" type="button">保存回复</button></div>
+              <p class="template-preview-text">${escapeHtml(template.template)}</p>
+              <div class="template-actions"><small>可用变量：${template.variables.map(escapeHtml).join(" ") || "无"}</small>
+              <button class="secondary" data-edit-template data-template-command="${escapeHtml(command.command)}" data-template-scenario="${escapeHtml(template.scenario)}" data-template-label="${escapeHtml(template.label)}" data-template="${escapeHtml(template.template)}" data-template-variables="${escapeHtml(JSON.stringify(template.variables))}" type="button">编辑</button></div>
             </section>`).join("")}</div>
         </article>`).join("") || "<p class=\"muted\">暂无指令。</p>";
       return;
@@ -229,34 +253,43 @@ document.querySelector("#command-list").addEventListener("click", async (event) 
     }
     return;
   }
-  const variable = event.target.closest("button[data-variable]");
-  if (variable) {
-    const textarea = variable.closest(".template-editor").querySelector("textarea[data-template-input]");
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    textarea.value = `${textarea.value.slice(0, start)}${variable.dataset.variable}${textarea.value.slice(end)}`;
-    textarea.focus();
-    textarea.selectionStart = textarea.selectionEnd = start + variable.dataset.variable.length;
+  const edit = event.target.closest("button[data-edit-template]");
+  if (edit) openTemplateModal(edit);
+});
+templateModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-template-modal]")) {
+    closeTemplateModal();
     return;
   }
-  const save = event.target.closest("button[data-template-command]");
-  if (!save) return;
-  const textarea = save.closest(".template-editor").querySelector("textarea[data-template-input]");
+  const variable = event.target.closest("button[data-variable]");
+  if (variable) {
+    const start = templateModalInput.selectionStart;
+    const end = templateModalInput.selectionEnd;
+    templateModalInput.value = `${templateModalInput.value.slice(0, start)}${variable.dataset.variable}${templateModalInput.value.slice(end)}`;
+    templateModalInput.focus();
+    templateModalInput.selectionStart = templateModalInput.selectionEnd = start + variable.dataset.variable.length;
+    return;
+  }
+  if (event.target.id !== "save-template-modal") return;
   try {
     await requestGame("/api/game/command-templates", {
       method: "PATCH",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
-        command: save.dataset.templateCommand,
-        scenario: save.dataset.templateScenario,
-        template: textarea.value,
+        command: templateModal.dataset.command,
+        scenario: templateModal.dataset.scenario,
+        template: templateModalInput.value,
       }),
     });
+    closeTemplateModal();
     await loadGameView("commands");
     setResult("回复模板已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
   }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !templateModal.hidden) closeTemplateModal();
 });
 document.querySelector("#item-form").addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -277,12 +277,16 @@ def test_admin_relay_forwards_core_template_validation_failure(client, headers, 
     assert response.json() == {"detail": "invalid template"}
 
 
-def test_command_library_serves_template_editor_controls(client):
-    """Fails if the command library cannot render or save reply templates."""
+def test_command_library_serves_a_modal_template_editor(client):
+    """Fails if administrators can no longer open or close the template editor."""
+    page = client.get("/")
     script = client.get("/static/admin.js")
 
-    assert "data-template-command" in script.text
+    assert 'id="template-modal"' in page.text
+    assert 'id="template-modal-input"' in page.text
+    assert "data-edit-template" in script.text
     assert "data-variable" in script.text
+    assert "closeTemplateModal" in script.text
     assert "/api/game/command-templates" in script.text
 
 

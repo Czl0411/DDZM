@@ -275,6 +275,20 @@ def test_admin_dashboard_exposes_game_navigation_and_proxies_game_data(
     assert item.status_code == 201
 
 
+def test_admin_accepts_the_browser_item_form_json_body(client, headers):
+    response = client.post(
+        "/api/game/items",
+        headers={**headers, "Content-Type": "text/plain;charset=UTF-8"},
+        content=(
+            '{"name":"午休券","description":"可安心休息十分钟。",'
+            '"price":5,"stock":1}'
+        ),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["name"] == "午休券"
+
+
 def test_admin_proxies_game_settings(client, headers, core):
     initial = client.get("/api/game/settings", headers=headers)
     updated = client.patch(

@@ -132,13 +132,17 @@ def create_app(
         return core.list_game_items()
 
     @app.post("/api/game/items", status_code=status.HTTP_201_CREATED)
-    def create_game_item(
-        request: dict, _: Annotated[None, Depends(authorize)]
+    async def create_game_item(
+        request: Request, _: Annotated[None, Depends(authorize)]
     ) -> dict:
-        required = ("name", "description", "price", "stock")
-        if not all(key in request for key in required):
+        try:
+            item = await request.json()
+        except ValueError:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid item")
-        return core.create_game_item({key: request[key] for key in required})
+        required = ("name", "description", "price", "stock")
+        if not isinstance(item, dict) or not all(key in item for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid item")
+        return core.create_game_item({key: item[key] for key in required})
 
     @app.get("/api/game/settings")
     def game_settings(_: Annotated[None, Depends(authorize)]) -> dict:

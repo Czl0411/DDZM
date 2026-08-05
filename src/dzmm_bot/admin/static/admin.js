@@ -443,6 +443,7 @@ document.querySelector("#item-form").addEventListener("submit", async (event) =>
   try {
     await requestGame("/api/game/items", {
       method: "POST",
+      headers: {"Content-Type": "application/json"},
       body: JSON.stringify({...values, price: Number(values.price), stock: Number(values.stock)}),
     });
     event.currentTarget.reset();

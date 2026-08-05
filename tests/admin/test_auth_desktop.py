@@ -157,7 +157,9 @@ def test_stop_closes_the_browser_before_terminating_the_desktop(tmp_path):
 
 def test_start_rejects_an_existing_desktop_pid_file(tmp_path):
     factory = ProcessFactory()
-    controller = make_controller(tmp_path, factory)
+    controller = make_controller(
+        tmp_path, factory, process_group_alive=lambda _pgid: True
+    )
     pid_file = tmp_path / "runtime" / "auth-desktop.json"
     pid_file.parent.mkdir()
     pid_file.write_text(json.dumps({"pids": [10], "process_groups": [110]}))

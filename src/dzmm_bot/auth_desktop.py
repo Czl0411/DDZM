@@ -82,7 +82,10 @@ class AuthDesktopController:
             if not self._browser_stopped():
                 raise RuntimeError("browser worker must be stopped")
             if self._pid_file.exists():
-                raise RuntimeError("authentication desktop is already active")
+                state = json.loads(self._pid_file.read_text())
+                if any(self._process_group_alive(group) for group in state["process_groups"]):
+                    raise RuntimeError("authentication desktop is already active")
+                self._pid_file.unlink()
 
             self._runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             self._profile_dir.mkdir(parents=True, exist_ok=True, mode=0o700)

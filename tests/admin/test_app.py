@@ -1033,3 +1033,10 @@ def test_random_event_scene_script_submits_openings_list():
 
     assert "signup_text: signupText" in script
     assert "openings" in script
+
+
+def test_random_event_scene_script_renders_role_variable_buttons():
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert "renderRandomEventSceneOpeningVariables" in script
+    assert "data-random-event-role-variable" in script

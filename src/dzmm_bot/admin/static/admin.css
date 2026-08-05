@@ -89,6 +89,9 @@ input { width: 100%; padding: 12px 13px; border: 1px solid #cfd6e4; border-radiu
 .scene-seat-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px auto; gap: 8px; align-items: center; }
 .scene-opening-inputs { display: grid; gap: 8px; }
 .scene-opening-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.scene-opening-editor { display: grid; gap: 8px; }
+.scene-opening-variable-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.variable-chip { padding: 5px 8px; color: var(--accent); border: 1px solid #d9d3ff; border-radius: 999px; background: #f5f3ff; font-size: 12px; font-weight: 700; }
 .activity-rule-row { display: grid; grid-template-columns: 72px 1fr 1fr; gap: 10px; align-items: end; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbff; }
 .activity-rule-row label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 .income-report-time-row { display: flex; gap: 10px; align-items: center; }

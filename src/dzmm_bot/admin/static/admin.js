@@ -12,6 +12,7 @@ let randomEventSettings = null;
 let employeePage = 1;
 let shopPage = 1;
 let randomEventScenePage = 1;
+let randomEventSceneOpeningTarget = null;
 
 const pageSize = 20;
 
@@ -185,14 +186,41 @@ function renderRandomEventSceneSeat(role = "", capacity = 1) {
   row.className = "scene-seat-row";
   row.innerHTML = `<input data-random-event-role maxlength="32" placeholder="角色，例如：主持" value="${escapeHtml(role)}"><input data-random-event-capacity type="number" min="1" max="99" value="${capacity}"><button class="text-button" data-remove-random-event-seat type="button">删除</button>`;
   randomEventSceneSeats.append(row);
+  renderRandomEventSceneOpeningVariables();
 }
 
 function renderRandomEventSceneOpening(value = "") {
   const row = document.createElement("div");
   row.className = "scene-opening-row";
-  row.innerHTML = '<textarea data-random-event-formal-opening rows="4" maxlength="2000" placeholder="例如：咖啡洒了一桌，主持人正在组织抢救。"></textarea><button class="text-button" data-remove-random-event-opening type="button">删除</button>';
+  row.innerHTML = '<div class="scene-opening-editor"><textarea data-random-event-formal-opening rows="4" maxlength="2000" placeholder="例如：咖啡洒了一桌，主持人正在组织抢救。"></textarea><div class="scene-opening-variable-buttons"></div></div><button class="text-button" data-remove-random-event-opening type="button">删除</button>';
   row.querySelector("textarea").value = value;
   randomEventSceneOpenings.append(row);
+  renderRandomEventSceneOpeningVariables();
+}
+
+function renderRandomEventSceneOpeningVariables() {
+  const roles = [...new Set([...randomEventSceneSeats.querySelectorAll("[data-random-event-role]")]
+    .map((input) => input.value.trim())
+    .filter(Boolean))];
+  randomEventSceneOpenings.querySelectorAll(".scene-opening-variable-buttons").forEach((container) => {
+    container.innerHTML = roles.map((role) => `<button class="variable-chip" data-random-event-role-variable="${escapeHtml(role)}" type="button">{${escapeHtml(role)}}</button>`).join("");
+  });
+}
+
+function insertRandomEventRoleVariable(role) {
+  const hasTarget = randomEventSceneOpenings.contains(randomEventSceneOpeningTarget);
+  const opening = hasTarget
+    ? randomEventSceneOpeningTarget
+    : randomEventSceneOpenings.querySelector("[data-random-event-formal-opening]");
+  if (!opening) return;
+  const token = `{${role}}`;
+  if (hasTarget) {
+    opening.setRangeText(token, opening.selectionStart, opening.selectionEnd, "end");
+  } else {
+    opening.value += token;
+  }
+  randomEventSceneOpeningTarget = opening;
+  opening.focus();
 }
 
 async function openRandomEventSettingsModal() {
@@ -219,6 +247,7 @@ function openRandomEventSceneModal(scene = null) {
   randomEventSceneSeats.innerHTML = "";
   (scene?.seats || [{role: "", capacity: 1}]).forEach((seat) => renderRandomEventSceneSeat(seat.role, seat.capacity));
   randomEventSceneOpenings.innerHTML = "";
+  randomEventSceneOpeningTarget = null;
   (scene?.openings || [""]).forEach((opening) => renderRandomEventSceneOpening(opening));
   randomEventSceneModal.hidden = false;
 }
@@ -790,10 +819,16 @@ randomEventSceneModal.addEventListener("click", async (event) => {
   }
   if (event.target.closest("[data-remove-random-event-seat]")) {
     event.target.closest(".scene-seat-row").remove();
+    renderRandomEventSceneOpeningVariables();
     return;
   }
   if (event.target.closest("[data-remove-random-event-opening]")) {
     event.target.closest(".scene-opening-row").remove();
+    return;
+  }
+  const roleVariable = event.target.closest("[data-random-event-role-variable]");
+  if (roleVariable) {
+    insertRandomEventRoleVariable(roleVariable.dataset.randomEventRoleVariable);
     return;
   }
   if (event.target.id !== "save-random-event-scene") return;
@@ -836,6 +871,16 @@ randomEventSceneModal.addEventListener("click", async (event) => {
     setResult(sceneId ? "随机事件场景已保存" : "随机事件场景已创建", "success");
   } catch (error) {
     setResult(`创建失败（${error.message}）`, "error");
+  }
+});
+randomEventSceneModal.addEventListener("input", (event) => {
+  if (event.target.matches("[data-random-event-role]")) {
+    renderRandomEventSceneOpeningVariables();
+  }
+});
+randomEventSceneModal.addEventListener("focusin", (event) => {
+  if (event.target.matches("[data-random-event-formal-opening]")) {
+    randomEventSceneOpeningTarget = event.target;
   }
 });
 document.querySelector("#random-event-scene-list").addEventListener("click", async (event) => {

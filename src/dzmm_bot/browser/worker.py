@@ -70,7 +70,7 @@ class BrowserWorker:
 
         if self._login_state is LoginState.AUTH_REQUIRED:
             delay = self._auth_backoff
-            self._auth_backoff = min(self._auth_backoff * 2, 30)
+            self._auth_backoff = min(self._auth_backoff * 2, 2)
             self._sleep(delay)
             return
         if self._login_state is LoginState.AUTH_IN_PROGRESS:

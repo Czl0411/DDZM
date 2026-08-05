@@ -196,7 +196,7 @@ def test_authentication_loss_transitions_once_and_backs_off_bounded(context):
     assert core.audits == [("authentication_lost", "worker-a", NOW)]
     assert core.submitted_ids == []
     assert all(state is LoginState.AUTH_REQUIRED for _, state, _ in core.heartbeats)
-    assert sleeps == [1, 2, 4, 8, 16, 30, 30, 30]
+    assert sleeps == [1, 2, 2, 2, 2, 2, 2, 2]
 
 
 def test_resume_listening_allows_polling_again(context):

@@ -580,6 +580,27 @@ def create_app(
             scope=f"random-event-schedule:{schedule_id}",
         )
 
+    @app.post("/api/game/random-events/today/{schedule_id}/trigger")
+    def trigger_random_event(
+        schedule_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(lambda: core.trigger_random_event(schedule_id)),
+            scope=f"random-event-schedule:{schedule_id}:trigger",
+        )
+
+    @app.get("/api/game/random-events/today/{schedule_id}/details")
+    def random_event_details(
+        schedule_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        return _relay_core(lambda: core.random_event_details(schedule_id))
+
     @app.post("/api/session", status_code=status.HTTP_204_NO_CONTENT)
     def create_console_session(
         response: Response, identity: Annotated[AdminIdentity, Depends(authorize)]

@@ -188,11 +188,17 @@ class RandomEventSeatModel(ApiModel):
     capacity: int = Field(ge=1, le=99)
 
 
+class RandomEventTemplateModel(ApiModel):
+    name: str = Field(min_length=1, max_length=64)
+    opening_text: str = Field(min_length=1, max_length=2000)
+
+
 class RandomEventSceneResponse(ApiModel):
     id: UUID
     name: str
     signup_text: str
     openings: list[str]
+    events: list[RandomEventTemplateModel]
     reward: int
     target_rounds: int
     enabled: bool
@@ -210,9 +216,8 @@ class PaginatedRandomEventScenesResponse(ApiModel):
 class CreateRandomEventSceneRequest(ApiModel):
     name: str = Field(min_length=1, max_length=64)
     signup_text: str = Field(min_length=1, max_length=2000)
-    openings: list[Annotated[str, Field(min_length=1, max_length=2000)]] = Field(
-        min_length=1, max_length=20
-    )
+    openings: list[Annotated[str, Field(min_length=1, max_length=2000)]] = Field(default_factory=list, max_length=20)
+    events: list[RandomEventTemplateModel] = Field(default_factory=list, max_length=20)
     reward: int = Field(ge=0, le=999)
     target_rounds: int = Field(ge=1, le=999)
     seats: list[RandomEventSeatModel] = Field(min_length=1, max_length=20)
@@ -227,6 +232,17 @@ class RandomEventScheduleResponse(ApiModel):
     scheduled_at: datetime
     status: str
     scene_name: str | None
+    event_name: str | None
+
+
+class RandomEventDetailResponse(ApiModel):
+    display_name: str
+    content: str
+    occurred_at: datetime
+
+
+class RandomEventDetailsResponse(ApiModel):
+    items: list[RandomEventDetailResponse]
 
 
 class RescheduleRandomEventRequest(ApiModel):

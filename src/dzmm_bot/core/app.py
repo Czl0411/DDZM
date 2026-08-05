@@ -44,6 +44,7 @@ from .api_models import (
     CreateRandomEventSceneRequest,
     UpdateRandomEventSceneRequest,
     RandomEventScheduleResponse,
+    RandomEventDetailsResponse,
     RescheduleRandomEventRequest,
     ItemResponse,
     PaginatedItemsResponse,
@@ -408,7 +409,7 @@ def create_app(
             scene = repository.create_random_event_scene(
                 request.name,
                 request.signup_text,
-                request.openings,
+                [event.model_dump() for event in request.events] or request.openings,
                 request.reward,
                 request.target_rounds,
                 [(seat.role, seat.capacity) for seat in request.seats],
@@ -431,7 +432,7 @@ def create_app(
                 scene_id,
                 request.name,
                 request.signup_text,
-                request.openings,
+                [event.model_dump() for event in request.events] or request.openings,
                 request.reward,
                 request.target_rounds,
                 [(seat.role, seat.capacity) for seat in request.seats],
@@ -479,6 +480,39 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _random_event_schedule_response(schedule)
+
+    @app.post(
+        "/internal/game/random-events/today/{schedule_id}/trigger",
+        response_model=RandomEventScheduleResponse,
+    )
+    def trigger_random_event(
+        schedule_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> RandomEventScheduleResponse:
+        try:
+            return _random_event_schedule_response(
+                repository.trigger_random_event(schedule_id, clock())
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+
+    @app.get(
+        "/internal/game/random-events/today/{schedule_id}/details",
+        response_model=RandomEventDetailsResponse,
+    )
+    def random_event_details(
+        schedule_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> RandomEventDetailsResponse:
+        try:
+            return RandomEventDetailsResponse(
+                items=[
+                    {"display_name": name, "content": content, "occurred_at": occurred_at}
+                    for name, content, occurred_at in repository.list_random_event_details(schedule_id)
+                ]
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
 
     @app.post("/internal/daily-jobs/run", response_model=AcceptedResponse)
     def run_daily_jobs(
@@ -677,6 +711,7 @@ def _random_event_scene_response(scene) -> RandomEventSceneResponse:
         name=scene.name,
         signup_text=scene.signup_text,
         openings=scene.openings,
+        events=[{"name": event.name, "opening_text": event.opening_text} for event in scene.events],
         reward=scene.reward,
         target_rounds=scene.target_rounds,
         enabled=scene.enabled,
@@ -690,6 +725,7 @@ def _random_event_schedule_response(schedule) -> RandomEventScheduleResponse:
         scheduled_at=schedule.scheduled_at,
         status=schedule.status,
         scene_name=schedule.scene_name,
+        event_name=schedule.event_name,
     )
 
 

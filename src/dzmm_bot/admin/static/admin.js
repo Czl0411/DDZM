@@ -43,6 +43,7 @@ const incomeReportTimeInputs = document.querySelector("#income-report-time-input
 const randomEventSettingsModal = document.querySelector("#random-event-settings-modal");
 const randomEventSceneModal = document.querySelector("#random-event-scene-modal");
 const randomEventTimeModal = document.querySelector("#random-event-time-modal");
+const randomEventDetailsModal = document.querySelector("#random-event-details-modal");
 const randomEventSceneSeats = document.querySelector("#random-event-scene-seats");
 const randomEventSceneOpenings = document.querySelector("#random-event-scene-openings");
 
@@ -158,12 +159,12 @@ function renderRandomEventSettings(settings) {
 
 function renderRandomEventScenes(scenes) {
   document.querySelector("#random-event-scene-list").innerHTML = scenes.map((scene) => `
-    <article class="data-row"><div><b>${escapeHtml(scene.name)}${scene.enabled ? "" : "（已停用）"}</b><small>报名公告：${escapeHtml(scene.signup_text)}</small><small>正式剧情开场白：${scene.openings.length} 条</small><small>席位：${scene.seats.map((seat) => `${escapeHtml(seat.role)} × ${seat.capacity}`).join(" · ")}</small></div><div class="command-actions"><strong>${scene.target_rounds} 轮 · ${scene.reward} 奖励</strong><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="edit" type="button">编辑</button><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有场景。新增一个场景后，系统才会在计划时刻发起事件。</p>";
+    <article class="data-row"><div><b>${escapeHtml(scene.name)}${scene.enabled ? "" : "（已停用）"}</b><small>报名公告：${escapeHtml(scene.signup_text)}</small><small>事件模板：${scene.events.length} 条</small><small>席位：${scene.seats.map((seat) => `${escapeHtml(seat.role)} × ${seat.capacity}`).join(" · ")}</small></div><div class="command-actions"><strong>${scene.target_rounds} 轮 · ${scene.reward} 奖励</strong><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="edit" type="button">编辑</button><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有场景。新增一个场景后，系统才会在计划时刻发起事件。</p>";
 }
 
 function renderTodayRandomEvents(events) {
   document.querySelector("#today-random-event-list").innerHTML = events.map((event) => `
-    <article class="data-row"><div><b>${eventStatusLabel(event.status)}</b><small>${formatHeartbeat(event.scheduled_at)}${event.scene_name ? ` · ${escapeHtml(event.scene_name)}` : ""}</small></div>${event.status === "pending" ? `<button class="secondary" data-adjust-random-event="${event.id}" data-scheduled-at="${event.scheduled_at}" type="button">调整时间</button>` : ""}</article>`).join("") || "<p class=\"muted\">今日计划将在每天北京时间 00:00 自动生成。</p>";
+    <article class="data-row"><div><b>${escapeHtml(event.scene_name || "未安排场景")}－${escapeHtml(event.event_name || "未安排事件")}－${eventStatusLabel(event.status)}</b><small>${formatHeartbeat(event.scheduled_at)}</small></div>${event.status === "pending" ? `<div class="command-actions"><button class="secondary" data-trigger-random-event="${event.id}" type="button">立即触发</button><button class="secondary" data-adjust-random-event="${event.id}" data-scheduled-at="${event.scheduled_at}" type="button">调整时间</button></div>` : `<button class="secondary" data-view-random-event-details="${event.id}" type="button">查看详情</button>`}</article>`).join("") || "<p class=\"muted\">今日计划将在每天北京时间 00:00 自动生成。</p>";
 }
 
 async function loadRandomEvents(page = randomEventScenePage) {
@@ -189,11 +190,12 @@ function renderRandomEventSceneSeat(role = "", capacity = 1) {
   renderRandomEventSceneOpeningVariables();
 }
 
-function renderRandomEventSceneOpening(value = "") {
+function renderRandomEventSceneOpening(event = {}) {
   const row = document.createElement("div");
   row.className = "scene-opening-row";
-  row.innerHTML = '<div class="scene-opening-editor"><textarea data-random-event-formal-opening rows="4" maxlength="2000" placeholder="例如：咖啡洒了一桌，主持人正在组织抢救。"></textarea><div class="scene-opening-variable-buttons"></div></div><button class="text-button" data-remove-random-event-opening type="button">删除</button>';
-  row.querySelector("textarea").value = value;
+  row.innerHTML = '<div class="scene-opening-editor"><input data-random-event-name maxlength="64" placeholder="事件名称，例如：咖啡事故"><textarea data-random-event-formal-opening rows="4" maxlength="2000" placeholder="例如：咖啡洒了一桌，主持人正在组织抢救。"></textarea><div class="scene-opening-variable-buttons"></div></div><button class="text-button" data-remove-random-event-opening type="button">删除</button>';
+  row.querySelector("[data-random-event-name]").value = event.name || "";
+  row.querySelector("textarea").value = event.opening_text || "";
   randomEventSceneOpenings.append(row);
   renderRandomEventSceneOpeningVariables();
 }
@@ -248,7 +250,7 @@ function openRandomEventSceneModal(scene = null) {
   (scene?.seats || [{role: "", capacity: 1}]).forEach((seat) => renderRandomEventSceneSeat(seat.role, seat.capacity));
   randomEventSceneOpenings.innerHTML = "";
   randomEventSceneOpeningTarget = null;
-  (scene?.openings || [""]).forEach((opening) => renderRandomEventSceneOpening(opening));
+  (scene?.events || scene?.openings?.map((opening) => ({name: "未命名事件", opening_text: opening})) || [{}]).forEach((event) => renderRandomEventSceneOpening(event));
   randomEventSceneModal.hidden = false;
 }
 
@@ -256,6 +258,12 @@ function openRandomEventTimeModal(button) {
   randomEventTimeModal.dataset.scheduleId = button.dataset.adjustRandomEvent;
   document.querySelector("#random-event-scheduled-at").value = formatBeijingInput(button.dataset.scheduledAt);
   randomEventTimeModal.hidden = false;
+}
+
+async function openRandomEventDetailsModal(scheduleId) {
+  const details = await requestGame(`/api/game/random-events/today/${scheduleId}/details`);
+  document.querySelector("#random-event-details-list").innerHTML = details.items.map((detail) => `<article class="data-row"><div><b>${escapeHtml(detail.display_name)}：${escapeHtml(detail.content)}</b><small>${formatHeartbeat(detail.occurred_at)}</small></div></article>`).join("") || '<p class="muted">暂无参与者发言记录。</p>';
+  randomEventDetailsModal.hidden = false;
 }
 
 async function loadSettings() {
@@ -834,9 +842,12 @@ randomEventSceneModal.addEventListener("click", async (event) => {
   if (event.target.id !== "save-random-event-scene") return;
   const name = document.querySelector("#random-event-scene-name").value.trim();
   const signupText = document.querySelector("#random-event-scene-signup").value.trim();
-  const openings = [...randomEventSceneOpenings.querySelectorAll("[data-random-event-formal-opening]")].map((input) => input.value.trim());
-  if (!name || !signupText || !openings.length || openings.some((opening) => !opening)) {
-    setResult("请填写场景名称、报名公告和至少一条正式剧情开场白", "error");
+  const events = [...randomEventSceneOpenings.querySelectorAll(".scene-opening-row")].map((row) => ({
+    name: row.querySelector("[data-random-event-name]").value.trim(),
+    opening_text: row.querySelector("[data-random-event-formal-opening]").value.trim(),
+  }));
+  if (!name || !signupText || !events.length || events.some((item) => !item.name || !item.opening_text)) {
+    setResult("请填写场景名称、报名公告和每个事件的名称、开场白", "error");
     return;
   }
   const seats = [...randomEventSceneSeats.querySelectorAll(".scene-seat-row")].map((row) => ({
@@ -858,7 +869,7 @@ randomEventSceneModal.addEventListener("click", async (event) => {
         body: JSON.stringify({
           name,
           signup_text: signupText,
-          openings,
+          events,
           target_rounds: Number(document.querySelector("#random-event-scene-rounds").value),
           reward: Number(document.querySelector("#random-event-scene-reward").value), seats,
           ...(sceneId ? {enabled: randomEventSceneModal.dataset.enabled === "true"} : {}),
@@ -909,9 +920,38 @@ document.querySelector("#random-event-scene-list").addEventListener("click", asy
     setResult(`更新失败（${error.message}）`, "error");
   }
 });
-document.querySelector("#today-random-event-list").addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-adjust-random-event]");
-  if (button) openRandomEventTimeModal(button);
+document.querySelector("#today-random-event-list").addEventListener("click", async (event) => {
+  const adjustButton = event.target.closest("button[data-adjust-random-event]");
+  if (adjustButton) {
+    openRandomEventTimeModal(adjustButton);
+    return;
+  }
+  const detailButton = event.target.closest("button[data-view-random-event-details]");
+  if (detailButton) {
+    try {
+      await openRandomEventDetailsModal(detailButton.dataset.viewRandomEventDetails);
+    } catch (error) {
+      setResult(`获取详情失败（${error.message}）`, "error");
+    }
+    return;
+  }
+  const triggerButton = event.target.closest("button[data-trigger-random-event]");
+  if (!triggerButton) return;
+  try {
+    await runMutation(triggerButton, "触发中…", async () => {
+      const updated = await requestGame(`/api/game/random-events/today/${triggerButton.dataset.triggerRandomEvent}/trigger`, {
+        method: "POST", headers: configurationHeaders(),
+      });
+      configurationVersion = updated.version;
+      await loadRandomEvents();
+    });
+    setResult("随机事件已开始报名", "success");
+  } catch (error) {
+    setResult(`立即触发失败（${error.message}）`, "error");
+  }
+});
+randomEventDetailsModal.addEventListener("click", (event) => {
+  if (event.target.closest("[data-close-random-event-details-modal]")) randomEventDetailsModal.hidden = true;
 });
 randomEventTimeModal.addEventListener("click", async (event) => {
   if (event.target.closest("[data-close-random-event-time-modal]")) {
@@ -940,6 +980,7 @@ randomEventTimeModal.addEventListener("click", async (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !templateModal.hidden) closeTemplateModal();
   if (event.key === "Escape" && !settingsModal.hidden) closeSettingsModal();
+  if (event.key === "Escape" && !randomEventDetailsModal.hidden) randomEventDetailsModal.hidden = true;
   if (event.key === "Escape" && !activitySettingsModal.hidden) closeActivitySettingsModal();
   if (event.key === "Escape" && !randomEventSettingsModal.hidden) closeRandomEventSettingsModal();
   if (event.key === "Escape" && !randomEventSceneModal.hidden) closeRandomEventSceneModal();

@@ -183,7 +183,7 @@
                 <div class="panel-heading">
                   <div>
                     <h2>今日随机事件</h2>
-                    <p class="muted">可调整待开始事件；报名中、进行中和结束事件仅供查看。</p>
+                    <p class="muted">待开始事件可立即触发或调整；其他状态可查看玩家发言详情。</p>
                   </div>
                   <button id="refresh-random-events" class="secondary" type="button">刷新列表</button>
                 </div>
@@ -314,13 +314,17 @@
         <label for="random-event-scene-signup">报名公告</label><textarea id="random-event-scene-signup" rows="4" maxlength="2000" placeholder="例如：今天的公司茶水间随机事件来啦，快点加入吧。"></textarea>
         <div class="event-input-grid"><label>达标轮次<input id="random-event-scene-rounds" type="number" min="1" max="999" value="10"></label><label>完成奖励<input id="random-event-scene-reward" type="number" min="0" max="999" value="1"></label></div>
         <label>角色席位</label><div id="random-event-scene-seats" class="scene-seat-inputs"></div><button id="add-random-event-scene-seat" class="secondary" type="button">添加角色席位</button>
-        <label>正式剧情开场白</label><p class="muted">席位满员后随机抽取一条发送，随后玩家开始表演。</p><div id="random-event-scene-openings" class="scene-opening-inputs"></div><button id="add-random-event-scene-opening" class="secondary" type="button">添加正式开场白</button>
+        <label>事件模板</label><p class="muted">每个事件包含名称和开场白，席位满员后随机抽取一个事件发送。</p><div id="random-event-scene-openings" class="scene-opening-inputs"></div><button id="add-random-event-scene-opening" class="secondary" type="button">添加事件</button>
         <div class="template-modal-actions"><button class="secondary" data-close-random-event-scene-modal type="button">取消</button><button id="save-random-event-scene" class="primary" type="button">创建场景</button></div>
       </section>
     </div>
     <div id="random-event-time-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="random-event-time-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-random-event-time-modal></div>
       <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">今日随机事件</p><h2 id="random-event-time-modal-title">调整开始时间</h2><p class="muted">只可调整尚未开始的事件。</p></div><button class="text-button" data-close-random-event-time-modal type="button">关闭</button></div><label for="random-event-scheduled-at">开始时间（北京时间）</label><input id="random-event-scheduled-at" type="datetime-local"><div class="template-modal-actions"><button class="secondary" data-close-random-event-time-modal type="button">取消</button><button id="save-random-event-time" class="primary" type="button">保存时间</button></div></section>
+    </div>
+    <div id="random-event-details-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="random-event-details-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-random-event-details-modal></div>
+      <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">随机事件</p><h2 id="random-event-details-modal-title">事件详情</h2><p class="muted">仅记录参与玩家的有效发言。</p></div><button class="text-button" data-close-random-event-details-modal type="button">关闭</button></div><div id="random-event-details-list" class="data-list"></div></section>
     </div>
     <script src="/static/admin.js"></script>
   </body>

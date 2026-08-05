@@ -531,7 +531,7 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert "/api/game/items?page=${page}&page_size=${pageSize}" in script
     assert '"保存中…"' in script
     assert '"上架中…"' in script
-    assert "请填写场景名称、报名公告和至少一条正式剧情开场白" in script
+    assert "请填写场景名称、报名公告和每个事件的名称、开场白" in script
 
 
 def test_admin_accepts_the_browser_item_form_json_body(client, headers):
@@ -1040,3 +1040,11 @@ def test_random_event_scene_script_renders_role_variable_buttons():
 
     assert "renderRandomEventSceneOpeningVariables" in script
     assert "data-random-event-role-variable" in script
+
+
+def test_random_event_script_offers_template_and_today_actions():
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert "data-random-event-name" in script
+    assert "data-trigger-random-event" in script
+    assert "openRandomEventDetailsModal" in script

@@ -709,3 +709,21 @@ def test_random_event_scene_requires_a_formal_opening(client, headers):
     )
 
     assert response.status_code == 422
+
+
+def test_random_event_scene_api_returns_named_events(client, headers):
+    response = client.post(
+        "/internal/game/random-events/scenes",
+        headers=headers,
+        json={
+            "name": "茶水间",
+            "signup_text": "报名",
+            "events": [{"name": "咖啡事故", "opening_text": "开场"}],
+            "reward": 1,
+            "target_rounds": 1,
+            "seats": [{"role": "员工", "capacity": 1}],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["events"] == [{"name": "咖啡事故", "opening_text": "开场"}]

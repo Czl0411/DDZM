@@ -199,6 +199,16 @@ class CoreClient:
         response.raise_for_status()
         return response.json()
 
+    def trigger_random_event(self, schedule_id: str) -> dict:
+        response = self._client.post(
+            f"/internal/game/random-events/today/{schedule_id}/trigger"
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def random_event_details(self, schedule_id: str) -> dict:
+        return self._get(f"/internal/game/random-events/today/{schedule_id}/details")
+
     def _get(self, path: str, params: dict | None = None):
         response = self._client.get(path, params=params)
         response.raise_for_status()

@@ -140,6 +140,33 @@ def test_full_random_event_sends_a_frozen_formal_opening(
     assert latest_outbound.text.endswith("咖啡洒了一桌，主持人正在组织抢救。")
 
 
+def test_in_progress_random_event_classifies_observer_parentheses(repository):
+    from dzmm_bot.core.schema import BEIJING
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "茶水间", "快点加入吧。", ["正式开始。"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.create_user("player", "小明", now, 0)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("player", "员工", now) == "started"
+
+    assert (
+        repository.classify_random_event_message("observer", " （ 你好，你们在干什么 ） ")
+        == "observer_valid"
+    )
+    assert (
+        repository.classify_random_event_message("observer", "( 你好，你们在干什么 )")
+        == "observer_valid"
+    )
+    assert (
+        repository.classify_random_event_message("observer", "你好，你们在干什么")
+        == "observer_invalid"
+    )
+
+
 def test_cross_day_active_random_event_skips_next_days_due_schedule(repository):
     from dzmm_bot.core.schema import BEIJING
 

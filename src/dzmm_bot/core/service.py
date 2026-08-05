@@ -39,9 +39,14 @@ class CoreService:
             self._repository.record_activity(
                 message.sender_platform_id, message.received_at, message.content
             )
-            self._repository.record_random_event_round(
+            event_message_status = self._repository.record_random_event_round(
                 message.sender_platform_id, message.received_at, message.content
             )
+            if event_message_status == "observer_invalid":
+                self._repository.enqueue_outbound(
+                    stored.id,
+                    "当前随机事件进行中，旁观请用（内容）或 (内容) 的形式发言。",
+                )
             reply = self._command_handler.handle(message)
             if reply is not None:
                 self._repository.enqueue_outbound(stored.id, reply)

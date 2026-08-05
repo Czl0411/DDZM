@@ -876,18 +876,19 @@ class CoreRepository:
 
     def record_random_event_round(
         self, platform_id: str, now: datetime, content: str
-    ) -> None:
-        if content.lstrip().startswith("/") or not content.strip():
-            return
+    ) -> str:
+        classification = self.classify_random_event_message(platform_id, content)
+        if classification != "participant":
+            return classification
         with self._session() as session:
             event = self._active_random_event(session)
             if event is None or event.state != "in_progress":
-                return
+                return "none"
             user = session.scalar(
                 select(UserRecord).where(UserRecord.platform_id == platform_id)
             )
             if user is None:
-                return
+                return "observer_invalid"
             participant = session.scalar(
                 select(RandomEventParticipantRecord).where(
                     RandomEventParticipantRecord.event_id == event.id,
@@ -897,6 +898,32 @@ class CoreRepository:
             )
             if participant is not None:
                 participant.rounds += 1
+                return "participant"
+        return "observer_invalid"
+
+    def classify_random_event_message(self, platform_id: str, content: str) -> str:
+        if content.lstrip().startswith("/") or not content.strip():
+            return "none"
+        with self._session() as session:
+            event = self._active_random_event(session)
+            if event is None or event.state != "in_progress":
+                return "none"
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is not None:
+                participant = session.scalar(
+                    select(RandomEventParticipantRecord).where(
+                        RandomEventParticipantRecord.event_id == event.id,
+                        RandomEventParticipantRecord.user_id == user.id,
+                        RandomEventParticipantRecord.left_at.is_(None),
+                    )
+                )
+                if participant is not None:
+                    return "participant"
+        if _is_parenthesized_observer_message(content):
+            return "observer_valid"
+        return "observer_invalid"
 
     def leave_random_event(self, platform_id: str, now: datetime) -> str:
         now = now.astimezone(BEIJING)
@@ -1949,6 +1976,14 @@ def _validate_random_event_scene(
     if len({rule.role for rule in rules}) != len(rules):
         raise ValueError("席位角色不能重复")
     return rules, normalized_openings
+
+
+def _is_parenthesized_observer_message(content: str) -> bool:
+    compact = "".join(content.split())
+    return (
+        len(compact) >= 3
+        and (compact[0], compact[-1]) in {("（", "）"), ("(", ")")}
+    )
 
 
 def _random_event_scene(

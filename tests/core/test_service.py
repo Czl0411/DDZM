@@ -82,6 +82,34 @@ def test_service_records_an_accepted_joined_message_once(session_factory):
     assert repository.personal_activity("sender-1", received_at).level == 1
 
 
+def test_service_warns_unwrapped_observer_during_random_event(session_factory):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import BEIJING, OutboundRecord
+    from dzmm_bot.core.service import CoreService
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository = CoreRepository(session_factory)
+    repository.create_random_event_scene(
+        "茶水间", "快点加入吧。", ["正式开始。"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.create_user("player", "小明", now, 0)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("player", "员工", now) == "started"
+    service = CoreService(repository)
+
+    result = service.receive_inbound(
+        InboundMessage("observer-message", "observer", "你好，你们在干什么", now)
+    )
+
+    with session_factory() as session:
+        warning = session.scalar(
+            select(OutboundRecord).where(OutboundRecord.inbound_message_id == result.message_id)
+        )
+    assert warning.text == "当前随机事件进行中，旁观请用（内容）或 (内容) 的形式发言。"
+
+
 def test_enqueue_failure_rolls_back_inbound(session_factory, inbound):
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import InboundRecord, WorkerCommandRecord

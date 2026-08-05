@@ -90,6 +90,7 @@ class CoreRepository:
         self._active_session: ContextVar[Session | None] = ContextVar(
             f"core_repository_session_{id(self)}", default=None
         )
+        self._current_day_history_backfilled: date | None = None
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -515,9 +516,92 @@ class CoreRepository:
 
     def run_daily_jobs(self, now: datetime) -> None:
         now = now.astimezone(BEIJING)
+        should_backfill = self._current_day_history_backfilled != now.date()
         with self.transaction():
+            if should_backfill:
+                self._backfill_current_day_history(now)
             self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)
+        if should_backfill:
+            self._current_day_history_backfilled = now.date()
+
+    def _backfill_current_day_history(self, now: datetime) -> None:
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        settings = self.get_game_settings()
+        with self._session() as session:
+            users = {
+                user.platform_id: user
+                for user in session.scalars(
+                    select(UserRecord).where(UserRecord.joined_at < end)
+                )
+            }
+            activity_totals: dict[UUID, int] = {}
+            for platform_id, content, received_at in session.execute(
+                select(
+                    InboundRecord.sender_platform_id,
+                    InboundRecord.content,
+                    InboundRecord.received_at,
+                ).where(
+                    InboundRecord.received_at >= start,
+                    InboundRecord.received_at < end,
+                )
+            ):
+                user = users.get(platform_id)
+                if (
+                    user is None
+                    or received_at < user.joined_at
+                    or content.lstrip().startswith("/")
+                ):
+                    continue
+                character_count = len("".join(content.split()))
+                if character_count:
+                    activity_totals[user.id] = (
+                        activity_totals.get(user.id, 0) + character_count
+                    )
+            for user_id, character_count in activity_totals.items():
+                activity = session.scalar(
+                    select(DailyActivityRecord).where(
+                        DailyActivityRecord.user_id == user_id,
+                        DailyActivityRecord.activity_date == now.date(),
+                    )
+                )
+                if activity is None:
+                    session.add(
+                        DailyActivityRecord(
+                            id=uuid4(),
+                            user_id=user_id,
+                            activity_date=now.date(),
+                            character_count=character_count,
+                        )
+                    )
+                else:
+                    activity.character_count = character_count
+            for checkin in session.scalars(
+                select(DailyCheckinRecord).where(
+                    DailyCheckinRecord.checkin_date == now.date()
+                )
+            ):
+                income_recorded = session.scalar(
+                    select(BalanceTransactionRecord.id).where(
+                        BalanceTransactionRecord.user_id == checkin.user_id,
+                        BalanceTransactionRecord.source.in_(
+                            ("checkin", "checkin_backfill")
+                        ),
+                        BalanceTransactionRecord.occurred_at >= start,
+                        BalanceTransactionRecord.occurred_at < end,
+                    )
+                )
+                if income_recorded is None:
+                    session.add(
+                        BalanceTransactionRecord(
+                            id=uuid4(),
+                            user_id=checkin.user_id,
+                            amount=settings.checkin_reward,
+                            source="checkin_backfill",
+                            occurred_at=checkin.checked_in_at,
+                        )
+                    )
 
     def _settle_activity_rewards(self, now: datetime) -> None:
         settings = self.get_activity_settings()

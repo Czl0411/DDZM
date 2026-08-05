@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 
 import httpx
 import pytest
@@ -375,6 +376,36 @@ def test_admin_page_exposes_game_settings_navigation_and_modal(client):
     assert 'id="settings-view"' in page
     assert 'id="settings-modal"' in page
     assert "/api/game/settings" in script
+
+
+def test_gameplay_settings_is_not_hidden_with_the_overview_view(client):
+    """Fails if the gameplay settings view is nested inside the overview view."""
+
+    class ViewParentParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+            self.parents = {}
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            if attributes.get("id") == "settings-view":
+                self.parents["settings-view"] = self.stack[-1] if self.stack else None
+            self.stack.append((tag, attributes))
+
+        def handle_endtag(self, tag):
+            for index in range(len(self.stack) - 1, -1, -1):
+                if self.stack[index][0] == tag:
+                    del self.stack[index:]
+                    return
+
+    parser = ViewParentParser()
+    parser.feed(client.get("/").text)
+
+    assert parser.parents["settings-view"] == (
+        "div",
+        {"class": "dashboard-views"},
+    )
 
 
 def test_status_returns_only_safe_operational_fields(client, headers):

@@ -297,6 +297,38 @@ def test_activity_counts_joined_non_command_text_without_whitespace(repository, 
     assert repository.personal_activity("u1", now).level == 1
 
 
+def test_daily_jobs_backfill_current_day_history_and_legacy_checkin_income(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import BEIJING, DailyCheckinRecord, UserRecord
+
+    joined_at = datetime(2026, 8, 5, 9, 0, tzinfo=BEIJING)
+    checkin_at = datetime(2026, 8, 5, 10, 0, tzinfo=BEIJING)
+    now = datetime(2026, 8, 5, 19, 45, tzinfo=BEIJING)
+    user, _ = repository.create_user("u1", "小明", joined_at, 0)
+    repository.accept_inbound(
+        InboundMessage("historic-text", "u1", "一二三四五六七八九十", checkin_at)
+    )
+    with session_factory.begin() as session:
+        session.get(UserRecord, user.id).balance = 5
+        session.add(
+            DailyCheckinRecord(
+                id=uuid4(),
+                user_id=user.id,
+                checkin_date=checkin_at.date(),
+                checked_in_at=checkin_at,
+            )
+        )
+
+    repository.run_daily_jobs(now)
+
+    assert repository.personal_activity("u1", now).level == 1
+    assert repository.today_income(user.id, now) == 5
+    repository.run_daily_jobs(now + timedelta(minutes=1))
+    assert repository.find_user("u1").balance == 5
+    assert repository.today_income(user.id, now) == 5
+
+
 def test_activity_settings_reject_non_increasing_thresholds(repository):
     from dzmm_bot.core.repository import ActivityLevelRule
 

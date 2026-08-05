@@ -100,6 +100,24 @@
                 <iframe id="login-console-frame" title="DZMM 人工登录桌面" allow="clipboard-read; clipboard-write"></iframe>
               </section>
 
+            </article>
+
+            <aside class="panel side-panel">
+              <p class="eyebrow">运行维护</p>
+              <h2>浏览器控制</h2>
+              <p>仅在登录状态异常时使用重启。不会影响核心数据库或队列。</p>
+              <button id="restart-browser" class="danger-button" data-action="/api/worker/restart" type="button">重启浏览器</button>
+              <hr>
+              <h3>消息收发</h3>
+              <p class="muted">群聊平台适配器尚未配置，因此监听与发送功能暂不开放。</p>
+              <div class="disabled-actions" aria-label="尚不可用的消息控制">
+                <button data-action="/api/worker/start" type="button" disabled>开始监听</button>
+                <button data-action="/api/worker/stop" type="button" disabled>暂停监听</button>
+              </div>
+            </aside>
+          </section>
+              </section>
+
               <section id="settings-view" class="dashboard-view panel" hidden>
                 <p class="eyebrow">玩法配置</p>
                 <div class="panel-heading">
@@ -119,23 +137,6 @@
                   <button id="edit-activity-settings" class="primary" type="button">编辑日活跃度</button>
                 </div>
                 <div id="activity-settings-card" class="settings-card" aria-live="polite"></div>
-              </section>
-            </article>
-
-            <aside class="panel side-panel">
-              <p class="eyebrow">运行维护</p>
-              <h2>浏览器控制</h2>
-              <p>仅在登录状态异常时使用重启。不会影响核心数据库或队列。</p>
-              <button id="restart-browser" class="danger-button" data-action="/api/worker/restart" type="button">重启浏览器</button>
-              <hr>
-              <h3>消息收发</h3>
-              <p class="muted">群聊平台适配器尚未配置，因此监听与发送功能暂不开放。</p>
-              <div class="disabled-actions" aria-label="尚不可用的消息控制">
-                <button data-action="/api/worker/start" type="button" disabled>开始监听</button>
-                <button data-action="/api/worker/stop" type="button" disabled>暂停监听</button>
-              </div>
-            </aside>
-          </section>
               </section>
 
               <section id="commands-view" class="dashboard-view panel" hidden>

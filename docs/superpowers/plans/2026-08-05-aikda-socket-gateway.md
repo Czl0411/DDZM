@@ -29,7 +29,7 @@
 - Consumes: `token_provider() -> str`, `request(method: str, path: str, input: dict | None) -> dict`, and a `socketio.Client`-compatible factory.
 - Produces: `AikdaSocketGateway(chat_url, token_provider, request, socket_factory, clock)` implementing `read_new()`, `send(text)`, `is_authenticated()`, and `close()`.
 
-- [ ] **Step 1: Write failing gateway tests**
+- [x] **Step 1: Write failing gateway tests**
 
 ```python
 def test_live_target_room_text_event_is_read_once():
@@ -51,13 +51,13 @@ def test_send_requires_successful_ack():
     assert socket.calls[0][0] == "message:send"
 ```
 
-- [ ] **Step 2: Run the targeted tests and verify they fail**
+- [x] **Step 2: Run the targeted tests and verify they fail**
 
 Run: `pytest tests/browser/test_aikda_socket.py -v`
 
 Expected: FAIL because `dzmm_bot.browser.aikda_socket` does not exist.
 
-- [ ] **Step 3: Add the minimal dependency and gateway implementation**
+- [x] **Step 3: Add the minimal dependency and gateway implementation**
 
 Add `python-socketio[client]>=5,<6` to `[project].dependencies`. Implement:
 
@@ -69,13 +69,13 @@ Socket.IO client.
 
 Use `socket.connect(origin, socketio_path="ws/matching", auth={"token": token}, transports=["websocket", "polling"])`; register `message:new`; run `user.getMe` and `chatroom.getMessages` through the supplied request callable; convert only `content.type == "text"`; create send IDs with `uuid4()` and timestamps with the injected clock.
 
-- [ ] **Step 4: Run gateway tests and verify they pass**
+- [x] **Step 4: Run gateway tests and verify they pass**
 
 Run: `pytest tests/browser/test_aikda_socket.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pyproject.toml src/dzmm_bot/browser/aikda_socket.py tests/browser/test_aikda_socket.py
@@ -92,7 +92,7 @@ git commit -m "feat: add Aikda Socket.IO gateway"
 - Consumes: the authenticated active Playwright page and configured chat URL.
 - Produces: `BrowserSession.start_headless()` / `attach_existing()` returning the Socket gateway rather than the DOM gateway.
 
-- [ ] **Step 1: Write failing session tests**
+- [x] **Step 1: Write failing session tests**
 
 ```python
 def test_session_supplies_same_origin_token_to_socket_gateway():
@@ -104,13 +104,13 @@ def test_session_uses_group_id_from_configured_chat_url():
     assert socket_gateway.chatroom_id == "group-1"
 ```
 
-- [ ] **Step 2: Run the targeted tests and verify they fail**
+- [x] **Step 2: Run the targeted tests and verify they fail**
 
 Run: `pytest tests/browser/test_session.py -v`
 
 Expected: FAIL because the session still returns `_PlaywrightGateway`.
 
-- [ ] **Step 3: Implement same-origin token and tRPC bridge**
+- [x] **Step 3: Implement same-origin token and tRPC bridge**
 
 Keep browser launch, login state, and group navigation unchanged. Replace
 `_PlaywrightGateway` creation with an `AikdaSocketGateway` constructed from:
@@ -130,13 +130,13 @@ checks `response.ok`, and returns JSON. Do not return cookies or browser
 storage values to Python. Remove `DzmmMessageSource` and DOM textarea usage
 from this path.
 
-- [ ] **Step 4: Run session tests and verify they pass**
+- [x] **Step 4: Run session tests and verify they pass**
 
 Run: `pytest tests/browser/test_session.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/dzmm_bot/browser/session.py tests/browser/test_session.py

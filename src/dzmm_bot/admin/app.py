@@ -94,6 +94,37 @@ def create_app(
         raw = core.status()
         return {key: raw.get(key) for key in _SAFE_STATUS_FIELDS}
 
+    @app.get("/api/game/commands")
+    def game_commands(_: Annotated[None, Depends(authorize)]) -> list[dict]:
+        return core.list_game_commands()
+
+    @app.patch("/api/game/commands")
+    def set_game_command_enabled(
+        request: dict, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        command = request.get("command")
+        enabled = request.get("enabled")
+        if not isinstance(command, str) or not isinstance(enabled, bool):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid command")
+        return core.set_game_command_enabled(command, enabled)
+
+    @app.get("/api/game/users")
+    def game_users(_: Annotated[None, Depends(authorize)]) -> list[dict]:
+        return core.list_game_users()
+
+    @app.get("/api/game/items")
+    def game_items(_: Annotated[None, Depends(authorize)]) -> list[dict]:
+        return core.list_game_items()
+
+    @app.post("/api/game/items", status_code=status.HTTP_201_CREATED)
+    def create_game_item(
+        request: dict, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        required = ("name", "description", "price", "stock")
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid item")
+        return core.create_game_item({key: request[key] for key in required})
+
     @app.post("/api/session", status_code=status.HTTP_204_NO_CONTENT)
     def create_console_session(
         response: Response, _: Annotated[None, Depends(authorize)]

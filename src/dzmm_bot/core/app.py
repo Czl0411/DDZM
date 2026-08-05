@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from secrets import compare_digest
 from typing import Annotated, Callable
 from uuid import UUID
@@ -16,6 +16,8 @@ from .api_models import (
     AdminStatusResponse,
     ClaimRequest,
     CompleteWorkerCommandRequest,
+    CommandDefinitionResponse,
+    CreateItemRequest,
     HealthResponse,
     HeartbeatRequest,
     HeartbeatResponse,
@@ -24,12 +26,16 @@ from .api_models import (
     OutboundClaimResponse,
     QueueCountsResponse,
     SentRequest,
+    SetCommandEnabledRequest,
+    ItemResponse,
+    UserResponse,
     WorkerCommandRequest,
     WorkerCommandResponse,
 )
 from .database import create_session_factory
+from .commands import GroupCommandHandler
 from .repository import CoreRepository
-from .schema import WorkerCommandRecord, WorkerInstanceRecord
+from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
 
 
@@ -54,10 +60,10 @@ def create_app(
     repository: CoreRepository,
     core_token: str,
     *,
-    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    clock: Callable[[], datetime] = beijing_now,
 ) -> FastAPI:
     app = FastAPI()
-    service = CoreService(repository)
+    service = CoreService(repository, GroupCommandHandler(repository))
 
     def authorize(x_core_token: Annotated[str | None, Header()] = None) -> None:
         if x_core_token is None or not compare_digest(x_core_token, core_token):
@@ -146,6 +152,74 @@ def create_app(
             queue_counts=QueueCountsResponse(**repository.queue_counts()),
         )
 
+    @app.get(
+        "/internal/game/commands", response_model=list[CommandDefinitionResponse]
+    )
+    def game_commands(
+        _: Annotated[None, Depends(authorize)],
+    ) -> list[CommandDefinitionResponse]:
+        return [
+            CommandDefinitionResponse(
+                command=record.command,
+                description=record.description,
+                enabled=record.enabled,
+            )
+            for record in repository.list_command_definitions()
+        ]
+
+    @app.patch(
+        "/internal/game/commands", response_model=CommandDefinitionResponse
+    )
+    def set_game_command_enabled(
+        request: SetCommandEnabledRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> CommandDefinitionResponse:
+        if not repository.set_command_enabled(request.command, request.enabled):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown command")
+        record = next(
+            record
+            for record in repository.list_command_definitions()
+            if record.command == request.command
+        )
+        return CommandDefinitionResponse(
+            command=record.command,
+            description=record.description,
+            enabled=record.enabled,
+        )
+
+    @app.get("/internal/game/users", response_model=list[UserResponse])
+    def game_users(
+        _: Annotated[None, Depends(authorize)],
+    ) -> list[UserResponse]:
+        return [
+            UserResponse(
+                platform_id=record.platform_id,
+                display_name=record.display_name,
+                balance=record.balance,
+                joined_at=record.joined_at,
+            )
+            for record in repository.list_users()
+        ]
+
+    @app.get("/internal/game/items", response_model=list[ItemResponse])
+    def game_items(
+        _: Annotated[None, Depends(authorize)],
+    ) -> list[ItemResponse]:
+        return [_item_response(record) for record in repository.list_active_items()]
+
+    @app.post(
+        "/internal/game/items", response_model=ItemResponse, status_code=201
+    )
+    def create_game_item(
+        request: CreateItemRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> ItemResponse:
+        return _item_response(
+            repository.add_item(
+                request.name, request.description, request.price, request.stock
+            )
+        )
+
     @app.post("/internal/worker-commands", response_model=WorkerCommandResponse)
     def enqueue_worker_command(
         request: WorkerCommandRequest, _: Annotated[None, Depends(authorize)]
@@ -229,4 +303,14 @@ def _worker_command_response(record: WorkerCommandRecord) -> WorkerCommandRespon
         status=record.status,
         lease_token=record.lease_token,
         lease_expires_at=record.lease_expires_at,
+    )
+
+
+def _item_response(record) -> ItemResponse:
+    return ItemResponse(
+        name=record.name,
+        description=record.description,
+        price=record.price,
+        stock=record.stock,
+        enabled=record.enabled,
     )

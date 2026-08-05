@@ -1,5 +1,6 @@
 import os
-from datetime import UTC, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from time import sleep
 
@@ -42,7 +43,7 @@ def create_worker(settings: Settings) -> BrowserWorker:
         ),
         session=session,
         desktop=desktop,
-        clock=lambda: datetime.now(UTC),
+        clock=lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
     )
     return worker
 

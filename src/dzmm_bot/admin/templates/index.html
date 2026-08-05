@@ -44,6 +44,15 @@
             <button id="refresh" class="secondary" type="button">刷新状态</button>
           </div>
 
+          <div class="dashboard-layout">
+            <nav class="side-nav" aria-label="管理菜单">
+              <button id="nav-overview" class="nav-item active" data-view="overview" type="button">运行概览</button>
+              <button id="nav-commands" class="nav-item" data-view="commands" type="button">指令库</button>
+              <button id="nav-employees" class="nav-item" data-view="employees" type="button">员工</button>
+              <button id="nav-shop" class="nav-item" data-view="shop" type="button">物品与商店</button>
+            </nav>
+            <div class="dashboard-views">
+              <section id="overview-view" class="dashboard-view">
           <section class="status-grid" aria-label="系统状态">
             <article class="status-card">
               <span>浏览器状态</span>
@@ -105,6 +114,35 @@
               </div>
             </aside>
           </section>
+              </section>
+
+              <section id="commands-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">玩法配置</p>
+                <h2>指令库</h2>
+                <p class="muted">关闭的指令不会回复，也不会产生业务数据。</p>
+                <div id="command-list" class="data-list"></div>
+              </section>
+
+              <section id="employees-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">群成员</p>
+                <h2>员工</h2>
+                <div id="employee-list" class="data-list"></div>
+              </section>
+
+              <section id="shop-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">总监事小卖部</p>
+                <h2>物品与商店</h2>
+                <form id="item-form" class="item-form">
+                  <input name="name" maxlength="64" placeholder="物品名称" required>
+                  <input name="description" placeholder="物品说明" required>
+                  <input name="price" type="number" min="0" max="999" placeholder="价格" required>
+                  <input name="stock" type="number" min="0" max="999" placeholder="库存" required>
+                  <button class="primary" type="submit">上架物品</button>
+                </form>
+                <div id="shop-list" class="data-list"></div>
+              </section>
+            </div>
+          </div>
 
           <p id="result" class="result" role="status" aria-live="polite"></p>
         </section>

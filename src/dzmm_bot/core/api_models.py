@@ -78,6 +78,39 @@ class AdminStatusResponse(ApiModel):
     queue_counts: QueueCountsResponse
 
 
+class CommandDefinitionResponse(ApiModel):
+    command: str
+    description: str
+    enabled: bool
+
+
+class SetCommandEnabledRequest(ApiModel):
+    command: str = Field(min_length=1, max_length=32)
+    enabled: bool
+
+
+class UserResponse(ApiModel):
+    platform_id: str
+    display_name: str
+    balance: int
+    joined_at: datetime
+
+
+class ItemResponse(ApiModel):
+    name: str
+    description: str
+    price: int
+    stock: int
+    enabled: bool
+
+
+class CreateItemRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=64)
+    description: str = Field(min_length=1)
+    price: int = Field(ge=0, le=999)
+    stock: int = Field(ge=0, le=999)
+
+
 WorkerCommandKind = Literal[
     "pause_listening",
     "resume_listening",

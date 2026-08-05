@@ -10,6 +10,13 @@ from starlette.websockets import WebSocketDisconnect
 class FakeCore:
     login_state_value: str = "ready"
     commands: list[str] = field(default_factory=list)
+    command_definitions: list[dict] = field(
+        default_factory=lambda: [
+            {"command": "/打卡", "description": "每日领取 5 摸鱼币", "enabled": True}
+        ]
+    )
+    employees: list[dict] = field(default_factory=list)
+    items: list[dict] = field(default_factory=list)
 
     def status(self):
         return {
@@ -26,6 +33,25 @@ class FakeCore:
     def enqueue_command(self, command):
         self.commands.append(command)
         return {"id": "command-1", "command": command, "status": "pending"}
+
+    def list_game_commands(self):
+        return self.command_definitions
+
+    def set_game_command_enabled(self, command, enabled):
+        record = next(item for item in self.command_definitions if item["command"] == command)
+        record["enabled"] = enabled
+        return record
+
+    def list_game_users(self):
+        return self.employees
+
+    def list_game_items(self):
+        return self.items
+
+    def create_game_item(self, item):
+        item = {**item, "enabled": True}
+        self.items.append(item)
+        return item
 
 
 class FakeConsole:
@@ -160,6 +186,30 @@ def test_admin_dashboard_serves_its_login_and_style_assets(client):
     assert 'id="login-console-frame"' in page.text
     assert stylesheet.status_code == 200
     assert "--surface" in stylesheet.text
+
+
+def test_admin_dashboard_exposes_game_navigation_and_proxies_game_data(
+    client, headers
+):
+    page = client.get("/")
+    commands = client.get("/api/game/commands", headers=headers)
+    disabled = client.patch(
+        "/api/game/commands",
+        headers=headers,
+        json={"command": "/打卡", "enabled": False},
+    )
+    item = client.post(
+        "/api/game/items",
+        headers=headers,
+        json={"name": "工位午睡券", "description": "眯十分钟。", "price": 5, "stock": 3},
+    )
+
+    assert 'id="nav-commands"' in page.text
+    assert 'id="nav-employees"' in page.text
+    assert 'id="nav-shop"' in page.text
+    assert commands.json()[0]["command"] == "/打卡"
+    assert disabled.json()["enabled"] is False
+    assert item.status_code == 201
 
 
 def test_status_returns_only_safe_operational_fields(client, headers):

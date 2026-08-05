@@ -11,6 +11,16 @@ class AdminCorePort(Protocol):
 
     def enqueue_command(self, command: str) -> dict: ...
 
+    def list_game_commands(self) -> list[dict]: ...
+
+    def set_game_command_enabled(self, command: str, enabled: bool) -> dict: ...
+
+    def list_game_users(self) -> list[dict]: ...
+
+    def list_game_items(self) -> list[dict]: ...
+
+    def create_game_item(self, item: dict) -> dict: ...
+
 
 class CoreClient:
     def __init__(
@@ -37,6 +47,27 @@ class CoreClient:
         response = self._client.post(
             "/internal/worker-commands", json={"command": command}
         )
+        response.raise_for_status()
+        return response.json()
+
+    def list_game_commands(self) -> list[dict]:
+        return self._get("/internal/game/commands")
+
+    def set_game_command_enabled(self, command: str, enabled: bool) -> dict:
+        response = self._client.patch(
+            "/internal/game/commands", json={"command": command, "enabled": enabled}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def list_game_users(self) -> list[dict]:
+        return self._get("/internal/game/users")
+
+    def list_game_items(self) -> list[dict]:
+        return self._get("/internal/game/items")
+
+    def create_game_item(self, item: dict) -> dict:
+        response = self._client.post("/internal/game/items", json=item)
         response.raise_for_status()
         return response.json()
 

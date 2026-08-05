@@ -1,5 +1,6 @@
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import logging
 from time import sleep as default_sleep
 from typing import Protocol
@@ -27,7 +28,7 @@ class BrowserWorker:
         core: CorePort,
         session: BrowserSession,
         desktop: ManualDesktop,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
         sleep: Callable[[float], None] = default_sleep,
         lease_seconds: int = 30,
     ) -> None:

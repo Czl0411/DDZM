@@ -76,6 +76,67 @@ def test_internal_inbound_is_idempotent(client, headers, payload):
     assert second.json()["message_id"] == first.json()["message_id"]
 
 
+def test_internal_inbound_executes_enabled_group_commands(app_context, headers, payload):
+    payload["content"] = "/入职 小明"
+
+    response = app_context.client.post(
+        "/internal/inbound", headers=headers, json=payload
+    )
+
+    assert response.status_code == 200
+    with app_context.session_factory() as session:
+        reply = session.scalar(select(OutboundRecord.text))
+    assert reply == "小明，欢迎入职摸鱼公司。当前余额：0 摸鱼币。"
+
+
+def test_heartbeat_response_uses_beijing_time(client, headers):
+    response = client.post(
+        "/internal/heartbeat",
+        headers=headers,
+        json={
+            "worker_id": "worker-a",
+            "login_state": "ready",
+            "recorded_at": NOW.isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["recorded_at"] == "2026-08-04T20:00:00+08:00"
+
+
+def test_game_management_lists_commands_employees_and_shop_items(client, headers):
+    commands = client.get("/internal/game/commands", headers=headers)
+    disabled = client.patch(
+        "/internal/game/commands",
+        headers=headers,
+        json={"command": "/打卡", "enabled": False},
+    )
+    employees = client.get("/internal/game/users", headers=headers)
+    created_item = client.post(
+        "/internal/game/items",
+        headers=headers,
+        json={"name": "工位午睡券", "description": "眯十分钟。", "price": 5, "stock": 3},
+    )
+    items = client.get("/internal/game/items", headers=headers)
+
+    assert commands.status_code == 200
+    assert {record["command"] for record in commands.json()} == {
+        "/入职", "/我的物品", "/打卡", "/余额", "/商店"
+    }
+    assert disabled.json()["enabled"] is False
+    assert employees.json() == []
+    assert created_item.status_code == 201
+    assert items.json() == [
+        {
+            "name": "工位午睡券",
+            "description": "眯十分钟。",
+            "price": 5,
+            "stock": 3,
+            "enabled": True,
+        }
+    ]
+
+
 def test_core_server_factory_enforces_local_settings_port(app_context):
     from dzmm_bot.core.app import create_server
     from dzmm_bot.runtime.settings import Settings
@@ -263,9 +324,7 @@ def test_heartbeat_updates_login_state_and_health_age(app_context, headers):
     assert heartbeat.json() == {
         "worker_id": "worker-a",
         "login_state": "ready",
-        "recorded_at": (NOW - timedelta(seconds=12)).isoformat().replace(
-            "+00:00", "Z"
-        ),
+        "recorded_at": "2026-08-04T19:59:48+08:00",
     }
     assert login_state.json() == heartbeat.json()
     assert after.json() == {
@@ -310,7 +369,7 @@ def test_internal_status_returns_real_queue_counts_and_latest_heartbeat(
     assert response.status_code == 200
     assert response.json() == {
         "state": "auth_required",
-        "last_heartbeat": NOW.isoformat().replace("+00:00", "Z"),
+        "last_heartbeat": "2026-08-04T20:00:00+08:00",
         "queue_counts": {
             "inbound_accepted": 1,
             "outbound_pending": 1,

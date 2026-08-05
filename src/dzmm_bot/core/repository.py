@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select, update
@@ -12,10 +12,24 @@ from sqlalchemy.orm import Session, sessionmaker
 from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
 
 from .schema import (
+    CommandDefinitionRecord,
+    DailyCheckinRecord,
     InboundRecord,
+    ItemRecord,
     OutboundRecord,
+    UserItemRecord,
+    UserRecord,
     WorkerCommandRecord,
     WorkerInstanceRecord,
+)
+
+
+_COMMAND_DEFINITIONS = (
+    ("/入职", "登记群成员为摸鱼公司员工"),
+    ("/我的物品", "查看自己持有的物品"),
+    ("/打卡", "每日领取 5 摸鱼币"),
+    ("/余额", "查看当前摸鱼币余额"),
+    ("/商店", "查看当前上架物品"),
 )
 
 
@@ -82,6 +96,151 @@ class CoreRepository:
             if record is None:
                 raise RuntimeError("inserted inbound message disappeared")
             return record, True
+
+    def ensure_command_definitions(self) -> None:
+        with self._session() as session:
+            dialect_name = session.get_bind().dialect.name
+            for command, description in _COMMAND_DEFINITIONS:
+                values = {"command": command, "description": description}
+                if dialect_name == "postgresql":
+                    statement = postgresql_insert(CommandDefinitionRecord).values(**values)
+                elif dialect_name == "sqlite":
+                    statement = sqlite_insert(CommandDefinitionRecord).values(**values)
+                else:
+                    raise ValueError(f"unsupported database dialect: {dialect_name}")
+                session.execute(
+                    statement.on_conflict_do_nothing(
+                        index_elements=[CommandDefinitionRecord.command]
+                    )
+                )
+
+    def is_command_enabled(self, command: str) -> bool:
+        with self._session() as session:
+            return bool(
+                session.scalar(
+                    select(CommandDefinitionRecord.enabled).where(
+                        CommandDefinitionRecord.command == command
+                    )
+                )
+            )
+
+    def list_command_definitions(self) -> list[CommandDefinitionRecord]:
+        self.ensure_command_definitions()
+        with self._session() as session:
+            return list(
+                session.scalars(
+                    select(CommandDefinitionRecord).order_by(CommandDefinitionRecord.command)
+                )
+            )
+
+    def set_command_enabled(self, command: str, enabled: bool) -> bool:
+        self.ensure_command_definitions()
+        with self._session() as session:
+            record = session.get(CommandDefinitionRecord, command)
+            if record is None:
+                return False
+            record.enabled = enabled
+            session.flush()
+            return True
+
+    def find_user(self, platform_id: str) -> UserRecord | None:
+        with self._session() as session:
+            return session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+
+    def create_user(
+        self, platform_id: str, display_name: str, joined_at: datetime
+    ) -> tuple[UserRecord, bool]:
+        with self._session() as session:
+            existing = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if existing is not None:
+                return existing, False
+            record = UserRecord(
+                platform_id=platform_id,
+                display_name=display_name,
+                balance=0,
+                joined_at=joined_at,
+            )
+            session.add(record)
+            session.flush()
+            return record, True
+
+    def check_in(self, user: UserRecord, checked_in_at: datetime) -> bool:
+        with self._session() as session:
+            employee = session.get(UserRecord, user.id)
+            if employee is None:
+                raise RuntimeError("employee disappeared")
+            values = {
+                "id": uuid4(),
+                "user_id": employee.id,
+                "checkin_date": checked_in_at.date(),
+                "checked_in_at": checked_in_at,
+            }
+            dialect_name = session.get_bind().dialect.name
+            if dialect_name == "postgresql":
+                statement = postgresql_insert(DailyCheckinRecord).values(**values)
+            elif dialect_name == "sqlite":
+                statement = sqlite_insert(DailyCheckinRecord).values(**values)
+            else:
+                raise ValueError(f"unsupported database dialect: {dialect_name}")
+            inserted_id = session.scalar(
+                statement.on_conflict_do_nothing(
+                    index_elements=[
+                        DailyCheckinRecord.user_id,
+                        DailyCheckinRecord.checkin_date,
+                    ]
+                ).returning(DailyCheckinRecord.id)
+            )
+            if inserted_id is None:
+                return False
+            employee.balance += 5
+            session.flush()
+            return True
+
+    def list_users(self) -> list[UserRecord]:
+        with self._session() as session:
+            return list(
+                session.scalars(select(UserRecord).order_by(UserRecord.joined_at))
+            )
+
+    def add_item(
+        self, name: str, description: str, price: int, stock: int
+    ) -> ItemRecord:
+        with self._session() as session:
+            record = ItemRecord(
+                name=name,
+                description=description,
+                price=price,
+                stock=stock,
+                enabled=True,
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def list_active_items(self) -> list[ItemRecord]:
+        with self._session() as session:
+            return list(
+                session.scalars(
+                    select(ItemRecord)
+                    .where(ItemRecord.enabled.is_(True))
+                    .order_by(ItemRecord.price, ItemRecord.name)
+                )
+            )
+
+    def list_user_items(self, user_id: UUID) -> list[tuple[str, int]]:
+        with self._session() as session:
+            return list(
+                session.execute(
+                    select(ItemRecord.name, UserItemRecord.quantity)
+                    .join(UserItemRecord, UserItemRecord.item_id == ItemRecord.id)
+                    .where(UserItemRecord.user_id == user_id)
+                    .order_by(ItemRecord.name)
+                )
+            )
 
     def enqueue_outbound(
         self, inbound_message_id: UUID | str, reply: str

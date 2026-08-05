@@ -31,8 +31,54 @@ function setAuthenticated(authenticated) {
 function formatHeartbeat(value) {
   if (!value) return "—";
   return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "short", timeStyle: "medium",
+    dateStyle: "short", timeStyle: "medium", timeZone: "Asia/Shanghai",
   }).format(new Date(value));
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;",
+  })[character]);
+}
+
+async function requestGame(path, options = {}) {
+  const response = await fetch(path, {headers: headers(), ...options});
+  if (!response.ok) throw new Error(String(response.status));
+  return response.json();
+}
+
+function showView(view) {
+  for (const element of document.querySelectorAll(".dashboard-view")) {
+    element.hidden = element.id !== `${view}-view`;
+  }
+  for (const button of document.querySelectorAll(".nav-item")) {
+    button.classList.toggle("active", button.dataset.view === view);
+  }
+}
+
+async function loadGameView(view) {
+  showView(view);
+  try {
+    if (view === "overview") return refresh();
+    if (view === "commands") {
+      const commands = await requestGame("/api/game/commands");
+      document.querySelector("#command-list").innerHTML = commands.map((command) => `
+        <article class="data-row"><div><b>${escapeHtml(command.command)}</b><small>${escapeHtml(command.description)}</small></div>
+        <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></article>`).join("") || "<p class=\"muted\">暂无指令。</p>";
+      return;
+    }
+    if (view === "employees") {
+      const employees = await requestGame("/api/game/users");
+      document.querySelector("#employee-list").innerHTML = employees.map((employee) => `
+        <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><strong>${employee.balance} 摸鱼币</strong></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
+      return;
+    }
+    const items = await requestGame("/api/game/items");
+    document.querySelector("#shop-list").innerHTML = items.map((item) => `
+      <article class="data-row"><div><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.description)}</small></div><strong>${item.price} 币 · 库存 ${item.stock}</strong></article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
+  } catch (error) {
+    setResult(`数据读取失败（${error.message}）`, "error");
+  }
 }
 
 function updateControls(state) {
@@ -152,6 +198,38 @@ document.querySelector("#open-login-console").addEventListener("click", openCons
 for (const button of document.querySelectorAll("button[data-action]")) {
   button.addEventListener("click", () => submitAction(button));
 }
+for (const button of document.querySelectorAll(".nav-item")) {
+  button.addEventListener("click", () => void loadGameView(button.dataset.view));
+}
+document.querySelector("#command-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-command]");
+  if (!button) return;
+  try {
+    await requestGame("/api/game/commands", {
+      method: "PATCH",
+      body: JSON.stringify({command: button.dataset.command, enabled: button.dataset.enabled === "true"}),
+    });
+    await loadGameView("commands");
+    setResult("指令状态已更新", "success");
+  } catch (error) {
+    setResult(`更新失败（${error.message}）`, "error");
+  }
+});
+document.querySelector("#item-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  try {
+    await requestGame("/api/game/items", {
+      method: "POST",
+      body: JSON.stringify({...values, price: Number(values.price), stock: Number(values.stock)}),
+    });
+    event.currentTarget.reset();
+    await loadGameView("shop");
+    setResult("物品已上架", "success");
+  } catch (error) {
+    setResult(`上架失败（${error.message}）`, "error");
+  }
+});
 
 setAuthenticated(Boolean(token));
 if (token) {

@@ -1,8 +1,9 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from time import time
 from typing import Callable, Protocol
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 from dzmm_bot.runtime.contracts import InboundMessage, LoginState
 from dzmm_bot.dzmm_source import DzmmMessageSource
@@ -105,7 +106,12 @@ class _PlaywrightGateway:
     def read_new(self) -> list[InboundMessage]:
         page = self._active_page()
         return [
-            InboundMessage(message.message_id, message.sender, message.text, datetime.now(UTC))
+            InboundMessage(
+                message.message_id,
+                message.sender,
+                message.text,
+                datetime.now(ZoneInfo("Asia/Shanghai")),
+            )
             for message in DzmmMessageSource(page).read_new()
         ]
 

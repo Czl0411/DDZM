@@ -41,8 +41,9 @@ class GroupCommandHandler:
         parts = content.split(maxsplit=1)
         if len(parts) != 2 or not parts[1].strip():
             return self._reply("/入职", "missing_name", received_at)
+        settings = self._repository.get_game_settings()
         employee, created = self._repository.create_user(
-            platform_id, parts[1].strip(), received_at
+            platform_id, parts[1].strip(), received_at, settings.onboarding_bonus
         )
         if not created:
             return self._reply(
@@ -62,7 +63,8 @@ class GroupCommandHandler:
         employee = self._repository.find_user(platform_id)
         if employee is None:
             return self._reply("/打卡", "not_joined", received_at)
-        if not self._repository.check_in(employee, received_at):
+        settings = self._repository.get_game_settings()
+        if not self._repository.check_in(employee, received_at, settings.checkin_reward):
             return self._reply(
                 "/打卡", "already_checked_in", received_at, {"{昵称}": employee.display_name}
             )
@@ -73,7 +75,7 @@ class GroupCommandHandler:
             {
                 "{昵称}": employee.display_name,
                 "{余额}": employee.balance,
-                "{打卡奖励}": 5,
+                "{打卡奖励}": settings.checkin_reward,
             },
         )
 
@@ -109,13 +111,14 @@ class GroupCommandHandler:
         items = self._repository.list_active_items()
         if not items:
             return self._reply("/商店", "empty", received_at)
+        currency_name = self._repository.get_game_settings().currency_name
         return self._reply(
             "/商店",
             "items_available",
             received_at,
             {
                 "{商店列表}": "\n".join(
-                    f"{item.name}（{item.price} 摸鱼币，库存 {item.stock}）"
+                    f"{item.name}（{item.price} {currency_name}，库存 {item.stock}）"
                     for item in items
                 )
             },
@@ -123,18 +126,31 @@ class GroupCommandHandler:
 
     def _help(self, received_at) -> str:
         commands = self._repository.list_enabled_command_definitions()
+        settings = self._repository.get_game_settings()
+        descriptions = {
+            "/打卡": f"每日领取 {settings.checkin_reward} {settings.currency_name}"
+        }
         return self._reply(
             "/帮助",
             "shown",
             received_at,
-            {"{指令列表}": "\n".join(f"{item.command}：{item.description}" for item in commands)},
+            {
+                "{指令列表}": "\n".join(
+                    f"{item.command}：{descriptions.get(item.command, item.description)}"
+                    for item in commands
+                )
+            },
         )
 
     def _reply(self, command: str, scenario: str, received_at, values=None) -> str:
         definition = template_definition(command, scenario)
         template_record = self._repository.get_reply_template(command, scenario)
         template = template_record.template if template_record is not None else definition.default
-        context = {"{日期}": received_at.date().isoformat(), **(values or {})}
+        context = {
+            "{日期}": received_at.date().isoformat(),
+            "{货币}": self._repository.get_game_settings().currency_name,
+            **(values or {}),
+        }
         try:
             return render_template(definition, template, context)
         except ValueError:

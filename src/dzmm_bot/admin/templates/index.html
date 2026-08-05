@@ -39,7 +39,7 @@
             <div>
               <p class="eyebrow">运行概览</p>
               <h1 id="dashboard-title">机器人运行状态</h1>
-              <p>此页面只提供人工登录与安全运维控制；消息收发适配尚未启用。</p>
+              <p>在这里查看运行状态，并配置机器人在群内使用的基础玩法规则。</p>
             </div>
             <button id="refresh" class="secondary" type="button">刷新状态</button>
           </div>
@@ -47,6 +47,7 @@
           <div class="dashboard-layout">
             <nav class="side-nav" aria-label="管理菜单">
               <button id="nav-overview" class="nav-item active" data-view="overview" type="button">运行概览</button>
+              <button id="nav-settings" class="nav-item" data-view="settings" type="button">玩法配置</button>
               <button id="nav-commands" class="nav-item" data-view="commands" type="button">指令库</button>
               <button id="nav-employees" class="nav-item" data-view="employees" type="button">员工</button>
               <button id="nav-shop" class="nav-item" data-view="shop" type="button">物品与商店</button>
@@ -97,6 +98,18 @@
                   <p class="muted">请仅在下方窗口输入账号、密码和验证码。登录完成后回到此页点击“完成登录”。</p>
                 </div>
                 <iframe id="login-console-frame" title="DZMM 人工登录桌面" allow="clipboard-read; clipboard-write"></iframe>
+              </section>
+
+              <section id="settings-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">玩法配置</p>
+                <div class="panel-heading">
+                  <div>
+                    <h2>经济规则</h2>
+                    <p class="muted">修改后会立即影响后续入职与打卡，不会改动已有员工余额。</p>
+                  </div>
+                  <button id="edit-settings" class="primary" type="button">编辑经济规则</button>
+                </div>
+                <div id="settings-card" class="settings-card" aria-live="polite"></div>
               </section>
             </article>
 
@@ -167,6 +180,32 @@
         <div class="template-modal-actions">
           <button class="secondary" data-close-template-modal type="button">取消</button>
           <button id="save-template-modal" class="primary" type="button">保存</button>
+        </div>
+      </section>
+    </div>
+    <div id="settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-settings-modal></div>
+      <section class="template-modal-card">
+        <div class="template-modal-heading">
+          <div>
+            <p class="eyebrow">玩法配置</p>
+            <h2 id="settings-modal-title">编辑经济规则</h2>
+            <p class="muted">新设置会影响后续操作；每日重置时间固定为北京时间 00:00。</p>
+          </div>
+          <button class="text-button" data-close-settings-modal type="button" aria-label="关闭经济规则窗口">关闭</button>
+        </div>
+        <label for="settings-currency-name">货币名称</label>
+        <input id="settings-currency-name" maxlength="12" required>
+        <small class="muted">例如：摸鱼币、工分。最多 12 个字符。</small>
+        <label for="settings-onboarding-bonus">入职初始余额</label>
+        <input id="settings-onboarding-bonus" type="number" min="0" max="999" required>
+        <small class="muted">只给之后新入职的员工，不会修改现有余额。</small>
+        <label for="settings-checkin-reward">每日打卡奖励</label>
+        <input id="settings-checkin-reward" type="number" min="0" max="999" required>
+        <small class="muted">每位员工每天最多领取一次，按北京时间日期重置。</small>
+        <div class="template-modal-actions">
+          <button class="secondary" data-close-settings-modal type="button">取消</button>
+          <button id="save-settings-modal" class="primary" type="button">保存设置</button>
         </div>
       </section>
     </div>

@@ -248,6 +248,29 @@ def test_reply_template_defaults_seed_once_and_preserve_an_edit(repository):
     )
 
 
+def test_game_settings_default_to_the_initial_economy(repository):
+    settings = repository.get_game_settings()
+
+    assert (settings.currency_name, settings.onboarding_bonus, settings.checkin_reward) == (
+        "摸鱼币",
+        0,
+        5,
+    )
+
+
+@pytest.mark.parametrize(
+    "currency_name,onboarding_bonus,checkin_reward",
+    [("", 0, 5), (" " * 13, 0, 5), ("工分", -1, 5), ("工分", 0, 1000)],
+)
+def test_game_settings_reject_invalid_values(
+    repository, currency_name, onboarding_bonus, checkin_reward
+):
+    with pytest.raises(ValueError):
+        repository.set_game_settings(
+            currency_name, onboarding_bonus, checkin_reward
+        )
+
+
 def test_template_validation_rejects_a_variable_unavailable_to_its_scenario():
     """Fails if a shop-only variable can leak into a balance reply."""
     from dzmm_bot.core.reply_templates import validate_template
@@ -294,6 +317,7 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         "audit_events",
         "command_definitions",
         "command_reply_templates",
+        "game_settings",
         "users",
         "daily_checkins",
         "items",

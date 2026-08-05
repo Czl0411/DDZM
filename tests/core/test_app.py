@@ -137,6 +137,28 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
     ]
 
 
+def test_game_settings_can_be_read_and_updated(client, headers):
+    initial = client.get("/internal/game/settings", headers=headers)
+    updated = client.patch(
+        "/internal/game/settings",
+        headers=headers,
+        json={"currency_name": "工分", "onboarding_bonus": 3, "checkin_reward": 7},
+    )
+
+    assert initial.json() == {
+        "currency_name": "摸鱼币",
+        "onboarding_bonus": 0,
+        "checkin_reward": 5,
+        "reset_time_label": "北京时间 00:00",
+    }
+    assert updated.json() == {
+        "currency_name": "工分",
+        "onboarding_bonus": 3,
+        "checkin_reward": 7,
+        "reset_time_label": "北京时间 00:00",
+    }
+
+
 def test_game_commands_list_templates_and_update_a_valid_template(client, headers):
     commands = client.get("/internal/game/commands", headers=headers).json()
     balance = next(command for command in commands if command["command"] == "/余额")
@@ -155,8 +177,8 @@ def test_game_commands_list_templates_and_update_a_valid_template(client, header
         {
             "scenario": "shown",
             "label": "查询成功",
-            "template": "{昵称}，当前余额：{余额} 摸鱼币。",
-            "variables": ["{昵称}", "{余额}", "{日期}"],
+            "template": "{昵称}，当前余额：{余额} {货币}。",
+            "variables": ["{昵称}", "{余额}", "{货币}", "{日期}"],
         },
         {
             "scenario": "not_joined",

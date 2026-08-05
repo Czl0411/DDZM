@@ -30,6 +30,14 @@ class FakeCore:
     employees: list[dict] = field(default_factory=list)
     items: list[dict] = field(default_factory=list)
     template_error: bool = False
+    game_settings: dict = field(
+        default_factory=lambda: {
+            "currency_name": "摸鱼币",
+            "onboarding_bonus": 0,
+            "checkin_reward": 5,
+            "reset_time_label": "北京时间 00:00",
+        }
+    )
 
     def status(self):
         return {
@@ -75,6 +83,13 @@ class FakeCore:
         item = {**item, "enabled": True}
         self.items.append(item)
         return item
+
+    def get_game_settings(self):
+        return self.game_settings
+
+    def set_game_settings(self, settings):
+        self.game_settings = {**settings, "reset_time_label": "北京时间 00:00"}
+        return self.game_settings
 
 
 class FakeConsole:
@@ -185,6 +200,7 @@ def headers():
         ("post", "/api/login/finish"),
         ("post", "/api/session"),
         ("patch", "/api/game/command-templates"),
+        ("get", "/api/game/settings"),
         ("get", "/login-console"),
     ],
 )
@@ -234,6 +250,19 @@ def test_admin_dashboard_exposes_game_navigation_and_proxies_game_data(
     assert commands.json()[0]["command"] == "/打卡"
     assert disabled.json()["enabled"] is False
     assert item.status_code == 201
+
+
+def test_admin_proxies_game_settings(client, headers, core):
+    initial = client.get("/api/game/settings", headers=headers)
+    updated = client.patch(
+        "/api/game/settings",
+        headers=headers,
+        json={"currency_name": "工分", "onboarding_bonus": 3, "checkin_reward": 7},
+    )
+
+    assert initial.json()["currency_name"] == "摸鱼币"
+    assert updated.json()["currency_name"] == "工分"
+    assert core.game_settings["checkin_reward"] == 7
 
 
 def test_admin_relay_updates_a_command_template(client, headers, core):
@@ -289,6 +318,16 @@ def test_command_library_keeps_template_scenarios_inside_a_modal(client):
     assert "data-variable" in script.text
     assert "closeTemplateModal" in script.text
     assert "/api/game/command-templates" in script.text
+
+
+def test_admin_page_exposes_game_settings_navigation_and_modal(client):
+    page = client.get("/").text
+    script = client.get("/static/admin.js").text
+
+    assert 'data-view="settings"' in page
+    assert 'id="settings-view"' in page
+    assert 'id="settings-modal"' in page
+    assert "/api/game/settings" in script
 
 
 def test_status_returns_only_safe_operational_fields(client, headers):

@@ -108,6 +108,21 @@ def test_checkin_awards_five_once_per_beijing_date_and_uses_beijing_dates():
         assert checkins[0].checked_in_at.tzinfo == BEIJING
 
 
+def test_updated_economy_applies_to_future_join_and_checkin_only():
+    service, repository, factory = _service()
+    repository.set_game_settings("工分", 3, 7)
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+
+    _receive(service, "join", "platform-xiaoming", "/入职 小明", received_at)
+    assert _latest_reply(factory) == "小明，欢迎入职摸鱼公司。当前余额：3 工分。"
+
+    _receive(service, "checkin", "platform-xiaoming", "/打卡", received_at)
+    assert _latest_reply(factory) == "打卡成功，领取 7 工分。当前余额：10 工分。"
+
+    _receive(service, "help", "platform-xiaoming", "/帮助", received_at)
+    assert "/打卡：每日领取 7 工分" in _latest_reply(factory)
+
+
 def test_balance_inventory_and_shop_require_employee_and_return_persisted_data():
     service, repository, factory = _service()
     received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)

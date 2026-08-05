@@ -140,6 +140,22 @@ def create_app(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid item")
         return core.create_game_item({key: request[key] for key in required})
 
+    @app.get("/api/game/settings")
+    def game_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return core.get_game_settings()
+
+    @app.patch("/api/game/settings")
+    def set_game_settings(
+        request: dict, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        required = ("currency_name", "onboarding_bonus", "checkin_reward")
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        try:
+            return core.set_game_settings({key: request[key] for key in required})
+        except HTTPStatusError as error:
+            raise HTTPException(error.response.status_code, error.response.text)
+
     @app.post("/api/session", status_code=status.HTTP_204_NO_CONTENT)
     def create_console_session(
         response: Response, _: Annotated[None, Depends(authorize)]

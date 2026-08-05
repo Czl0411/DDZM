@@ -19,6 +19,7 @@ from .api_models import (
     CommandDefinitionResponse,
     CommandTemplateResponse,
     CreateItemRequest,
+    GameSettingsResponse,
     HealthResponse,
     HeartbeatRequest,
     HeartbeatResponse,
@@ -29,6 +30,7 @@ from .api_models import (
     SentRequest,
     SetCommandEnabledRequest,
     SetCommandTemplateRequest,
+    SetGameSettingsRequest,
     ItemResponse,
     UserResponse,
     WorkerCommandRequest,
@@ -257,6 +259,25 @@ def create_app(
             )
         )
 
+    @app.get("/internal/game/settings", response_model=GameSettingsResponse)
+    def game_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> GameSettingsResponse:
+        return _game_settings_response(repository.get_game_settings())
+
+    @app.patch("/internal/game/settings", response_model=GameSettingsResponse)
+    def set_game_settings(
+        request: SetGameSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> GameSettingsResponse:
+        try:
+            record = repository.set_game_settings(
+                request.currency_name, request.onboarding_bonus, request.checkin_reward
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _game_settings_response(record)
+
     @app.post("/internal/worker-commands", response_model=WorkerCommandResponse)
     def enqueue_worker_command(
         request: WorkerCommandRequest, _: Annotated[None, Depends(authorize)]
@@ -350,6 +371,14 @@ def _item_response(record) -> ItemResponse:
         price=record.price,
         stock=record.stock,
         enabled=record.enabled,
+    )
+
+
+def _game_settings_response(record) -> GameSettingsResponse:
+    return GameSettingsResponse(
+        currency_name=record.currency_name,
+        onboarding_bonus=record.onboarding_bonus,
+        checkin_reward=record.checkin_reward,
     )
 
 

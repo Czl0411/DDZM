@@ -17,13 +17,13 @@ class TemplateDefinition:
 
 
 TEMPLATE_DEFINITIONS = (
-    TemplateDefinition("/入职", "joined", "入职成功", "{昵称}，欢迎入职摸鱼公司。当前余额：{余额} 摸鱼币。", ("{昵称}", "{余额}", "{日期}")),
-    TemplateDefinition("/入职", "already_joined", "已入职", "{昵称}已经在职，当前余额：{余额} 摸鱼币。", ("{昵称}", "{余额}", "{日期}")),
+    TemplateDefinition("/入职", "joined", "入职成功", "{昵称}，欢迎入职摸鱼公司。当前余额：{余额} {货币}。", ("{昵称}", "{余额}", "{货币}", "{日期}")),
+    TemplateDefinition("/入职", "already_joined", "已入职", "{昵称}已经在职，当前余额：{余额} {货币}。", ("{昵称}", "{余额}", "{货币}", "{日期}")),
     TemplateDefinition("/入职", "missing_name", "缺少昵称", "请用 /入职 名字 加入摸鱼公司。", ("{日期}",)),
-    TemplateDefinition("/打卡", "checked_in", "打卡成功", "打卡成功，领取 {打卡奖励} 摸鱼币。当前余额：{余额} 摸鱼币。", ("{昵称}", "{余额}", "{打卡奖励}", "{日期}")),
+    TemplateDefinition("/打卡", "checked_in", "打卡成功", "打卡成功，领取 {打卡奖励} {货币}。当前余额：{余额} {货币}。", ("{昵称}", "{余额}", "{打卡奖励}", "{货币}", "{日期}")),
     TemplateDefinition("/打卡", "already_checked_in", "今日已打卡", "今天已经打过卡啦，明天再来。", ("{昵称}", "{日期}")),
     TemplateDefinition("/打卡", "not_joined", "未入职", "请先用 /入职 名字 加入摸鱼公司。", ("{日期}",)),
-    TemplateDefinition("/余额", "shown", "查询成功", "{昵称}，当前余额：{余额} 摸鱼币。", ("{昵称}", "{余额}", "{日期}")),
+    TemplateDefinition("/余额", "shown", "查询成功", "{昵称}，当前余额：{余额} {货币}。", ("{昵称}", "{余额}", "{货币}", "{日期}")),
     TemplateDefinition("/余额", "not_joined", "未入职", "请先用 /入职 名字 加入摸鱼公司。", ("{日期}",)),
     TemplateDefinition("/我的物品", "shown", "查询成功", "{昵称}的物品：\n{物品列表}", ("{昵称}", "{物品列表}", "{日期}")),
     TemplateDefinition("/我的物品", "not_joined", "未入职", "请先用 /入职 名字 加入摸鱼公司。", ("{日期}",)),

@@ -54,6 +54,10 @@ input { width: 100%; padding: 12px 13px; border: 1px solid #cfd6e4; border-radiu
 .nav-item.active { color: var(--accent); background: #f0eeff; }
 .dashboard-views { min-width: 0; }
 .data-list { display: grid; gap: 10px; margin-top: 22px; }
+.settings-card { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 24px; }
+.settings-card article { padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #fafbff; }
+.settings-card span, .settings-card small { display: block; color: var(--muted); }
+.settings-card strong { display: block; margin: 8px 0 4px; font-size: 24px; letter-spacing: -.03em; }
 .data-row { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 15px; border: 1px solid var(--line); border-radius: 10px; }
 .data-row b, .data-row small { display: block; }
 .data-row small { margin-top: 3px; color: var(--muted); }
@@ -103,4 +107,4 @@ input { width: 100%; padding: 12px 13px; border: 1px solid #cfd6e4; border-radiu
 .result[data-type="success"] { color: var(--success); }
 .result[data-type="error"] { color: var(--danger); }
 [hidden] { display: none !important; }
-@media (max-width: 760px) { .topbar { padding: 0 20px; } .connection { display: none; } main { width: min(100% - 32px, 1180px); padding: 32px 0; } .login-card { padding: 28px; } .page-heading, .workspace, .dashboard-layout { display: grid; } .dashboard-layout { grid-template-columns: 1fr; } .side-nav { grid-template-columns: repeat(2, 1fr); } .status-grid { grid-template-columns: 1fr; } .item-form { grid-template-columns: 1fr; } .data-row, .command-heading, .command-actions, .template-modal-heading, .template-modal-actions { align-items: start; flex-direction: column; } .page-heading .secondary { justify-self: start; } .topbar-meta { gap: 4px; } #login-console-frame { min-height: 480px; } }
+@media (max-width: 760px) { .topbar { padding: 0 20px; } .connection { display: none; } main { width: min(100% - 32px, 1180px); padding: 32px 0; } .login-card { padding: 28px; } .page-heading, .workspace, .dashboard-layout { display: grid; } .dashboard-layout { grid-template-columns: 1fr; } .side-nav { grid-template-columns: repeat(2, 1fr); } .status-grid, .settings-card { grid-template-columns: 1fr; } .item-form { grid-template-columns: 1fr; } .data-row, .command-heading, .command-actions, .template-modal-heading, .template-modal-actions { align-items: start; flex-direction: column; } .page-heading .secondary { justify-self: start; } .topbar-meta { gap: 4px; } #login-console-frame { min-height: 480px; } }

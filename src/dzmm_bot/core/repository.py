@@ -16,6 +16,7 @@ from .schema import (
     CommandDefinitionRecord,
     CommandReplyTemplateRecord,
     DailyCheckinRecord,
+    GameSettingsRecord,
     InboundRecord,
     ItemRecord,
     OutboundRecord,
@@ -24,6 +25,11 @@ from .schema import (
     WorkerCommandRecord,
     WorkerInstanceRecord,
 )
+
+
+_DEFAULT_CURRENCY_NAME = "摸鱼币"
+_DEFAULT_ONBOARDING_BONUS = 0
+_DEFAULT_CHECKIN_REWARD = 5
 
 
 _COMMAND_DEFINITIONS = (
@@ -227,6 +233,41 @@ class CoreRepository:
             session.flush()
             return True
 
+    def get_game_settings(self) -> GameSettingsRecord:
+        with self._session() as session:
+            record = session.get(GameSettingsRecord, 1)
+            if record is None:
+                record = GameSettingsRecord(
+                    id=1,
+                    currency_name=_DEFAULT_CURRENCY_NAME,
+                    onboarding_bonus=_DEFAULT_ONBOARDING_BONUS,
+                    checkin_reward=_DEFAULT_CHECKIN_REWARD,
+                )
+                session.add(record)
+                session.flush()
+            return record
+
+    def set_game_settings(
+        self, currency_name: str, onboarding_bonus: int, checkin_reward: int
+    ) -> GameSettingsRecord:
+        currency_name = currency_name.strip()
+        if not 1 <= len(currency_name) <= 12:
+            raise ValueError("货币名称需为 1 至 12 个字符")
+        if not 0 <= onboarding_bonus <= 999:
+            raise ValueError("入职初始余额需在 0 至 999 之间")
+        if not 0 <= checkin_reward <= 999:
+            raise ValueError("打卡奖励需在 0 至 999 之间")
+        with self._session() as session:
+            record = session.get(GameSettingsRecord, 1)
+            if record is None:
+                record = GameSettingsRecord(id=1)
+                session.add(record)
+            record.currency_name = currency_name
+            record.onboarding_bonus = onboarding_bonus
+            record.checkin_reward = checkin_reward
+            session.flush()
+            return record
+
     def find_user(self, platform_id: str) -> UserRecord | None:
         with self._session() as session:
             return session.scalar(
@@ -234,7 +275,7 @@ class CoreRepository:
             )
 
     def create_user(
-        self, platform_id: str, display_name: str, joined_at: datetime
+        self, platform_id: str, display_name: str, joined_at: datetime, initial_balance: int
     ) -> tuple[UserRecord, bool]:
         with self._session() as session:
             existing = session.scalar(
@@ -245,14 +286,14 @@ class CoreRepository:
             record = UserRecord(
                 platform_id=platform_id,
                 display_name=display_name,
-                balance=0,
+                balance=initial_balance,
                 joined_at=joined_at,
             )
             session.add(record)
             session.flush()
             return record, True
 
-    def check_in(self, user: UserRecord, checked_in_at: datetime) -> bool:
+    def check_in(self, user: UserRecord, checked_in_at: datetime, reward: int) -> bool:
         with self._session() as session:
             employee = session.get(UserRecord, user.id)
             if employee is None:
@@ -280,7 +321,7 @@ class CoreRepository:
             )
             if inserted_id is None:
                 return False
-            employee.balance += 5
+            employee.balance += reward
             session.flush()
             return True
 

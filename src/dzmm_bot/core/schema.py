@@ -102,6 +102,15 @@ class CommandReplyTemplateRecord(Base):
     )
 
 
+class GameSettingsRecord(Base):
+    __tablename__ = "game_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    currency_name: Mapped[str] = mapped_column(String(12), nullable=False)
+    onboarding_bonus: Mapped[int] = mapped_column(Integer, nullable=False)
+    checkin_reward: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class UserRecord(Base):
     __tablename__ = "users"
 

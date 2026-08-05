@@ -1,6 +1,7 @@
 let token = sessionStorage.getItem("dzmm-admin-token") || "";
 let currentState = "unknown";
 let consoleLoading = false;
+let gameSettings = null;
 
 const loginScreen = document.querySelector("#login-screen");
 const dashboard = document.querySelector("#dashboard");
@@ -18,6 +19,10 @@ const templateModalContext = document.querySelector("#template-modal-context");
 const templateModalScenario = document.querySelector("#template-modal-scenario");
 const templateModalInput = document.querySelector("#template-modal-input");
 const templateModalVariables = document.querySelector("#template-modal-variables");
+const settingsModal = document.querySelector("#settings-modal");
+const settingsCurrencyName = document.querySelector("#settings-currency-name");
+const settingsOnboardingBonus = document.querySelector("#settings-onboarding-bonus");
+const settingsCheckinReward = document.querySelector("#settings-checkin-reward");
 
 function headers() {
   return {"X-Admin-Token": token};
@@ -51,6 +56,32 @@ function closeTemplateModal() {
   templateModal.hidden = true;
   delete templateModal.dataset.command;
   delete templateModal.dataset.templates;
+}
+
+function closeSettingsModal() {
+  settingsModal.hidden = true;
+}
+
+function renderSettings(settings) {
+  document.querySelector("#settings-card").innerHTML = `
+    <article><span>货币名称</span><strong>${escapeHtml(settings.currency_name)}</strong><small>余额、打卡和商店的计价单位</small></article>
+    <article><span>入职初始余额</span><strong>${settings.onboarding_bonus}</strong><small>仅影响之后新入职的员工</small></article>
+    <article><span>每日打卡奖励</span><strong>${settings.checkin_reward}</strong><small>${escapeHtml(settings.reset_time_label)} 重置</small></article>`;
+}
+
+async function loadSettings() {
+  gameSettings = await requestGame("/api/game/settings");
+  renderSettings(gameSettings);
+  return gameSettings;
+}
+
+async function openSettingsModal() {
+  const settings = gameSettings || await loadSettings();
+  settingsCurrencyName.value = settings.currency_name;
+  settingsOnboardingBonus.value = settings.onboarding_bonus;
+  settingsCheckinReward.value = settings.checkin_reward;
+  settingsModal.hidden = false;
+  settingsCurrencyName.focus();
 }
 
 function openTemplateModal(button) {
@@ -100,6 +131,10 @@ async function loadGameView(view) {
   showView(view);
   try {
     if (view === "overview") return refresh();
+    if (view === "settings") {
+      await loadSettings();
+      return;
+    }
     if (view === "commands") {
       const commands = await requestGame("/api/game/commands");
       document.querySelector("#command-list").innerHTML = commands.map((command) => `
@@ -111,14 +146,16 @@ async function loadGameView(view) {
       return;
     }
     if (view === "employees") {
+      const settings = gameSettings || await loadSettings();
       const employees = await requestGame("/api/game/users");
       document.querySelector("#employee-list").innerHTML = employees.map((employee) => `
-        <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><strong>${employee.balance} 摸鱼币</strong></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
+        <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
       return;
     }
+    const settings = gameSettings || await loadSettings();
     const items = await requestGame("/api/game/items");
     document.querySelector("#shop-list").innerHTML = items.map((item) => `
-      <article class="data-row"><div><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.description)}</small></div><strong>${item.price} 币 · 库存 ${item.stock}</strong></article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
+      <article class="data-row"><div><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.description)}</small></div><strong>${item.price} ${escapeHtml(settings.currency_name)} · 库存 ${item.stock}</strong></article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
   } catch (error) {
     setResult(`数据读取失败（${error.message}）`, "error");
   }
@@ -238,6 +275,7 @@ document.querySelector("#logout").addEventListener("click", () => {
 });
 document.querySelector("#refresh").addEventListener("click", refresh);
 document.querySelector("#open-login-console").addEventListener("click", openConsole);
+document.querySelector("#edit-settings").addEventListener("click", () => void openSettingsModal());
 for (const button of document.querySelectorAll("button[data-action]")) {
   button.addEventListener("click", () => submitAction(button));
 }
@@ -296,8 +334,32 @@ templateModal.addEventListener("click", async (event) => {
     setResult(`保存失败（${error.message}）`, "error");
   }
 });
+settingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-settings-modal]")) {
+    closeSettingsModal();
+    return;
+  }
+  if (event.target.id !== "save-settings-modal") return;
+  try {
+    gameSettings = await requestGame("/api/game/settings", {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        currency_name: settingsCurrencyName.value.trim(),
+        onboarding_bonus: Number(settingsOnboardingBonus.value),
+        checkin_reward: Number(settingsCheckinReward.value),
+      }),
+    });
+    renderSettings(gameSettings);
+    closeSettingsModal();
+    setResult("经济规则已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !templateModal.hidden) closeTemplateModal();
+  if (event.key === "Escape" && !settingsModal.hidden) closeSettingsModal();
 });
 document.querySelector("#item-form").addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -125,6 +125,19 @@ class CreateItemRequest(ApiModel):
     stock: int = Field(ge=0, le=999)
 
 
+class GameSettingsResponse(ApiModel):
+    currency_name: str
+    onboarding_bonus: int
+    checkin_reward: int
+    reset_time_label: str = "北京时间 00:00"
+
+
+class SetGameSettingsRequest(ApiModel):
+    currency_name: str = Field(min_length=1, max_length=12)
+    onboarding_bonus: int = Field(ge=0, le=999)
+    checkin_reward: int = Field(ge=0, le=999)
+
+
 WorkerCommandKind = Literal[
     "pause_listening",
     "resume_listening",

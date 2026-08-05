@@ -43,6 +43,7 @@ const randomEventSettingsModal = document.querySelector("#random-event-settings-
 const randomEventSceneModal = document.querySelector("#random-event-scene-modal");
 const randomEventTimeModal = document.querySelector("#random-event-time-modal");
 const randomEventSceneSeats = document.querySelector("#random-event-scene-seats");
+const randomEventSceneOpenings = document.querySelector("#random-event-scene-openings");
 
 function headers() {
   return token ? {"X-Admin-Token": token} : {"X-Admin-Session": adminSession};
@@ -156,7 +157,7 @@ function renderRandomEventSettings(settings) {
 
 function renderRandomEventScenes(scenes) {
   document.querySelector("#random-event-scene-list").innerHTML = scenes.map((scene) => `
-    <article class="data-row"><div><b>${escapeHtml(scene.name)}${scene.enabled ? "" : "（已停用）"}</b><small>${escapeHtml(scene.opening_text)}</small><small>席位：${scene.seats.map((seat) => `${escapeHtml(seat.role)} × ${seat.capacity}`).join(" · ")}</small></div><div class="command-actions"><strong>${scene.target_rounds} 轮 · ${scene.reward} 奖励</strong><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="edit" type="button">编辑</button><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有场景。新增一个场景后，系统才会在计划时刻发起事件。</p>";
+    <article class="data-row"><div><b>${escapeHtml(scene.name)}${scene.enabled ? "" : "（已停用）"}</b><small>报名公告：${escapeHtml(scene.signup_text)}</small><small>正式剧情开场白：${scene.openings.length} 条</small><small>席位：${scene.seats.map((seat) => `${escapeHtml(seat.role)} × ${seat.capacity}`).join(" · ")}</small></div><div class="command-actions"><strong>${scene.target_rounds} 轮 · ${scene.reward} 奖励</strong><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="edit" type="button">编辑</button><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有场景。新增一个场景后，系统才会在计划时刻发起事件。</p>";
 }
 
 function renderTodayRandomEvents(events) {
@@ -186,6 +187,14 @@ function renderRandomEventSceneSeat(role = "", capacity = 1) {
   randomEventSceneSeats.append(row);
 }
 
+function renderRandomEventSceneOpening(value = "") {
+  const row = document.createElement("div");
+  row.className = "scene-opening-row";
+  row.innerHTML = '<textarea data-random-event-formal-opening rows="4" maxlength="2000" placeholder="例如：咖啡洒了一桌，主持人正在组织抢救。"></textarea><button class="text-button" data-remove-random-event-opening type="button">删除</button>';
+  row.querySelector("textarea").value = value;
+  randomEventSceneOpenings.append(row);
+}
+
 async function openRandomEventSettingsModal() {
   const settings = randomEventSettings || await requestGame("/api/game/random-events/settings");
   randomEventSettings = settings;
@@ -204,11 +213,13 @@ function openRandomEventSceneModal(scene = null) {
   document.querySelector("#random-event-scene-modal-title").textContent = scene ? `编辑场景：${scene.name}` : "新增场景";
   document.querySelector("#save-random-event-scene").textContent = scene ? "保存场景" : "创建场景";
   document.querySelector("#random-event-scene-name").value = scene?.name || "";
-  document.querySelector("#random-event-scene-opening").value = scene?.opening_text || "";
+  document.querySelector("#random-event-scene-signup").value = scene?.signup_text || "";
   document.querySelector("#random-event-scene-rounds").value = scene?.target_rounds || 10;
   document.querySelector("#random-event-scene-reward").value = scene?.reward ?? 1;
   randomEventSceneSeats.innerHTML = "";
   (scene?.seats || [{role: "", capacity: 1}]).forEach((seat) => renderRandomEventSceneSeat(seat.role, seat.capacity));
+  randomEventSceneOpenings.innerHTML = "";
+  (scene?.openings || [""]).forEach((opening) => renderRandomEventSceneOpening(opening));
   randomEventSceneModal.hidden = false;
 }
 
@@ -773,15 +784,24 @@ randomEventSceneModal.addEventListener("click", async (event) => {
     renderRandomEventSceneSeat();
     return;
   }
+  if (event.target.id === "add-random-event-scene-opening") {
+    renderRandomEventSceneOpening();
+    return;
+  }
   if (event.target.closest("[data-remove-random-event-seat]")) {
     event.target.closest(".scene-seat-row").remove();
     return;
   }
+  if (event.target.closest("[data-remove-random-event-opening]")) {
+    event.target.closest(".scene-opening-row").remove();
+    return;
+  }
   if (event.target.id !== "save-random-event-scene") return;
   const name = document.querySelector("#random-event-scene-name").value.trim();
-  const openingText = document.querySelector("#random-event-scene-opening").value.trim();
-  if (!name || !openingText) {
-    setResult("请填写场景名称和开场文案", "error");
+  const signupText = document.querySelector("#random-event-scene-signup").value.trim();
+  const openings = [...randomEventSceneOpenings.querySelectorAll("[data-random-event-formal-opening]")].map((input) => input.value.trim());
+  if (!name || !signupText || !openings.length || openings.some((opening) => !opening)) {
+    setResult("请填写场景名称、报名公告和至少一条正式剧情开场白", "error");
     return;
   }
   const seats = [...randomEventSceneSeats.querySelectorAll(".scene-seat-row")].map((row) => ({
@@ -802,7 +822,8 @@ randomEventSceneModal.addEventListener("click", async (event) => {
         method: sceneId ? "PUT" : "POST", headers: {"Content-Type": "application/json", ...configurationHeaders()},
         body: JSON.stringify({
           name,
-          opening_text: openingText,
+          signup_text: signupText,
+          openings,
           target_rounds: Number(document.querySelector("#random-event-scene-rounds").value),
           reward: Number(document.querySelector("#random-event-scene-reward").value), seats,
           ...(sceneId ? {enabled: randomEventSceneModal.dataset.enabled === "true"} : {}),

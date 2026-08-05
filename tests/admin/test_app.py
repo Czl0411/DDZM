@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+from pathlib import Path
 
 import httpx
 import pytest
@@ -1018,3 +1019,17 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
     assert scene.json()["name"] == "茶水间"
     assert scene.json()["openings"] == ["咖啡机突然发出一声巨响。"]
     assert client.get("/api/game/random-events/scenes", headers=headers).json()["items"]
+
+
+def test_random_event_scene_modal_uses_split_copy_fields(client):
+    page = client.get("/").text
+
+    assert 'id="random-event-scene-signup"' in page
+    assert 'id="random-event-scene-openings"' in page
+
+
+def test_random_event_scene_script_submits_openings_list():
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert "signup_text: signupText" in script
+    assert "openings" in script

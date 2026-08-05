@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -13,10 +14,12 @@ from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
 
 from .reply_templates import TEMPLATE_DEFINITIONS, validate_template
 from .schema import (
+    ActivityLevelRuleRecord,
     CommandDefinitionRecord,
     CommandReplyTemplateRecord,
     DailyCheckinRecord,
     GameSettingsRecord,
+    IncomeReportScheduleRecord,
     InboundRecord,
     ItemRecord,
     OutboundRecord,
@@ -30,6 +33,32 @@ from .schema import (
 _DEFAULT_CURRENCY_NAME = "摸鱼币"
 _DEFAULT_ONBOARDING_BONUS = 0
 _DEFAULT_CHECKIN_REWARD = 5
+_DEFAULT_ACTIVITY_RULES = (
+    (1, 10, 1),
+    (2, 25, 2),
+    (3, 60, 3),
+    (4, 90, 4),
+    (5, 140, 5),
+    (6, 190, 6),
+    (7, 250, 7),
+    (8, 330, 8),
+    (9, 410, 9),
+    (10, 500, 10),
+)
+_DEFAULT_INCOME_REPORT_TIMES = ("12:00", "16:00", "20:00", "23:59")
+
+
+@dataclass(frozen=True)
+class ActivityLevelRule:
+    level: int
+    character_threshold: int
+    reward: int
+
+
+@dataclass(frozen=True)
+class ActivitySettings:
+    rules: list[ActivityLevelRule]
+    report_times: list[str]
 
 
 _COMMAND_DEFINITIONS = (
@@ -247,6 +276,67 @@ class CoreRepository:
                 session.flush()
             return record
 
+    def ensure_activity_settings(self) -> None:
+        with self._session() as session:
+            dialect_name = session.get_bind().dialect.name
+            for level, character_threshold, reward in _DEFAULT_ACTIVITY_RULES:
+                values = {
+                    "level": level,
+                    "character_threshold": character_threshold,
+                    "reward": reward,
+                }
+                if dialect_name == "postgresql":
+                    statement = postgresql_insert(ActivityLevelRuleRecord).values(**values)
+                elif dialect_name == "sqlite":
+                    statement = sqlite_insert(ActivityLevelRuleRecord).values(**values)
+                else:
+                    raise ValueError(f"unsupported database dialect: {dialect_name}")
+                session.execute(
+                    statement.on_conflict_do_nothing(
+                        index_elements=[ActivityLevelRuleRecord.level]
+                    )
+                )
+            for report_time in _DEFAULT_INCOME_REPORT_TIMES:
+                values = {"report_time": report_time}
+                if dialect_name == "postgresql":
+                    statement = postgresql_insert(IncomeReportScheduleRecord).values(
+                        **values
+                    )
+                elif dialect_name == "sqlite":
+                    statement = sqlite_insert(IncomeReportScheduleRecord).values(**values)
+                else:
+                    raise ValueError(f"unsupported database dialect: {dialect_name}")
+                session.execute(
+                    statement.on_conflict_do_nothing(
+                        index_elements=[IncomeReportScheduleRecord.report_time]
+                    )
+                )
+
+    def get_activity_settings(self) -> ActivitySettings:
+        self.ensure_activity_settings()
+        with self._session() as session:
+            rules = list(
+                session.scalars(
+                    select(ActivityLevelRuleRecord).order_by(ActivityLevelRuleRecord.level)
+                )
+            )
+            report_times = list(
+                session.scalars(
+                    select(IncomeReportScheduleRecord.report_time).order_by(
+                        IncomeReportScheduleRecord.report_time
+                    )
+                )
+            )
+        return ActivitySettings(
+            rules=[
+                ActivityLevelRule(
+                    rule.level, rule.character_threshold, rule.reward
+                )
+                for rule in rules
+            ],
+            report_times=report_times,
+        )
+
     def set_game_settings(
         self, currency_name: str, onboarding_bonus: int, checkin_reward: int
     ) -> GameSettingsRecord:
@@ -374,6 +464,13 @@ class CoreRepository:
             record = OutboundRecord(
                 inbound_message_id=UUID(str(inbound_message_id)), text=reply
             )
+            session.add(record)
+            session.flush()
+            return record
+
+    def enqueue_system_outbound(self, text: str) -> OutboundRecord:
+        with self._session() as session:
+            record = OutboundRecord(inbound_message_id=None, text=text)
             session.add(record)
             session.flush()
             return record

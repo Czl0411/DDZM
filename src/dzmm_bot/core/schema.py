@@ -111,6 +111,20 @@ class GameSettingsRecord(Base):
     checkin_reward: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class ActivityLevelRuleRecord(Base):
+    __tablename__ = "activity_level_rules"
+
+    level: Mapped[int] = mapped_column(Integer, primary_key=True)
+    character_threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    reward: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class IncomeReportScheduleRecord(Base):
+    __tablename__ = "income_report_schedules"
+
+    report_time: Mapped[str] = mapped_column(String(5), primary_key=True)
+
+
 class UserRecord(Base):
     __tablename__ = "users"
 
@@ -129,6 +143,39 @@ class DailyCheckinRecord(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     checkin_date: Mapped[date] = mapped_column(Date, nullable=False)
     checked_in_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class DailyActivityRecord(Base):
+    __tablename__ = "daily_activities"
+    __table_args__ = (UniqueConstraint("user_id", "activity_date"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    activity_date: Mapped[date] = mapped_column(Date, nullable=False)
+    character_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class ActivityRewardSettlementRecord(Base):
+    __tablename__ = "activity_reward_settlements"
+    __table_args__ = (UniqueConstraint("user_id", "activity_date"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    activity_date: Mapped[date] = mapped_column(Date, nullable=False)
+    level: Mapped[int] = mapped_column(Integer, nullable=False)
+    reward: Mapped[int] = mapped_column(Integer, nullable=False)
+    settled_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class BalanceTransactionRecord(Base):
+    __tablename__ = "balance_transactions"
+    __table_args__ = (Index("ix_balance_transactions_user_occurred", "user_id", "occurred_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
 class ItemRecord(Base):
@@ -171,8 +218,8 @@ class OutboundRecord(Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    inbound_message_id: Mapped[UUID] = mapped_column(
-        ForeignKey("inbound_messages.id"), unique=True, nullable=False
+    inbound_message_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("inbound_messages.id"), unique=True
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
@@ -186,6 +233,22 @@ class OutboundRecord(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, onupdate=beijing_now, nullable=False
+    )
+
+
+class IncomeReportDeliveryRecord(Base):
+    __tablename__ = "income_report_deliveries"
+    __table_args__ = (UniqueConstraint("report_date", "report_time"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    report_date: Mapped[date] = mapped_column(Date, nullable=False)
+    report_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    outbound_message_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("outbound_messages.id"), unique=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
     )
 
 

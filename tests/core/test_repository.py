@@ -258,6 +258,34 @@ def test_game_settings_default_to_the_initial_economy(repository):
     )
 
 
+def test_activity_settings_default_to_the_initial_rules(repository):
+    settings = repository.get_activity_settings()
+
+    assert settings.report_times == ["12:00", "16:00", "20:00", "23:59"]
+    assert [
+        (rule.level, rule.character_threshold, rule.reward) for rule in settings.rules
+    ] == [
+        (1, 10, 1),
+        (2, 25, 2),
+        (3, 60, 3),
+        (4, 90, 4),
+        (5, 140, 5),
+        (6, 190, 6),
+        (7, 250, 7),
+        (8, 330, 8),
+        (9, 410, 9),
+        (10, 500, 10),
+    ]
+
+
+def test_system_outbound_can_be_claimed(repository, now):
+    outbound = repository.enqueue_system_outbound("系统推送")
+    claimed = repository.claim_outbound("worker-a", now, 30)
+
+    assert claimed.id == outbound.id
+    assert claimed.inbound_message_id is None
+
+
 @pytest.mark.parametrize(
     "currency_name,onboarding_bonus,checkin_reward",
     [("", 0, 5), (" " * 13, 0, 5), ("工分", -1, 5), ("工分", 0, 1000)],

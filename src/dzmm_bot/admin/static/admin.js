@@ -59,8 +59,7 @@ function renderStatus(status) {
   stateHelp.textContent = currentState === "auth_required" ? "登录已失效，请启动人工登录" : currentState === "auth_in_progress" ? "请在登录控制台完成验证" : currentState === "ready" ? "浏览器已就绪" : "等待 Worker 心跳";
   document.querySelector("#last-heartbeat").textContent = formatHeartbeat(status.last_heartbeat);
   const queue = status.queue_counts || {};
-  const total = Object.values(queue).reduce((sum, value) => sum + Number(value || 0), 0);
-  document.querySelector("#queue-total").textContent = String(total);
+  document.querySelector("#queue-total").textContent = String(queue.inbound_accepted || 0);
   document.querySelector("#queue-counts").textContent = Object.entries(queue).map(([key, value]) => `${key}: ${value}`).join(" · ") || "队列为空";
   updateControls(currentState);
   if (currentState === "auth_in_progress" && !consoleFrame.getAttribute("src")) {

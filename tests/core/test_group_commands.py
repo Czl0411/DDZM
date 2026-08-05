@@ -166,7 +166,12 @@ def test_random_event_commands_join_count_rounds_and_settle_on_exit():
     service, repository, factory = _service()
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_random_event_scene(
-        "茶水间", "咖啡机突然发出一声巨响。", 4, 2, [("员工", 2)]
+        "茶水间",
+        "咖啡机突然发出一声巨响。",
+        ["咖啡机突然发出一声巨响。"],
+        4,
+        2,
+        [("员工", 2)],
     )
     repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
     _receive(service, "join-1", "u1", "/入职 小明", now)

@@ -75,7 +75,12 @@ def test_random_event_lifecycle_rewards_only_completed_participant(
 
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_random_event_scene(
-        "午休室", "午休铃响了，大家各就各位。", 3, 2, [("员工", 2)]
+        "午休室",
+        "午休铃响了，大家各就各位。",
+        ["午休铃响了，大家各就各位。"],
+        3,
+        2,
+        [("员工", 2)],
     )
     repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
     first, _ = repository.create_user("u1", "小明", now, 0)
@@ -98,11 +103,50 @@ def test_random_event_lifecycle_rewards_only_completed_participant(
         assert session.scalars(select(OutboundRecord)).first() is not None
 
 
+def test_full_random_event_sends_a_frozen_formal_opening(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import (
+        BEIJING,
+        OutboundRecord,
+        RandomEventRecord,
+    )
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "茶水间",
+        "今天的公司茶水间随机事件来啦，快点加入吧。",
+        ["咖啡洒了一桌，主持人正在组织抢救。"],
+        3,
+        1,
+        [("主持", 1), ("员工", 1)],
+    )
+    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_user("u2", "小红", now, 0)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+
+    assert repository.join_random_event("u1", "主持", now) == "joined"
+    assert repository.join_random_event("u2", "员工", now) == "started"
+
+    with session_factory() as session:
+        event = session.scalar(select(RandomEventRecord))
+        latest_outbound = session.scalar(
+            select(OutboundRecord).order_by(OutboundRecord.created_at.desc())
+        )
+
+    assert event.formal_opening_text == "咖啡洒了一桌，主持人正在组织抢救。"
+    assert latest_outbound.text.endswith("咖啡洒了一桌，主持人正在组织抢救。")
+
+
 def test_cross_day_active_random_event_skips_next_days_due_schedule(repository):
     from dzmm_bot.core.schema import BEIJING
 
     first_day = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
-    repository.create_random_event_scene("会议室", "会议还没结束。", 1, 10, [("主持", 1)])
+    repository.create_random_event_scene(
+        "会议室", "会议还没结束。", ["会议还没结束。"], 1, 10, [("主持", 1)]
+    )
     repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
     repository.create_user("u1", "小明", first_day, 0)
     repository.schedule_random_events(first_day)
@@ -120,14 +164,23 @@ def test_cross_day_active_random_event_skips_next_days_due_schedule(repository):
 
 def test_random_event_scene_can_be_updated_and_deleted(repository):
     scene = repository.create_random_event_scene(
-        "旧会议室", "旧开场。", 1, 1, [("员工", 1)]
+        "旧会议室", "旧报名公告。", ["旧正式开场。"], 1, 1, [("员工", 1)]
     )
 
     updated = repository.update_random_event_scene(
-        scene.id, "新会议室", "新开场。", 2, 3, [("主持", 1), ("员工", 2)], False
+        scene.id,
+        "新会议室",
+        "新报名公告。",
+        ["新正式开场。"],
+        2,
+        3,
+        [("主持", 1), ("员工", 2)],
+        False,
     )
 
     assert updated.name == "新会议室"
+    assert updated.signup_text == "新报名公告。"
+    assert updated.openings == ["新正式开场。"]
     assert updated.enabled is False
     assert [(seat.role, seat.capacity) for seat in updated.seats] == [
         ("主持", 1),

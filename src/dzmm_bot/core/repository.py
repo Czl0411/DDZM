@@ -36,6 +36,7 @@ from .schema import (
     RandomEventParticipantRecord,
     RandomEventSeatRecord,
     RandomEventSceneRecord,
+    RandomEventSceneOpeningRecord,
     RandomEventSceneSeatRecord,
     RandomEventSettingsRecord,
     UserItemRecord,
@@ -110,7 +111,8 @@ class RandomEventSeatRule:
 class RandomEventScene:
     id: UUID
     name: str
-    opening_text: str
+    signup_text: str
+    openings: list[str]
     reward: int
     target_rounds: int
     enabled: bool
@@ -530,20 +532,21 @@ class CoreRepository:
     def create_random_event_scene(
         self,
         name: str,
-        opening_text: str,
+        signup_text: str,
+        openings: list[str],
         reward: int,
         target_rounds: int,
         seats: list[tuple[str, int]],
     ) -> RandomEventScene:
         name = name.strip()
-        opening_text = opening_text.strip()
-        rules = _validate_random_event_scene(
-            name, opening_text, reward, target_rounds, seats
+        signup_text = signup_text.strip()
+        rules, normalized_openings = _validate_random_event_scene(
+            name, signup_text, openings, reward, target_rounds, seats
         )
         with self._session() as session:
             record = RandomEventSceneRecord(
                 name=name,
-                opening_text=opening_text,
+                signup_text=signup_text,
                 reward=reward,
                 target_rounds=target_rounds,
             )
@@ -557,8 +560,16 @@ class CoreRepository:
                     for rule in rules
                 ]
             )
+            session.add_all(
+                [
+                    RandomEventSceneOpeningRecord(
+                        scene_id=record.id, position=position, content=content
+                    )
+                    for position, content in enumerate(normalized_openings)
+                ]
+            )
             session.flush()
-            return _random_event_scene(record, rules)
+            return _random_event_scene(record, rules, normalized_openings)
 
     def list_random_event_scenes(self) -> list[RandomEventScene]:
         scenes, _ = self.list_random_event_scenes_page(1, 100)
@@ -587,6 +598,9 @@ class CoreRepository:
             seats_by_scene: dict[UUID, list[RandomEventSeatRule]] = {
                 record.id: [] for record in records
             }
+            openings_by_scene: dict[UUID, list[str]] = {
+                record.id: [] for record in records
+            }
             for seat in session.scalars(
                 select(RandomEventSceneSeatRecord)
                 .where(RandomEventSceneSeatRecord.scene_id.in_(seats_by_scene))
@@ -598,9 +612,20 @@ class CoreRepository:
                 seats_by_scene[seat.scene_id].append(
                     RandomEventSeatRule(seat.role, seat.capacity)
                 )
+            for opening in session.scalars(
+                select(RandomEventSceneOpeningRecord)
+                .where(RandomEventSceneOpeningRecord.scene_id.in_(openings_by_scene))
+                .order_by(
+                    RandomEventSceneOpeningRecord.scene_id,
+                    RandomEventSceneOpeningRecord.position,
+                )
+            ):
+                openings_by_scene[opening.scene_id].append(opening.content)
             return (
                 [
-                    _random_event_scene(record, seats_by_scene[record.id])
+                    _random_event_scene(
+                        record, seats_by_scene[record.id], openings_by_scene[record.id]
+                    )
                     for record in records
                 ],
                 total,
@@ -610,29 +635,35 @@ class CoreRepository:
         self,
         scene_id: UUID,
         name: str,
-        opening_text: str,
+        signup_text: str,
+        openings: list[str],
         reward: int,
         target_rounds: int,
         seats: list[tuple[str, int]],
         enabled: bool,
     ) -> RandomEventScene:
         name = name.strip()
-        opening_text = opening_text.strip()
-        rules = _validate_random_event_scene(
-            name, opening_text, reward, target_rounds, seats
+        signup_text = signup_text.strip()
+        rules, normalized_openings = _validate_random_event_scene(
+            name, signup_text, openings, reward, target_rounds, seats
         )
         with self._session() as session:
             record = session.get(RandomEventSceneRecord, scene_id, with_for_update=True)
             if record is None:
                 raise ValueError("场景不存在")
             record.name = name
-            record.opening_text = opening_text
+            record.signup_text = signup_text
             record.reward = reward
             record.target_rounds = target_rounds
             record.enabled = enabled
             session.execute(
                 delete(RandomEventSceneSeatRecord).where(
                     RandomEventSceneSeatRecord.scene_id == scene_id
+                )
+            )
+            session.execute(
+                delete(RandomEventSceneOpeningRecord).where(
+                    RandomEventSceneOpeningRecord.scene_id == scene_id
                 )
             )
             session.add_all(
@@ -643,8 +674,16 @@ class CoreRepository:
                     for rule in rules
                 ]
             )
+            session.add_all(
+                [
+                    RandomEventSceneOpeningRecord(
+                        scene_id=scene_id, position=position, content=content
+                    )
+                    for position, content in enumerate(normalized_openings)
+                ]
+            )
             session.flush()
-            return _random_event_scene(record, rules)
+            return _random_event_scene(record, rules, normalized_openings)
 
     def delete_random_event_scene(self, scene_id: UUID) -> bool:
         with self._session() as session:
@@ -654,6 +693,11 @@ class CoreRepository:
             session.execute(
                 delete(RandomEventSceneSeatRecord).where(
                     RandomEventSceneSeatRecord.scene_id == scene_id
+                )
+            )
+            session.execute(
+                delete(RandomEventSceneOpeningRecord).where(
+                    RandomEventSceneOpeningRecord.scene_id == scene_id
                 )
             )
             session.delete(record)
@@ -723,12 +767,23 @@ class CoreRepository:
                             .order_by(RandomEventSceneSeatRecord.role)
                         )
                     )
+                    scene_openings = list(
+                        session.scalars(
+                            select(RandomEventSceneOpeningRecord.content)
+                            .where(RandomEventSceneOpeningRecord.scene_id == scene.id)
+                            .order_by(RandomEventSceneOpeningRecord.position)
+                        )
+                    )
+                    if not scene_openings:
+                        schedule.status = "skipped"
+                        continue
                     settings = self.get_random_event_settings()
                     active = RandomEventRecord(
                         schedule_id=schedule.id,
                         state="signup",
                         scene_name=scene.name,
-                        opening_text=scene.opening_text,
+                        signup_text=scene.signup_text,
+                        formal_opening_text=scene_openings[randbelow(len(scene_openings))],
                         reward=scene.reward,
                         target_rounds=scene.target_rounds,
                         signup_deadline=now
@@ -751,7 +806,7 @@ class CoreRepository:
                         ]
                     )
                     self.enqueue_system_outbound(
-                        f"【随机事件：{scene.name}】\n{scene.opening_text}\n"
+                        f"【随机事件：{scene.name}】\n{scene.signup_text}\n"
                         f"使用 /加入 角色 报名，报名将在 "
                         f"{settings.signup_timeout_minutes} 分钟后截止。"
                     )
@@ -813,7 +868,8 @@ class CoreRepository:
                     if schedule is not None:
                         schedule.status = "in_progress"
                     self.enqueue_system_outbound(
-                        f"【随机事件：{event.scene_name}】人员已齐，事件开始。"
+                        f"【随机事件：{event.scene_name}】人员已齐，事件开始。\n"
+                        f"{event.formal_opening_text}"
                     )
                     return "started"
                 return "joined"
@@ -1867,13 +1923,19 @@ def _random_event_schedule(
 
 def _validate_random_event_scene(
     name: str,
-    opening_text: str,
+    signup_text: str,
+    openings: list[str],
     reward: int,
     target_rounds: int,
     seats: list[tuple[str, int]],
-) -> list[RandomEventSeatRule]:
-    if not 1 <= len(name) <= 64 or not opening_text:
-        raise ValueError("场景名称和开场文案不能为空")
+) -> tuple[list[RandomEventSeatRule], list[str]]:
+    if not 1 <= len(name) <= 64 or not signup_text:
+        raise ValueError("场景名称和报名公告不能为空")
+    if not isinstance(openings, list) or not openings:
+        raise ValueError("至少需要一条正式剧情开场白")
+    normalized_openings = [opening.strip() for opening in openings if isinstance(opening, str)]
+    if len(normalized_openings) != len(openings) or any(not opening for opening in normalized_openings):
+        raise ValueError("正式剧情开场白不能为空")
     if not isinstance(reward, int) or not 0 <= reward <= 999:
         raise ValueError("事件奖励需在 0 至 999 之间")
     if not isinstance(target_rounds, int) or target_rounds < 1:
@@ -1886,16 +1948,19 @@ def _validate_random_event_scene(
         raise ValueError("席位角色和人数无效")
     if len({rule.role for rule in rules}) != len(rules):
         raise ValueError("席位角色不能重复")
-    return rules
+    return rules, normalized_openings
 
 
 def _random_event_scene(
-    record: RandomEventSceneRecord, seats: list[RandomEventSeatRule]
+    record: RandomEventSceneRecord,
+    seats: list[RandomEventSeatRule],
+    openings: list[str],
 ) -> RandomEventScene:
     return RandomEventScene(
         id=record.id,
         name=record.name,
-        opening_text=record.opening_text,
+        signup_text=record.signup_text,
+        openings=openings,
         reward=record.reward,
         target_rounds=record.target_rounds,
         enabled=record.enabled,

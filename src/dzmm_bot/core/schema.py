@@ -142,7 +142,7 @@ class RandomEventSceneRecord(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    opening_text: Mapped[str] = mapped_column(Text, nullable=False)
+    signup_text: Mapped[str] = mapped_column(Text, nullable=False)
     reward: Mapped[int] = mapped_column(Integer, nullable=False)
     target_rounds: Mapped[int] = mapped_column(Integer, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -161,6 +161,18 @@ class RandomEventSceneSeatRecord(Base):
     )
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class RandomEventSceneOpeningRecord(Base):
+    __tablename__ = "random_event_scene_openings"
+    __table_args__ = (UniqueConstraint("scene_id", "position"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    scene_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_event_scenes.id"), nullable=False
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class RandomEventScheduleRecord(Base):
@@ -196,7 +208,8 @@ class RandomEventRecord(Base):
     group_key: Mapped[str] = mapped_column(String(255), default="default", nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
     scene_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    opening_text: Mapped[str] = mapped_column(Text, nullable=False)
+    signup_text: Mapped[str] = mapped_column(Text, nullable=False)
+    formal_opening_text: Mapped[str] = mapped_column(Text, nullable=False)
     reward: Mapped[int] = mapped_column(Integer, nullable=False)
     target_rounds: Mapped[int] = mapped_column(Integer, nullable=False)
     signup_deadline: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)

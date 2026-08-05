@@ -21,6 +21,7 @@ class FakeSocket:
         self.call_result = {"success": True}
         self.calls = []
         self.message_after_join = None
+        self.joined_payload = {"syncMode": "http"}
 
     def on(self, event, handler):
         self.handlers[event] = handler
@@ -30,7 +31,10 @@ class FakeSocket:
         self.connected = True
         handler = self.handlers.get("message:joined")
         if handler is not None:
-            handler({"syncMode": "http"})
+            if self.joined_payload is None:
+                handler()
+            else:
+                handler(self.joined_payload)
             self.joined = True
         if self.message_after_join is not None:
             self.handlers["message:new"](self.message_after_join)
@@ -186,6 +190,15 @@ def test_send_waits_for_server_join_before_emitting(gateway):
     adapter.send("余额：5 摸鱼币")
 
     assert socket.joined is True
+
+
+def test_joined_event_without_payload_marks_the_gateway_ready(gateway):
+    """Fails for Aikda's real zero-argument message:joined event signature."""
+    adapter, socket, _ = gateway
+    socket.joined_payload = None
+
+    assert adapter.read_new() == []
+    assert adapter.is_authenticated()
 
 
 def test_send_raises_when_ack_rejects_message(gateway):

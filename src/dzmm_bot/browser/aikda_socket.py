@@ -122,7 +122,7 @@ class AikdaSocketGateway:
         if isinstance(message, dict):
             self._accept_message(payload.get("chatroomId"), message)
 
-    def _on_joined(self, _payload: dict[str, Any]) -> None:
+    def _on_joined(self, _payload: dict[str, Any] | None = None) -> None:
         self._joined.set()
 
     def _on_disconnect(self) -> None:

@@ -1,8 +1,11 @@
+from datetime import UTC, datetime
 from pathlib import Path
+from time import time
 from typing import Callable, Protocol
 from urllib.parse import urlsplit
 
 from dzmm_bot.runtime.contracts import InboundMessage, LoginState
+from dzmm_bot.dzmm_source import DzmmMessageSource
 
 
 class ChatGateway(Protocol):
@@ -86,10 +89,21 @@ class _PlaywrightGateway:
         self._login_url = login_url
 
     def read_new(self) -> list[InboundMessage]:
-        raise NotImplementedError("message reading requires a platform adapter")
+        page = self._active_page()
+        return [
+            InboundMessage(message.message_id, message.sender, message.text, datetime.now(UTC))
+            for message in DzmmMessageSource(page).read_new()
+        ]
 
     def send(self, text: str) -> str:
-        raise NotImplementedError("message sending requires a platform adapter")
+        page = self._active_page()
+        editor = page.locator("textarea, [contenteditable='true']").last
+        editor.fill(text)
+        editor.press("Enter")
+        return f"dzmm:{int(time() * 1000)}"
+
+    def _active_page(self):
+        return next((page for page in self._context.pages if "/chat" in page.url), self._context.pages[0])
 
     def is_authenticated(self) -> bool:
         if not self._context.pages:

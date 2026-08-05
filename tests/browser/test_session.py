@@ -7,11 +7,30 @@ from dzmm_bot.runtime.contracts import LoginState
 
 
 class FakePage:
-    def __init__(self, url):
+    def __init__(self, url, rows=None):
         self.url = url
+        self.rows = rows or []
+        self.filled = []
+        self.pressed = []
 
     def goto(self, url):
         self.url = url
+
+    def evaluate(self, _script, _selectors):
+        return self.rows
+
+    def locator(self, _selector):
+        return self
+
+    @property
+    def last(self):
+        return self
+
+    def fill(self, text):
+        self.filled.append(text)
+
+    def press(self, key):
+        self.pressed.append(key)
 
 
 class FakeContext:
@@ -132,17 +151,25 @@ def test_stop_releases_browser_and_playwright(tmp_path):
     assert playwright.stopped is True
 
 
-def test_gateway_defers_platform_specific_message_operations(tmp_path):
+def test_gateway_reads_and_sends_platform_messages(tmp_path):
+    page = FakePage(
+        "https://chat.example/room",
+        rows=[{"source_index": "42", "sender": "甲", "text": "你好", "is_self": False}],
+    )
     session = BrowserSession(
         tmp_path / "profile",
         "https://chat.example/login",
-        playwright_factory=lambda: FakePlaywright(
-            FakeChromium(FakeContext("https://chat.example/room"))
-        ),
+        playwright_factory=lambda: FakePlaywright(FakeChromium(FakeContext(page.url))),
     )
+    session._playwright_factory = lambda: FakePlaywright(FakeChromium(type("Context", (), {"pages": [page], "close": lambda self: None})()))
     gateway = session.start_headless()
 
-    with pytest.raises(NotImplementedError, match="platform adapter"):
-        gateway.read_new()
-    with pytest.raises(NotImplementedError, match="platform adapter"):
-        gateway.send("hello")
+    messages = gateway.read_new()
+    platform_id = gateway.send("hello")
+
+    assert messages[0].platform_message_id == "main:stable:42"
+    assert messages[0].sender_platform_id == "甲"
+    assert messages[0].content == "你好"
+    assert page.filled == ["hello"]
+    assert page.pressed == ["Enter"]
+    assert platform_id.startswith("dzmm:")

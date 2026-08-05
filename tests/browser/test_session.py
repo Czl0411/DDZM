@@ -51,6 +51,10 @@ class FakeChromium:
         self.calls.append(kwargs)
         return self.context
 
+    def connect_over_cdp(self, url):
+        self.calls.append({"cdp_url": url})
+        return type("Browser", (), {"contexts": [self.context]})()
+
 
 class FakePlaywright:
     def __init__(self, chromium):
@@ -92,6 +96,19 @@ def test_headless_session_uses_owned_profile_and_loopback_cdp(tmp_path):
 def test_session_rejects_nonstandard_cdp_port(tmp_path):
     with pytest.raises(ValueError, match="19222"):
         BrowserSession(tmp_path / "profile", None, cdp_port=9222)
+
+
+def test_session_attaches_to_the_existing_desktop_browser(tmp_path):
+    context = FakeContext("https://chat.example/room")
+    chromium = FakeChromium(context)
+    session = BrowserSession(
+        tmp_path / "profile",
+        "https://chat.example/login",
+        playwright_factory=lambda: FakePlaywright(chromium),
+    )
+
+    assert session.attach_existing().is_authenticated()
+    assert chromium.calls == [{"cdp_url": "http://127.0.0.1:19222"}]
 
 
 def test_headless_session_prefers_a_restored_page_over_a_blank_page(tmp_path):

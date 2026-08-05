@@ -143,8 +143,7 @@ class BrowserWorker:
                 self._listening = False
                 self._manual_auth_confirmed = False
             elif command.command == "finish_auth":
-                self._desktop.stop()
-                self._gateway = self._session.start_headless()
+                self._gateway = self._session.attach_existing()
                 self._login_state = LoginState.READY
                 self._listening = True
                 self._auth_loss_reported = False

@@ -48,6 +48,10 @@ class FakeSession:
         self.starts += 1
         return self.gateway
 
+    def attach_existing(self):
+        self.starts += 1
+        return self.gateway
+
     def stop(self):
         self.stops += 1
 
@@ -171,7 +175,7 @@ def test_paused_worker_still_heartbeats_and_polls_commands(context):
     [
         ("restart_browser", 1, 1, 0, 0),
         ("start_auth", 0, 1, 1, 0),
-        ("finish_auth", 1, 0, 0, 1),
+        ("finish_auth", 1, 0, 0, 0),
     ],
 )
 def test_lifecycle_commands_touch_only_the_expected_processes(

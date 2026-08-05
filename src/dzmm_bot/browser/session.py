@@ -36,6 +36,19 @@ class BrowserSession:
         self._playwright = None
         self._context = None
         self._gateway = None
+        self._attached = False
+
+    def attach_existing(self) -> ChatGateway:
+        if self._gateway is not None:
+            return self._gateway
+        self._playwright = self._playwright_factory()
+        browser = self._playwright.chromium.connect_over_cdp(
+            f"http://127.0.0.1:{self.cdp_port}"
+        )
+        self._context = browser.contexts[0]
+        self._attached = True
+        self._gateway = _PlaywrightGateway(self._context, self.login_url)
+        return self._gateway
 
     def start_headless(self) -> ChatGateway:
         if self._gateway is not None:
@@ -65,12 +78,13 @@ class BrowserSession:
         return self._gateway
 
     def stop(self) -> None:
-        if self._context is not None:
+        if self._context is not None and not self._attached:
             self._context.close()
         if self._playwright is not None:
             self._playwright.stop()
         self._gateway = None
         self._context = None
+        self._attached = False
         self._playwright = None
 
     def login_state(self) -> LoginState:

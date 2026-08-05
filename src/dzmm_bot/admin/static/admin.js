@@ -9,6 +9,8 @@ const result = document.querySelector("#result");
 const stateElement = document.querySelector("#state");
 const stateHelp = document.querySelector("#state-help");
 const loginStep = document.querySelector("#login-step");
+const consolePanel = document.querySelector("#login-console-panel");
+const consoleFrame = document.querySelector("#login-console-frame");
 
 function headers() {
   return {"X-Admin-Token": token};
@@ -43,6 +45,10 @@ function updateControls(state) {
   document.querySelector("#step-console").classList.toggle("active", isProgress);
   document.querySelector("#step-finish").classList.toggle("active", state === "ready");
   loginStep.textContent = isProgress ? "验证进行中" : isRequired ? "需要登录" : state === "ready" ? "已登录" : "等待开始";
+  if (!isProgress) {
+    consolePanel.hidden = true;
+    consoleFrame.removeAttribute("src");
+  }
 }
 
 function renderStatus(status) {
@@ -80,12 +86,30 @@ async function submitAction(button) {
   button.disabled = true;
   const response = await fetch(button.dataset.action, {method: "POST", headers: headers()});
   if (response.ok) {
-    setResult("操作指令已发送，正在等待 Worker 响应。", "success");
-    window.setTimeout(refresh, 800);
+    if (button.id === "start-login") {
+      setResult("正在启动安全登录桌面…", "success");
+      if (await waitForLoginDesktop()) {
+        await openConsole();
+      }
+    } else {
+      setResult("操作指令已发送，正在等待 Worker 响应。", "success");
+      window.setTimeout(refresh, 800);
+    }
   } else {
     setResult(`操作被拒绝（${response.status}）`, "error");
   }
   window.setTimeout(() => updateControls(currentState), 200);
+}
+
+async function waitForLoginDesktop() {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    await refresh();
+    if (currentState === "auth_in_progress") return true;
+    if (currentState !== "auth_required") break;
+  }
+  setResult("登录桌面启动超时，请刷新状态后重试。", "error");
+  return false;
 }
 
 async function openConsole() {
@@ -94,7 +118,10 @@ async function openConsole() {
     setResult(`登录控制台授权失败（${response.status}）`, "error");
     return;
   }
-  window.open("/login-console", "dzmm-login-console", "noopener");
+  consoleFrame.src = "/login-console";
+  consolePanel.hidden = false;
+  consolePanel.scrollIntoView({behavior: "smooth", block: "start"});
+  setResult("登录桌面已就绪，请在下方完成验证。", "success");
 }
 
 loginForm.addEventListener("submit", async (event) => {

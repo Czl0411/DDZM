@@ -78,9 +78,17 @@
               </ol>
               <div class="action-row">
                 <button id="start-login" class="primary" data-action="/api/login/start" type="button">开始人工登录</button>
-                <button id="open-login-console" class="secondary" type="button">打开登录控制台</button>
+                <button id="open-login-console" class="secondary" type="button">重新加载登录桌面</button>
                 <button id="finish-login" class="secondary" data-action="/api/login/finish" type="button">完成登录</button>
               </div>
+              <section id="login-console-panel" class="login-console" hidden aria-labelledby="login-console-title">
+                <div>
+                  <p class="eyebrow">安全隔离桌面</p>
+                  <h3 id="login-console-title">在此完成平台登录</h3>
+                  <p class="muted">请仅在下方窗口输入账号、密码和验证码。登录完成后回到此页点击“完成登录”。</p>
+                </div>
+                <iframe id="login-console-frame" title="DZMM 人工登录桌面" allow="clipboard-read; clipboard-write"></iframe>
+              </section>
             </article>
 
             <aside class="panel side-panel">

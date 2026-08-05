@@ -157,6 +157,7 @@ def test_admin_dashboard_serves_its_login_and_style_assets(client):
     assert 'id="login-screen"' in page.text
     assert 'id="dashboard"' in page.text
     assert 'data-action="/api/login/start"' in page.text
+    assert 'id="login-console-frame"' in page.text
     assert stylesheet.status_code == 200
     assert "--surface" in stylesheet.text
 

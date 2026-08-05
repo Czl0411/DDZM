@@ -292,38 +292,48 @@ class CoreRepository:
     def ensure_activity_settings(self) -> None:
         with self._session() as session:
             dialect_name = session.get_bind().dialect.name
-            for level, character_threshold, reward in _DEFAULT_ACTIVITY_RULES:
-                values = {
-                    "level": level,
-                    "character_threshold": character_threshold,
-                    "reward": reward,
-                }
-                if dialect_name == "postgresql":
-                    statement = postgresql_insert(ActivityLevelRuleRecord).values(**values)
-                elif dialect_name == "sqlite":
-                    statement = sqlite_insert(ActivityLevelRuleRecord).values(**values)
-                else:
-                    raise ValueError(f"unsupported database dialect: {dialect_name}")
-                session.execute(
-                    statement.on_conflict_do_nothing(
-                        index_elements=[ActivityLevelRuleRecord.level]
+            if session.scalar(select(ActivityLevelRuleRecord.level).limit(1)) is None:
+                for level, character_threshold, reward in _DEFAULT_ACTIVITY_RULES:
+                    values = {
+                        "level": level,
+                        "character_threshold": character_threshold,
+                        "reward": reward,
+                    }
+                    if dialect_name == "postgresql":
+                        statement = postgresql_insert(ActivityLevelRuleRecord).values(
+                            **values
+                        )
+                    elif dialect_name == "sqlite":
+                        statement = sqlite_insert(ActivityLevelRuleRecord).values(**values)
+                    else:
+                        raise ValueError(
+                            f"unsupported database dialect: {dialect_name}"
+                        )
+                    session.execute(
+                        statement.on_conflict_do_nothing(
+                            index_elements=[ActivityLevelRuleRecord.level]
+                        )
                     )
-                )
-            for report_time in _DEFAULT_INCOME_REPORT_TIMES:
-                values = {"report_time": report_time}
-                if dialect_name == "postgresql":
-                    statement = postgresql_insert(IncomeReportScheduleRecord).values(
-                        **values
+            if session.scalar(select(IncomeReportScheduleRecord.report_time).limit(1)) is None:
+                for report_time in _DEFAULT_INCOME_REPORT_TIMES:
+                    values = {"report_time": report_time}
+                    if dialect_name == "postgresql":
+                        statement = postgresql_insert(IncomeReportScheduleRecord).values(
+                            **values
+                        )
+                    elif dialect_name == "sqlite":
+                        statement = sqlite_insert(IncomeReportScheduleRecord).values(
+                            **values
+                        )
+                    else:
+                        raise ValueError(
+                            f"unsupported database dialect: {dialect_name}"
+                        )
+                    session.execute(
+                        statement.on_conflict_do_nothing(
+                            index_elements=[IncomeReportScheduleRecord.report_time]
+                        )
                     )
-                elif dialect_name == "sqlite":
-                    statement = sqlite_insert(IncomeReportScheduleRecord).values(**values)
-                else:
-                    raise ValueError(f"unsupported database dialect: {dialect_name}")
-                session.execute(
-                    statement.on_conflict_do_nothing(
-                        index_elements=[IncomeReportScheduleRecord.report_time]
-                    )
-                )
 
     def get_activity_settings(self) -> ActivitySettings:
         self.ensure_activity_settings()

@@ -80,6 +80,7 @@ class FakeCore:
     heartbeats: list[tuple] = field(default_factory=list)
     completions: list[tuple] = field(default_factory=list)
     audits: list[tuple] = field(default_factory=list)
+    daily_job_times: list[datetime] = field(default_factory=list)
 
     def submit_inbound(self, message):
         self.submitted_ids.append(message.platform_message_id)
@@ -105,6 +106,9 @@ class FakeCore:
 
     def record_audit(self, event_type, worker_id, recorded_at):
         self.audits.append((event_type, worker_id, recorded_at))
+
+    def run_daily_jobs(self, now):
+        self.daily_job_times.append(now)
 
 
 @pytest.fixture
@@ -133,6 +137,16 @@ def test_worker_submits_each_platform_message_once(context):
     worker.run_once()
 
     assert core.submitted_ids == ["p-1"]
+
+
+def test_worker_runs_daily_jobs_after_submitting_messages(context):
+    worker, gateway, _, _, core, _ = context
+    gateway.messages = [InboundMessage("p-1", "u-1", "普通消息", NOW)]
+
+    worker.run_once()
+
+    assert core.submitted_ids == ["p-1"]
+    assert core.daily_job_times == [NOW]
 
 def test_worker_confirms_only_after_gateway_send_succeeds(context):
     worker, gateway, _, _, core, _ = context

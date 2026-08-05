@@ -13,12 +13,15 @@ from dzmm_bot.runtime.settings import Settings
 
 from .api_models import (
     AcceptedResponse,
+    ActivityLevelRuleModel,
+    ActivitySettingsResponse,
     AdminStatusResponse,
     ClaimRequest,
     CompleteWorkerCommandRequest,
     CommandDefinitionResponse,
     CommandTemplateResponse,
     CreateItemRequest,
+    DailyJobsRequest,
     GameSettingsResponse,
     HealthResponse,
     HeartbeatRequest,
@@ -30,6 +33,7 @@ from .api_models import (
     SentRequest,
     SetCommandEnabledRequest,
     SetCommandTemplateRequest,
+    SetActivitySettingsRequest,
     SetGameSettingsRequest,
     ItemResponse,
     UserResponse,
@@ -38,7 +42,7 @@ from .api_models import (
 )
 from .database import create_session_factory
 from .commands import GroupCommandHandler
-from .repository import CoreRepository
+from .repository import ActivityLevelRule, CoreRepository
 from .reply_templates import definitions_for_command, template_definition
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
@@ -278,6 +282,43 @@ def create_app(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _game_settings_response(record)
 
+    @app.get(
+        "/internal/game/activity-settings", response_model=ActivitySettingsResponse
+    )
+    def activity_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> ActivitySettingsResponse:
+        return _activity_settings_response(repository.get_activity_settings())
+
+    @app.patch(
+        "/internal/game/activity-settings", response_model=ActivitySettingsResponse
+    )
+    def set_activity_settings(
+        request: SetActivitySettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> ActivitySettingsResponse:
+        try:
+            settings = repository.set_activity_settings(
+                [
+                    ActivityLevelRule(
+                        rule.level, rule.character_threshold, rule.reward
+                    )
+                    for rule in request.rules
+                ],
+                request.report_times,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _activity_settings_response(settings)
+
+    @app.post("/internal/daily-jobs/run", response_model=AcceptedResponse)
+    def run_daily_jobs(
+        request: DailyJobsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        repository.run_daily_jobs(request.now)
+        return AcceptedResponse(accepted=True)
+
     @app.post("/internal/worker-commands", response_model=WorkerCommandResponse)
     def enqueue_worker_command(
         request: WorkerCommandRequest, _: Annotated[None, Depends(authorize)]
@@ -379,6 +420,20 @@ def _game_settings_response(record) -> GameSettingsResponse:
         currency_name=record.currency_name,
         onboarding_bonus=record.onboarding_bonus,
         checkin_reward=record.checkin_reward,
+    )
+
+
+def _activity_settings_response(settings) -> ActivitySettingsResponse:
+    return ActivitySettingsResponse(
+        rules=[
+            ActivityLevelRuleModel(
+                level=rule.level,
+                character_threshold=rule.character_threshold,
+                reward=rule.reward,
+            )
+            for rule in settings.rules
+        ],
+        report_times=settings.report_times,
     )
 
 

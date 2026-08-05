@@ -12,7 +12,7 @@ from dzmm_bot.runtime.contracts import InboundMessage, LoginState
 @dataclass(frozen=True)
 class OutboundClaim:
     id: UUID
-    inbound_message_id: str
+    inbound_message_id: str | None
     text: str
     lease_token: UUID
 
@@ -26,6 +26,8 @@ class WorkerCommand:
 
 class CorePort(Protocol):
     def submit_inbound(self, message: InboundMessage) -> None: ...
+
+    def run_daily_jobs(self, now: datetime) -> None: ...
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int
@@ -87,6 +89,9 @@ class CoreClient:
                 "received_at": message.received_at.isoformat(),
             },
         )
+
+    def run_daily_jobs(self, now: datetime) -> None:
+        self._post("/internal/daily-jobs/run", {"now": now.isoformat()})
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int

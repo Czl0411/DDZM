@@ -75,11 +75,13 @@ class BrowserWorker:
         self._core.heartbeat(self._worker_id, self._login_state, self._clock())
 
         if self._login_state is LoginState.AUTH_REQUIRED:
+            self._core.run_daily_jobs(now)
             delay = self._auth_backoff
             self._auth_backoff = min(self._auth_backoff * 2, 2)
             self._sleep(delay)
             return
         if self._login_state is LoginState.AUTH_IN_PROGRESS:
+            self._core.run_daily_jobs(now)
             return
 
         gateway = self._ensure_gateway()
@@ -94,6 +96,8 @@ class BrowserWorker:
                     continue
                 self._core.submit_inbound(message)
                 self._seen_message_ids.add(message.platform_message_id)
+
+        self._core.run_daily_jobs(now)
 
         outbound = self._core.claim_outbound(
             self._worker_id, self._clock(), self._lease_seconds

@@ -121,7 +121,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-        "/入职", "/我的物品", "/打卡", "/余额", "/商店", "/帮助"
+        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助"
     }
     assert disabled.json()["enabled"] is False
     assert employees.json() == []
@@ -157,6 +157,41 @@ def test_game_settings_can_be_read_and_updated(client, headers):
         "checkin_reward": 7,
         "reset_time_label": "北京时间 00:00",
     }
+
+
+def test_activity_settings_can_be_read_and_updated(client, headers):
+    initial = client.get("/internal/game/activity-settings", headers=headers)
+    updated = client.patch(
+        "/internal/game/activity-settings",
+        headers=headers,
+        json={
+            "rules": [
+                {
+                    "level": level,
+                    "character_threshold": level * 10,
+                    "reward": level,
+                }
+                for level in range(1, 11)
+            ],
+            "report_times": ["09:30", "18:00"],
+        },
+    )
+
+    assert initial.status_code == 200
+    assert initial.json()["report_times"] == ["12:00", "16:00", "20:00", "23:59"]
+    assert updated.status_code == 200
+    assert updated.json()["report_times"] == ["09:30", "18:00"]
+
+
+def test_daily_jobs_require_the_core_token(client, headers):
+    assert client.post("/internal/daily-jobs/run", json={"now": NOW.isoformat()}).status_code == 401
+
+    response = client.post(
+        "/internal/daily-jobs/run", headers=headers, json={"now": NOW.isoformat()}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"accepted": True}
 
 
 def test_game_commands_list_templates_and_update_a_valid_template(client, headers):
@@ -267,7 +302,10 @@ def test_database_backed_identifiers_reject_more_than_255_characters(
         ("post", "/internal/heartbeat"),
         ("get", "/internal/login-state"),
         ("get", "/internal/status"),
+        ("get", "/internal/game/activity-settings"),
+        ("patch", "/internal/game/activity-settings"),
         ("patch", "/internal/game/command-templates"),
+        ("post", "/internal/daily-jobs/run"),
         ("post", "/internal/worker-commands"),
         ("post", "/internal/worker-commands/claim"),
         (

@@ -31,7 +31,7 @@ class ClaimRequest(ApiModel):
 
 class OutboundClaimResponse(ApiModel):
     id: UUID
-    inbound_message_id: UUID
+    inbound_message_id: UUID | None
     text: str
     lease_token: UUID
     lease_expires_at: datetime
@@ -136,6 +136,26 @@ class SetGameSettingsRequest(ApiModel):
     currency_name: str = Field(min_length=1, max_length=12)
     onboarding_bonus: int = Field(ge=0, le=999)
     checkin_reward: int = Field(ge=0, le=999)
+
+
+class ActivityLevelRuleModel(ApiModel):
+    level: int = Field(ge=1, le=10)
+    character_threshold: int = Field(ge=0)
+    reward: int = Field(ge=0, le=999)
+
+
+class ActivitySettingsResponse(ApiModel):
+    rules: list[ActivityLevelRuleModel]
+    report_times: list[str]
+
+
+class SetActivitySettingsRequest(ApiModel):
+    rules: list[ActivityLevelRuleModel] = Field(min_length=10, max_length=10)
+    report_times: list[str] = Field(min_length=1)
+
+
+class DailyJobsRequest(ApiModel):
+    now: AwareDatetime
 
 
 WorkerCommandKind = Literal[

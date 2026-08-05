@@ -51,7 +51,7 @@ Expected: FAIL because `events` is not exposed.
 op.create_table("random_event_scene_events", sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True), sa.Column("scene_id", postgresql.UUID(as_uuid=True), nullable=False), sa.Column("position", sa.Integer(), nullable=False), sa.Column("name", sa.String(length=64), nullable=False), sa.Column("opening_text", sa.Text(), nullable=False), sa.UniqueConstraint("scene_id", "position"))
 ```
 
-Migrate each old `random_event_scene_openings.content` row into an event template with the same position and name `未命名事件`; add snapshot columns and a detail table. Reflect them with focused SQLAlchemy records.
+Migrate each old `random_event_scene_openings.content` row into an event template with the same position and name `未命名事件`; add snapshot columns as nullable for pre-existing schedules and a detail table. Reflect them with focused SQLAlchemy records.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -102,7 +102,7 @@ def trigger_random_event(self, schedule_id: UUID, now: datetime) -> RandomEventS
     # Lock a same-day pending plan, require no active event, and use its snapshot to create signup.
 ```
 
-Select an enabled scene plus one of its templates while generating every daily schedule. Store the complete snapshot, create signup only from that snapshot, add the event name to the frozen event record, and display `【随机事件：场景－事件】` when full. Extend `record_random_event_round` to append a detail record only after the existing active-participant classification succeeds. Exclude commands, observers and leavers. Make the immediate trigger reuse the same signup-creation helper and retain a pending row when blocked by an active event.
+Select an enabled scene plus one of its templates while generating every daily schedule. Store the complete snapshot, and also fill any same-day pending schedule whose migration-era snapshot is empty; create signup only from that snapshot, add the event name to the frozen event record, and display `【随机事件：场景－事件】` when full. Extend `record_random_event_round` to append a detail record only after the existing active-participant classification succeeds. Exclude commands, observers and leavers. Make the immediate trigger reuse the same signup-creation helper and retain a pending row when blocked by an active event.
 
 - [ ] **Step 4: Run tests to verify they pass**
 

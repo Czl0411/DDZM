@@ -37,6 +37,14 @@ from .api_models import (
     SetCommandTemplateRequest,
     SetActivitySettingsRequest,
     SetGameSettingsRequest,
+    RandomEventSettingsResponse,
+    SetRandomEventSettingsRequest,
+    RandomEventSceneResponse,
+    PaginatedRandomEventScenesResponse,
+    CreateRandomEventSceneRequest,
+    UpdateRandomEventSceneRequest,
+    RandomEventScheduleResponse,
+    RescheduleRandomEventRequest,
     ItemResponse,
     PaginatedItemsResponse,
     PaginatedUsersResponse,
@@ -339,6 +347,137 @@ def create_app(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _activity_settings_response(settings)
 
+    @app.get(
+        "/internal/game/random-events/settings",
+        response_model=RandomEventSettingsResponse,
+    )
+    def random_event_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> RandomEventSettingsResponse:
+        return _random_event_settings_response(repository.get_random_event_settings())
+
+    @app.patch(
+        "/internal/game/random-events/settings",
+        response_model=RandomEventSettingsResponse,
+    )
+    def set_random_event_settings(
+        request: SetRandomEventSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> RandomEventSettingsResponse:
+        try:
+            settings = repository.set_random_event_settings(
+                request.start_time,
+                request.end_time,
+                request.events_per_day,
+                request.minimum_interval_minutes,
+                request.signup_timeout_minutes,
+                request.reminder_interval_minutes,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _random_event_settings_response(settings)
+
+    @app.get(
+        "/internal/game/random-events/scenes",
+        response_model=PaginatedRandomEventScenesResponse,
+    )
+    def random_event_scenes(
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> PaginatedRandomEventScenesResponse:
+        scenes, total = repository.list_random_event_scenes_page(page, page_size)
+        return PaginatedRandomEventScenesResponse(
+            items=[_random_event_scene_response(scene) for scene in scenes],
+            page=page,
+            page_size=page_size,
+            total=total,
+            pages=(total + page_size - 1) // page_size,
+        )
+
+    @app.post(
+        "/internal/game/random-events/scenes",
+        response_model=RandomEventSceneResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_random_event_scene(
+        request: CreateRandomEventSceneRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> RandomEventSceneResponse:
+        try:
+            scene = repository.create_random_event_scene(
+                request.name,
+                request.opening_text,
+                request.reward,
+                request.target_rounds,
+                [(seat.role, seat.capacity) for seat in request.seats],
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _random_event_scene_response(scene)
+
+    @app.put(
+        "/internal/game/random-events/scenes/{scene_id}",
+        response_model=RandomEventSceneResponse,
+    )
+    def update_random_event_scene(
+        scene_id: UUID,
+        request: UpdateRandomEventSceneRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> RandomEventSceneResponse:
+        try:
+            scene = repository.update_random_event_scene(
+                scene_id,
+                request.name,
+                request.opening_text,
+                request.reward,
+                request.target_rounds,
+                [(seat.role, seat.capacity) for seat in request.seats],
+                request.enabled,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _random_event_scene_response(scene)
+
+    @app.delete(
+        "/internal/game/random-events/scenes/{scene_id}",
+        response_model=AcceptedResponse,
+    )
+    def delete_random_event_scene(
+        scene_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.delete_random_event_scene(scene_id))
+
+    @app.get(
+        "/internal/game/random-events/today",
+        response_model=list[RandomEventScheduleResponse],
+    )
+    def today_random_event_schedules(
+        _: Annotated[None, Depends(authorize)],
+    ) -> list[RandomEventScheduleResponse]:
+        return [
+            _random_event_schedule_response(schedule)
+            for schedule in repository.list_today_random_event_schedules(clock())
+        ]
+
+    @app.patch(
+        "/internal/game/random-events/today/{schedule_id}",
+        response_model=RandomEventScheduleResponse,
+    )
+    def reschedule_random_event(
+        schedule_id: UUID,
+        request: RescheduleRandomEventRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> RandomEventScheduleResponse:
+        try:
+            schedule = repository.reschedule_random_event(
+                schedule_id, request.scheduled_at, clock()
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _random_event_schedule_response(schedule)
+
     @app.post("/internal/daily-jobs/run", response_model=AcceptedResponse)
     def run_daily_jobs(
         request: DailyJobsRequest,
@@ -516,6 +655,38 @@ def _activity_settings_response(settings) -> ActivitySettingsResponse:
             for rule in settings.rules
         ],
         report_times=settings.report_times,
+    )
+
+
+def _random_event_settings_response(settings) -> RandomEventSettingsResponse:
+    return RandomEventSettingsResponse(
+        start_time=settings.start_time,
+        end_time=settings.end_time,
+        events_per_day=settings.events_per_day,
+        minimum_interval_minutes=settings.minimum_interval_minutes,
+        signup_timeout_minutes=settings.signup_timeout_minutes,
+        reminder_interval_minutes=settings.reminder_interval_minutes,
+    )
+
+
+def _random_event_scene_response(scene) -> RandomEventSceneResponse:
+    return RandomEventSceneResponse(
+        id=scene.id,
+        name=scene.name,
+        opening_text=scene.opening_text,
+        reward=scene.reward,
+        target_rounds=scene.target_rounds,
+        enabled=scene.enabled,
+        seats=[{"role": seat.role, "capacity": seat.capacity} for seat in scene.seats],
+    )
+
+
+def _random_event_schedule_response(schedule) -> RandomEventScheduleResponse:
+    return RandomEventScheduleResponse(
+        id=schedule.id,
+        scheduled_at=schedule.scheduled_at,
+        status=schedule.status,
+        scene_name=schedule.scene_name,
     )
 
 

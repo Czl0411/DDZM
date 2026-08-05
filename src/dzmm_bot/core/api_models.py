@@ -170,6 +170,65 @@ class SetActivitySettingsRequest(ApiModel):
     report_times: list[str] = Field(min_length=1)
 
 
+class RandomEventSettingsResponse(ApiModel):
+    start_time: str
+    end_time: str
+    events_per_day: int
+    minimum_interval_minutes: int
+    signup_timeout_minutes: int
+    reminder_interval_minutes: int
+
+
+class SetRandomEventSettingsRequest(RandomEventSettingsResponse):
+    pass
+
+
+class RandomEventSeatModel(ApiModel):
+    role: str = Field(min_length=1, max_length=32)
+    capacity: int = Field(ge=1, le=99)
+
+
+class RandomEventSceneResponse(ApiModel):
+    id: UUID
+    name: str
+    opening_text: str
+    reward: int
+    target_rounds: int
+    enabled: bool
+    seats: list[RandomEventSeatModel]
+
+
+class PaginatedRandomEventScenesResponse(ApiModel):
+    items: list[RandomEventSceneResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
+class CreateRandomEventSceneRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=64)
+    opening_text: str = Field(min_length=1, max_length=2000)
+    reward: int = Field(ge=0, le=999)
+    target_rounds: int = Field(ge=1, le=999)
+    seats: list[RandomEventSeatModel] = Field(min_length=1, max_length=20)
+
+
+class UpdateRandomEventSceneRequest(CreateRandomEventSceneRequest):
+    enabled: bool
+
+
+class RandomEventScheduleResponse(ApiModel):
+    id: UUID
+    scheduled_at: datetime
+    status: str
+    scene_name: str | None
+
+
+class RescheduleRandomEventRequest(ApiModel):
+    scheduled_at: AwareDatetime
+
+
 class DailyJobsRequest(ApiModel):
     now: AwareDatetime
 

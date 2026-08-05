@@ -49,6 +49,94 @@ def test_duplicate_platform_message_returns_existing_record(repository, inbound)
     assert second.id == first.id
 
 
+def test_random_event_schedule_respects_window_and_minimum_gap(repository):
+    from dzmm_bot.core.schema import BEIJING
+
+    now = datetime(2026, 8, 6, 0, 0, tzinfo=BEIJING)
+    repository.set_random_event_settings("10:00", "24:00", 3, 90, 15, 5)
+
+    schedules = repository.schedule_random_events(now)
+
+    assert len(schedules) == 3
+    assert all(
+        "10:00" <= schedule.scheduled_at.strftime("%H:%M") < "24:00"
+        for schedule in schedules
+    )
+    assert all(
+        (right.scheduled_at - left.scheduled_at).total_seconds() >= 90 * 60
+        for left, right in zip(schedules, schedules[1:])
+    )
+
+
+def test_random_event_lifecycle_rewards_only_completed_participant(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import BEIJING, OutboundRecord, UserRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "午休室", "午休铃响了，大家各就各位。", 3, 2, [("员工", 2)]
+    )
+    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    first, _ = repository.create_user("u1", "小明", now, 0)
+    second, _ = repository.create_user("u2", "小红", now, 0)
+
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+
+    assert repository.join_random_event("u1", "员工", now) == "joined"
+    assert repository.join_random_event("u2", "员工", now) == "started"
+    repository.record_random_event_round("u1", now, "第一轮")
+    repository.record_random_event_round("u1", now, "第二轮")
+
+    assert repository.leave_random_event("u1", now) == "rewarded"
+    assert repository.leave_random_event("u2", now) == "left_without_reward"
+
+    with session_factory() as session:
+        assert session.get(UserRecord, first.id).balance == 3
+        assert session.get(UserRecord, second.id).balance == 0
+        assert session.scalars(select(OutboundRecord)).first() is not None
+
+
+def test_cross_day_active_random_event_skips_next_days_due_schedule(repository):
+    from dzmm_bot.core.schema import BEIJING
+
+    first_day = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene("会议室", "会议还没结束。", 1, 10, [("主持", 1)])
+    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.create_user("u1", "小明", first_day, 0)
+    repository.schedule_random_events(first_day)
+    repository.run_random_event_jobs(first_day)
+    assert repository.join_random_event("u1", "主持", first_day) == "started"
+
+    second_day = first_day + timedelta(days=1)
+    repository.schedule_random_events(second_day)
+    repository.run_random_event_jobs(second_day)
+
+    assert [event.status for event in repository.list_today_random_event_schedules(second_day)] == [
+        "skipped"
+    ]
+
+
+def test_random_event_scene_can_be_updated_and_deleted(repository):
+    scene = repository.create_random_event_scene(
+        "旧会议室", "旧开场。", 1, 1, [("员工", 1)]
+    )
+
+    updated = repository.update_random_event_scene(
+        scene.id, "新会议室", "新开场。", 2, 3, [("主持", 1), ("员工", 2)], False
+    )
+
+    assert updated.name == "新会议室"
+    assert updated.enabled is False
+    assert [(seat.role, seat.capacity) for seat in updated.seats] == [
+        ("主持", 1),
+        ("员工", 2),
+    ]
+    assert repository.delete_random_event_scene(scene.id) is True
+    assert repository.list_random_event_scenes() == []
+
+
 def test_expired_lease_can_be_claimed_once_by_another_worker(
     repository, inbound, now
 ):
@@ -507,6 +595,13 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         "admin_idempotency_records",
         "admin_config_revisions",
         "manual_login_leases",
+        "random_event_settings",
+        "random_event_scenes",
+        "random_event_scene_seats",
+        "random_event_schedules",
+        "random_events",
+        "random_event_seats",
+        "random_event_participants",
     } <= set(inspector.get_table_names())
     assert "ux_inbound_messages_platform_message_id" in {
         index["name"] for index in inspector.get_indexes("inbound_messages")

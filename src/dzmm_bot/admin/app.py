@@ -432,6 +432,146 @@ def create_app(
             scope="activity-settings",
         )
 
+    @app.get("/api/game/random-events/settings")
+    def random_event_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **core.get_random_event_settings(),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/random-events/settings")
+    def set_random_event_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "start_time",
+            "end_time",
+            "events_per_day",
+            "minimum_interval_minutes",
+            "signup_timeout_minutes",
+            "reminder_interval_minutes",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_random_event_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="random-event-settings",
+        )
+
+    @app.get("/api/game/random-events/scenes")
+    def random_event_scenes(
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        return {
+            **core.list_random_event_scenes(page, page_size),
+            "version": repository.config_version(),
+        }
+
+    @app.post("/api/game/random-events/scenes", status_code=status.HTTP_201_CREATED)
+    async def create_random_event_scene(
+        request: Request,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        try:
+            scene = await request.json()
+        except ValueError:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
+        required = ("name", "opening_text", "reward", "target_rounds", "seats")
+        if not isinstance(scene, dict) or not all(key in scene for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.create_random_event_scene(
+                    {key: scene[key] for key in required}
+                )
+            ),
+            scope="random-event-scenes",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    @app.put("/api/game/random-events/scenes/{scene_id}")
+    def update_random_event_scene(
+        scene_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = ("name", "opening_text", "reward", "target_rounds", "seats", "enabled")
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.update_random_event_scene(
+                    scene_id, {key: request[key] for key in required}
+                )
+            ),
+            scope=f"random-event-scene:{scene_id}",
+        )
+
+    @app.delete("/api/game/random-events/scenes/{scene_id}")
+    def delete_random_event_scene(
+        scene_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(lambda: core.delete_random_event_scene(scene_id)),
+            scope=f"random-event-scene:{scene_id}",
+        )
+
+    @app.get("/api/game/random-events/today")
+    def today_random_events(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            "items": core.list_today_random_events(),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/random-events/today/{schedule_id}")
+    def reschedule_random_event(
+        schedule_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        scheduled_at = request.get("scheduled_at")
+        if not isinstance(scheduled_at, str):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid schedule")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.reschedule_random_event(schedule_id, scheduled_at)
+            ),
+            scope=f"random-event-schedule:{schedule_id}",
+        )
+
     @app.post("/api/session", status_code=status.HTTP_204_NO_CONTENT)
     def create_console_session(
         response: Response, identity: Annotated[AdminIdentity, Depends(authorize)]

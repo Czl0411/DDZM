@@ -125,6 +125,110 @@ class IncomeReportScheduleRecord(Base):
     report_time: Mapped[str] = mapped_column(String(5), primary_key=True)
 
 
+class RandomEventSettingsRecord(Base):
+    __tablename__ = "random_event_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    start_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    end_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    events_per_day: Mapped[int] = mapped_column(Integer, nullable=False)
+    minimum_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    signup_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    reminder_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class RandomEventSceneRecord(Base):
+    __tablename__ = "random_event_scenes"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    opening_text: Mapped[str] = mapped_column(Text, nullable=False)
+    reward: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_rounds: Mapped[int] = mapped_column(Integer, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class RandomEventSceneSeatRecord(Base):
+    __tablename__ = "random_event_scene_seats"
+    __table_args__ = (UniqueConstraint("scene_id", "role"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    scene_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_event_scenes.id"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    capacity: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class RandomEventScheduleRecord(Base):
+    __tablename__ = "random_event_schedules"
+    __table_args__ = (UniqueConstraint("event_date", "scheduled_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    event_date: Mapped[date] = mapped_column(Date, nullable=False)
+    scheduled_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class RandomEventRecord(Base):
+    __tablename__ = "random_events"
+    __table_args__ = (
+        UniqueConstraint("schedule_id"),
+        Index(
+            "ux_random_events_one_active_group",
+            "group_key",
+            unique=True,
+            sqlite_where=text("state IN ('signup', 'in_progress')"),
+            postgresql_where=text("state IN ('signup', 'in_progress')"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    schedule_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_event_schedules.id"), nullable=False
+    )
+    group_key: Mapped[str] = mapped_column(String(255), default="default", nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    scene_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    opening_text: Mapped[str] = mapped_column(Text, nullable=False)
+    reward: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_rounds: Mapped[int] = mapped_column(Integer, nullable=False)
+    signup_deadline: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    next_reminder_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    started_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class RandomEventSeatRecord(Base):
+    __tablename__ = "random_event_seats"
+    __table_args__ = (UniqueConstraint("event_id", "role"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("random_events.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    capacity: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class RandomEventParticipantRecord(Base):
+    __tablename__ = "random_event_participants"
+    __table_args__ = (UniqueConstraint("event_id", "user_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("random_events.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    rounds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    left_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    rewarded_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
 class UserRecord(Base):
     __tablename__ = "users"
 

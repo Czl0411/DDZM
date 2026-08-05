@@ -7,7 +7,9 @@ from .repository import CoreRepository
 
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
-_COMMANDS = {"/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助"}
+_COMMANDS = {
+    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出"
+}
 
 
 class GroupCommandHandler:
@@ -39,6 +41,10 @@ class GroupCommandHandler:
             return self._inventory(message.sender_platform_id, received_at)
         if command == "/商店":
             return self._shop(received_at)
+        if command == "/加入":
+            return self._event_join(message.sender_platform_id, content, received_at)
+        if command == "/退出":
+            return self._event_leave(message.sender_platform_id, received_at)
         return self._help(received_at)
 
     def _join(self, platform_id: str, content: str, received_at) -> str:
@@ -146,6 +152,66 @@ class GroupCommandHandler:
                 )
             },
         )
+
+    def _event_join(self, platform_id: str, content: str, received_at) -> str:
+        parts = content.split(maxsplit=1)
+        if len(parts) != 2 or not parts[1].strip():
+            return self._reply("/加入", "invalid", received_at)
+        status = self._repository.join_random_event(
+            platform_id, parts[1].strip(), received_at
+        )
+        employee = self._repository.find_user(platform_id)
+        if status == "not_joined":
+            return self._reply("/加入", status, received_at)
+        if status == "no_event":
+            return self._reply("/加入", status, received_at)
+        if status == "joined":
+            return self._reply(
+                "/加入", status, received_at,
+                {"{昵称}": employee.display_name, "{角色}": parts[1].strip()},
+            )
+        if status == "started":
+            return self._reply(
+                "/加入", status, received_at, {"{昵称}": employee.display_name}
+            )
+        reasons = {
+            "event_started": "随机事件已经开始，无法再报名。",
+            "already_joined": "你已经报名了当前随机事件。",
+            "unknown_role": "这个角色不在当前随机事件的可选席位中。",
+            "role_full": "这个角色的席位已经满了。",
+        }
+        return self._reply("/加入", "failed", received_at, {"{原因}": reasons[status]})
+
+    def _event_leave(self, platform_id: str, received_at) -> str:
+        status = self._repository.leave_random_event(platform_id, received_at)
+        if status == "not_joined":
+            return self._reply("/退出", status, received_at)
+        if status == "no_event":
+            return self._reply("/退出", status, received_at)
+        employee = self._repository.find_user(platform_id)
+        if status == "rewarded":
+            return self._reply(
+                "/退出", status, received_at,
+                {
+                    "{昵称}": employee.display_name,
+                    "{事件奖励}": self._event_reward(platform_id),
+                },
+            )
+        if status == "left_signup":
+            return self._reply(
+                "/退出", "signup_left", received_at, {"{昵称}": employee.display_name}
+            )
+        if status == "left_without_reward":
+            return self._reply(
+                "/退出", "left", received_at, {"{昵称}": employee.display_name}
+            )
+        return self._reply(
+            "/退出", "failed", received_at,
+            {"{原因}": "你没有加入当前随机事件。"},
+        )
+
+    def _event_reward(self, platform_id: str) -> int:
+        return self._repository.last_random_event_reward(platform_id)
 
     def _help(self, received_at) -> str:
         commands = self._repository.list_enabled_command_definitions()

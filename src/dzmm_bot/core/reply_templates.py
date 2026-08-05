@@ -32,6 +32,18 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/商店", "items_available", "商店有货", "总监事小卖部：\n{商店列表}", ("{商店列表}", "{日期}")),
     TemplateDefinition("/商店", "empty", "商店为空", "总监事小卖部还没有上架商品。", ("{日期}",)),
     TemplateDefinition("/帮助", "shown", "帮助回复", "总监事指令簿：\n{指令列表}", ("{指令列表}", "{日期}")),
+    TemplateDefinition("/加入", "joined", "报名成功", "{昵称}已加入随机事件，担任{角色}。", ("{昵称}", "{角色}", "{日期}")),
+    TemplateDefinition("/加入", "started", "事件开始", "{昵称}已加入，人员已齐，随机事件开始。", ("{昵称}", "{日期}")),
+    TemplateDefinition("/加入", "no_event", "暂无事件", "当前没有可报名的随机事件。", ("{日期}",)),
+    TemplateDefinition("/加入", "not_joined", "未入职", "请先用 /入职 名字 加入摸鱼公司。", ("{日期}",)),
+    TemplateDefinition("/加入", "invalid", "报名方式", "请用 /加入 角色 报名。", ("{日期}",)),
+    TemplateDefinition("/加入", "failed", "报名失败", "{原因}", ("{原因}", "{日期}")),
+    TemplateDefinition("/退出", "rewarded", "领取奖励", "{昵称}完成目标，领取 {事件奖励} {货币}。", ("{昵称}", "{事件奖励}", "{货币}", "{日期}")),
+    TemplateDefinition("/退出", "left", "退出事件", "{昵称}已退出随机事件，未达到奖励条件。", ("{昵称}", "{日期}")),
+    TemplateDefinition("/退出", "signup_left", "取消报名", "{昵称}已退出随机事件报名。", ("{昵称}", "{日期}")),
+    TemplateDefinition("/退出", "no_event", "暂无事件", "当前没有可退出的随机事件。", ("{日期}",)),
+    TemplateDefinition("/退出", "not_joined", "未入职", "请先用 /入职 名字 加入摸鱼公司。", ("{日期}",)),
+    TemplateDefinition("/退出", "failed", "退出失败", "{原因}", ("{原因}", "{日期}")),
 )
 
 

@@ -75,6 +75,18 @@ class FakeCore:
             "report_times": ["12:00", "16:00", "20:00", "23:59"],
         }
     )
+    random_event_settings: dict = field(
+        default_factory=lambda: {
+            "start_time": "10:00",
+            "end_time": "24:00",
+            "events_per_day": 1,
+            "minimum_interval_minutes": 60,
+            "signup_timeout_minutes": 15,
+            "reminder_interval_minutes": 5,
+        }
+    )
+    random_event_scenes: list[dict] = field(default_factory=list)
+    today_random_events: list[dict] = field(default_factory=list)
     manual_login_lease: dict | None = None
 
     def status(self):
@@ -163,6 +175,45 @@ class FakeCore:
     def set_activity_settings(self, settings):
         self.activity_settings = settings
         return self.activity_settings
+
+    def get_random_event_settings(self):
+        return self.random_event_settings
+
+    def set_random_event_settings(self, settings):
+        self.random_event_settings = settings
+        return self.random_event_settings
+
+    def list_random_event_scenes(self, page, page_size):
+        return _page(self.random_event_scenes, page, page_size)
+
+    def create_random_event_scene(self, scene):
+        saved = {**scene, "id": f"scene-{len(self.random_event_scenes) + 1}", "enabled": True}
+        self.random_event_scenes.append(saved)
+        return saved
+
+    def update_random_event_scene(self, scene_id, scene):
+        index = next(
+            index
+            for index, item in enumerate(self.random_event_scenes)
+            if item["id"] == scene_id
+        )
+        saved = {**scene, "id": scene_id}
+        self.random_event_scenes[index] = saved
+        return saved
+
+    def delete_random_event_scene(self, scene_id):
+        self.random_event_scenes = [
+            scene for scene in self.random_event_scenes if scene["id"] != scene_id
+        ]
+        return {"accepted": True}
+
+    def list_today_random_events(self):
+        return self.today_random_events
+
+    def reschedule_random_event(self, schedule_id, scheduled_at):
+        schedule = next(item for item in self.today_random_events if item["id"] == schedule_id)
+        schedule["scheduled_at"] = scheduled_at
+        return schedule
 
 
 class FakeConsole:
@@ -932,3 +983,35 @@ def test_index_contains_status_fields_and_only_declared_actions(client):
         "/api/login/finish",
     ):
         assert path in response.text
+
+
+def test_admin_configures_random_event_settings_and_creates_scene(client, headers, core):
+    settings = client.patch(
+        "/api/game/random-events/settings",
+        headers=headers,
+        json={
+            "start_time": "10:00",
+            "end_time": "24:00",
+            "events_per_day": 2,
+            "minimum_interval_minutes": 90,
+            "signup_timeout_minutes": 15,
+            "reminder_interval_minutes": 5,
+        },
+    )
+    scene = client.post(
+        "/api/game/random-events/scenes",
+        headers={**headers, "Idempotency-Key": "scene-create", "If-Match": "1"},
+        json={
+            "name": "茶水间",
+            "opening_text": "咖啡机突然发出一声巨响。",
+            "reward": 4,
+            "target_rounds": 10,
+            "seats": [{"role": "员工", "capacity": 2}],
+        },
+    )
+
+    assert settings.status_code == 200
+    assert settings.json()["version"] == 1
+    assert scene.status_code == 201
+    assert scene.json()["name"] == "茶水间"
+    assert client.get("/api/game/random-events/scenes", headers=headers).json()["items"]

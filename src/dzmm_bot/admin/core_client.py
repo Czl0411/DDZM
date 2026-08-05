@@ -41,6 +41,22 @@ class AdminCorePort(Protocol):
 
     def set_activity_settings(self, settings: dict) -> dict: ...
 
+    def get_random_event_settings(self) -> dict: ...
+
+    def set_random_event_settings(self, settings: dict) -> dict: ...
+
+    def list_random_event_scenes(self, page: int, page_size: int) -> dict: ...
+
+    def create_random_event_scene(self, scene: dict) -> dict: ...
+
+    def update_random_event_scene(self, scene_id: str, scene: dict) -> dict: ...
+
+    def delete_random_event_scene(self, scene_id: str) -> dict: ...
+
+    def list_today_random_events(self) -> list[dict]: ...
+
+    def reschedule_random_event(self, schedule_id: str, scheduled_at: str) -> dict: ...
+
 
 class CoreClient:
     def __init__(
@@ -132,6 +148,54 @@ class CoreClient:
 
     def set_activity_settings(self, settings: dict) -> dict:
         response = self._client.patch("/internal/game/activity-settings", json=settings)
+        response.raise_for_status()
+        return response.json()
+
+    def get_random_event_settings(self) -> dict:
+        return self._get("/internal/game/random-events/settings")
+
+    def set_random_event_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/random-events/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def list_random_event_scenes(self, page: int, page_size: int) -> dict:
+        return self._get(
+            "/internal/game/random-events/scenes",
+            params={"page": page, "page_size": page_size},
+        )
+
+    def create_random_event_scene(self, scene: dict) -> dict:
+        response = self._client.post(
+            "/internal/game/random-events/scenes", json=scene
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def update_random_event_scene(self, scene_id: str, scene: dict) -> dict:
+        response = self._client.put(
+            f"/internal/game/random-events/scenes/{scene_id}", json=scene
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_random_event_scene(self, scene_id: str) -> dict:
+        response = self._client.delete(
+            f"/internal/game/random-events/scenes/{scene_id}"
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def list_today_random_events(self) -> list[dict]:
+        return self._get("/internal/game/random-events/today")
+
+    def reschedule_random_event(self, schedule_id: str, scheduled_at: str) -> dict:
+        response = self._client.patch(
+            f"/internal/game/random-events/today/{schedule_id}",
+            json={"scheduled_at": scheduled_at},
+        )
         response.raise_for_status()
         return response.json()
 

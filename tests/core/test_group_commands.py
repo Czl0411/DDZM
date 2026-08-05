@@ -162,6 +162,27 @@ def test_me_alias_shows_balance_level_and_today_income_without_count():
     assert "10" not in reply
 
 
+def test_random_event_commands_join_count_rounds_and_settle_on_exit():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "茶水间", "咖啡机突然发出一声巨响。", 4, 2, [("员工", 2)]
+    )
+    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    _receive(service, "join-1", "u1", "/入职 小明", now)
+    _receive(service, "join-2", "u2", "/入职 小红", now)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+
+    _receive(service, "event-join-1", "u1", "/加入 员工", now)
+    _receive(service, "event-join-2", "u2", "/加入 员工", now)
+    _receive(service, "round-1", "u1", "第一句", now)
+    _receive(service, "round-2", "u1", "第二句", now)
+    _receive(service, "event-leave", "u1", "/退出", now)
+
+    assert "领取 4 摸鱼币" in _latest_reply(factory)
+
+
 def test_disabled_command_does_not_reply_or_change_data():
     from dzmm_bot.core.schema import UserRecord
 

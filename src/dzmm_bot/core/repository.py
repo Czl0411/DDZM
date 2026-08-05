@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import re
+from secrets import randbelow
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, or_, select, update
@@ -30,6 +31,13 @@ from .schema import (
     ItemRecord,
     ManualLoginLeaseRecord,
     OutboundRecord,
+    RandomEventScheduleRecord,
+    RandomEventRecord,
+    RandomEventParticipantRecord,
+    RandomEventSeatRecord,
+    RandomEventSceneRecord,
+    RandomEventSceneSeatRecord,
+    RandomEventSettingsRecord,
     UserItemRecord,
     UserRecord,
     WorkerCommandRecord,
@@ -53,6 +61,12 @@ _DEFAULT_ACTIVITY_RULES = (
     (10, 500, 10),
 )
 _DEFAULT_INCOME_REPORT_TIMES = ("12:00", "16:00", "20:00", "23:59")
+_DEFAULT_RANDOM_EVENT_START_TIME = "10:00"
+_DEFAULT_RANDOM_EVENT_END_TIME = "24:00"
+_DEFAULT_RANDOM_EVENT_COUNT = 1
+_DEFAULT_RANDOM_EVENT_MINIMUM_INTERVAL_MINUTES = 60
+_DEFAULT_RANDOM_EVENT_SIGNUP_TIMEOUT_MINUTES = 15
+_DEFAULT_RANDOM_EVENT_REMINDER_INTERVAL_MINUTES = 5
 
 
 @dataclass(frozen=True)
@@ -66,6 +80,41 @@ class ActivityLevelRule:
 class ActivitySettings:
     rules: list[ActivityLevelRule]
     report_times: list[str]
+
+
+@dataclass(frozen=True)
+class RandomEventSettings:
+    start_time: str
+    end_time: str
+    events_per_day: int
+    minimum_interval_minutes: int
+    signup_timeout_minutes: int
+    reminder_interval_minutes: int
+
+
+@dataclass(frozen=True)
+class RandomEventSchedule:
+    id: UUID
+    scheduled_at: datetime
+    status: str
+    scene_name: str | None = None
+
+
+@dataclass(frozen=True)
+class RandomEventSeatRule:
+    role: str
+    capacity: int
+
+
+@dataclass(frozen=True)
+class RandomEventScene:
+    id: UUID
+    name: str
+    opening_text: str
+    reward: int
+    target_rounds: int
+    enabled: bool
+    seats: list[RandomEventSeatRule]
 
 
 @dataclass(frozen=True)
@@ -97,6 +146,8 @@ _COMMAND_DEFINITIONS = (
     ("/我", "查看余额、今日活跃度和今日收益"),
     ("/商店", "查看当前上架物品"),
     ("/帮助", "查看当前可用指令"),
+    ("/加入", "加入当前随机事件的指定角色"),
+    ("/退出", "退出当前随机事件并结算奖励"),
 )
 
 
@@ -305,6 +356,616 @@ class CoreRepository:
                 session.add(record)
                 session.flush()
             return record
+
+    def get_random_event_settings(self) -> RandomEventSettings:
+        with self._session() as session:
+            record = session.get(RandomEventSettingsRecord, 1)
+            if record is None:
+                record = RandomEventSettingsRecord(
+                    id=1,
+                    start_time=_DEFAULT_RANDOM_EVENT_START_TIME,
+                    end_time=_DEFAULT_RANDOM_EVENT_END_TIME,
+                    events_per_day=_DEFAULT_RANDOM_EVENT_COUNT,
+                    minimum_interval_minutes=_DEFAULT_RANDOM_EVENT_MINIMUM_INTERVAL_MINUTES,
+                    signup_timeout_minutes=_DEFAULT_RANDOM_EVENT_SIGNUP_TIMEOUT_MINUTES,
+                    reminder_interval_minutes=_DEFAULT_RANDOM_EVENT_REMINDER_INTERVAL_MINUTES,
+                )
+                session.add(record)
+                session.flush()
+            return _random_event_settings(record)
+
+    def set_random_event_settings(
+        self,
+        start_time: str,
+        end_time: str,
+        events_per_day: int,
+        minimum_interval_minutes: int,
+        signup_timeout_minutes: int,
+        reminder_interval_minutes: int,
+    ) -> RandomEventSettings:
+        start_minutes = _event_time_minutes(start_time)
+        end_minutes = _event_time_minutes(end_time, allow_midnight=True)
+        if start_minutes is None or end_minutes is None or start_minutes >= end_minutes:
+            raise ValueError("随机事件时间窗无效")
+        if not isinstance(events_per_day, int) or events_per_day < 1:
+            raise ValueError("每日随机事件次数至少为 1")
+        if not isinstance(minimum_interval_minutes, int) or minimum_interval_minutes < 60:
+            raise ValueError("事件最小间隔至少为 1 小时")
+        if not isinstance(signup_timeout_minutes, int) or signup_timeout_minutes < 1:
+            raise ValueError("报名超时至少为 1 分钟")
+        if not isinstance(reminder_interval_minutes, int) or reminder_interval_minutes < 1:
+            raise ValueError("提醒间隔至少为 1 分钟")
+        _validate_random_event_capacity(
+            start_minutes, end_minutes, events_per_day, minimum_interval_minutes
+        )
+        with self._session() as session:
+            record = session.get(RandomEventSettingsRecord, 1)
+            if record is None:
+                record = RandomEventSettingsRecord(id=1)
+                session.add(record)
+            record.start_time = start_time
+            record.end_time = end_time
+            record.events_per_day = events_per_day
+            record.minimum_interval_minutes = minimum_interval_minutes
+            record.signup_timeout_minutes = signup_timeout_minutes
+            record.reminder_interval_minutes = reminder_interval_minutes
+            session.flush()
+            return _random_event_settings(record)
+
+    def schedule_random_events(self, now: datetime) -> list[RandomEventSchedule]:
+        now = now.astimezone(BEIJING)
+        settings = self.get_random_event_settings()
+        start_minutes = _event_time_minutes(settings.start_time)
+        end_minutes = _event_time_minutes(settings.end_time, allow_midnight=True)
+        if start_minutes is None or end_minutes is None:
+            raise RuntimeError("random event settings disappeared")
+        with self._session() as session:
+            existing = list(
+                session.scalars(
+                    select(RandomEventScheduleRecord)
+                    .where(RandomEventScheduleRecord.event_date == now.date())
+                    .order_by(RandomEventScheduleRecord.scheduled_at)
+                )
+            )
+            if existing:
+                return [_random_event_schedule(record) for record in existing]
+            _validate_random_event_capacity(
+                start_minutes,
+                end_minutes,
+                settings.events_per_day,
+                settings.minimum_interval_minutes,
+            )
+            latest_first_minute = (
+                end_minutes
+                - 1
+                - (settings.events_per_day - 1) * settings.minimum_interval_minutes
+            )
+            extra_minutes = latest_first_minute - start_minutes
+            offsets = sorted(
+                randbelow(extra_minutes + 1)
+                for _ in range(settings.events_per_day)
+            )
+            records = []
+            for index, offset in enumerate(offsets):
+                minute = start_minutes + offset + index * settings.minimum_interval_minutes
+                scheduled_at = now.replace(
+                    hour=minute // 60,
+                    minute=minute % 60,
+                    second=0,
+                    microsecond=0,
+                )
+                record = RandomEventScheduleRecord(
+                    event_date=now.date(), scheduled_at=scheduled_at
+                )
+                session.add(record)
+                records.append(record)
+            session.flush()
+            return [_random_event_schedule(record) for record in records]
+
+    def list_today_random_event_schedules(
+        self, now: datetime
+    ) -> list[RandomEventSchedule]:
+        now = now.astimezone(BEIJING)
+        with self._session() as session:
+            records = list(
+                session.scalars(
+                    select(RandomEventScheduleRecord)
+                    .where(RandomEventScheduleRecord.event_date == now.date())
+                    .order_by(RandomEventScheduleRecord.scheduled_at)
+                )
+            )
+            names = {
+                schedule_id: scene_name
+                for schedule_id, scene_name in session.execute(
+                    select(RandomEventRecord.schedule_id, RandomEventRecord.scene_name).where(
+                        RandomEventRecord.schedule_id.in_([record.id for record in records])
+                    )
+                )
+            }
+            return [
+                _random_event_schedule(record, names.get(record.id))
+                for record in records
+            ]
+
+    def reschedule_random_event(
+        self, schedule_id: UUID, scheduled_at: datetime, now: datetime
+    ) -> RandomEventSchedule:
+        now = now.astimezone(BEIJING)
+        scheduled_at = scheduled_at.astimezone(BEIJING).replace(second=0, microsecond=0)
+        settings = self.get_random_event_settings()
+        start = _event_time_minutes(settings.start_time)
+        end = _event_time_minutes(settings.end_time, allow_midnight=True)
+        minute = scheduled_at.hour * 60 + scheduled_at.minute
+        if (
+            scheduled_at.date() != now.date()
+            or start is None
+            or end is None
+            or not start <= minute < end
+        ):
+            raise ValueError("调整时间必须在今日配置的时间窗内")
+        with self._session() as session:
+            record = session.get(RandomEventScheduleRecord, schedule_id)
+            if record is None:
+                raise ValueError("随机事件不存在")
+            if record.event_date != now.date() or record.status != "pending":
+                raise ValueError("仅待开始事件可以调整")
+            conflicts = list(
+                session.scalars(
+                    select(RandomEventScheduleRecord).where(
+                        RandomEventScheduleRecord.event_date == now.date(),
+                        RandomEventScheduleRecord.id != record.id,
+                    )
+                )
+            )
+            if any(
+                abs((other.scheduled_at - scheduled_at).total_seconds())
+                < settings.minimum_interval_minutes * 60
+                for other in conflicts
+            ):
+                raise ValueError("调整时间与其他随机事件间隔不足")
+            record.scheduled_at = scheduled_at
+            session.flush()
+            return _random_event_schedule(record)
+
+    def create_random_event_scene(
+        self,
+        name: str,
+        opening_text: str,
+        reward: int,
+        target_rounds: int,
+        seats: list[tuple[str, int]],
+    ) -> RandomEventScene:
+        name = name.strip()
+        opening_text = opening_text.strip()
+        rules = _validate_random_event_scene(
+            name, opening_text, reward, target_rounds, seats
+        )
+        with self._session() as session:
+            record = RandomEventSceneRecord(
+                name=name,
+                opening_text=opening_text,
+                reward=reward,
+                target_rounds=target_rounds,
+            )
+            session.add(record)
+            session.flush()
+            session.add_all(
+                [
+                    RandomEventSceneSeatRecord(
+                        scene_id=record.id, role=rule.role, capacity=rule.capacity
+                    )
+                    for rule in rules
+                ]
+            )
+            session.flush()
+            return _random_event_scene(record, rules)
+
+    def list_random_event_scenes(self) -> list[RandomEventScene]:
+        scenes, _ = self.list_random_event_scenes_page(1, 100)
+        return scenes
+
+    def list_random_event_scenes_page(
+        self, page: int, page_size: int
+    ) -> tuple[list[RandomEventScene], int]:
+        with self._session() as session:
+            records = list(
+                session.scalars(
+                    select(RandomEventSceneRecord).order_by(
+                        RandomEventSceneRecord.created_at.desc(),
+                        RandomEventSceneRecord.id.desc(),
+                    )
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            total = int(
+                session.scalar(
+                    select(func.count()).select_from(RandomEventSceneRecord)
+                )
+                or 0
+            )
+            seats_by_scene: dict[UUID, list[RandomEventSeatRule]] = {
+                record.id: [] for record in records
+            }
+            for seat in session.scalars(
+                select(RandomEventSceneSeatRecord)
+                .where(RandomEventSceneSeatRecord.scene_id.in_(seats_by_scene))
+                .order_by(
+                    RandomEventSceneSeatRecord.scene_id,
+                    RandomEventSceneSeatRecord.role,
+                )
+            ):
+                seats_by_scene[seat.scene_id].append(
+                    RandomEventSeatRule(seat.role, seat.capacity)
+                )
+            return (
+                [
+                    _random_event_scene(record, seats_by_scene[record.id])
+                    for record in records
+                ],
+                total,
+            )
+
+    def update_random_event_scene(
+        self,
+        scene_id: UUID,
+        name: str,
+        opening_text: str,
+        reward: int,
+        target_rounds: int,
+        seats: list[tuple[str, int]],
+        enabled: bool,
+    ) -> RandomEventScene:
+        name = name.strip()
+        opening_text = opening_text.strip()
+        rules = _validate_random_event_scene(
+            name, opening_text, reward, target_rounds, seats
+        )
+        with self._session() as session:
+            record = session.get(RandomEventSceneRecord, scene_id, with_for_update=True)
+            if record is None:
+                raise ValueError("场景不存在")
+            record.name = name
+            record.opening_text = opening_text
+            record.reward = reward
+            record.target_rounds = target_rounds
+            record.enabled = enabled
+            session.execute(
+                delete(RandomEventSceneSeatRecord).where(
+                    RandomEventSceneSeatRecord.scene_id == scene_id
+                )
+            )
+            session.add_all(
+                [
+                    RandomEventSceneSeatRecord(
+                        scene_id=scene_id, role=rule.role, capacity=rule.capacity
+                    )
+                    for rule in rules
+                ]
+            )
+            session.flush()
+            return _random_event_scene(record, rules)
+
+    def delete_random_event_scene(self, scene_id: UUID) -> bool:
+        with self._session() as session:
+            record = session.get(RandomEventSceneRecord, scene_id, with_for_update=True)
+            if record is None:
+                return False
+            session.execute(
+                delete(RandomEventSceneSeatRecord).where(
+                    RandomEventSceneSeatRecord.scene_id == scene_id
+                )
+            )
+            session.delete(record)
+            return True
+
+    def run_random_event_jobs(self, now: datetime) -> None:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            self.schedule_random_events(now)
+            with self._session() as session:
+                active = session.scalar(
+                    select(RandomEventRecord)
+                    .where(RandomEventRecord.state.in_(("signup", "in_progress")))
+                    .order_by(RandomEventRecord.started_at)
+                    .with_for_update()
+                )
+                if active is not None and active.state == "signup":
+                    if active.signup_deadline <= now:
+                        self._finish_random_event(session, active, "dissolved", now)
+                        self.enqueue_system_outbound(
+                            f"【随机事件：{active.scene_name}】报名超时，事件已解散。"
+                        )
+                        active = None
+                    elif (
+                        active.next_reminder_at is not None
+                        and active.next_reminder_at <= now
+                    ):
+                        open_seats = self._random_event_open_seats(session, active.id)
+                        self.enqueue_system_outbound(
+                            f"【随机事件：{active.scene_name}】仍在报名：{open_seats}。"
+                        )
+                        settings = self.get_random_event_settings()
+                        active.next_reminder_at = now + timedelta(
+                            minutes=settings.reminder_interval_minutes
+                        )
+                due_schedules = list(
+                    session.scalars(
+                        select(RandomEventScheduleRecord)
+                        .where(
+                            RandomEventScheduleRecord.status == "pending",
+                            RandomEventScheduleRecord.event_date == now.date(),
+                            RandomEventScheduleRecord.scheduled_at <= now,
+                        )
+                        .order_by(RandomEventScheduleRecord.scheduled_at)
+                        .with_for_update()
+                    )
+                )
+                for schedule in due_schedules:
+                    if active is not None:
+                        schedule.status = "skipped"
+                        continue
+                    scenes = list(
+                        session.scalars(
+                            select(RandomEventSceneRecord).where(
+                                RandomEventSceneRecord.enabled.is_(True)
+                            )
+                        )
+                    )
+                    if not scenes:
+                        schedule.status = "skipped"
+                        continue
+                    scene = scenes[randbelow(len(scenes))]
+                    scene_seats = list(
+                        session.scalars(
+                            select(RandomEventSceneSeatRecord)
+                            .where(RandomEventSceneSeatRecord.scene_id == scene.id)
+                            .order_by(RandomEventSceneSeatRecord.role)
+                        )
+                    )
+                    settings = self.get_random_event_settings()
+                    active = RandomEventRecord(
+                        schedule_id=schedule.id,
+                        state="signup",
+                        scene_name=scene.name,
+                        opening_text=scene.opening_text,
+                        reward=scene.reward,
+                        target_rounds=scene.target_rounds,
+                        signup_deadline=now
+                        + timedelta(minutes=settings.signup_timeout_minutes),
+                        next_reminder_at=now
+                        + timedelta(minutes=settings.reminder_interval_minutes),
+                        started_at=now,
+                    )
+                    schedule.status = "signup"
+                    session.add(active)
+                    session.flush()
+                    session.add_all(
+                        [
+                            RandomEventSeatRecord(
+                                event_id=active.id,
+                                role=seat.role,
+                                capacity=seat.capacity,
+                            )
+                            for seat in scene_seats
+                        ]
+                    )
+                    self.enqueue_system_outbound(
+                        f"【随机事件：{scene.name}】\n{scene.opening_text}\n"
+                        f"使用 /加入 角色 报名，报名将在 "
+                        f"{settings.signup_timeout_minutes} 分钟后截止。"
+                    )
+
+    def join_random_event(self, platform_id: str, role: str, now: datetime) -> str:
+        role = role.strip()
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if user is None:
+                    return "not_joined"
+                event = self._active_random_event(session)
+                if event is None:
+                    return "no_event"
+                if event.state != "signup":
+                    return "event_started"
+                participant = session.scalar(
+                    select(RandomEventParticipantRecord).where(
+                        RandomEventParticipantRecord.event_id == event.id,
+                        RandomEventParticipantRecord.user_id == user.id,
+                    )
+                )
+                if participant is not None:
+                    return "already_joined"
+                seat = session.scalar(
+                    select(RandomEventSeatRecord).where(
+                        RandomEventSeatRecord.event_id == event.id,
+                        RandomEventSeatRecord.role == role,
+                    )
+                )
+                if seat is None:
+                    return "unknown_role"
+                occupied = int(
+                    session.scalar(
+                        select(func.count())
+                        .select_from(RandomEventParticipantRecord)
+                        .where(
+                            RandomEventParticipantRecord.event_id == event.id,
+                            RandomEventParticipantRecord.role == role,
+                            RandomEventParticipantRecord.left_at.is_(None),
+                        )
+                    )
+                    or 0
+                )
+                if occupied >= seat.capacity:
+                    return "role_full"
+                session.add(
+                    RandomEventParticipantRecord(
+                        event_id=event.id, user_id=user.id, role=role, joined_at=now
+                    )
+                )
+                session.flush()
+                if self._random_event_is_full(session, event.id):
+                    event.state = "in_progress"
+                    schedule = session.get(RandomEventScheduleRecord, event.schedule_id)
+                    if schedule is not None:
+                        schedule.status = "in_progress"
+                    self.enqueue_system_outbound(
+                        f"【随机事件：{event.scene_name}】人员已齐，事件开始。"
+                    )
+                    return "started"
+                return "joined"
+
+    def record_random_event_round(
+        self, platform_id: str, now: datetime, content: str
+    ) -> None:
+        if content.lstrip().startswith("/") or not content.strip():
+            return
+        with self._session() as session:
+            event = self._active_random_event(session)
+            if event is None or event.state != "in_progress":
+                return
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return
+            participant = session.scalar(
+                select(RandomEventParticipantRecord).where(
+                    RandomEventParticipantRecord.event_id == event.id,
+                    RandomEventParticipantRecord.user_id == user.id,
+                    RandomEventParticipantRecord.left_at.is_(None),
+                )
+            )
+            if participant is not None:
+                participant.rounds += 1
+
+    def leave_random_event(self, platform_id: str, now: datetime) -> str:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                event = self._active_random_event(session)
+                if event is None:
+                    return "no_event"
+                user = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if user is None:
+                    return "not_joined"
+                participant = session.scalar(
+                    select(RandomEventParticipantRecord).where(
+                        RandomEventParticipantRecord.event_id == event.id,
+                        RandomEventParticipantRecord.user_id == user.id,
+                        RandomEventParticipantRecord.left_at.is_(None),
+                    )
+                )
+                if participant is None:
+                    return "not_participating"
+                participant.left_at = now
+                result = "left_signup"
+                if event.state == "in_progress":
+                    if participant.rounds >= event.target_rounds:
+                        self._apply_balance_change(user, event.reward, "random_event", now)
+                        participant.rewarded_at = now
+                        result = "rewarded"
+                    else:
+                        result = "left_without_reward"
+                    remaining = int(
+                        session.scalar(
+                            select(func.count())
+                            .select_from(RandomEventParticipantRecord)
+                            .where(
+                                RandomEventParticipantRecord.event_id == event.id,
+                                RandomEventParticipantRecord.left_at.is_(None),
+                            )
+                        )
+                        or 0
+                    )
+                    if remaining == 0:
+                        self._finish_random_event(session, event, "ended", now)
+                return result
+
+    def last_random_event_reward(self, platform_id: str) -> int:
+        with self._session() as session:
+            return int(
+                session.scalar(
+                    select(RandomEventRecord.reward)
+                    .join(
+                        RandomEventParticipantRecord,
+                        RandomEventParticipantRecord.event_id == RandomEventRecord.id,
+                    )
+                    .join(UserRecord, UserRecord.id == RandomEventParticipantRecord.user_id)
+                    .where(
+                        UserRecord.platform_id == platform_id,
+                        RandomEventParticipantRecord.rewarded_at.is_not(None),
+                    )
+                    .order_by(RandomEventParticipantRecord.rewarded_at.desc())
+                    .limit(1)
+                )
+                or 0
+            )
+
+    def _active_random_event(self, session: Session) -> RandomEventRecord | None:
+        return session.scalar(
+            select(RandomEventRecord)
+            .where(RandomEventRecord.state.in_(("signup", "in_progress")))
+            .order_by(RandomEventRecord.started_at)
+            .with_for_update()
+        )
+
+    def _random_event_is_full(self, session: Session, event_id: UUID) -> bool:
+        for seat in session.scalars(
+            select(RandomEventSeatRecord).where(RandomEventSeatRecord.event_id == event_id)
+        ):
+            occupied = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(RandomEventParticipantRecord)
+                    .where(
+                        RandomEventParticipantRecord.event_id == event_id,
+                        RandomEventParticipantRecord.role == seat.role,
+                        RandomEventParticipantRecord.left_at.is_(None),
+                    )
+                )
+                or 0
+            )
+            if occupied < seat.capacity:
+                return False
+        return True
+
+    def _random_event_open_seats(self, session: Session, event_id: UUID) -> str:
+        remaining = []
+        for seat in session.scalars(
+            select(RandomEventSeatRecord)
+            .where(RandomEventSeatRecord.event_id == event_id)
+            .order_by(RandomEventSeatRecord.role)
+        ):
+            occupied = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(RandomEventParticipantRecord)
+                    .where(
+                        RandomEventParticipantRecord.event_id == event_id,
+                        RandomEventParticipantRecord.role == seat.role,
+                        RandomEventParticipantRecord.left_at.is_(None),
+                    )
+                )
+                or 0
+            )
+            if occupied < seat.capacity:
+                remaining.append(f"{seat.role} {seat.capacity - occupied}")
+        return "，".join(remaining) or "已满员"
+
+    def _finish_random_event(
+        self, session: Session, event: RandomEventRecord, state: str, now: datetime
+    ) -> None:
+        event.state = state
+        event.ended_at = now
+        schedule = session.get(RandomEventScheduleRecord, event.schedule_id)
+        if schedule is not None:
+            schedule.status = state
 
     def ensure_activity_settings(self) -> None:
         with self._session() as session:
@@ -538,6 +1199,7 @@ class CoreRepository:
                 self._backfill_current_day_history(now)
             self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)
+            self.run_random_event_jobs(now)
         if should_backfill:
             self._current_day_history_backfilled = now.date()
 
@@ -1161,3 +1823,81 @@ class CoreRepository:
                 )
                 or 0,
             }
+
+
+def _event_time_minutes(value: str, *, allow_midnight: bool = False) -> int | None:
+    if not isinstance(value, str) or re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value) is None:
+        if allow_midnight and value == "24:00":
+            return 24 * 60
+        return None
+    return int(value[:2]) * 60 + int(value[3:])
+
+
+def _validate_random_event_capacity(
+    start_minutes: int,
+    end_minutes: int,
+    events_per_day: int,
+    minimum_interval_minutes: int,
+) -> None:
+    if end_minutes - start_minutes - 1 < (events_per_day - 1) * minimum_interval_minutes:
+        raise ValueError("时间窗不足以容纳每日次数和最小间隔")
+
+
+def _random_event_settings(record: RandomEventSettingsRecord) -> RandomEventSettings:
+    return RandomEventSettings(
+        start_time=record.start_time,
+        end_time=record.end_time,
+        events_per_day=record.events_per_day,
+        minimum_interval_minutes=record.minimum_interval_minutes,
+        signup_timeout_minutes=record.signup_timeout_minutes,
+        reminder_interval_minutes=record.reminder_interval_minutes,
+    )
+
+
+def _random_event_schedule(
+    record: RandomEventScheduleRecord, scene_name: str | None = None
+) -> RandomEventSchedule:
+    return RandomEventSchedule(
+        id=record.id,
+        scheduled_at=record.scheduled_at,
+        status=record.status,
+        scene_name=scene_name,
+    )
+
+
+def _validate_random_event_scene(
+    name: str,
+    opening_text: str,
+    reward: int,
+    target_rounds: int,
+    seats: list[tuple[str, int]],
+) -> list[RandomEventSeatRule]:
+    if not 1 <= len(name) <= 64 or not opening_text:
+        raise ValueError("场景名称和开场文案不能为空")
+    if not isinstance(reward, int) or not 0 <= reward <= 999:
+        raise ValueError("事件奖励需在 0 至 999 之间")
+    if not isinstance(target_rounds, int) or target_rounds < 1:
+        raise ValueError("目标轮次至少为 1")
+    rules = [RandomEventSeatRule(role.strip(), capacity) for role, capacity in seats]
+    if not rules or any(
+        not 1 <= len(rule.role) <= 32 or not isinstance(rule.capacity, int) or rule.capacity < 1
+        for rule in rules
+    ):
+        raise ValueError("席位角色和人数无效")
+    if len({rule.role for rule in rules}) != len(rules):
+        raise ValueError("席位角色不能重复")
+    return rules
+
+
+def _random_event_scene(
+    record: RandomEventSceneRecord, seats: list[RandomEventSeatRule]
+) -> RandomEventScene:
+    return RandomEventScene(
+        id=record.id,
+        name=record.name,
+        opening_text=record.opening_text,
+        reward=record.reward,
+        target_rounds=record.target_rounds,
+        enabled=record.enabled,
+        seats=seats,
+    )

@@ -141,7 +141,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助"
+        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出"
     }
     assert disabled.json()["enabled"] is False
     assert employees.json() == {
@@ -654,3 +654,21 @@ def test_worker_command_completion_requires_all_fencing_fields(client, headers):
         "lease_token",
         "now",
     }
+
+
+def test_random_event_settings_are_available_through_internal_api(client, headers):
+    response = client.patch(
+        "/internal/game/random-events/settings",
+        headers=headers,
+        json={
+            "start_time": "10:00",
+            "end_time": "24:00",
+            "events_per_day": 2,
+            "minimum_interval_minutes": 90,
+            "signup_timeout_minutes": 15,
+            "reminder_interval_minutes": 5,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["events_per_day"] == 2

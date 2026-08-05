@@ -4,7 +4,7 @@
 
 **Goal:** Add an operator-friendly global economy configuration page for currency name, new-employee balance, and daily check-in reward.
 
-**Architecture:** Persist one `game_settings` row with defaults. Commands read it for new `/入职`, successful `/打卡`, and generated currency wording. Core and Admin expose authenticated read/update APIs; Admin renders settings separately from the template editor.
+**Architecture:** Persist one `game_settings` row with defaults. Commands read it for new `/入职`, successful `/打卡`, and generated currency wording. The migration upgrades only unchanged old default templates to use `{货币}` and leaves administrator-authored text untouched. Core and Admin expose authenticated read/update APIs; Admin renders settings separately from the template editor.
 
 **Tech Stack:** Python 3.13, FastAPI, SQLAlchemy, Alembic, vanilla JavaScript/CSS, pytest.
 
@@ -56,7 +56,7 @@ class GameSettingsRecord(Base):
     checkin_reward: Mapped[int] = mapped_column(Integer, nullable=False)
 ```
 
-Use defaults when the row does not exist. Validate all values in the repository. Make `GroupCommandHandler` pass configured rewards into repository writes and currency into generated context.
+Use defaults when the row does not exist. Validate all values in the repository. Make `GroupCommandHandler` pass configured rewards into repository writes and currency into generated context. Add `{货币}` to applicable template definitions and migrate unchanged known default templates from `摸鱼币` to `{货币}` without changing any other saved template.
 
 - [ ] **Step 4: Run green tests**
 

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
@@ -191,7 +191,8 @@ class RandomEventSeatModel(ApiModel):
 class RandomEventSceneResponse(ApiModel):
     id: UUID
     name: str
-    opening_text: str
+    signup_text: str
+    openings: list[str]
     reward: int
     target_rounds: int
     enabled: bool
@@ -208,7 +209,10 @@ class PaginatedRandomEventScenesResponse(ApiModel):
 
 class CreateRandomEventSceneRequest(ApiModel):
     name: str = Field(min_length=1, max_length=64)
-    opening_text: str = Field(min_length=1, max_length=2000)
+    signup_text: str = Field(min_length=1, max_length=2000)
+    openings: list[Annotated[str, Field(min_length=1, max_length=2000)]] = Field(
+        min_length=1, max_length=20
+    )
     reward: int = Field(ge=0, le=999)
     target_rounds: int = Field(ge=1, le=999)
     seats: list[RandomEventSeatModel] = Field(min_length=1, max_length=20)

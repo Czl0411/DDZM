@@ -1004,7 +1004,8 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
         headers={**headers, "Idempotency-Key": "scene-create", "If-Match": "1"},
         json={
             "name": "茶水间",
-            "opening_text": "咖啡机突然发出一声巨响。",
+            "signup_text": "今天的公司茶水间随机事件来啦，快点加入吧。",
+            "openings": ["咖啡机突然发出一声巨响。"],
             "reward": 4,
             "target_rounds": 10,
             "seats": [{"role": "员工", "capacity": 2}],
@@ -1015,4 +1016,5 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
     assert settings.json()["version"] == 1
     assert scene.status_code == 201
     assert scene.json()["name"] == "茶水间"
+    assert scene.json()["openings"] == ["咖啡机突然发出一声巨响。"]
     assert client.get("/api/game/random-events/scenes", headers=headers).json()["items"]

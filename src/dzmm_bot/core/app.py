@@ -407,7 +407,8 @@ def create_app(
         try:
             scene = repository.create_random_event_scene(
                 request.name,
-                request.opening_text,
+                request.signup_text,
+                request.openings,
                 request.reward,
                 request.target_rounds,
                 [(seat.role, seat.capacity) for seat in request.seats],
@@ -429,7 +430,8 @@ def create_app(
             scene = repository.update_random_event_scene(
                 scene_id,
                 request.name,
-                request.opening_text,
+                request.signup_text,
+                request.openings,
                 request.reward,
                 request.target_rounds,
                 [(seat.role, seat.capacity) for seat in request.seats],
@@ -673,7 +675,8 @@ def _random_event_scene_response(scene) -> RandomEventSceneResponse:
     return RandomEventSceneResponse(
         id=scene.id,
         name=scene.name,
-        opening_text=scene.opening_text,
+        signup_text=scene.signup_text,
+        openings=scene.openings,
         reward=scene.reward,
         target_rounds=scene.target_rounds,
         enabled=scene.enabled,

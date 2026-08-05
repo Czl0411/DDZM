@@ -490,7 +490,7 @@ def create_app(
             scene = await request.json()
         except ValueError:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
-        required = ("name", "opening_text", "reward", "target_rounds", "seats")
+        required = ("name", "signup_text", "openings", "reward", "target_rounds", "seats")
         if not isinstance(scene, dict) or not all(key in scene for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
         return versioned_configuration_response(
@@ -514,7 +514,15 @@ def create_app(
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
         if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     ) -> JSONResponse:
-        required = ("name", "opening_text", "reward", "target_rounds", "seats", "enabled")
+        required = (
+            "name",
+            "signup_text",
+            "openings",
+            "reward",
+            "target_rounds",
+            "seats",
+            "enabled",
+        )
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
         return versioned_configuration_response(

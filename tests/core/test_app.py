@@ -680,7 +680,8 @@ def test_random_event_scene_is_created_through_internal_api(client, headers):
         headers=headers,
         json={
             "name": "茶水间",
-            "opening_text": "咖啡机突然发出一声巨响。",
+            "signup_text": "今天的公司茶水间随机事件来啦，快点加入吧。",
+            "openings": ["咖啡机突然发出一声巨响。"],
             "reward": 4,
             "target_rounds": 10,
             "seats": [{"role": "员工", "capacity": 2}],
@@ -688,4 +689,23 @@ def test_random_event_scene_is_created_through_internal_api(client, headers):
     )
 
     assert response.status_code == 201
+    assert response.json()["signup_text"] == "今天的公司茶水间随机事件来啦，快点加入吧。"
+    assert response.json()["openings"] == ["咖啡机突然发出一声巨响。"]
     assert response.json()["seats"] == [{"role": "员工", "capacity": 2}]
+
+
+def test_random_event_scene_requires_a_formal_opening(client, headers):
+    response = client.post(
+        "/internal/game/random-events/scenes",
+        headers=headers,
+        json={
+            "name": "茶水间",
+            "signup_text": "今天的公司茶水间随机事件来啦，快点加入吧。",
+            "openings": [],
+            "reward": 4,
+            "target_rounds": 10,
+            "seats": [{"role": "员工", "capacity": 2}],
+        },
+    )
+
+    assert response.status_code == 422

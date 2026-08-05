@@ -44,6 +44,7 @@ class BrowserWorker:
         self._seen_message_ids: set[str] = set()
         self._auth_loss_reported = False
         self._auth_backoff = 1
+        self._manual_auth_confirmed = False
 
     @property
     def login_state(self) -> LoginState:
@@ -63,7 +64,7 @@ class BrowserWorker:
 
         if self._login_state is not LoginState.AUTH_IN_PROGRESS:
             gateway = self._ensure_gateway()
-            if gateway.is_authenticated():
+            if gateway.is_authenticated() or self._manual_auth_confirmed:
                 self._login_state = LoginState.READY
                 self._auth_loss_reported = False
                 self._auth_backoff = 1
@@ -135,6 +136,7 @@ class BrowserWorker:
                 self._desktop.start()
                 self._login_state = LoginState.AUTH_IN_PROGRESS
                 self._listening = False
+                self._manual_auth_confirmed = False
             elif command.command == "finish_auth":
                 self._desktop.stop()
                 self._gateway = self._session.start_headless()
@@ -142,6 +144,7 @@ class BrowserWorker:
                 self._listening = True
                 self._auth_loss_reported = False
                 self._auth_backoff = 1
+                self._manual_auth_confirmed = True
             else:
                 raise ValueError(f"unsupported worker command: {command.command}")
         except Exception:

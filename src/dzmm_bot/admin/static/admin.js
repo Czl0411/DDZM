@@ -15,6 +15,7 @@ const consoleFrame = document.querySelector("#login-console-frame");
 const templateModal = document.querySelector("#template-modal");
 const templateModalTitle = document.querySelector("#template-modal-title");
 const templateModalContext = document.querySelector("#template-modal-context");
+const templateModalScenario = document.querySelector("#template-modal-scenario");
 const templateModalInput = document.querySelector("#template-modal-input");
 const templateModalVariables = document.querySelector("#template-modal-variables");
 
@@ -49,20 +50,32 @@ function escapeHtml(value) {
 function closeTemplateModal() {
   templateModal.hidden = true;
   delete templateModal.dataset.command;
-  delete templateModal.dataset.scenario;
+  delete templateModal.dataset.templates;
 }
 
 function openTemplateModal(button) {
-  templateModal.dataset.command = button.dataset.templateCommand;
-  templateModal.dataset.scenario = button.dataset.templateScenario;
-  templateModalTitle.textContent = `编辑 ${button.dataset.templateCommand} 回复`;
-  templateModalContext.textContent = `${button.dataset.templateLabel} · ${button.dataset.templateScenario}`;
-  templateModalInput.value = button.dataset.template;
-  templateModalVariables.innerHTML = JSON.parse(button.dataset.templateVariables)
-    .map((variable) => `<button class="variable-pill" data-variable="${escapeHtml(variable)}" type="button">${escapeHtml(variable)}</button>`)
+  const templates = JSON.parse(button.dataset.commandTemplates);
+  templateModal.dataset.command = button.dataset.command;
+  templateModal.dataset.templates = button.dataset.commandTemplates;
+  templateModalTitle.textContent = `配置 ${button.dataset.command} 回复`;
+  templateModalContext.textContent = button.dataset.commandDescription;
+  templateModalScenario.innerHTML = templates
+    .map((template) => `<option value="${escapeHtml(template.scenario)}">${escapeHtml(template.label)}</option>`)
     .join("");
+  templateModalScenario.value = templates[0].scenario;
+  loadTemplateScenario();
   templateModal.hidden = false;
   templateModalInput.focus();
+}
+
+function loadTemplateScenario() {
+  const template = JSON.parse(templateModal.dataset.templates).find(
+    (item) => item.scenario === templateModalScenario.value,
+  );
+  templateModalInput.value = template.template;
+  templateModalVariables.innerHTML = template.variables
+    .map((variable) => `<button class="variable-pill" data-variable="${escapeHtml(variable)}" type="button">${escapeHtml(variable)}</button>`)
+    .join("");
 }
 
 async function requestGame(path, options = {}) {
@@ -92,14 +105,8 @@ async function loadGameView(view) {
       document.querySelector("#command-list").innerHTML = commands.map((command) => `
         <article class="command-card">
           <div class="command-heading"><div><b>${escapeHtml(command.command)}</b><small>${escapeHtml(command.description)}</small></div>
-          <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></div>
-          <div class="template-list">${command.templates.map((template) => `
-            <section class="template-preview">
-              <div class="template-heading"><b>${escapeHtml(template.label)}</b><small>${escapeHtml(template.scenario)}</small></div>
-              <p class="template-preview-text">${escapeHtml(template.template)}</p>
-              <div class="template-actions"><small>可用变量：${template.variables.map(escapeHtml).join(" ") || "无"}</small>
-              <button class="secondary" data-edit-template data-template-command="${escapeHtml(command.command)}" data-template-scenario="${escapeHtml(template.scenario)}" data-template-label="${escapeHtml(template.label)}" data-template="${escapeHtml(template.template)}" data-template-variables="${escapeHtml(JSON.stringify(template.variables))}" type="button">编辑</button></div>
-            </section>`).join("")}</div>
+          <div class="command-actions"><button class="secondary" data-command-templates="${escapeHtml(JSON.stringify(command.templates))}" data-command="${escapeHtml(command.command)}" data-command-description="${escapeHtml(command.description)}" type="button">配置回复</button>
+          <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></div></div>
         </article>`).join("") || "<p class=\"muted\">暂无指令。</p>";
       return;
     }
@@ -238,7 +245,7 @@ for (const button of document.querySelectorAll(".nav-item")) {
   button.addEventListener("click", () => void loadGameView(button.dataset.view));
 }
 document.querySelector("#command-list").addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-command]");
+  const button = event.target.closest("button[data-command][data-enabled]");
   if (button) {
     try {
       await requestGame("/api/game/commands", {
@@ -253,9 +260,10 @@ document.querySelector("#command-list").addEventListener("click", async (event) 
     }
     return;
   }
-  const edit = event.target.closest("button[data-edit-template]");
-  if (edit) openTemplateModal(edit);
+  const configure = event.target.closest("button[data-command-templates]");
+  if (configure) openTemplateModal(configure);
 });
+templateModalScenario.addEventListener("change", loadTemplateScenario);
 templateModal.addEventListener("click", async (event) => {
   if (event.target.closest("[data-close-template-modal]")) {
     closeTemplateModal();
@@ -277,7 +285,7 @@ templateModal.addEventListener("click", async (event) => {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         command: templateModal.dataset.command,
-        scenario: templateModal.dataset.scenario,
+        scenario: templateModalScenario.value,
         template: templateModalInput.value,
       }),
     });

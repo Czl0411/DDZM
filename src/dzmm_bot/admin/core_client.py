@@ -15,6 +15,10 @@ class AdminCorePort(Protocol):
 
     def set_game_command_enabled(self, command: str, enabled: bool) -> dict: ...
 
+    def set_game_command_template(
+        self, command: str, scenario: str, template: str
+    ) -> dict: ...
+
     def list_game_users(self) -> list[dict]: ...
 
     def list_game_items(self) -> list[dict]: ...
@@ -56,6 +60,16 @@ class CoreClient:
     def set_game_command_enabled(self, command: str, enabled: bool) -> dict:
         response = self._client.patch(
             "/internal/game/commands", json={"command": command, "enabled": enabled}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def set_game_command_template(
+        self, command: str, scenario: str, template: str
+    ) -> dict:
+        response = self._client.patch(
+            "/internal/game/command-templates",
+            json={"command": command, "scenario": scenario, "template": template},
         )
         response.raise_for_status()
         return response.json()

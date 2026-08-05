@@ -137,6 +137,52 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
     ]
 
 
+def test_game_commands_list_templates_and_update_a_valid_template(client, headers):
+    commands = client.get("/internal/game/commands", headers=headers).json()
+    balance = next(command for command in commands if command["command"] == "/余额")
+
+    response = client.patch(
+        "/internal/game/command-templates",
+        headers=headers,
+        json={
+            "command": "/余额",
+            "scenario": "shown",
+            "template": "{昵称}：{余额}",
+        },
+    )
+
+    assert balance["templates"] == [
+        {
+            "scenario": "shown",
+            "label": "查询成功",
+            "template": "{昵称}，当前余额：{余额} 摸鱼币。",
+            "variables": ["{昵称}", "{余额}", "{日期}"],
+        },
+        {
+            "scenario": "not_joined",
+            "label": "未入职",
+            "template": "请先用 /入职 名字 加入摸鱼公司。",
+            "variables": ["{日期}"],
+        },
+    ]
+    assert response.status_code == 200
+    assert response.json()["template"] == "{昵称}：{余额}"
+
+
+def test_game_command_template_rejects_an_unsupported_variable(client, headers):
+    response = client.patch(
+        "/internal/game/command-templates",
+        headers=headers,
+        json={
+            "command": "/余额",
+            "scenario": "shown",
+            "template": "{商店列表}",
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_core_server_factory_enforces_local_settings_port(app_context):
     from dzmm_bot.core.app import create_server
     from dzmm_bot.runtime.settings import Settings

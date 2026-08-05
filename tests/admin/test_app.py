@@ -12,7 +12,19 @@ class FakeCore:
     commands: list[str] = field(default_factory=list)
     command_definitions: list[dict] = field(
         default_factory=lambda: [
-            {"command": "/打卡", "description": "每日领取 5 摸鱼币", "enabled": True}
+            {
+                "command": "/打卡",
+                "description": "每日领取 5 摸鱼币",
+                "enabled": True,
+                "templates": [
+                    {
+                        "scenario": "checked_in",
+                        "label": "打卡成功",
+                        "template": "打卡成功，领取 {打卡奖励} 摸鱼币。",
+                        "variables": ["{昵称}", "{余额}", "{打卡奖励}", "{日期}"],
+                    }
+                ],
+            }
         ]
     )
     employees: list[dict] = field(default_factory=list)
@@ -41,6 +53,12 @@ class FakeCore:
         record = next(item for item in self.command_definitions if item["command"] == command)
         record["enabled"] = enabled
         return record
+
+    def set_game_command_template(self, command, scenario, template):
+        record = next(item for item in self.command_definitions if item["command"] == command)
+        reply = next(item for item in record["templates"] if item["scenario"] == scenario)
+        reply["template"] = template
+        return reply
 
     def list_game_users(self):
         return self.employees
@@ -210,6 +228,30 @@ def test_admin_dashboard_exposes_game_navigation_and_proxies_game_data(
     assert commands.json()[0]["command"] == "/打卡"
     assert disabled.json()["enabled"] is False
     assert item.status_code == 201
+
+
+def test_admin_relay_updates_a_command_template(client, headers, core):
+    response = client.patch(
+        "/api/game/command-templates",
+        headers=headers,
+        json={
+            "command": "/打卡",
+            "scenario": "checked_in",
+            "template": "{昵称} +{打卡奖励}",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["template"] == "{昵称} +{打卡奖励}"
+    assert core.command_definitions[0]["templates"][0]["template"] == "{昵称} +{打卡奖励}"
+
+
+def test_admin_relay_rejects_a_template_without_required_fields(client, headers):
+    response = client.patch(
+        "/api/game/command-templates", headers=headers, json={"command": "/余额"}
+    )
+
+    assert response.status_code == 422
 
 
 def test_status_returns_only_safe_operational_fields(client, headers):

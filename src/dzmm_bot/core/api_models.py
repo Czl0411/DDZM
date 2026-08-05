@@ -78,15 +78,29 @@ class AdminStatusResponse(ApiModel):
     queue_counts: QueueCountsResponse
 
 
+class CommandTemplateResponse(ApiModel):
+    scenario: str
+    label: str
+    template: str
+    variables: list[str]
+
+
 class CommandDefinitionResponse(ApiModel):
     command: str
     description: str
     enabled: bool
+    templates: list[CommandTemplateResponse]
 
 
 class SetCommandEnabledRequest(ApiModel):
     command: str = Field(min_length=1, max_length=32)
     enabled: bool
+
+
+class SetCommandTemplateRequest(ApiModel):
+    command: str = Field(min_length=1, max_length=32)
+    scenario: str = Field(min_length=1, max_length=64)
+    template: str = Field(min_length=1, max_length=2000)
 
 
 class UserResponse(ApiModel):

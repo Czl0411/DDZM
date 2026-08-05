@@ -15,6 +15,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from httpx import HTTPStatusError
 
 from dzmm_bot.runtime.settings import Settings
 
@@ -107,6 +108,20 @@ def create_app(
         if not isinstance(command, str) or not isinstance(enabled, bool):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid command")
         return core.set_game_command_enabled(command, enabled)
+
+    @app.patch("/api/game/command-templates")
+    def set_game_command_template(
+        request: dict, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        command = request.get("command")
+        scenario = request.get("scenario")
+        template = request.get("template")
+        if not all(isinstance(value, str) for value in (command, scenario, template)):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid template")
+        try:
+            return core.set_game_command_template(command, scenario, template)
+        except HTTPStatusError as error:
+            raise HTTPException(error.response.status_code, error.response.text)
 
     @app.get("/api/game/users")
     def game_users(_: Annotated[None, Depends(authorize)]) -> list[dict]:

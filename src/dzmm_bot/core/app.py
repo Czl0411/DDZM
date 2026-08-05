@@ -17,6 +17,7 @@ from .api_models import (
     ClaimRequest,
     CompleteWorkerCommandRequest,
     CommandDefinitionResponse,
+    CommandTemplateResponse,
     CreateItemRequest,
     HealthResponse,
     HeartbeatRequest,
@@ -27,6 +28,7 @@ from .api_models import (
     QueueCountsResponse,
     SentRequest,
     SetCommandEnabledRequest,
+    SetCommandTemplateRequest,
     ItemResponse,
     UserResponse,
     WorkerCommandRequest,
@@ -35,6 +37,7 @@ from .api_models import (
 from .database import create_session_factory
 from .commands import GroupCommandHandler
 from .repository import CoreRepository
+from .reply_templates import definitions_for_command, template_definition
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
 
@@ -163,6 +166,15 @@ def create_app(
                 command=record.command,
                 description=record.description,
                 enabled=record.enabled,
+                templates=[
+                    _template_response(
+                        definition,
+                        repository.get_reply_template(
+                            definition.command, definition.scenario
+                        ),
+                    )
+                    for definition in definitions_for_command(record.command)
+                ],
             )
             for record in repository.list_command_definitions()
         ]
@@ -185,7 +197,32 @@ def create_app(
             command=record.command,
             description=record.description,
             enabled=record.enabled,
+            templates=[
+                _template_response(
+                    definition,
+                    repository.get_reply_template(
+                        definition.command, definition.scenario
+                    ),
+                )
+                for definition in definitions_for_command(record.command)
+            ],
         )
+
+    @app.patch(
+        "/internal/game/command-templates", response_model=CommandTemplateResponse
+    )
+    def set_game_command_template(
+        request: SetCommandTemplateRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> CommandTemplateResponse:
+        try:
+            record = repository.set_reply_template(
+                request.command, request.scenario, request.template
+            )
+            definition = template_definition(request.command, request.scenario)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _template_response(definition, record)
 
     @app.get("/internal/game/users", response_model=list[UserResponse])
     def game_users(
@@ -313,4 +350,13 @@ def _item_response(record) -> ItemResponse:
         price=record.price,
         stock=record.stock,
         enabled=record.enabled,
+    )
+
+
+def _template_response(definition, record) -> CommandTemplateResponse:
+    return CommandTemplateResponse(
+        scenario=definition.scenario,
+        label=definition.label,
+        template=definition.default if record is None else record.template,
+        variables=list(definition.variables),
     )

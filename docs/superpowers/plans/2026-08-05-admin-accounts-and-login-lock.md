@@ -24,7 +24,7 @@
 **Files:**
 - Modify: src/dzmm_bot/core/schema.py
 - Create: src/dzmm_bot/admin/repository.py
-- Create: migrations/versions/20260805_03_admin_accounts.py
+- Create: migrations/versions/20260805_06_admin_accounts.py
 - Create: tests/admin/test_repository.py
 
 **Interfaces:**
@@ -68,7 +68,7 @@ Run: .venv/bin/pytest -q tests/admin/test_repository.py
 Expected: PASS.
 
 ~~~bash
-git add src/dzmm_bot/core/schema.py src/dzmm_bot/admin/repository.py migrations/versions/20260805_03_admin_accounts.py tests/admin/test_repository.py
+git add src/dzmm_bot/core/schema.py src/dzmm_bot/admin/repository.py migrations/versions/20260805_06_admin_accounts.py tests/admin/test_repository.py
 git commit -m "feat: add administrator account storage"
 ~~~
 
@@ -80,7 +80,7 @@ git commit -m "feat: add administrator account storage"
 - Modify: src/dzmm_bot/core/api_models.py
 - Modify: src/dzmm_bot/core/app.py
 - Modify: src/dzmm_bot/admin/core_client.py
-- Modify: migrations/versions/20260805_03_admin_accounts.py
+- Modify: migrations/versions/20260805_06_admin_accounts.py
 - Test: tests/core/test_repository.py
 - Test: tests/core/test_app.py
 
@@ -120,7 +120,7 @@ Run: .venv/bin/pytest -q tests/core/test_repository.py tests/core/test_app.py -k
 Expected: PASS.
 
 ~~~bash
-git add src/dzmm_bot/core/schema.py src/dzmm_bot/core/repository.py src/dzmm_bot/core/api_models.py src/dzmm_bot/core/app.py src/dzmm_bot/admin/core_client.py migrations/versions/20260805_03_admin_accounts.py tests/core/test_repository.py tests/core/test_app.py
+git add src/dzmm_bot/core/schema.py src/dzmm_bot/core/repository.py src/dzmm_bot/core/api_models.py src/dzmm_bot/core/app.py src/dzmm_bot/admin/core_client.py migrations/versions/20260805_06_admin_accounts.py tests/core/test_repository.py tests/core/test_app.py
 git commit -m "feat: add exclusive manual login lease"
 ~~~
 

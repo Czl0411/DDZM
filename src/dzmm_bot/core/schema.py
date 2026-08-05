@@ -313,3 +313,46 @@ class AuditEventRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
+
+
+class AdminAccountRecord(Base):
+    __tablename__ = "admin_accounts"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    username: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class AdminSessionRecord(Base):
+    __tablename__ = "admin_sessions"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    account_id: Mapped[UUID] = mapped_column(
+        ForeignKey("admin_accounts.id"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class AdminIdempotencyRecord(Base):
+    __tablename__ = "admin_idempotency_records"
+    __table_args__ = (UniqueConstraint("actor_key", "key_hash"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    actor_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status_code: Mapped[int | None] = mapped_column(Integer)
+    response_body: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql")
+    )
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )

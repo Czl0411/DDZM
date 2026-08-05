@@ -68,6 +68,20 @@ def test_random_event_schedule_respects_window_and_minimum_gap(repository):
     )
 
 
+def test_random_event_scene_returns_named_event_templates(repository):
+    scene = repository.create_random_event_scene(
+        "茶水间",
+        "报名",
+        [{"name": "咖啡事故", "opening_text": "{主持}打翻咖啡。"}],
+        3,
+        10,
+        [("主持", 1)],
+    )
+
+    assert scene.events[0].name == "咖啡事故"
+    assert scene.events[0].opening_text == "{主持}打翻咖啡。"
+
+
 def test_random_event_lifecycle_rewards_only_completed_participant(
     repository, session_factory
 ):
@@ -167,6 +181,24 @@ def test_full_random_event_renders_role_variables(repository, session_factory):
         event = session.scalar(select(RandomEventRecord))
 
     assert event.formal_opening_text == "小明端着咖啡走进茶水间，对小红、小李说开始。"
+
+
+def test_random_event_records_participant_details_and_can_trigger(repository):
+    from dzmm_bot.core.schema import BEIJING
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "茶水间", "报名", [{"name": "咖啡事故", "opening_text": "开始。"}], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.create_user("u1", "小明", now, 0)
+    schedule = repository.schedule_random_events(now)[0]
+
+    assert repository.trigger_random_event(schedule.id, now).status == "signup"
+    assert repository.join_random_event("u1", "员工", now) == "started"
+    assert repository.record_random_event_round("u1", now, "开始收拾") == "participant"
+    assert repository.record_random_event_round("observer", now, "（路过）") == "observer_valid"
+    assert repository.list_random_event_details(schedule.id) == [("小明", "开始收拾", now)]
 
 
 def test_scene_rejects_unknown_formal_opening_role(repository):

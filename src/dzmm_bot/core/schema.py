@@ -172,6 +172,7 @@ class RandomEventSceneOpeningRecord(Base):
         ForeignKey("random_event_scenes.id"), nullable=False
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, default="未命名事件")
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
 
@@ -183,6 +184,13 @@ class RandomEventScheduleRecord(Base):
     event_date: Mapped[date] = mapped_column(Date, nullable=False)
     scheduled_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    scene_name: Mapped[str | None] = mapped_column(String(64))
+    event_name: Mapped[str | None] = mapped_column(String(64))
+    signup_text: Mapped[str | None] = mapped_column(Text)
+    formal_opening_text: Mapped[str | None] = mapped_column(Text)
+    reward: Mapped[int | None] = mapped_column(Integer)
+    target_rounds: Mapped[int | None] = mapped_column(Integer)
+    seats: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
@@ -208,6 +216,7 @@ class RandomEventRecord(Base):
     group_key: Mapped[str] = mapped_column(String(255), default="default", nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
     scene_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_name: Mapped[str | None] = mapped_column(String(64))
     signup_text: Mapped[str] = mapped_column(Text, nullable=False)
     formal_opening_text: Mapped[str] = mapped_column(Text, nullable=False)
     reward: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -240,6 +249,19 @@ class RandomEventParticipantRecord(Base):
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     left_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     rewarded_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class RandomEventDetailRecord(Base):
+    __tablename__ = "random_event_details"
+    __table_args__ = (UniqueConstraint("event_id", "position"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("random_events.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class UserRecord(Base):

@@ -32,6 +32,7 @@ from .schema import (
     ManualLoginLeaseRecord,
     OutboundRecord,
     RandomEventScheduleRecord,
+    RandomEventDetailRecord,
     RandomEventRecord,
     RandomEventParticipantRecord,
     RandomEventSeatRecord,
@@ -100,6 +101,13 @@ class RandomEventSchedule:
     scheduled_at: datetime
     status: str
     scene_name: str | None = None
+    event_name: str | None = None
+
+
+@dataclass(frozen=True)
+class RandomEventTemplate:
+    name: str
+    opening_text: str
 
 
 @dataclass(frozen=True)
@@ -114,6 +122,7 @@ class RandomEventScene:
     name: str
     signup_text: str
     openings: list[str]
+    events: list[RandomEventTemplate]
     reward: int
     target_rounds: int
     enabled: bool
@@ -431,6 +440,9 @@ class CoreRepository:
                 )
             )
             if existing:
+                for record in existing:
+                    if record.status == "pending" and record.scene_name is None:
+                        self._fill_random_event_schedule_snapshot(session, record)
                 return [_random_event_schedule(record) for record in existing]
             _validate_random_event_capacity(
                 start_minutes,
@@ -461,6 +473,7 @@ class CoreRepository:
                     event_date=now.date(), scheduled_at=scheduled_at
                 )
                 session.add(record)
+                self._fill_random_event_schedule_snapshot(session, record)
                 records.append(record)
             session.flush()
             return [_random_event_schedule(record) for record in records]
@@ -478,15 +491,19 @@ class CoreRepository:
                 )
             )
             names = {
-                schedule_id: scene_name
-                for schedule_id, scene_name in session.execute(
-                    select(RandomEventRecord.schedule_id, RandomEventRecord.scene_name).where(
+                schedule_id: (scene_name, event_name)
+                for schedule_id, scene_name, event_name in session.execute(
+                    select(
+                        RandomEventRecord.schedule_id,
+                        RandomEventRecord.scene_name,
+                        RandomEventRecord.event_name,
+                    ).where(
                         RandomEventRecord.schedule_id.in_([record.id for record in records])
                     )
                 )
             }
             return [
-                _random_event_schedule(record, names.get(record.id))
+                _random_event_schedule(record, *(names.get(record.id, (None, None))))
                 for record in records
             ]
 
@@ -530,18 +547,35 @@ class CoreRepository:
             session.flush()
             return _random_event_schedule(record)
 
+    def trigger_random_event(
+        self, schedule_id: UUID, now: datetime
+    ) -> RandomEventSchedule:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                schedule = session.get(RandomEventScheduleRecord, schedule_id, with_for_update=True)
+                if schedule is None or schedule.event_date != now.date() or schedule.status != "pending":
+                    raise ValueError("仅待开始事件可以立即触发")
+                if self._active_random_event(session) is not None:
+                    raise ValueError("当前已有进行中的随机事件")
+                if not self._fill_random_event_schedule_snapshot(session, schedule):
+                    schedule.status = "skipped"
+                    raise ValueError("没有可用的随机事件场景")
+                self._start_random_event_from_schedule(session, schedule, now)
+                return _random_event_schedule(schedule)
+
     def create_random_event_scene(
         self,
         name: str,
         signup_text: str,
-        openings: list[str],
+        openings: list[str | dict[str, str]],
         reward: int,
         target_rounds: int,
         seats: list[tuple[str, int]],
     ) -> RandomEventScene:
         name = name.strip()
         signup_text = signup_text.strip()
-        rules, normalized_openings = _validate_random_event_scene(
+        rules, templates = _validate_random_event_scene(
             name, signup_text, openings, reward, target_rounds, seats
         )
         with self._session() as session:
@@ -564,13 +598,16 @@ class CoreRepository:
             session.add_all(
                 [
                     RandomEventSceneOpeningRecord(
-                        scene_id=record.id, position=position, content=content
+                        scene_id=record.id,
+                        position=position,
+                        name=template.name,
+                        content=template.opening_text,
                     )
-                    for position, content in enumerate(normalized_openings)
+                    for position, template in enumerate(templates)
                 ]
             )
             session.flush()
-            return _random_event_scene(record, rules, normalized_openings)
+            return _random_event_scene(record, rules, templates)
 
     def list_random_event_scenes(self) -> list[RandomEventScene]:
         scenes, _ = self.list_random_event_scenes_page(1, 100)
@@ -599,7 +636,7 @@ class CoreRepository:
             seats_by_scene: dict[UUID, list[RandomEventSeatRule]] = {
                 record.id: [] for record in records
             }
-            openings_by_scene: dict[UUID, list[str]] = {
+            templates_by_scene: dict[UUID, list[RandomEventTemplate]] = {
                 record.id: [] for record in records
             }
             for seat in session.scalars(
@@ -615,17 +652,19 @@ class CoreRepository:
                 )
             for opening in session.scalars(
                 select(RandomEventSceneOpeningRecord)
-                .where(RandomEventSceneOpeningRecord.scene_id.in_(openings_by_scene))
+                .where(RandomEventSceneOpeningRecord.scene_id.in_(templates_by_scene))
                 .order_by(
                     RandomEventSceneOpeningRecord.scene_id,
                     RandomEventSceneOpeningRecord.position,
                 )
             ):
-                openings_by_scene[opening.scene_id].append(opening.content)
+                templates_by_scene[opening.scene_id].append(
+                    RandomEventTemplate(opening.name, opening.content)
+                )
             return (
                 [
                     _random_event_scene(
-                        record, seats_by_scene[record.id], openings_by_scene[record.id]
+                        record, seats_by_scene[record.id], templates_by_scene[record.id]
                     )
                     for record in records
                 ],
@@ -637,7 +676,7 @@ class CoreRepository:
         scene_id: UUID,
         name: str,
         signup_text: str,
-        openings: list[str],
+        openings: list[str | dict[str, str]],
         reward: int,
         target_rounds: int,
         seats: list[tuple[str, int]],
@@ -645,7 +684,7 @@ class CoreRepository:
     ) -> RandomEventScene:
         name = name.strip()
         signup_text = signup_text.strip()
-        rules, normalized_openings = _validate_random_event_scene(
+        rules, templates = _validate_random_event_scene(
             name, signup_text, openings, reward, target_rounds, seats
         )
         with self._session() as session:
@@ -678,13 +717,16 @@ class CoreRepository:
             session.add_all(
                 [
                     RandomEventSceneOpeningRecord(
-                        scene_id=scene_id, position=position, content=content
+                        scene_id=scene_id,
+                        position=position,
+                        name=template.name,
+                        content=template.opening_text,
                     )
-                    for position, content in enumerate(normalized_openings)
+                    for position, template in enumerate(templates)
                 ]
             )
             session.flush()
-            return _random_event_scene(record, rules, normalized_openings)
+            return _random_event_scene(record, rules, templates)
 
     def delete_random_event_scene(self, scene_id: UUID) -> bool:
         with self._session() as session:
@@ -750,67 +792,10 @@ class CoreRepository:
                     if active is not None:
                         schedule.status = "skipped"
                         continue
-                    scenes = list(
-                        session.scalars(
-                            select(RandomEventSceneRecord).where(
-                                RandomEventSceneRecord.enabled.is_(True)
-                            )
-                        )
-                    )
-                    if not scenes:
+                    if not self._fill_random_event_schedule_snapshot(session, schedule):
                         schedule.status = "skipped"
                         continue
-                    scene = scenes[randbelow(len(scenes))]
-                    scene_seats = list(
-                        session.scalars(
-                            select(RandomEventSceneSeatRecord)
-                            .where(RandomEventSceneSeatRecord.scene_id == scene.id)
-                            .order_by(RandomEventSceneSeatRecord.role)
-                        )
-                    )
-                    scene_openings = list(
-                        session.scalars(
-                            select(RandomEventSceneOpeningRecord.content)
-                            .where(RandomEventSceneOpeningRecord.scene_id == scene.id)
-                            .order_by(RandomEventSceneOpeningRecord.position)
-                        )
-                    )
-                    if not scene_openings:
-                        schedule.status = "skipped"
-                        continue
-                    settings = self.get_random_event_settings()
-                    active = RandomEventRecord(
-                        schedule_id=schedule.id,
-                        state="signup",
-                        scene_name=scene.name,
-                        signup_text=scene.signup_text,
-                        formal_opening_text=scene_openings[randbelow(len(scene_openings))],
-                        reward=scene.reward,
-                        target_rounds=scene.target_rounds,
-                        signup_deadline=now
-                        + timedelta(minutes=settings.signup_timeout_minutes),
-                        next_reminder_at=now
-                        + timedelta(minutes=settings.reminder_interval_minutes),
-                        started_at=now,
-                    )
-                    schedule.status = "signup"
-                    session.add(active)
-                    session.flush()
-                    session.add_all(
-                        [
-                            RandomEventSeatRecord(
-                                event_id=active.id,
-                                role=seat.role,
-                                capacity=seat.capacity,
-                            )
-                            for seat in scene_seats
-                        ]
-                    )
-                    self.enqueue_system_outbound(
-                        f"【随机事件：{scene.name}】\n{scene.signup_text}\n"
-                        f"使用 /加入 角色 报名，报名将在 "
-                        f"{settings.signup_timeout_minutes} 分钟后截止。"
-                    )
+                    active = self._start_random_event_from_schedule(session, schedule, now)
 
     def join_random_event(self, platform_id: str, role: str, now: datetime) -> str:
         role = role.strip()
@@ -872,7 +857,7 @@ class CoreRepository:
                     if schedule is not None:
                         schedule.status = "in_progress"
                     self.enqueue_system_outbound(
-                        f"【随机事件：{event.scene_name}】人员已齐，事件开始。\n"
+                        f"【随机事件：{event.scene_name}－{event.event_name or '未命名事件'}】人员已齐，事件开始。\n"
                         f"{event.formal_opening_text}"
                     )
                     return "started"
@@ -902,6 +887,24 @@ class CoreRepository:
             )
             if participant is not None:
                 participant.rounds += 1
+                position = int(
+                    session.scalar(
+                        select(func.count())
+                        .select_from(RandomEventDetailRecord)
+                        .where(RandomEventDetailRecord.event_id == event.id)
+                    )
+                    or 0
+                )
+                session.add(
+                    RandomEventDetailRecord(
+                        event_id=event.id,
+                        user_id=user.id,
+                        display_name=user.display_name,
+                        content=content,
+                        occurred_at=now.astimezone(BEIJING),
+                        position=position,
+                    )
+                )
                 return "participant"
         return "observer_invalid"
 
@@ -993,6 +996,111 @@ class CoreRepository:
                 )
                 or 0
             )
+
+    def list_random_event_details(self, schedule_id: UUID) -> list[tuple[str, str, datetime]]:
+        with self._session() as session:
+            event = session.scalar(
+                select(RandomEventRecord).where(RandomEventRecord.schedule_id == schedule_id)
+            )
+            if event is None:
+                raise ValueError("随机事件不存在")
+            return list(
+                session.execute(
+                    select(
+                        RandomEventDetailRecord.display_name,
+                        RandomEventDetailRecord.content,
+                        RandomEventDetailRecord.occurred_at,
+                    )
+                    .where(RandomEventDetailRecord.event_id == event.id)
+                    .order_by(RandomEventDetailRecord.position)
+                )
+            )
+
+    def _fill_random_event_schedule_snapshot(
+        self, session: Session, schedule: RandomEventScheduleRecord
+    ) -> bool:
+        if schedule.scene_name is not None:
+            return True
+        scenes = list(
+            session.scalars(
+                select(RandomEventSceneRecord).where(RandomEventSceneRecord.enabled.is_(True))
+            )
+        )
+        if not scenes:
+            return False
+        scene = scenes[randbelow(len(scenes))]
+        templates = list(
+            session.scalars(
+                select(RandomEventSceneOpeningRecord)
+                .where(RandomEventSceneOpeningRecord.scene_id == scene.id)
+                .order_by(RandomEventSceneOpeningRecord.position)
+            )
+        )
+        if not templates:
+            return False
+        template = templates[randbelow(len(templates))]
+        seats = list(
+            session.scalars(
+                select(RandomEventSceneSeatRecord)
+                .where(RandomEventSceneSeatRecord.scene_id == scene.id)
+                .order_by(RandomEventSceneSeatRecord.role)
+            )
+        )
+        schedule.scene_name = scene.name
+        schedule.event_name = template.name
+        schedule.signup_text = scene.signup_text
+        schedule.formal_opening_text = template.content
+        schedule.reward = scene.reward
+        schedule.target_rounds = scene.target_rounds
+        schedule.seats = [{"role": seat.role, "capacity": seat.capacity} for seat in seats]
+        return True
+
+    def _start_random_event_from_schedule(
+        self, session: Session, schedule: RandomEventScheduleRecord, now: datetime
+    ) -> RandomEventRecord:
+        if any(
+            value is None
+            for value in (
+                schedule.scene_name,
+                schedule.event_name,
+                schedule.signup_text,
+                schedule.formal_opening_text,
+                schedule.reward,
+                schedule.target_rounds,
+                schedule.seats,
+            )
+        ):
+            raise ValueError("随机事件计划缺少快照")
+        settings = self.get_random_event_settings()
+        active = RandomEventRecord(
+            schedule_id=schedule.id,
+            state="signup",
+            scene_name=schedule.scene_name,
+            event_name=schedule.event_name,
+            signup_text=schedule.signup_text,
+            formal_opening_text=schedule.formal_opening_text,
+            reward=schedule.reward,
+            target_rounds=schedule.target_rounds,
+            signup_deadline=now + timedelta(minutes=settings.signup_timeout_minutes),
+            next_reminder_at=now + timedelta(minutes=settings.reminder_interval_minutes),
+            started_at=now,
+        )
+        schedule.status = "signup"
+        session.add(active)
+        session.flush()
+        session.add_all(
+            [
+                RandomEventSeatRecord(
+                    event_id=active.id, role=seat["role"], capacity=seat["capacity"]
+                )
+                for seat in schedule.seats
+            ]
+        )
+        self.enqueue_system_outbound(
+            f"【随机事件：{schedule.scene_name}－{schedule.event_name}】\n{schedule.signup_text}\n"
+            f"使用 /加入 角色 报名，报名将在 {settings.signup_timeout_minutes} 分钟后截止。"
+        )
+        return active
 
     def _active_random_event(self, session: Session) -> RandomEventRecord | None:
         return session.scalar(
@@ -1942,31 +2050,46 @@ def _random_event_settings(record: RandomEventSettingsRecord) -> RandomEventSett
 
 
 def _random_event_schedule(
-    record: RandomEventScheduleRecord, scene_name: str | None = None
+    record: RandomEventScheduleRecord,
+    scene_name: str | None = None,
+    event_name: str | None = None,
 ) -> RandomEventSchedule:
     return RandomEventSchedule(
         id=record.id,
         scheduled_at=record.scheduled_at,
         status=record.status,
-        scene_name=scene_name,
+        scene_name=record.scene_name or scene_name,
+        event_name=record.event_name or event_name,
     )
 
 
 def _validate_random_event_scene(
     name: str,
     signup_text: str,
-    openings: list[str],
+    openings: list[str | dict[str, str]],
     reward: int,
     target_rounds: int,
     seats: list[tuple[str, int]],
-) -> tuple[list[RandomEventSeatRule], list[str]]:
+) -> tuple[list[RandomEventSeatRule], list[RandomEventTemplate]]:
     if not 1 <= len(name) <= 64 or not signup_text:
         raise ValueError("场景名称和报名公告不能为空")
     if not isinstance(openings, list) or not openings:
         raise ValueError("至少需要一条正式剧情开场白")
-    normalized_openings = [opening.strip() for opening in openings if isinstance(opening, str)]
-    if len(normalized_openings) != len(openings) or any(not opening for opening in normalized_openings):
-        raise ValueError("正式剧情开场白不能为空")
+    templates: list[RandomEventTemplate] = []
+    for opening in openings:
+        if isinstance(opening, str):
+            templates.append(RandomEventTemplate("未命名事件", opening.strip()))
+        elif isinstance(opening, dict):
+            templates.append(
+                RandomEventTemplate(
+                    str(opening.get("name", "")).strip(),
+                    str(opening.get("opening_text", "")).strip(),
+                )
+            )
+    if len(templates) != len(openings) or any(
+        not template.name or not template.opening_text for template in templates
+    ):
+        raise ValueError("事件名称和正式剧情开场白不能为空")
     if not isinstance(reward, int) or not 0 <= reward <= 999:
         raise ValueError("事件奖励需在 0 至 999 之间")
     if not isinstance(target_rounds, int) or target_rounds < 1:
@@ -1980,9 +2103,9 @@ def _validate_random_event_scene(
     if len({rule.role for rule in rules}) != len(rules):
         raise ValueError("席位角色不能重复")
     _validate_formal_opening_variables(
-        normalized_openings, {rule.role for rule in rules}
+        [template.opening_text for template in templates], {rule.role for rule in rules}
     )
-    return rules, normalized_openings
+    return rules, templates
 
 
 def _validate_formal_opening_variables(openings: list[str], roles: set[str]) -> None:
@@ -2031,13 +2154,14 @@ def _is_parenthesized_observer_message(content: str) -> bool:
 def _random_event_scene(
     record: RandomEventSceneRecord,
     seats: list[RandomEventSeatRule],
-    openings: list[str],
+    openings: list[RandomEventTemplate],
 ) -> RandomEventScene:
     return RandomEventScene(
         id=record.id,
         name=record.name,
         signup_text=record.signup_text,
-        openings=openings,
+        openings=[template.opening_text for template in openings],
+        events=openings,
         reward=record.reward,
         target_rounds=record.target_rounds,
         enabled=record.enabled,

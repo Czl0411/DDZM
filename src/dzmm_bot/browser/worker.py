@@ -83,7 +83,12 @@ class BrowserWorker:
 
         gateway = self._ensure_gateway()
         if self._listening:
-            for message in gateway.read_new():
+            try:
+                messages = gateway.read_new()
+            except NotImplementedError:
+                self._listening = False
+                messages = []
+            for message in messages:
                 if message.platform_message_id in self._seen_message_ids:
                     continue
                 self._core.submit_inbound(message)

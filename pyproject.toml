@@ -27,4 +27,4 @@ dzmm-read = "dzmm_bot.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-dzmm_bot = ["admin/static/*.js", "admin/templates/*.html"]
+dzmm_bot = ["admin/static/*.css", "admin/static/*.js", "admin/templates/*.html"]

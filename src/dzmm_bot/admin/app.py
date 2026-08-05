@@ -79,6 +79,10 @@ def create_app(
             _ROOT / "static" / "admin.js", media_type="text/javascript"
         )
 
+    @app.get("/static/admin.css")
+    def stylesheet() -> FileResponse:
+        return FileResponse(_ROOT / "static" / "admin.css", media_type="text/css")
+
     @app.get("/healthz")
     def health() -> dict[str, str]:
         return {"status": "ok"}

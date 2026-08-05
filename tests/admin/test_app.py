@@ -149,6 +149,18 @@ def test_health_is_public_and_discloses_no_configuration(client):
     assert response.json() == {"status": "ok"}
 
 
+def test_admin_dashboard_serves_its_login_and_style_assets(client):
+    page = client.get("/")
+    stylesheet = client.get("/static/admin.css")
+
+    assert page.status_code == 200
+    assert 'id="login-screen"' in page.text
+    assert 'id="dashboard"' in page.text
+    assert 'data-action="/api/login/start"' in page.text
+    assert stylesheet.status_code == 200
+    assert "--surface" in stylesheet.text
+
+
 def test_status_returns_only_safe_operational_fields(client, headers):
     response = client.get("/api/status", headers=headers)
 

@@ -22,6 +22,7 @@ def test_deployment_runs_migrations_with_the_private_environment():
     migration_env = (ROOT / "migrations/env.py").read_text()
 
     assert "source /etc/dzmm/dzmm.env" in deploy
+    assert "cd /opt/dzmm/current" in deploy
     assert "alembic -c /opt/dzmm/current/alembic.ini upgrade head" in deploy
     assert 'os.environ.get("DZMM_DATABASE_URL")' in migration_env
     assert 'usage: deploy.sh RELEASE_DIRECTORY' in deploy

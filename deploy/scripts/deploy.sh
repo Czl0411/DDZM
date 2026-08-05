@@ -14,6 +14,7 @@ python3 -m venv /opt/dzmm/venv
 set -a
 source /etc/dzmm/dzmm.env
 set +a
+cd /opt/dzmm/current
 /opt/dzmm/venv/bin/alembic -c /opt/dzmm/current/alembic.ini upgrade head
 install -m 644 /opt/dzmm/current/deploy/systemd/dzmm-*.service /etc/systemd/system/
 systemctl daemon-reload

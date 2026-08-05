@@ -164,7 +164,7 @@ function renderRandomEventScenes(scenes) {
 
 function renderTodayRandomEvents(events) {
   document.querySelector("#today-random-event-list").innerHTML = events.map((event) => `
-    <article class="data-row"><div><b>${escapeHtml(event.scene_name || "未安排场景")}－${escapeHtml(event.event_name || "未安排事件")}－${eventStatusLabel(event.status)}</b><small>${formatHeartbeat(event.scheduled_at)}</small></div>${event.status === "pending" ? `<div class="command-actions"><button class="secondary" data-trigger-random-event="${event.id}" type="button">立即触发</button><button class="secondary" data-adjust-random-event="${event.id}" data-scheduled-at="${event.scheduled_at}" type="button">调整时间</button></div>` : `<button class="secondary" data-view-random-event-details="${event.id}" type="button">查看详情</button>`}</article>`).join("") || "<p class=\"muted\">今日计划将在每天北京时间 00:00 自动生成。</p>";
+    <article class="data-row"><div><b>${escapeHtml(event.scene_name || "未安排场景")}－${escapeHtml(event.event_name || "未安排事件")}－${eventStatusLabel(event.status)}</b><small>${formatHeartbeat(event.scheduled_at)}</small></div>${event.status === "pending" ? `<div class="command-actions"><button class="secondary" data-trigger-random-event="${event.id}" type="button">立即触发</button><button class="secondary" data-adjust-random-event="${event.id}" data-scheduled-at="${event.scheduled_at}" type="button">调整时间</button></div>` : event.status === "skipped" ? "" : `<button class="secondary" data-view-random-event-details="${event.id}" type="button">查看详情</button>`}</article>`).join("") || "<p class=\"muted\">今日计划将在每天北京时间 00:00 自动生成。</p>";
 }
 
 async function loadRandomEvents(page = randomEventScenePage) {

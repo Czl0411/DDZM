@@ -97,6 +97,17 @@ def test_start_spawns_isolated_desktop_and_loopback_novnc(tmp_path):
     }
 
 
+def test_start_uses_the_configured_browser_executable(tmp_path):
+    factory = ProcessFactory()
+    controller = make_controller(
+        tmp_path, factory, browser_executable="/opt/dzmm/chromium"
+    )
+
+    controller.start()
+
+    assert factory.calls[2][0][0] == "/opt/dzmm/chromium"
+
+
 def test_stop_signals_only_recorded_process_groups_and_removes_pid_file(tmp_path):
     factory = ProcessFactory()
     signals = []

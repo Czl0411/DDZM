@@ -27,6 +27,7 @@ class AuthDesktopController:
         login_url: str | None,
         login_state: Callable[[], str | None],
         browser_stopped: Callable[[], bool],
+        browser_executable: str = "google-chrome",
         novnc_port: int = 16080,
         process_factory: ProcessFactory = asyncio.create_subprocess_exec,
         getpgid: Callable[[int], int] = os.getpgid,
@@ -44,6 +45,7 @@ class AuthDesktopController:
         self._login_url = login_url
         self._login_state = login_state
         self._browser_stopped = browser_stopped
+        self._browser_executable = browser_executable
         self._novnc_port = novnc_port
         self._process_factory = process_factory
         self._getpgid = getpgid
@@ -85,7 +87,7 @@ class AuthDesktopController:
                 (("fluxbox",), {"env": display_environment}),
                 (
                     (
-                        "google-chrome",
+                        self._browser_executable,
                         f"--user-data-dir={self._profile_dir}",
                         "--no-first-run",
                         "--disable-dev-shm-usage",

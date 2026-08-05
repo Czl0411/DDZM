@@ -32,6 +32,7 @@ def create_worker(settings: Settings) -> BrowserWorker:
         login_url=settings.login_url,
         login_state=lambda: worker.login_state.value,
         browser_stopped=lambda: worker.browser_stopped,
+        browser_executable=_playwright_chromium_executable(),
         novnc_port=settings.novnc_port,
     )
     worker = BrowserWorker(
@@ -44,6 +45,13 @@ def create_worker(settings: Settings) -> BrowserWorker:
         clock=lambda: datetime.now(UTC),
     )
     return worker
+
+
+def _playwright_chromium_executable() -> str:
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        return playwright.chromium.executable_path
 
 
 if __name__ == "__main__":

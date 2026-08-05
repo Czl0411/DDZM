@@ -11,6 +11,7 @@ chown -R dzmm:dzmm /opt/dzmm/current
 python3 -m venv /opt/dzmm/venv
 /opt/dzmm/venv/bin/pip install --upgrade pip
 /opt/dzmm/venv/bin/pip install /opt/dzmm/current
+runuser -u dzmm -- /opt/dzmm/venv/bin/playwright install chromium
 set -a
 source /etc/dzmm/dzmm.env
 set +a

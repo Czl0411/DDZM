@@ -116,7 +116,7 @@ def test_balance_inventory_and_shop_require_employee_and_return_persisted_data()
 
     _receive(service, "message-2", "platform-xiaoming", "/入职 小明", received_at)
     _receive(service, "message-3", "platform-xiaoming", "/我的物品", received_at)
-    assert _latest_reply(factory) == "小明的物品：暂时空空如也。"
+    assert _latest_reply(factory) == "小明的物品：\n暂时空空如也。"
 
     repository.add_item("工位午睡券", "允许正大光明眯十分钟。", 5, 3)
     _receive(service, "message-4", "platform-xiaoming", "/商店", received_at)
@@ -140,3 +140,30 @@ def test_disabled_command_does_not_reply_or_change_data():
     with factory() as session:
         assert session.scalar(select(UserRecord)) is None
     assert _latest_reply(factory) is None
+
+
+def test_custom_checkin_template_receives_current_balance_and_reward():
+    """Fails if a successful check-in ignores the administrator's template."""
+    service, repository, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    repository.set_reply_template(
+        "/打卡", "checked_in", "{昵称} 今日 +{打卡奖励}，余额 {余额}"
+    )
+
+    _receive(service, "join", "platform-xiaoming", "/入职 小明", received_at)
+    _receive(service, "checkin", "platform-xiaoming", "/打卡", received_at)
+
+    assert _latest_reply(factory) == "小明 今日 +5，余额 5"
+
+
+def test_help_lists_only_enabled_commands_and_uses_its_template():
+    """Fails if help does not reflect the command library or its template."""
+    service, repository, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    repository.set_command_enabled("/打卡", False)
+    repository.set_reply_template("/帮助", "shown", "可用：\n{指令列表}")
+
+    _receive(service, "help", "platform-xiaoming", "/帮助", received_at)
+
+    assert "/帮助" in _latest_reply(factory)
+    assert "/打卡" not in _latest_reply(factory)

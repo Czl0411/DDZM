@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Mapping
 import re
 
 
@@ -58,3 +59,16 @@ def validate_template(command: str, scenario: str, template: str) -> None:
         if f"{{{token}}}" not in allowed:
             raise ValueError(f"模板变量不支持：{{{token}}}")
 
+
+def render_template(
+    definition: TemplateDefinition, template: str, values: Mapping[str, object]
+) -> str:
+    validate_template(definition.command, definition.scenario, template)
+    rendered = template
+    for variable in definition.variables:
+        if variable not in rendered:
+            continue
+        if variable not in values:
+            raise ValueError(f"模板变量缺少值：{variable}")
+        rendered = rendered.replace(variable, str(values[variable]))
+    return rendered

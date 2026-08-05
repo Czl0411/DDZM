@@ -121,7 +121,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-        "/入职", "/我的物品", "/打卡", "/余额", "/商店"
+        "/入职", "/我的物品", "/打卡", "/余额", "/商店", "/帮助"
     }
     assert disabled.json()["enabled"] is False
     assert employees.json() == []

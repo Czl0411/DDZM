@@ -2,11 +2,12 @@ from zoneinfo import ZoneInfo
 
 from dzmm_bot.runtime.contracts import InboundMessage
 
+from .reply_templates import render_template, template_definition
 from .repository import CoreRepository
 
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
-_COMMANDS = {"/入职", "/我的物品", "/打卡", "/余额", "/商店"}
+_COMMANDS = {"/入职", "/我的物品", "/打卡", "/余额", "/商店", "/帮助"}
 
 
 class GroupCommandHandler:
@@ -29,52 +30,112 @@ class GroupCommandHandler:
         if command == "/打卡":
             return self._check_in(message.sender_platform_id, received_at)
         if command == "/余额":
-            return self._balance(message.sender_platform_id)
+            return self._balance(message.sender_platform_id, received_at)
         if command == "/我的物品":
-            return self._inventory(message.sender_platform_id)
-        return self._shop()
+            return self._inventory(message.sender_platform_id, received_at)
+        if command == "/商店":
+            return self._shop(received_at)
+        return self._help(received_at)
 
     def _join(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)
         if len(parts) != 2 or not parts[1].strip():
-            return "请用 /入职 名字 加入摸鱼公司。"
+            return self._reply("/入职", "missing_name", received_at)
         employee, created = self._repository.create_user(
             platform_id, parts[1].strip(), received_at
         )
         if not created:
-            return f"{employee.display_name}已经在职，当前余额：{employee.balance} 摸鱼币。"
-        return f"{employee.display_name}，欢迎入职摸鱼公司。当前余额：0 摸鱼币。"
+            return self._reply(
+                "/入职",
+                "already_joined",
+                received_at,
+                {"{昵称}": employee.display_name, "{余额}": employee.balance},
+            )
+        return self._reply(
+            "/入职",
+            "joined",
+            received_at,
+            {"{昵称}": employee.display_name, "{余额}": employee.balance},
+        )
 
     def _check_in(self, platform_id: str, received_at) -> str:
         employee = self._repository.find_user(platform_id)
         if employee is None:
-            return "请先用 /入职 名字 加入摸鱼公司。"
+            return self._reply("/打卡", "not_joined", received_at)
         if not self._repository.check_in(employee, received_at):
-            return "今天已经打过卡啦，明天再来。"
-        return f"打卡成功，领取 5 摸鱼币。当前余额：{employee.balance} 摸鱼币。"
-
-    def _balance(self, platform_id: str) -> str:
-        employee = self._repository.find_user(platform_id)
-        if employee is None:
-            return "请先用 /入职 名字 加入摸鱼公司。"
-        return f"{employee.display_name}，当前余额：{employee.balance} 摸鱼币。"
-
-    def _inventory(self, platform_id: str) -> str:
-        employee = self._repository.find_user(platform_id)
-        if employee is None:
-            return "请先用 /入职 名字 加入摸鱼公司。"
-        items = self._repository.list_user_items(employee.id)
-        if not items:
-            return f"{employee.display_name}的物品：暂时空空如也。"
-        return f"{employee.display_name}的物品：\n" + "\n".join(
-            f"{name} × {quantity}" for name, quantity in items
+            return self._reply(
+                "/打卡", "already_checked_in", received_at, {"{昵称}": employee.display_name}
+            )
+        return self._reply(
+            "/打卡",
+            "checked_in",
+            received_at,
+            {
+                "{昵称}": employee.display_name,
+                "{余额}": employee.balance,
+                "{打卡奖励}": 5,
+            },
         )
 
-    def _shop(self) -> str:
+    def _balance(self, platform_id: str, received_at) -> str:
+        employee = self._repository.find_user(platform_id)
+        if employee is None:
+            return self._reply("/余额", "not_joined", received_at)
+        return self._reply(
+            "/余额",
+            "shown",
+            received_at,
+            {"{昵称}": employee.display_name, "{余额}": employee.balance},
+        )
+
+    def _inventory(self, platform_id: str, received_at) -> str:
+        employee = self._repository.find_user(platform_id)
+        if employee is None:
+            return self._reply("/我的物品", "not_joined", received_at)
+        items = self._repository.list_user_items(employee.id)
+        return self._reply(
+            "/我的物品",
+            "shown",
+            received_at,
+            {
+                "{昵称}": employee.display_name,
+                "{物品列表}": "暂时空空如也。"
+                if not items
+                else "\n".join(f"{name} × {quantity}" for name, quantity in items),
+            },
+        )
+
+    def _shop(self, received_at) -> str:
         items = self._repository.list_active_items()
         if not items:
-            return "总监事小卖部还没有上架商品。"
-        return "总监事小卖部：\n" + "\n".join(
-            f"{item.name}（{item.price} 摸鱼币，库存 {item.stock}）"
-            for item in items
+            return self._reply("/商店", "empty", received_at)
+        return self._reply(
+            "/商店",
+            "items_available",
+            received_at,
+            {
+                "{商店列表}": "\n".join(
+                    f"{item.name}（{item.price} 摸鱼币，库存 {item.stock}）"
+                    for item in items
+                )
+            },
         )
+
+    def _help(self, received_at) -> str:
+        commands = self._repository.list_enabled_command_definitions()
+        return self._reply(
+            "/帮助",
+            "shown",
+            received_at,
+            {"{指令列表}": "\n".join(f"{item.command}：{item.description}" for item in commands)},
+        )
+
+    def _reply(self, command: str, scenario: str, received_at, values=None) -> str:
+        definition = template_definition(command, scenario)
+        template_record = self._repository.get_reply_template(command, scenario)
+        template = template_record.template if template_record is not None else definition.default
+        context = {"{日期}": received_at.date().isoformat(), **(values or {})}
+        try:
+            return render_template(definition, template, context)
+        except ValueError:
+            return render_template(definition, definition.default, context)

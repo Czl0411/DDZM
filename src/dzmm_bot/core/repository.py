@@ -32,6 +32,7 @@ _COMMAND_DEFINITIONS = (
     ("/打卡", "每日领取 5 摸鱼币"),
     ("/余额", "查看当前摸鱼币余额"),
     ("/商店", "查看当前上架物品"),
+    ("/帮助", "查看当前可用指令"),
 )
 
 
@@ -202,6 +203,17 @@ class CoreRepository:
             return list(
                 session.scalars(
                     select(CommandDefinitionRecord).order_by(CommandDefinitionRecord.command)
+                )
+            )
+
+    def list_enabled_command_definitions(self) -> list[CommandDefinitionRecord]:
+        self.ensure_command_definitions()
+        with self._session() as session:
+            return list(
+                session.scalars(
+                    select(CommandDefinitionRecord)
+                    .where(CommandDefinitionRecord.enabled.is_(True))
+                    .order_by(CommandDefinitionRecord.command)
                 )
             )
 

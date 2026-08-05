@@ -36,6 +36,7 @@ class AuthDesktopController:
         readiness_probe: ReadinessProbe | None = None,
         process_alive: Callable[[int], bool] | None = None,
         process_group_alive: Callable[[int], bool] | None = None,
+        graceful_browser_close: Callable[[], Awaitable[None]] | None = None,
         sleep: AsyncSleep = asyncio.sleep,
         readiness_attempts: int = 100,
         shutdown_attempts: int = 50,
@@ -52,6 +53,9 @@ class AuthDesktopController:
         self._killpg = killpg
         self._process_alive = process_alive or _pid_alive
         self._process_group_alive = process_group_alive or _group_alive
+        self._graceful_browser_close = (
+            graceful_browser_close or _close_desktop_browser
+        )
         self._x_readiness_probe = x_readiness_probe or (
             lambda pid: self._process_alive(pid)
             and Path("/tmp/.X11-unix/X99").exists()
@@ -93,6 +97,8 @@ class AuthDesktopController:
                         "--no-first-run",
                         "--no-sandbox",
                         "--disable-dev-shm-usage",
+                        "--remote-debugging-address=127.0.0.1",
+                        "--remote-debugging-port=19222",
                         *(tuple([self._login_url]) if self._login_url else ()),
                     ),
                     {"env": display_environment},
@@ -163,6 +169,7 @@ class AuthDesktopController:
             groups = state["process_groups"]
             if len(pids) != len(groups):
                 raise RuntimeError("invalid authentication desktop PID metadata")
+            await self._graceful_browser_close()
             await self._terminate(groups)
             self._pid_file.unlink()
 
@@ -272,3 +279,19 @@ def _port_ready(port: int) -> bool:
             return True
     except OSError:
         return False
+
+
+async def _close_desktop_browser() -> None:
+    try:
+        from playwright.async_api import async_playwright
+
+        playwright = await async_playwright().start()
+        try:
+            browser = await playwright.chromium.connect_over_cdp(
+                "http://127.0.0.1:19222"
+            )
+            await browser.close()
+        finally:
+            await playwright.stop()
+    except Exception:
+        return

@@ -84,6 +84,7 @@ def test_start_spawns_isolated_desktop_and_loopback_novnc(tmp_path):
     chrome = commands[2]
     assert f"--user-data-dir={tmp_path / 'profile'}" in chrome
     assert "--no-sandbox" in chrome
+    assert "--remote-debugging-port=19222" in chrome
     assert "https://chat.example/login" in chrome
     x11vnc = commands[3]
     assert "-localhost" in x11vnc
@@ -129,6 +130,29 @@ def test_stop_signals_only_recorded_process_groups_and_removes_pid_file(tmp_path
     assert signals == [(120, signal.SIGTERM), (110, signal.SIGTERM)]
     assert not pid_file.exists()
     assert factory.calls == []
+
+
+def test_stop_closes_the_browser_before_terminating_the_desktop(tmp_path):
+    factory = ProcessFactory()
+    events = []
+
+    async def close_browser():
+        events.append("browser")
+
+    controller = make_controller(
+        tmp_path,
+        factory,
+        graceful_browser_close=close_browser,
+        killpg=lambda _pgid, _sig: events.append("terminate"),
+        login_state=lambda: "auth_in_progress",
+    )
+    pid_file = tmp_path / "runtime" / "auth-desktop.json"
+    pid_file.parent.mkdir()
+    pid_file.write_text(json.dumps({"pids": [10], "process_groups": [110]}))
+
+    controller.stop()
+
+    assert events == ["browser", "terminate"]
 
 
 def test_start_rejects_an_existing_desktop_pid_file(tmp_path):

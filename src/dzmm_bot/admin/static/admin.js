@@ -42,7 +42,10 @@ function escapeHtml(value) {
 }
 
 async function requestGame(path, options = {}) {
-  const response = await fetch(path, {headers: headers(), ...options});
+  const response = await fetch(path, {
+    ...options,
+    headers: {...headers(), ...(options.headers || {})},
+  });
   if (!response.ok) throw new Error(String(response.status));
   return response.json();
 }
@@ -63,8 +66,17 @@ async function loadGameView(view) {
     if (view === "commands") {
       const commands = await requestGame("/api/game/commands");
       document.querySelector("#command-list").innerHTML = commands.map((command) => `
-        <article class="data-row"><div><b>${escapeHtml(command.command)}</b><small>${escapeHtml(command.description)}</small></div>
-        <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></article>`).join("") || "<p class=\"muted\">暂无指令。</p>";
+        <article class="command-card">
+          <div class="command-heading"><div><b>${escapeHtml(command.command)}</b><small>${escapeHtml(command.description)}</small></div>
+          <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></div>
+          <div class="template-list">${command.templates.map((template) => `
+            <section class="template-editor">
+              <div class="template-heading"><b>${escapeHtml(template.label)}</b><small>${escapeHtml(template.scenario)}</small></div>
+              <textarea data-template-input="true" rows="3" maxlength="2000" aria-label="${escapeHtml(command.command)} ${escapeHtml(template.label)} 回复模板">${escapeHtml(template.template)}</textarea>
+              <div class="template-actions"><div class="variable-pills">${template.variables.map((variable) => `<button class="variable-pill" data-variable="${escapeHtml(variable)}" type="button">${escapeHtml(variable)}</button>`).join("")}</div>
+              <button class="secondary" data-template-command="${escapeHtml(command.command)}" data-template-scenario="${escapeHtml(template.scenario)}" type="button">保存回复</button></div>
+            </section>`).join("")}</div>
+        </article>`).join("") || "<p class=\"muted\">暂无指令。</p>";
       return;
     }
     if (view === "employees") {
@@ -203,16 +215,47 @@ for (const button of document.querySelectorAll(".nav-item")) {
 }
 document.querySelector("#command-list").addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-command]");
-  if (!button) return;
+  if (button) {
+    try {
+      await requestGame("/api/game/commands", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({command: button.dataset.command, enabled: button.dataset.enabled === "true"}),
+      });
+      await loadGameView("commands");
+      setResult("指令状态已更新", "success");
+    } catch (error) {
+      setResult(`更新失败（${error.message}）`, "error");
+    }
+    return;
+  }
+  const variable = event.target.closest("button[data-variable]");
+  if (variable) {
+    const textarea = variable.closest(".template-editor").querySelector("textarea[data-template-input]");
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    textarea.value = `${textarea.value.slice(0, start)}${variable.dataset.variable}${textarea.value.slice(end)}`;
+    textarea.focus();
+    textarea.selectionStart = textarea.selectionEnd = start + variable.dataset.variable.length;
+    return;
+  }
+  const save = event.target.closest("button[data-template-command]");
+  if (!save) return;
+  const textarea = save.closest(".template-editor").querySelector("textarea[data-template-input]");
   try {
-    await requestGame("/api/game/commands", {
+    await requestGame("/api/game/command-templates", {
       method: "PATCH",
-      body: JSON.stringify({command: button.dataset.command, enabled: button.dataset.enabled === "true"}),
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        command: save.dataset.templateCommand,
+        scenario: save.dataset.templateScenario,
+        template: textarea.value,
+      }),
     });
     await loadGameView("commands");
-    setResult("指令状态已更新", "success");
+    setResult("回复模板已保存", "success");
   } catch (error) {
-    setResult(`更新失败（${error.message}）`, "error");
+    setResult(`保存失败（${error.message}）`, "error");
   }
 });
 document.querySelector("#item-form").addEventListener("submit", async (event) => {

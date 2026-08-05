@@ -254,6 +254,15 @@ def test_admin_relay_rejects_a_template_without_required_fields(client, headers)
     assert response.status_code == 422
 
 
+def test_command_library_serves_template_editor_controls(client):
+    """Fails if the command library cannot render or save reply templates."""
+    script = client.get("/static/admin.js")
+
+    assert "data-template-command" in script.text
+    assert "data-variable" in script.text
+    assert "/api/game/command-templates" in script.text
+
+
 def test_status_returns_only_safe_operational_fields(client, headers):
     response = client.get("/api/status", headers=headers)
 

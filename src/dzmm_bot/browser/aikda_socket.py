@@ -1,6 +1,6 @@
 from collections import deque
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from threading import Event, Lock
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -11,6 +11,8 @@ from dzmm_bot.runtime.contracts import InboundMessage
 
 
 class AikdaSocketGateway:
+    _HISTORY_SYNC_INTERVAL = timedelta(seconds=5)
+
     def __init__(
         self,
         chat_url: str,
@@ -35,14 +37,19 @@ class AikdaSocketGateway:
         self._authenticated = False
         self._joined = Event()
         self._reconcile_needed = True
+        self._last_history_sync_at: datetime | None = None
         self._pending: deque[InboundMessage] = deque()
         self._seen_ids: set[str] = set()
         self._pending_lock = Lock()
 
     def read_new(self) -> list[InboundMessage]:
         self._ensure_connected()
-        if self._reconcile_needed:
-            self._reconcile_history()
+        now = self._clock()
+        initial_sync = self._reconcile_needed
+        if initial_sync or self._history_sync_due(now):
+            recovered = self._reconcile_history(now)
+            if recovered and not initial_sync:
+                self._invalidate_stale_socket()
         with self._pending_lock:
             messages, self._pending = self._pending, deque()
         return sorted(messages, key=lambda message: message.received_at)
@@ -111,11 +118,26 @@ class AikdaSocketGateway:
         self._authenticated = True
         self._reconcile_needed = True
 
-    def _reconcile_history(self) -> None:
+    def _history_sync_due(self, now: datetime) -> bool:
+        return (
+            self._last_history_sync_at is None
+            or now - self._last_history_sync_at >= self._HISTORY_SYNC_INTERVAL
+        )
+
+    def _reconcile_history(self, now: datetime) -> bool:
+        seen_before = len(self._seen_ids)
         payload = self._request("chatroom.getMessages", {"chatroomId": self.chatroom_id})
         for message in payload.get("messages", []):
             self._accept_message(self.chatroom_id, message)
         self._reconcile_needed = False
+        self._last_history_sync_at = now
+        return len(self._seen_ids) > seen_before
+
+    def _invalidate_stale_socket(self) -> None:
+        self._socket.disconnect()
+        self._authenticated = False
+        self._joined.clear()
+        self._reconcile_needed = True
 
     def _on_message(self, payload: dict[str, Any]) -> None:
         message = payload.get("message")

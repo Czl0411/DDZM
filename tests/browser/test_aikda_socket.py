@@ -1,5 +1,5 @@
 from collections import deque
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -156,6 +156,48 @@ def test_history_reconciles_unseen_text_messages_in_timestamp_order():
     )
 
     assert [item.platform_message_id for item in adapter.read_new()] == ["m-1", "m-2"]
+
+
+def test_history_recovers_a_message_when_a_connected_socket_stops_emitting_events():
+    """Fails until connected-but-stale sockets periodically reconcile history."""
+    now = [NOW]
+    socket = FakeSocket()
+    request = FakeRequest()
+    adapter = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "short-lived-token",
+        request=request,
+        socket_factory=lambda: socket,
+        clock=lambda: now[0],
+    )
+
+    assert adapter.read_new() == []
+    request.messages = [message("m-missed", "u-1", "/帮助")]
+    now[0] += timedelta(seconds=5)
+
+    assert [item.platform_message_id for item in adapter.read_new()] == ["m-missed"]
+
+
+def test_history_recovery_reconnects_a_stale_socket_before_the_next_poll():
+    """Fails until a missed live event invalidates the stale subscription."""
+    now = [NOW]
+    socket = FakeSocket()
+    request = FakeRequest()
+    adapter = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "short-lived-token",
+        request=request,
+        socket_factory=lambda: socket,
+        clock=lambda: now[0],
+    )
+
+    adapter.read_new()
+    request.messages = [message("m-missed", "u-1", "/帮助")]
+    now[0] += timedelta(seconds=5)
+    adapter.read_new()
+    adapter.read_new()
+
+    assert len(socket.connect_calls) == 2
 
 
 def test_send_requires_successful_ack(gateway):

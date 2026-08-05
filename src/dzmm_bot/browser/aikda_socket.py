@@ -1,7 +1,7 @@
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
-from threading import Event
+from threading import Event, Lock
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
@@ -37,14 +37,15 @@ class AikdaSocketGateway:
         self._reconcile_needed = True
         self._pending: deque[InboundMessage] = deque()
         self._seen_ids: set[str] = set()
+        self._pending_lock = Lock()
 
     def read_new(self) -> list[InboundMessage]:
         self._ensure_connected()
         if self._reconcile_needed:
             self._reconcile_history()
-        messages = sorted(self._pending, key=lambda message: message.received_at)
-        self._pending.clear()
-        return messages
+        with self._pending_lock:
+            messages, self._pending = self._pending, deque()
+        return sorted(messages, key=lambda message: message.received_at)
 
     def send(self, text: str) -> str:
         self._ensure_connected()
@@ -143,24 +144,25 @@ class AikdaSocketGateway:
             or not isinstance(message_id, str)
             or not isinstance(sent_by, str)
             or not isinstance(sent_at, str)
-            or message_id in self._seen_ids
         ):
             return
-        self._seen_ids.add(message_id)
-        self._pending.append(
-            InboundMessage(
-                message_id,
-                sent_by,
-                content["text"],
-                _shanghai_time(sent_at),
-            )
+        inbound = InboundMessage(
+            message_id,
+            sent_by,
+            content["text"],
+            _shanghai_time(sent_at),
         )
+        with self._pending_lock:
+            if message_id in self._seen_ids:
+                return
+            self._seen_ids.add(message_id)
+            self._pending.append(inbound)
 
 
 def _socket_client():
     import socketio
 
-    return socketio.Client(reconnection=True)
+    return socketio.Client(reconnection=False)
 
 
 def _shanghai_time(value: str) -> datetime:

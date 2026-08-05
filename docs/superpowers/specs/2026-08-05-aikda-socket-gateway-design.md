@@ -13,7 +13,9 @@ access token.
 - Receive live `message:new` events and send text through `message:send`.
 - Fetch `chatroom.getMessages` after connecting and reconnecting to close any
   gap in live delivery.
-- Resolve the sender with `user.getChatroomUser` when a message is accepted.
+- Use each message's `sent_by` as the sender's stable platform identity. Profile
+  hydration through `user.getChatroomUser` is deferred until a feature needs a
+  profile field beyond the existing `/入职` display name.
 - Filter messages authored by the bot account returned by `user.getMe`.
 - Keep all timestamps as timezone-aware values and preserve the existing
   core-side idempotency by platform message ID.

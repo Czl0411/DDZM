@@ -1,9 +1,10 @@
+from collections import deque
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from dzmm_bot.browser.aikda_socket import AikdaSocketGateway
+from dzmm_bot.browser.aikda_socket import AikdaSocketGateway, _socket_client
 from dzmm_bot.runtime.contracts import InboundMessage
 
 
@@ -194,3 +195,47 @@ def test_send_raises_when_ack_rejects_message(gateway):
 
     with pytest.raises(RuntimeError, match="rejected"):
         adapter.send("余额：5 摸鱼币")
+
+
+def test_socket_client_defers_reconnection_until_a_fresh_token_is_available():
+    """Fails if the Socket.IO client retries with an expired connection token."""
+    assert _socket_client().reconnection is False
+
+
+def test_reconnect_acquires_a_fresh_token(gateway):
+    """Fails if a disconnected session reuses its previous short-lived token."""
+    adapter, socket, _ = gateway
+    issued_tokens = []
+    adapter._token_provider = lambda: issued_tokens.append("fresh-token") or "fresh-token"
+
+    adapter.read_new()
+    socket.connected = False
+    adapter.read_new()
+
+    assert issued_tokens == ["fresh-token", "fresh-token"]
+    assert len(socket.connect_calls) == 2
+
+
+def test_live_event_arriving_while_pending_messages_are_read_is_retained(gateway):
+    """Fails if clearing the read queue discards a concurrently received event."""
+    adapter, socket, _ = gateway
+    adapter.read_new()
+
+    class RaceQueue(deque):
+        def __init__(self):
+            super().__init__()
+            self.triggered = False
+
+        def __iter__(self):
+            yield from tuple(super().__iter__())
+            if not self.triggered:
+                self.triggered = True
+                socket.trigger(
+                    "message:new",
+                    {"chatroomId": "room-1", "message": message("m-race", "u-1", "/余额")},
+                )
+
+    adapter._pending = RaceQueue()
+
+    assert adapter.read_new() == []
+    assert [item.platform_message_id for item in adapter.read_new()] == ["m-race"]

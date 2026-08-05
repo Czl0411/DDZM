@@ -235,3 +235,29 @@ def test_configured_session_uses_socket_gateway_instead_of_dom_chat_controls(tmp
     assert socket.calls[0][0] == "message:send"
     assert platform_id == socket.calls[0][1]["message"]["message_id"]
     assert page.filled == []
+
+
+def test_stop_disconnects_the_configured_socket_gateway(tmp_path):
+    page = FakePage("https://chat.example/chat")
+    socket = FakeSocket()
+    page.evaluate = lambda script, arg=None: (
+        "short-lived-token"
+        if "api/auth/token" in script
+        else {"id": "bot-1"}
+        if arg["procedure"] == "user.getMe"
+        else {"messages": []}
+    )
+    context = FakeContext(page.url)
+    context.pages = [page]
+    session = BrowserSession(
+        tmp_path / "profile",
+        "https://chat.example/login",
+        chat_url="https://chat.example/chat?c=group-1",
+        playwright_factory=lambda: FakePlaywright(FakeChromium(context)),
+        socket_factory=lambda: socket,
+    )
+
+    assert session.start_headless().is_authenticated()
+    session.stop()
+
+    assert socket.connected is False

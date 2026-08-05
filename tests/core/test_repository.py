@@ -236,6 +236,26 @@ def test_worker_heartbeat_is_persisted(repository, now):
     assert second.recorded_at == now + timedelta(seconds=5)
 
 
+def test_reply_template_defaults_seed_once_and_preserve_an_edit(repository):
+    """Fails if a later default seed overwrites an administrator's template."""
+    repository.ensure_reply_templates()
+    repository.set_reply_template("/余额", "shown", "{昵称} 有 {余额} 币。")
+    repository.ensure_reply_templates()
+
+    assert (
+        repository.get_reply_template("/余额", "shown").template
+        == "{昵称} 有 {余额} 币。"
+    )
+
+
+def test_template_validation_rejects_a_variable_unavailable_to_its_scenario():
+    """Fails if a shop-only variable can leak into a balance reply."""
+    from dzmm_bot.core.reply_templates import validate_template
+
+    with pytest.raises(ValueError, match="不支持"):
+        validate_template("/余额", "shown", "{商店列表}")
+
+
 @pytest.fixture
 def migrated_postgres_url():
     database_url = os.environ.get("TEST_DATABASE_URL")

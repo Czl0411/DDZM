@@ -1,0 +1,60 @@
+from dataclasses import dataclass
+import re
+
+
+_TEMPLATE_TOKEN = re.compile(r"\{([^{}]+)\}")
+_MAX_TEMPLATE_LENGTH = 2000
+
+
+@dataclass(frozen=True)
+class TemplateDefinition:
+    command: str
+    scenario: str
+    label: str
+    default: str
+    variables: tuple[str, ...]
+
+
+TEMPLATE_DEFINITIONS = (
+    TemplateDefinition("/入职", "joined", "入职成功", "{昵称}，欢迎入职摸鱼公司。当前余额：{余额} 摸鱼币。", ("{昵称}", "{余额}", "{日期}")),
+    TemplateDefinition("/入职", "already_joined", "已入职", "{昵称}已经在职，当前余额：{余额} 摸鱼币。", ("{昵称}", "{余额}", "{日期}")),
+    TemplateDefinition("/入职", "missing_name", "缺少昵称", "请用 /入职 名字 加入摸鱼公司。", ("{日期}",)),
+    TemplateDefinition("/打卡", "checked_in", "打卡成功", "打卡成功，领取 {打卡奖励} 摸鱼币。当前余额：{余额} 摸鱼币。", ("{昵称}", "{余额}", "{打卡奖励}", "{日期}")),
+    TemplateDefinition("/打卡", "already_checked_in", "今日已打卡", "今天已经打过卡啦，明天再来。", ("{昵称}", "{日期}")),
+    TemplateDefinition("/打卡", "not_joined", "未入职", "请先用 /入职 名字 加入摸鱼公司。", ("{日期}",)),
+    TemplateDefinition("/余额", "shown", "查询成功", "{昵称}，当前余额：{余额} 摸鱼币。", ("{昵称}", "{余额}", "{日期}")),
+    TemplateDefinition("/余额", "not_joined", "未入职", "请先用 /入职 名字 加入摸鱼公司。", ("{日期}",)),
+    TemplateDefinition("/我的物品", "shown", "查询成功", "{昵称}的物品：\n{物品列表}", ("{昵称}", "{物品列表}", "{日期}")),
+    TemplateDefinition("/我的物品", "not_joined", "未入职", "请先用 /入职 名字 加入摸鱼公司。", ("{日期}",)),
+    TemplateDefinition("/商店", "items_available", "商店有货", "总监事小卖部：\n{商店列表}", ("{商店列表}", "{日期}")),
+    TemplateDefinition("/商店", "empty", "商店为空", "总监事小卖部还没有上架商品。", ("{日期}",)),
+    TemplateDefinition("/帮助", "shown", "帮助回复", "总监事指令簿：\n{指令列表}", ("{指令列表}", "{日期}")),
+)
+
+
+def template_definition(command: str, scenario: str) -> TemplateDefinition:
+    for definition in TEMPLATE_DEFINITIONS:
+        if definition.command == command and definition.scenario == scenario:
+            return definition
+    raise ValueError("未知模板场景")
+
+
+def definitions_for_command(command: str) -> tuple[TemplateDefinition, ...]:
+    return tuple(
+        definition
+        for definition in TEMPLATE_DEFINITIONS
+        if definition.command == command
+    )
+
+
+def validate_template(command: str, scenario: str, template: str) -> None:
+    definition = template_definition(command, scenario)
+    if not template.strip():
+        raise ValueError("模板不能为空")
+    if len(template) > _MAX_TEMPLATE_LENGTH:
+        raise ValueError("模板不能超过 2000 个字符")
+    allowed = set(definition.variables)
+    for token in _TEMPLATE_TOKEN.findall(template):
+        if f"{{{token}}}" not in allowed:
+            raise ValueError(f"模板变量不支持：{{{token}}}")
+

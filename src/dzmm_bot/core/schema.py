@@ -86,6 +86,22 @@ class CommandDefinitionRecord(Base):
     )
 
 
+class CommandReplyTemplateRecord(Base):
+    __tablename__ = "command_reply_templates"
+    __table_args__ = (UniqueConstraint("command", "scenario"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    command: Mapped[str] = mapped_column(String(32), nullable=False)
+    scenario: Mapped[str] = mapped_column(String(64), nullable=False)
+    template: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, onupdate=beijing_now, nullable=False
+    )
+
+
 class UserRecord(Base):
     __tablename__ = "users"
 

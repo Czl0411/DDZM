@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
 
+from .reply_templates import TEMPLATE_DEFINITIONS, validate_template
 from .schema import (
     CommandDefinitionRecord,
+    CommandReplyTemplateRecord,
     DailyCheckinRecord,
     InboundRecord,
     ItemRecord,
@@ -113,6 +115,76 @@ class CoreRepository:
                         index_elements=[CommandDefinitionRecord.command]
                     )
                 )
+        self.ensure_reply_templates()
+
+    def ensure_reply_templates(self) -> None:
+        with self._session() as session:
+            dialect_name = session.get_bind().dialect.name
+            for definition in TEMPLATE_DEFINITIONS:
+                values = {
+                    "id": uuid4(),
+                    "command": definition.command,
+                    "scenario": definition.scenario,
+                    "template": definition.default,
+                }
+                if dialect_name == "postgresql":
+                    statement = postgresql_insert(CommandReplyTemplateRecord).values(
+                        **values
+                    )
+                elif dialect_name == "sqlite":
+                    statement = sqlite_insert(CommandReplyTemplateRecord).values(
+                        **values
+                    )
+                else:
+                    raise ValueError(f"unsupported database dialect: {dialect_name}")
+                session.execute(
+                    statement.on_conflict_do_nothing(
+                        index_elements=[
+                            CommandReplyTemplateRecord.command,
+                            CommandReplyTemplateRecord.scenario,
+                        ]
+                    )
+                )
+
+    def list_reply_templates(self, command: str) -> list[CommandReplyTemplateRecord]:
+        self.ensure_reply_templates()
+        with self._session() as session:
+            return list(
+                session.scalars(
+                    select(CommandReplyTemplateRecord)
+                    .where(CommandReplyTemplateRecord.command == command)
+                    .order_by(CommandReplyTemplateRecord.scenario)
+                )
+            )
+
+    def get_reply_template(
+        self, command: str, scenario: str
+    ) -> CommandReplyTemplateRecord | None:
+        with self._session() as session:
+            return session.scalar(
+                select(CommandReplyTemplateRecord).where(
+                    CommandReplyTemplateRecord.command == command,
+                    CommandReplyTemplateRecord.scenario == scenario,
+                )
+            )
+
+    def set_reply_template(
+        self, command: str, scenario: str, template: str
+    ) -> CommandReplyTemplateRecord:
+        validate_template(command, scenario, template)
+        self.ensure_reply_templates()
+        with self._session() as session:
+            record = session.scalar(
+                select(CommandReplyTemplateRecord).where(
+                    CommandReplyTemplateRecord.command == command,
+                    CommandReplyTemplateRecord.scenario == scenario,
+                )
+            )
+            if record is None:
+                raise RuntimeError("reply template disappeared")
+            record.template = template
+            session.flush()
+            return record
 
     def is_command_enabled(self, command: str) -> bool:
         with self._session() as session:

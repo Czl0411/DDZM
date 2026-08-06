@@ -1048,3 +1048,9 @@ def test_random_event_script_offers_template_and_today_actions():
     assert "data-random-event-name" in script
     assert "data-trigger-random-event" in script
     assert "openRandomEventDetailsModal" in script
+
+
+def test_admin_account_list_bypasses_browser_cache():
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert 'requestGame("/api/admins", {cache: "no-store"})' in script

@@ -406,7 +406,7 @@ async function loadShop(page = shopPage) {
 }
 
 async function loadAdministrators() {
-  const accounts = await requestGame("/api/admins");
+  const accounts = await requestGame("/api/admins", {cache: "no-store"});
   document.querySelector("#admin-account-list").innerHTML = accounts.map((account) => `
     <article class="data-row"><div><b>${escapeHtml(account.username)}</b><small>${account.active ? "可登录，可运营" : "已停用，所有会话已失效"}</small></div>
     <div class="command-actions"><button class="secondary" data-admin-action="toggle" data-admin-id="${account.id}" data-admin-active="${account.active}" type="button">${account.active ? "停用" : "启用"}</button><button class="secondary" data-admin-action="password" data-admin-id="${account.id}" type="button">重置密码</button><button class="danger-button" data-admin-action="delete" data-admin-id="${account.id}" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有普通管理员账号。</p>";

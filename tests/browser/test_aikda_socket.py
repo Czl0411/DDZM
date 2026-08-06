@@ -279,7 +279,7 @@ def test_retracts_an_acknowledged_message_in_the_target_chatroom(gateway):
 
     assert socket.calls == [
         (
-            "message:delete",
+            "message:recall",
             {"chatroomId": "room-1", "messageId": "outbound-1"},
             10,
         )

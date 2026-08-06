@@ -79,7 +79,7 @@ class AikdaSocketGateway:
     def retract(self, message_id: str) -> None:
         self._ensure_connected()
         acknowledgement = self._socket.call(
-            "message:delete",
+            "message:recall",
             {"chatroomId": self.chatroom_id, "messageId": message_id},
             timeout=10,
         )

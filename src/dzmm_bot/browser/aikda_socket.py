@@ -76,6 +76,17 @@ class AikdaSocketGateway:
             raise RuntimeError(error)
         return message_id
 
+    def retract(self, message_id: str) -> None:
+        self._ensure_connected()
+        acknowledgement = self._socket.call(
+            "message:delete",
+            {"chatroomId": self.chatroom_id, "messageId": message_id},
+            timeout=10,
+        )
+        if not acknowledgement or acknowledgement.get("success") is not True:
+            error = acknowledgement.get("error", "message retraction acknowledgement failed") if acknowledgement else "message retraction acknowledgement failed"
+            raise RuntimeError(error)
+
     def is_authenticated(self) -> bool:
         try:
             self._ensure_connected()

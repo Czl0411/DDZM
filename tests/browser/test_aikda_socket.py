@@ -252,6 +252,21 @@ def test_send_raises_when_ack_rejects_message(gateway):
         adapter.send("余额：5 摸鱼币")
 
 
+def test_retracts_an_acknowledged_message_in_the_target_chatroom(gateway):
+    """Fails until a sent message can be withdrawn through the live gateway."""
+    adapter, socket, _ = gateway
+
+    adapter.retract("outbound-1")
+
+    assert socket.calls == [
+        (
+            "message:delete",
+            {"chatroomId": "room-1", "messageId": "outbound-1"},
+            10,
+        )
+    ]
+
+
 def test_socket_client_defers_reconnection_until_a_fresh_token_is_available():
     """Fails if the Socket.IO client retries with an expired connection token."""
     assert _socket_client().reconnection is False

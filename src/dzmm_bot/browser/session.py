@@ -16,6 +16,8 @@ class ChatGateway(Protocol):
 
     def send(self, text: str) -> str: ...
 
+    def retract(self, message_id: str) -> None: ...
+
     def is_authenticated(self) -> bool: ...
 
     def close(self) -> None: ...
@@ -170,6 +172,9 @@ class _PlaywrightGateway:
         editor.fill(text)
         editor.press("Enter")
         return f"dzmm:{int(time() * 1000)}"
+
+    def retract(self, message_id: str) -> None:
+        raise NotImplementedError("message retraction requires the Aikda socket gateway")
 
     def _active_page(self):
         return next((page for page in self._context.pages if "/chat" in page.url), self._context.pages[0])

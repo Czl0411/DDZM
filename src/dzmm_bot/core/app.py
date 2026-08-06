@@ -47,6 +47,12 @@ from .api_models import (
     RandomEventScheduleResponse,
     RandomEventDetailsResponse,
     RescheduleRandomEventRequest,
+    HideAndSeekSettingsResponse,
+    SetHideAndSeekSettingsRequest,
+    HideAndSeekSceneResponse,
+    PaginatedHideAndSeekScenesResponse,
+    CreateHideAndSeekSceneRequest,
+    UpdateHideAndSeekSceneRequest,
     ItemResponse,
     PaginatedItemsResponse,
     PaginatedUsersResponse,
@@ -379,6 +385,95 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _random_event_settings_response(settings)
+
+    @app.get(
+        "/internal/game/hide-and-seek/settings",
+        response_model=HideAndSeekSettingsResponse,
+    )
+    def hide_and_seek_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> HideAndSeekSettingsResponse:
+        return _hide_and_seek_settings_response(repository.get_hide_and_seek_settings())
+
+    @app.patch(
+        "/internal/game/hide-and-seek/settings",
+        response_model=HideAndSeekSettingsResponse,
+    )
+    def set_hide_and_seek_settings(
+        request: SetHideAndSeekSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> HideAndSeekSettingsResponse:
+        try:
+            settings = repository.set_hide_and_seek_settings(
+                request.enabled,
+                request.entry_fee,
+                request.win_reward,
+                request.daily_limit,
+                request.selection_timeout_minutes,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _hide_and_seek_settings_response(settings)
+
+    @app.get(
+        "/internal/game/hide-and-seek/scenes",
+        response_model=PaginatedHideAndSeekScenesResponse,
+    )
+    def hide_and_seek_scenes(
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> PaginatedHideAndSeekScenesResponse:
+        scenes, total = repository.list_hide_and_seek_scenes_page(page, page_size)
+        return PaginatedHideAndSeekScenesResponse(
+            items=[_hide_and_seek_scene_response(scene) for scene in scenes],
+            page=page,
+            page_size=page_size,
+            total=total,
+            pages=(total + page_size - 1) // page_size,
+        )
+
+    @app.post(
+        "/internal/game/hide-and-seek/scenes",
+        response_model=HideAndSeekSceneResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_hide_and_seek_scene(
+        request: CreateHideAndSeekSceneRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> HideAndSeekSceneResponse:
+        try:
+            scene = repository.create_hide_and_seek_scene(request.name)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _hide_and_seek_scene_response(scene)
+
+    @app.put(
+        "/internal/game/hide-and-seek/scenes/{scene_id}",
+        response_model=HideAndSeekSceneResponse,
+    )
+    def update_hide_and_seek_scene(
+        scene_id: UUID,
+        request: UpdateHideAndSeekSceneRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> HideAndSeekSceneResponse:
+        try:
+            scene = repository.update_hide_and_seek_scene(
+                scene_id, request.name, request.enabled
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _hide_and_seek_scene_response(scene)
+
+    @app.delete(
+        "/internal/game/hide-and-seek/scenes/{scene_id}",
+        response_model=AcceptedResponse,
+    )
+    def delete_hide_and_seek_scene(
+        scene_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.delete_hide_and_seek_scene(scene_id))
 
     @app.get(
         "/internal/game/random-events/scenes",
@@ -733,6 +828,20 @@ def _random_event_settings_response(settings) -> RandomEventSettingsResponse:
         signup_timeout_minutes=settings.signup_timeout_minutes,
         reminder_interval_minutes=settings.reminder_interval_minutes,
     )
+
+
+def _hide_and_seek_settings_response(settings) -> HideAndSeekSettingsResponse:
+    return HideAndSeekSettingsResponse(
+        enabled=settings.enabled,
+        entry_fee=settings.entry_fee,
+        win_reward=settings.win_reward,
+        daily_limit=settings.daily_limit,
+        selection_timeout_minutes=settings.selection_timeout_minutes,
+    )
+
+
+def _hide_and_seek_scene_response(scene) -> HideAndSeekSceneResponse:
+    return HideAndSeekSceneResponse(id=scene.id, name=scene.name, enabled=scene.enabled)
 
 
 def _random_event_scene_response(scene) -> RandomEventSceneResponse:

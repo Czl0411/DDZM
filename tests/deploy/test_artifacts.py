@@ -36,3 +36,14 @@ def test_weekly_attendance_migration_preserves_custom_me_templates():
 
     assert "weekly_attendance_settlements" in migration
     assert "连续打卡：{连续打卡天数} 天。" in migration
+
+
+def test_hide_and_seek_migration_creates_game_tables():
+    migration = (ROOT / "migrations/versions/20260806_13_hide_and_seek.py").read_text()
+
+    assert 'down_revision: str | None = "20260806_12"' in migration
+    assert "hide_and_seek_settings" in migration
+    assert "hide_and_seek_scenes" in migration
+    assert "hide_and_seek_daily_plays" in migration
+    assert "hide_and_seek_games" in migration
+    assert "ux_hide_and_seek_one_selecting_user" in migration

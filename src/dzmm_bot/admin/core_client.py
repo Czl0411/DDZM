@@ -45,6 +45,18 @@ class AdminCorePort(Protocol):
 
     def set_random_event_settings(self, settings: dict) -> dict: ...
 
+    def get_hide_and_seek_settings(self) -> dict: ...
+
+    def set_hide_and_seek_settings(self, settings: dict) -> dict: ...
+
+    def list_hide_and_seek_scenes(self, page: int, page_size: int) -> dict: ...
+
+    def create_hide_and_seek_scene(self, scene: dict) -> dict: ...
+
+    def update_hide_and_seek_scene(self, scene_id: str, scene: dict) -> dict: ...
+
+    def delete_hide_and_seek_scene(self, scene_id: str) -> dict: ...
+
     def list_random_event_scenes(self, page: int, page_size: int) -> dict: ...
 
     def create_random_event_scene(self, scene: dict) -> dict: ...
@@ -162,6 +174,39 @@ class CoreClient:
         response = self._client.patch(
             "/internal/game/random-events/settings", json=settings
         )
+        response.raise_for_status()
+        return response.json()
+
+    def get_hide_and_seek_settings(self) -> dict:
+        return self._get("/internal/game/hide-and-seek/settings")
+
+    def set_hide_and_seek_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/hide-and-seek/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def list_hide_and_seek_scenes(self, page: int, page_size: int) -> dict:
+        return self._get(
+            "/internal/game/hide-and-seek/scenes",
+            params={"page": page, "page_size": page_size},
+        )
+
+    def create_hide_and_seek_scene(self, scene: dict) -> dict:
+        response = self._client.post("/internal/game/hide-and-seek/scenes", json=scene)
+        response.raise_for_status()
+        return response.json()
+
+    def update_hide_and_seek_scene(self, scene_id: str, scene: dict) -> dict:
+        response = self._client.put(
+            f"/internal/game/hide-and-seek/scenes/{scene_id}", json=scene
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_hide_and_seek_scene(self, scene_id: str) -> dict:
+        response = self._client.delete(f"/internal/game/hide-and-seek/scenes/{scene_id}")
         response.raise_for_status()
         return response.json()
 

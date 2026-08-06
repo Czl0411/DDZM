@@ -87,6 +87,16 @@ class FakeCore:
     )
     random_event_scenes: list[dict] = field(default_factory=list)
     today_random_events: list[dict] = field(default_factory=list)
+    hide_and_seek_settings: dict = field(
+        default_factory=lambda: {
+            "enabled": True,
+            "entry_fee": 1,
+            "win_reward": 3,
+            "daily_limit": 2,
+            "selection_timeout_minutes": 2,
+        }
+    )
+    hide_and_seek_scenes: list[dict] = field(default_factory=list)
     manual_login_lease: dict | None = None
 
     def status(self):
@@ -234,6 +244,42 @@ class FakeCore:
             event for event in self.today_random_events if event["id"] != schedule_id
         ]
         return {"accepted": len(self.today_random_events) != before}
+
+    def get_hide_and_seek_settings(self):
+        return self.hide_and_seek_settings
+
+    def set_hide_and_seek_settings(self, settings):
+        self.hide_and_seek_settings = settings
+        return self.hide_and_seek_settings
+
+    def list_hide_and_seek_scenes(self, page, page_size):
+        return _page(self.hide_and_seek_scenes, page, page_size)
+
+    def create_hide_and_seek_scene(self, scene):
+        saved = {
+            **scene,
+            "id": f"hide-scene-{len(self.hide_and_seek_scenes) + 1}",
+            "enabled": True,
+        }
+        self.hide_and_seek_scenes.append(saved)
+        return saved
+
+    def update_hide_and_seek_scene(self, scene_id, scene):
+        index = next(
+            index
+            for index, item in enumerate(self.hide_and_seek_scenes)
+            if item["id"] == scene_id
+        )
+        saved = {**scene, "id": scene_id}
+        self.hide_and_seek_scenes[index] = saved
+        return saved
+
+    def delete_hide_and_seek_scene(self, scene_id):
+        before = len(self.hide_and_seek_scenes)
+        self.hide_and_seek_scenes = [
+            scene for scene in self.hide_and_seek_scenes if scene["id"] != scene_id
+        ]
+        return {"accepted": len(self.hide_and_seek_scenes) != before}
 
 
 class FakeConsole:
@@ -629,6 +675,25 @@ def test_admin_proxies_activity_settings(client, headers, core):
 
     assert initial.json()["report_times"] == ["12:00", "16:00", "20:00", "23:59"]
     assert updated.json()["report_times"] == ["09:30", "18:00"]
+
+
+def test_admin_proxies_hide_and_seek_scene_creation_with_version_and_idempotency(
+    client, headers, core
+):
+    initial = client.get("/api/game/hide-and-seek/settings", headers=headers)
+    response = client.post(
+        "/api/game/hide-and-seek/scenes",
+        headers={
+            **headers,
+            "If-Match": str(initial.json()["version"]),
+            "Idempotency-Key": "hide-scene-1",
+        },
+        json={"name": "打印区"},
+    )
+
+    assert response.status_code == 201
+    assert core.hide_and_seek_scenes[0]["name"] == "打印区"
+    assert "version" in response.json()
 
 
 def test_admin_page_exposes_activity_settings_modal(client):
@@ -1096,6 +1161,17 @@ def test_random_event_scene_modal_uses_split_copy_fields(client):
 
     assert 'id="random-event-scene-signup"' in page
     assert 'id="random-event-scene-openings"' in page
+
+
+def test_admin_exposes_hide_and_seek_configuration_surface(client):
+    page = client.get("/").text
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert 'data-view="hide-and-seek"' in page
+    assert 'id="hide-and-seek-view"' in page
+    assert 'id="hide-and-seek-settings-modal"' in page
+    assert "loadHideAndSeek" in script
+    assert '"/api/game/hide-and-seek/settings"' in script
 
 
 def test_admin_static_assets_disable_browser_cache(client):

@@ -480,6 +480,111 @@ def create_app(
             scope="random-event-settings",
         )
 
+    @app.get("/api/game/hide-and-seek/settings")
+    def hide_and_seek_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_hide_and_seek_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/hide-and-seek/settings")
+    def set_hide_and_seek_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "enabled",
+            "entry_fee",
+            "win_reward",
+            "daily_limit",
+            "selection_timeout_minutes",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_hide_and_seek_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="hide-and-seek-settings",
+        )
+
+    @app.get("/api/game/hide-and-seek/scenes")
+    def hide_and_seek_scenes(
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        return {
+            **_relay_core(lambda: core.list_hide_and_seek_scenes(page, page_size)),
+            "version": repository.config_version(),
+        }
+
+    @app.post("/api/game/hide-and-seek/scenes", status_code=status.HTTP_201_CREATED)
+    def create_hide_and_seek_scene(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        if not isinstance(request.get("name"), str):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.create_hide_and_seek_scene({"name": request["name"]})
+            ),
+            scope="hide-and-seek-scenes",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    @app.put("/api/game/hide-and-seek/scenes/{scene_id}")
+    def update_hide_and_seek_scene(
+        scene_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        if not isinstance(request.get("name"), str) or not isinstance(
+            request.get("enabled"), bool
+        ):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.update_hide_and_seek_scene(
+                    scene_id, {"name": request["name"], "enabled": request["enabled"]}
+                )
+            ),
+            scope=f"hide-and-seek-scene:{scene_id}",
+        )
+
+    @app.delete("/api/game/hide-and-seek/scenes/{scene_id}")
+    def delete_hide_and_seek_scene(
+        scene_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(lambda: core.delete_hide_and_seek_scene(scene_id)),
+            scope=f"hide-and-seek-scene:{scene_id}",
+        )
+
     @app.get("/api/game/random-events/scenes")
     def random_event_scenes(
         _: Annotated[None, Depends(authorize)],

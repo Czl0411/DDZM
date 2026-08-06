@@ -183,6 +183,40 @@ class SetRandomEventSettingsRequest(RandomEventSettingsResponse):
     pass
 
 
+class HideAndSeekSettingsResponse(ApiModel):
+    enabled: bool
+    entry_fee: int = Field(ge=0, le=999)
+    win_reward: int = Field(ge=0, le=999)
+    daily_limit: int = Field(ge=1, le=99)
+    selection_timeout_minutes: int = Field(ge=1, le=60)
+
+
+class SetHideAndSeekSettingsRequest(HideAndSeekSettingsResponse):
+    pass
+
+
+class HideAndSeekSceneResponse(ApiModel):
+    id: UUID
+    name: str
+    enabled: bool
+
+
+class PaginatedHideAndSeekScenesResponse(ApiModel):
+    items: list[HideAndSeekSceneResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
+class CreateHideAndSeekSceneRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=64)
+
+
+class UpdateHideAndSeekSceneRequest(CreateHideAndSeekSceneRequest):
+    enabled: bool
+
+
 class RandomEventSeatModel(ApiModel):
     role: str = Field(min_length=1, max_length=32)
     capacity: int = Field(ge=1, le=99)

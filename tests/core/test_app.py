@@ -141,7 +141,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出"
+        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫"
     }
     assert disabled.json()["enabled"] is False
     assert employees.json() == {
@@ -243,6 +243,36 @@ def test_activity_settings_can_be_read_and_updated(client, headers):
     assert initial.json()["report_times"] == ["12:00", "16:00", "20:00", "23:59"]
     assert updated.status_code == 200
     assert updated.json()["report_times"] == ["09:30", "18:00"]
+
+
+def test_hide_and_seek_settings_and_scenes_are_managed_over_core_api(client, headers):
+    settings = client.get("/internal/game/hide-and-seek/settings", headers=headers)
+    updated = client.patch(
+        "/internal/game/hide-and-seek/settings",
+        headers=headers,
+        json={
+            "enabled": True,
+            "entry_fee": 2,
+            "win_reward": 5,
+            "daily_limit": 3,
+            "selection_timeout_minutes": 2,
+        },
+    )
+    created = client.post(
+        "/internal/game/hide-and-seek/scenes",
+        headers=headers,
+        json={"name": "打印区"},
+    )
+    scenes = client.get(
+        "/internal/game/hide-and-seek/scenes?page=1&page_size=5", headers=headers
+    )
+
+    assert settings.status_code == 200
+    assert settings.json()["daily_limit"] == 2
+    assert updated.status_code == 200
+    assert updated.json()["entry_fee"] == 2
+    assert created.status_code == 201
+    assert scenes.json()["total"] == 11
 
 
 def test_daily_jobs_require_the_core_token(client, headers):

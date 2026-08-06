@@ -14,6 +14,8 @@ let shopPage = 1;
 let randomEventScenePage = 1;
 let randomEventSceneOpeningTarget = null;
 let randomEventAddScenes = [];
+let hideAndSeekSettings = null;
+let hideAndSeekScenePage = 1;
 
 const pageSize = 20;
 
@@ -51,6 +53,8 @@ const randomEventDetailsModal = document.querySelector("#random-event-details-mo
 const randomEventSceneSeats = document.querySelector("#random-event-scene-seats");
 const randomEventSceneOpenings = document.querySelector("#random-event-scene-openings");
 const randomEventTimeInputs = document.querySelector("#random-event-time-inputs");
+const hideAndSeekSettingsModal = document.querySelector("#hide-and-seek-settings-modal");
+const hideAndSeekSceneModal = document.querySelector("#hide-and-seek-scene-modal");
 
 function headers() {
   return token ? {"X-Admin-Token": token} : {"X-Admin-Session": adminSession};
@@ -146,6 +150,12 @@ function closeRandomEventTimeModal() {
   delete randomEventTimeModal.dataset.scheduleId;
 }
 function closeRandomEventAddModal() { randomEventAddModal.hidden = true; }
+function closeHideAndSeekSettingsModal() { hideAndSeekSettingsModal.hidden = true; }
+function closeHideAndSeekSceneModal() {
+  hideAndSeekSceneModal.hidden = true;
+  delete hideAndSeekSceneModal.dataset.sceneId;
+  delete hideAndSeekSceneModal.dataset.enabled;
+}
 
 function renderSettings(settings) {
   document.querySelector("#settings-card").innerHTML = `
@@ -182,6 +192,53 @@ function renderRandomEventSettings(settings) {
 function renderRandomEventScenes(scenes) {
   document.querySelector("#random-event-scene-list").innerHTML = scenes.map((scene) => `
     <article class="data-row"><div><b>${escapeHtml(scene.name)}${scene.enabled ? "" : "（已停用）"}</b><small>报名公告：${escapeHtml(scene.signup_text)}</small><small>事件模板：${scene.events.length} 条</small><small>席位：${scene.seats.map((seat) => `${escapeHtml(seat.role)} × ${seat.capacity}`).join(" · ")}</small></div><div class="command-actions"><strong>${scene.target_rounds} 轮 · ${scene.reward} 奖励</strong><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="edit" type="button">编辑</button><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有场景。新增一个场景后，系统才会在计划时刻发起事件。</p>";
+}
+
+function renderHideAndSeekSettings(settings) {
+  document.querySelector("#hide-and-seek-settings-card").innerHTML = `
+    <article><span>游戏状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>停用后玩家无法发起新游戏</small></article>
+    <article><span>每局经济</span><strong>${settings.entry_fee} / ${settings.win_reward}</strong><small>发起消耗 / 胜利奖励</small></article>
+    <article><span>每日限制</span><strong>${settings.daily_limit} 次</strong><small>选择超时 ${settings.selection_timeout_minutes} 分钟</small></article>`;
+}
+
+function renderHideAndSeekScenes(scenes) {
+  document.querySelector("#hide-and-seek-scene-list").innerHTML = scenes.map((scene) => `
+    <article class="data-row"><div><b>${escapeHtml(scene.name)}${scene.enabled ? "" : "（已停用）"}</b><small>${scene.enabled ? "可被随机抽取为躲藏地点" : "不会进入新的躲猫猫游戏"}</small></div>
+    <div class="command-actions"><button class="secondary" data-hide-and-seek-scene="${escapeHtml(JSON.stringify(scene))}" data-hide-and-seek-scene-action="edit" type="button">编辑</button><button class="secondary" data-hide-and-seek-scene="${escapeHtml(JSON.stringify(scene))}" data-hide-and-seek-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-hide-and-seek-scene="${escapeHtml(JSON.stringify(scene))}" data-hide-and-seek-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有地点。至少新增并启用 7 个地点后，玩家才能开始游戏。</p>";
+}
+
+async function loadHideAndSeek(page = hideAndSeekScenePage) {
+  const [settings, scenes] = await Promise.all([
+    requestGame("/api/game/hide-and-seek/settings"),
+    requestGame(`/api/game/hide-and-seek/scenes?page=${page}&page_size=${pageSize}`),
+  ]);
+  hideAndSeekSettings = settings;
+  hideAndSeekScenePage = scenes.page;
+  configurationVersion = settings.version;
+  renderHideAndSeekSettings(settings);
+  renderHideAndSeekScenes(scenes.items);
+  renderPagination(document.querySelector("#hide-and-seek-scene-pagination"), scenes, "个地点", loadHideAndSeek);
+}
+
+async function openHideAndSeekSettingsModal() {
+  const settings = hideAndSeekSettings || await requestGame("/api/game/hide-and-seek/settings");
+  hideAndSeekSettings = settings;
+  document.querySelector("#hide-and-seek-enabled").checked = settings.enabled;
+  document.querySelector("#hide-and-seek-entry-fee").value = settings.entry_fee;
+  document.querySelector("#hide-and-seek-win-reward").value = settings.win_reward;
+  document.querySelector("#hide-and-seek-daily-limit").value = settings.daily_limit;
+  document.querySelector("#hide-and-seek-timeout").value = settings.selection_timeout_minutes;
+  hideAndSeekSettingsModal.hidden = false;
+}
+
+function openHideAndSeekSceneModal(scene = null) {
+  hideAndSeekSceneModal.dataset.sceneId = scene?.id || "";
+  hideAndSeekSceneModal.dataset.enabled = String(scene?.enabled ?? true);
+  document.querySelector("#hide-and-seek-scene-modal-title").textContent = scene ? `编辑地点：${scene.name}` : "新增地点";
+  document.querySelector("#save-hide-and-seek-scene").textContent = scene ? "保存地点" : "创建地点";
+  document.querySelector("#hide-and-seek-scene-name").value = scene?.name || "";
+  hideAndSeekSceneModal.hidden = false;
+  document.querySelector("#hide-and-seek-scene-name").focus();
 }
 
 function renderTodayRandomEvents(events) {
@@ -474,6 +531,7 @@ async function loadGameView(view) {
       return;
     }
     if (view === "events") return loadRandomEvents();
+    if (view === "hide-and-seek") return loadHideAndSeek();
     if (view === "commands") {
       const commands = await requestGame("/api/game/commands");
       configurationVersion = commands[0]?.version ?? configurationVersion;
@@ -684,6 +742,8 @@ document.querySelector("#edit-settings").addEventListener("click", () => void op
 document.querySelector("#edit-activity-settings").addEventListener("click", () => void openActivitySettingsModal());
 document.querySelector("#edit-random-event-settings").addEventListener("click", () => void openRandomEventSettingsModal());
 document.querySelector("#create-random-event-scene").addEventListener("click", () => openRandomEventSceneModal());
+document.querySelector("#edit-hide-and-seek-settings").addEventListener("click", () => void openHideAndSeekSettingsModal());
+document.querySelector("#create-hide-and-seek-scene").addEventListener("click", () => openHideAndSeekSceneModal());
 document.querySelector("#add-today-random-event").addEventListener("click", async (event) => {
   try {
     await runMutation(event.currentTarget, "加载中…", openRandomEventAddModal);
@@ -1099,6 +1159,92 @@ randomEventTimeModal.addEventListener("click", async (event) => {
     setResult(`调整失败（${error.message}）`, "error");
   }
 });
+hideAndSeekSettingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-hide-and-seek-settings-modal]")) {
+    closeHideAndSeekSettingsModal();
+    return;
+  }
+  if (event.target.id !== "save-hide-and-seek-settings") return;
+  const button = event.target;
+  const settings = {
+    enabled: document.querySelector("#hide-and-seek-enabled").checked,
+    entry_fee: Number(document.querySelector("#hide-and-seek-entry-fee").value),
+    win_reward: Number(document.querySelector("#hide-and-seek-win-reward").value),
+    daily_limit: Number(document.querySelector("#hide-and-seek-daily-limit").value),
+    selection_timeout_minutes: Number(document.querySelector("#hide-and-seek-timeout").value),
+  };
+  try {
+    await runMutation(button, "保存中…", async () => {
+      hideAndSeekSettings = await requestGame("/api/game/hide-and-seek/settings", {
+        method: "PATCH", headers: {"Content-Type": "application/json", ...configurationHeaders()}, body: JSON.stringify(settings),
+      });
+      configurationVersion = hideAndSeekSettings.version;
+      renderHideAndSeekSettings(hideAndSeekSettings);
+      closeHideAndSeekSettingsModal();
+    });
+    setResult("躲猫猫规则已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+hideAndSeekSceneModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-hide-and-seek-scene-modal]")) {
+    closeHideAndSeekSceneModal();
+    return;
+  }
+  if (event.target.id !== "save-hide-and-seek-scene") return;
+  const name = document.querySelector("#hide-and-seek-scene-name").value.trim();
+  if (!name) {
+    setResult("请填写地点名称", "error");
+    return;
+  }
+  const button = event.target;
+  const sceneId = hideAndSeekSceneModal.dataset.sceneId;
+  try {
+    await runMutation(button, sceneId ? "保存中…" : "创建中…", async () => {
+      const scene = await requestGame(
+        sceneId ? `/api/game/hide-and-seek/scenes/${sceneId}` : "/api/game/hide-and-seek/scenes",
+        {
+          method: sceneId ? "PUT" : "POST",
+          headers: {"Content-Type": "application/json", ...configurationHeaders()},
+          body: JSON.stringify({name, ...(sceneId ? {enabled: hideAndSeekSceneModal.dataset.enabled === "true"} : {})}),
+        },
+      );
+      configurationVersion = scene.version;
+      closeHideAndSeekSceneModal();
+      await loadHideAndSeek();
+    });
+    setResult(sceneId ? "躲猫猫地点已保存" : "躲猫猫地点已创建", "success");
+  } catch (error) {
+    setResult(error.message === "躲猫猫地点名称已存在" ? "地点已存在，请直接编辑现有地点。" : `保存失败（${error.message}）`, "error");
+  }
+});
+document.querySelector("#hide-and-seek-scene-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-hide-and-seek-scene-action]");
+  if (!button) return;
+  const scene = JSON.parse(button.dataset.hideAndSeekScene);
+  if (button.dataset.hideAndSeekSceneAction === "edit") {
+    openHideAndSeekSceneModal(scene);
+    return;
+  }
+  const deletion = button.dataset.hideAndSeekSceneAction === "delete";
+  if (deletion && !window.confirm(`确定删除地点“${scene.name}”？`)) return;
+  try {
+    await runMutation(button, deletion ? "删除中…" : "保存中…", async () => {
+      const updated = await requestGame(`/api/game/hide-and-seek/scenes/${scene.id}`, {
+        method: deletion ? "DELETE" : "PUT",
+        ...(deletion
+          ? {headers: configurationHeaders()}
+          : {headers: {"Content-Type": "application/json", ...configurationHeaders()}, body: JSON.stringify({...scene, enabled: !scene.enabled})}),
+      });
+      configurationVersion = updated.version;
+      await loadHideAndSeek();
+    });
+    setResult(deletion ? "地点已删除" : `地点已${scene.enabled ? "停用" : "启用"}`, "success");
+  } catch (error) {
+    setResult(`更新失败（${error.message}）`, "error");
+  }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !templateModal.hidden) closeTemplateModal();
   if (event.key === "Escape" && !settingsModal.hidden) closeSettingsModal();
@@ -1108,6 +1254,8 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !randomEventSceneModal.hidden) closeRandomEventSceneModal();
   if (event.key === "Escape" && !randomEventTimeModal.hidden) closeRandomEventTimeModal();
   if (event.key === "Escape" && !randomEventAddModal.hidden) closeRandomEventAddModal();
+  if (event.key === "Escape" && !hideAndSeekSettingsModal.hidden) closeHideAndSeekSettingsModal();
+  if (event.key === "Escape" && !hideAndSeekSceneModal.hidden) closeHideAndSeekSceneModal();
 });
 document.querySelector("#item-form").addEventListener("submit", async (event) => {
   event.preventDefault();

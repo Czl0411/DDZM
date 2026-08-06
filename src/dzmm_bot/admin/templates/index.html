@@ -58,6 +58,7 @@
               <button id="nav-overview" class="nav-item active" data-view="overview" type="button">运行概览</button>
               <button id="nav-settings" class="nav-item" data-view="settings" type="button">玩法配置</button>
               <button id="nav-events" class="nav-item" data-view="events" type="button">随机事件</button>
+              <button id="nav-hide-and-seek" class="nav-item" data-view="hide-and-seek" type="button">躲猫猫</button>
               <button id="nav-commands" class="nav-item" data-view="commands" type="button">指令库</button>
               <button id="nav-employees" class="nav-item" data-view="employees" type="button">员工</button>
               <button id="nav-shop" class="nav-item" data-view="shop" type="button">物品与商店</button>
@@ -188,6 +189,28 @@
                   <div class="command-actions"><button id="add-today-random-event" class="primary" type="button">补充今日事件</button><button id="refresh-random-events" class="secondary" type="button">刷新列表</button></div>
                 </div>
                 <div id="today-random-event-list" class="data-list"></div>
+              </section>
+
+              <section id="hide-and-seek-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">单人摸鱼小游戏</p>
+                <div class="panel-heading">
+                  <div>
+                    <h2>躲猫猫规则</h2>
+                    <p class="muted">玩家支付入场费后，从 7 个地点中选择一处；系统一次巡查 3 个地点。</p>
+                  </div>
+                  <button id="edit-hide-and-seek-settings" class="primary" type="button">编辑规则</button>
+                </div>
+                <div id="hide-and-seek-settings-card" class="settings-card" aria-live="polite"></div>
+                <hr>
+                <div class="panel-heading">
+                  <div>
+                    <h2>躲猫猫场景库</h2>
+                    <p class="muted">每局会从已启用地点中随机抽取 7 个；至少保留 7 个已启用地点才能开始游戏。</p>
+                  </div>
+                  <button id="create-hide-and-seek-scene" class="primary" type="button">新增地点</button>
+                </div>
+                <div id="hide-and-seek-scene-list" class="data-list"></div>
+                <nav id="hide-and-seek-scene-pagination" class="pagination" aria-label="躲猫猫场景分页"></nav>
               </section>
 
               <section id="employees-view" class="dashboard-view panel" hidden>
@@ -335,6 +358,24 @@
     <div id="random-event-details-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="random-event-details-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-random-event-details-modal></div>
       <section class="template-modal-card event-details-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">随机事件</p><h2 id="random-event-details-modal-title">事件详情</h2><p class="muted">仅记录参与玩家的有效发言。</p></div><button class="text-button" data-close-random-event-details-modal type="button">关闭</button></div><div id="random-event-details-list" class="data-list"></div></section>
+    </div>
+    <div id="hide-and-seek-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="hide-and-seek-settings-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-hide-and-seek-settings-modal></div>
+      <section class="template-modal-card">
+        <div class="template-modal-heading"><div><p class="eyebrow">摸鱼躲猫猫</p><h2 id="hide-and-seek-settings-modal-title">编辑游戏规则</h2><p class="muted">每日次数按北京时间 00:00 重置；随机事件报名或进行中时无法发起游戏。</p></div><button class="text-button" data-close-hide-and-seek-settings-modal type="button">关闭</button></div>
+        <label><input id="hide-and-seek-enabled" type="checkbox"> 启用躲猫猫</label>
+        <div class="event-input-grid"><label>发起消耗<input id="hide-and-seek-entry-fee" type="number" min="0" max="999" required></label><label>胜利奖励<input id="hide-and-seek-win-reward" type="number" min="0" max="999" required></label></div>
+        <div class="event-input-grid"><label>每日可玩次数<input id="hide-and-seek-daily-limit" type="number" min="1" max="99" required></label><label>选择超时（分钟）<input id="hide-and-seek-timeout" type="number" min="1" max="60" required></label></div>
+        <div class="template-modal-actions"><button class="secondary" data-close-hide-and-seek-settings-modal type="button">取消</button><button id="save-hide-and-seek-settings" class="primary" type="button">保存规则</button></div>
+      </section>
+    </div>
+    <div id="hide-and-seek-scene-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="hide-and-seek-scene-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-hide-and-seek-scene-modal></div>
+      <section class="template-modal-card">
+        <div class="template-modal-heading"><div><p class="eyebrow">摸鱼躲猫猫</p><h2 id="hide-and-seek-scene-modal-title">新增地点</h2><p class="muted">地点名称会直接展示给玩家。停用地点不会再进入后续游戏候选。</p></div><button class="text-button" data-close-hide-and-seek-scene-modal type="button">关闭</button></div>
+        <label for="hide-and-seek-scene-name">地点名称</label><input id="hide-and-seek-scene-name" maxlength="64" placeholder="例如：公司茶水间" required>
+        <div class="template-modal-actions"><button class="secondary" data-close-hide-and-seek-scene-modal type="button">取消</button><button id="save-hide-and-seek-scene" class="primary" type="button">创建地点</button></div>
+      </section>
     </div>
     <script src="/static/admin.js"></script>
   </body>

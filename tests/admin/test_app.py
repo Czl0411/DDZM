@@ -1104,6 +1104,12 @@ def test_admin_static_assets_disable_browser_cache(client):
     assert response.headers["cache-control"] == "no-store"
 
 
+def test_admin_index_disables_browser_cache(client):
+    response = client.get("/")
+
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_admin_uses_standard_toast_notifications(client):
     page = client.get("/").text
     script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
@@ -1119,6 +1125,16 @@ def test_status_refresh_does_not_show_a_success_notification():
     )[0]
 
     assert 'setResult("状态已更新", "success")' not in refresh
+
+
+def test_random_event_details_modal_keeps_header_visible_and_scrolls_entries(client):
+    page = client.get("/").text
+    stylesheet = Path("src/dzmm_bot/admin/static/admin.css").read_text()
+
+    assert 'class="template-modal-card event-details-modal-card"' in page
+    assert ".event-details-modal-card" in stylesheet
+    assert "#random-event-details-list" in stylesheet
+    assert "overflow-y: auto" in stylesheet
 
 
 def test_random_event_scene_script_submits_openings_list():

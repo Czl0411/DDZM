@@ -164,7 +164,10 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> FileResponse:
-        return FileResponse(_ROOT / "templates" / "index.html")
+        return FileResponse(
+            _ROOT / "templates" / "index.html",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/static/admin.js")
     def javascript() -> FileResponse:

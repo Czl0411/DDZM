@@ -7,10 +7,10 @@ import re
 from secrets import randbelow
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
 
@@ -2322,6 +2322,15 @@ class CoreRepository:
         self, worker_id: str, now: datetime, lease_seconds: int
     ) -> OutboundRecord | None:
         with self._session() as session:
+            earlier_reply = aliased(OutboundRecord)
+            has_unsent_earlier_reply = exists(
+                select(1).where(
+                    earlier_reply.inbound_message_id
+                    == OutboundRecord.inbound_message_id,
+                    earlier_reply.reply_index < OutboundRecord.reply_index,
+                    earlier_reply.status != "sent",
+                )
+            )
             record = session.scalar(
                 select(OutboundRecord)
                 .where(
@@ -2329,6 +2338,10 @@ class CoreRepository:
                     or_(
                         OutboundRecord.lease_expires_at.is_(None),
                         OutboundRecord.lease_expires_at <= now,
+                    ),
+                    or_(
+                        OutboundRecord.inbound_message_id.is_(None),
+                        ~has_unsent_earlier_reply,
                     ),
                 )
                 .order_by(

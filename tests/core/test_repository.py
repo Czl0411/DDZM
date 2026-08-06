@@ -503,6 +503,21 @@ def test_outbound_replies_for_one_inbound_are_claimed_in_reply_order(
     assert claimed_second.id == second.id
 
 
+def test_second_reply_waits_until_the_first_reply_is_sent(repository, inbound, now):
+    stored, _ = repository.accept_inbound(inbound)
+    first = repository.enqueue_outbound(stored.id, "第一轮巡查", 0)
+    second = repository.enqueue_outbound(stored.id, "第二轮巡查", 1)
+
+    claimed_first = repository.claim_outbound("worker-a", now, 30)
+    assert claimed_first.id == first.id
+    assert repository.claim_outbound("worker-b", now, 30) is None
+
+    assert repository.confirm_sent(
+        first.id, "worker-a", claimed_first.lease_token, "sent-1", now
+    )
+    assert repository.claim_outbound("worker-b", now, 30).id == second.id
+
+
 def test_confirmed_outbound_is_not_claimed_again(
     repository, session_factory, inbound, now
 ):

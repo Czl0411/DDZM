@@ -1,7 +1,9 @@
 """Split hide and seek patrol replies into separate template scenarios."""
 
 from collections.abc import Sequence
+from datetime import datetime
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from alembic import op
 import sqlalchemy as sa
@@ -20,12 +22,15 @@ new_won_template = "【系统巡查·第二轮】巡查 {巡查地点}\n躲藏�
 
 
 def upgrade() -> None:
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
     templates = sa.table(
         "command_reply_templates",
         sa.column("id", sa.Uuid()),
         sa.column("command", sa.String()),
         sa.column("scenario", sa.String()),
         sa.column("template", sa.Text()),
+        sa.column("created_at", sa.DateTime(timezone=True)),
+        sa.column("updated_at", sa.DateTime(timezone=True)),
     )
     for scenario, template in (
         ("first_round_missed", "【系统巡查·第一轮】巡查 {巡查地点}\n奇怪，人躲哪里去了......."),
@@ -33,7 +38,12 @@ def upgrade() -> None:
     ):
         op.execute(
             templates.insert().values(
-                id=uuid4(), command="/摸鱼躲猫猫", scenario=scenario, template=template
+                id=uuid4(),
+                command="/摸鱼躲猫猫",
+                scenario=scenario,
+                template=template,
+                created_at=now,
+                updated_at=now,
             )
         )
     for scenario, old_template, new_template in (

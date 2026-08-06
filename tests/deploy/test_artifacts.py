@@ -91,3 +91,5 @@ def test_separate_patrol_template_migration_adds_first_round_scenarios():
     assert 'down_revision: str | None = "20260806_17"' in migration
     assert '"first_round_missed"' in migration
     assert '"found_first_round"' in migration
+    assert '"created_at"' in migration
+    assert '"updated_at"' in migration

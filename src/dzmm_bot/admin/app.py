@@ -490,8 +490,12 @@ def create_app(
             scene = await request.json()
         except ValueError:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
-        required = ("name", "signup_text", "openings", "reward", "target_rounds", "seats")
-        if not isinstance(scene, dict) or not all(key in scene for key in required):
+        required = ("name", "signup_text", "reward", "target_rounds", "seats")
+        if (
+            not isinstance(scene, dict)
+            or not all(key in scene for key in required)
+            or not isinstance(scene.get("events", scene.get("openings")), list)
+        ):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
         return versioned_configuration_response(
             identity,
@@ -500,6 +504,9 @@ def create_app(
             lambda: _relay_core(
                 lambda: core.create_random_event_scene(
                     {key: scene[key] for key in required}
+                    | {"events": scene["events"]}
+                    if "events" in scene
+                    else {key: scene[key] for key in (*required, "openings")}
                 )
             ),
             scope="random-event-scenes",
@@ -517,13 +524,15 @@ def create_app(
         required = (
             "name",
             "signup_text",
-            "openings",
             "reward",
             "target_rounds",
             "seats",
             "enabled",
         )
-        if not all(key in request for key in required):
+        if (
+            not all(key in request for key in required)
+            or not isinstance(request.get("events", request.get("openings")), list)
+        ):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
         return versioned_configuration_response(
             identity,
@@ -531,7 +540,11 @@ def create_app(
             if_match,
             lambda: _relay_core(
                 lambda: core.update_random_event_scene(
-                    scene_id, {key: request[key] for key in required}
+                    scene_id,
+                    {key: request[key] for key in required}
+                    | {"events": request["events"]}
+                    if "events" in request
+                    else {key: request[key] for key in (*required, "openings")},
                 )
             ),
             scope=f"random-event-scene:{scene_id}",

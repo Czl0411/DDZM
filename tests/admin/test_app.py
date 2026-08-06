@@ -1054,3 +1054,33 @@ def test_admin_account_list_bypasses_browser_cache():
     script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
 
     assert 'requestGame("/api/admins", {cache: "no-store"})' in script
+
+
+def test_admin_updates_random_event_scene_with_named_events(client, headers):
+    created = client.post(
+        "/api/game/random-events/scenes",
+        headers=headers,
+        json={
+            "name": "茶水间",
+            "signup_text": "报名",
+            "events": [{"name": "咖啡事故", "opening_text": "开场"}],
+            "reward": 1,
+            "target_rounds": 1,
+            "seats": [{"role": "员工", "capacity": 1}],
+        },
+    )
+    scene = created.json()
+
+    updated = client.put(
+        f"/api/game/random-events/scenes/{scene['id']}",
+        headers={
+            **headers,
+            "Idempotency-Key": "test-request-update",
+            "If-Match": str(scene["version"]),
+        },
+        json={**scene, "events": [{"name": "新事件", "opening_text": "新开场"}]},
+    )
+
+    assert created.status_code == 201
+    assert updated.status_code == 200
+    assert updated.json()["events"][0]["name"] == "新事件"

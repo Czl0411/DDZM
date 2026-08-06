@@ -56,3 +56,12 @@ def test_hide_and_seek_command_migration_preserves_custom_templates():
     assert "old_started_template" in migration
     assert "old_found_template" in migration
     assert "/开始摸鱼躲藏" in migration
+
+
+def test_hide_and_seek_penalty_timing_migration_preserves_custom_start_copy():
+    migration = (ROOT / "migrations/versions/20260806_15_hide_and_seek_penalty_timing.py").read_text()
+
+    assert 'down_revision: str | None = "20260806_14"' in migration
+    assert "old_started_template" in migration
+    assert "old_expired_template" in migration
+    assert "开局不扣除" in migration

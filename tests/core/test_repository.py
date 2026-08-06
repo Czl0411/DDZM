@@ -86,35 +86,38 @@ def test_hide_and_seek_scene_name_must_be_unique(repository):
         repository.create_hide_and_seek_scene("茶水间")
 
 
-def test_hide_and_seek_charges_then_rewards_unpatrolled_scene(repository, monkeypatch):
+def test_hide_and_seek_rewards_unpatrolled_scene_without_opening_charge(repository, monkeypatch):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     user, _ = repository.create_user("u1", "小明", now, 0)
     monkeypatch.setattr("dzmm_bot.core.repository.randbelow", lambda _: 0)
 
     started = repository.start_hide_and_seek("u1", now)
+    assert repository.find_user("u1").balance == 0
     finished = repository.choose_hide_and_seek("u1", 7, now)
 
     assert started.status == "started"
     assert len(started.candidates) == 7
     assert finished.status == "won"
     assert finished.patrol_numbers == (1, 2, 3)
-    assert repository.find_user("u1").balance == 2
+    assert repository.find_user("u1").balance == 3
     assert repository.today_income(user.id, now) == 3
 
 
-def test_hide_and_seek_found_keeps_entry_fee(repository, monkeypatch):
+def test_hide_and_seek_found_charges_frozen_penalty(repository, monkeypatch):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_user("u1", "小明", now, 0)
     monkeypatch.setattr("dzmm_bot.core.repository.randbelow", lambda _: 0)
 
-    repository.start_hide_and_seek("u1", now)
+    started = repository.start_hide_and_seek("u1", now)
+    assert repository.find_user("u1").balance == 0
     finished = repository.choose_hide_and_seek("u1", 1, now)
 
     assert finished.status == "found"
+    assert finished.entry_fee == started.entry_fee == 1
     assert repository.find_user("u1").balance == -1
 
 
-def test_hide_and_seek_timeout_refunds_and_returns_daily_play(repository):
+def test_hide_and_seek_timeout_returns_daily_play_without_balance_change(repository):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_user("u1", "小明", now, 0)
     repository.start_hide_and_seek("u1", now)
@@ -123,7 +126,7 @@ def test_hide_and_seek_timeout_refunds_and_returns_daily_play(repository):
     restarted = repository.start_hide_and_seek("u1", now + timedelta(minutes=2, seconds=1))
 
     assert [game.status for game in cancelled] == ["cancelled"]
-    assert repository.find_user("u1").balance == -1
+    assert repository.find_user("u1").balance == 0
     assert restarted.status == "started"
     assert repository.expire_hide_and_seek_games(now + timedelta(minutes=3)) == []
 
@@ -152,7 +155,7 @@ def test_hide_and_seek_limits_active_game_and_invalid_scene(repository):
     assert repository.start_hide_and_seek("u1", now).status == "started"
     assert repository.start_hide_and_seek("u1", now).status == "already_active"
     assert repository.choose_hide_and_seek("u1", 8, now).status == "invalid_scene"
-    assert repository.find_user("u1").balance == -1
+    assert repository.find_user("u1").balance == 0
 
 
 def test_hide_and_seek_daily_limit_is_beijing_scoped(repository):

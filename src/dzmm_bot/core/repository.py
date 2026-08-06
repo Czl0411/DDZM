@@ -663,7 +663,6 @@ class CoreRepository:
                     session.add(daily)
                 candidates = _sample_distinct([scene.name for scene in scenes], 7)
                 daily.count += 1
-                self._apply_balance_change(user, -settings.entry_fee, "hide_and_seek_entry", now)
                 session.add(
                     HideAndSeekGameRecord(
                         user_id=user.id,
@@ -717,7 +716,11 @@ class CoreRepository:
                 game.patrol_numbers = patrol_numbers
                 game.finished_at = now
                 game.state = "found" if scene_number in patrol_numbers else "won"
-                if game.state == "won":
+                if game.state == "found":
+                    self._apply_balance_change(
+                        user, -game.entry_fee, "hide_and_seek_penalty", now
+                    )
+                else:
                     self._apply_balance_change(user, game.win_reward, "hide_and_seek_win", now)
                 patrol_scenes = tuple(game.candidates[number - 1] for number in patrol_numbers)
                 return HideAndSeekGameResult(
@@ -773,7 +776,6 @@ class CoreRepository:
             return
         game.state = "cancelled"
         game.finished_at = now
-        self._apply_balance_change(user, game.entry_fee, "hide_and_seek_refund", now)
         daily = session.scalar(
             select(HideAndSeekDailyPlayRecord)
             .where(
@@ -1836,7 +1838,7 @@ class CoreRepository:
                 self._backfill_current_day_history(now)
             for game in self.expire_hide_and_seek_games(now):
                 self.enqueue_system_outbound(
-                    f"【摸鱼躲猫猫】{game.display_name} 未在 {game.selection_timeout_minutes} 分钟内选择地点，本局已取消，入场费和次数已返还。"
+                    f"【摸鱼躲猫猫】{game.display_name} 未在 {game.selection_timeout_minutes} 分钟内选择地点，本局已取消，次数已返还。"
                 )
             self._settle_weekly_attendance_rewards(now)
             self._settle_activity_rewards(now)

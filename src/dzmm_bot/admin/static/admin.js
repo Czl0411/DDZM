@@ -201,7 +201,7 @@ function renderRandomEventScenes(scenes) {
 function renderHideAndSeekSettings(settings) {
   document.querySelector("#hide-and-seek-settings-card").innerHTML = `
     <article><span>游戏状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>停用后玩家无法发起新游戏</small></article>
-    <article><span>每局经济</span><strong>${settings.entry_fee} / ${settings.win_reward}</strong><small>发起消耗 / 胜利奖励</small></article>
+    <article><span>每局经济</span><strong>${settings.entry_fee} / ${settings.win_reward}</strong><small>被发现扣除 / 胜利奖励</small></article>
     <article><span>每日限制</span><strong>${settings.daily_limit} 次</strong><small>选择超时 ${settings.selection_timeout_minutes} 分钟</small></article>`;
 }
 

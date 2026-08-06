@@ -56,11 +56,12 @@ class FakeRequest:
     def __init__(self, messages=None):
         self.messages = messages or []
         self.calls = []
+        self.profile = {"id": "bot-1"}
 
     def __call__(self, procedure, payload=None):
         self.calls.append((procedure, payload))
         if procedure == "user.getMe":
-            return {"id": "bot-1"}
+            return self.profile
         if procedure == "chatroom.getMessages":
             return {"messages": self.messages}
         raise AssertionError(f"unexpected procedure {procedure}")
@@ -243,21 +244,20 @@ def test_joined_event_without_payload_marks_the_gateway_ready(gateway):
     assert adapter.is_authenticated()
 
 
-def test_authentication_is_lost_when_the_browser_returns_to_sign_in():
-    """Fails if a stale socket keeps reporting ready after browser logout."""
+def test_authentication_is_lost_when_the_platform_identity_is_unavailable():
+    """Fails if a stale socket keeps reporting ready after token expiry."""
     socket = FakeSocket()
-    browser_authenticated = [True]
+    request = FakeRequest()
     adapter = AikdaSocketGateway(
         TARGET_URL,
         token_provider=lambda: "short-lived-token",
-        request=FakeRequest(),
+        request=request,
         socket_factory=lambda: socket,
-        browser_authenticated=lambda: browser_authenticated[0],
         clock=lambda: NOW,
     )
 
     assert adapter.is_authenticated() is True
-    browser_authenticated[0] = False
+    request.profile = {}
 
     assert adapter.is_authenticated() is False
 

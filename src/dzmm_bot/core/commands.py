@@ -21,6 +21,10 @@ class GroupCommandHandler:
         if not content:
             return None
         command = content.split(maxsplit=1)[0]
+        if command == "/摸鱼躲猫猫":
+            return None
+        if command in {"/开始摸鱼躲藏", "/躲"}:
+            command = "/摸鱼躲猫猫"
         if command == "/me":
             command = "/我"
         if command not in _COMMANDS:
@@ -224,7 +228,7 @@ class GroupCommandHandler:
 
     def _hide_and_seek(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split()
-        if len(parts) == 2 and parts[1] == "发起游戏":
+        if content == "/开始摸鱼躲藏":
             result = self._repository.start_hide_and_seek(platform_id, received_at)
             if result.status == "started":
                 return self._reply(
@@ -242,9 +246,9 @@ class GroupCommandHandler:
                     },
                 )
             return self._hide_and_seek_status_reply(result.status, received_at)
-        if len(parts) == 3 and parts[1] == "躲" and parts[2].isdigit():
+        if len(parts) == 2 and parts[0] == "/躲" and parts[1].isdigit():
             result = self._repository.choose_hide_and_seek(
-                platform_id, int(parts[2]), received_at
+                platform_id, int(parts[1]), received_at
             )
             if result.status in {"won", "found"}:
                 patrols = "、".join(
@@ -260,6 +264,7 @@ class GroupCommandHandler:
                         "{巡查地点}": patrols,
                         "{奖励}": result.win_reward,
                         "{余额}": result.balance,
+                        "{惩罚金额}": result.entry_fee,
                     },
                 )
             return self._hide_and_seek_status_reply(result.status, received_at)
@@ -283,7 +288,8 @@ class GroupCommandHandler:
         commands = self._repository.list_enabled_command_definitions()
         settings = self._repository.get_game_settings()
         descriptions = {
-            "/打卡": f"每日领取 {settings.checkin_reward} {settings.currency_name}"
+            "/打卡": f"每日领取 {settings.checkin_reward} {settings.currency_name}",
+            "/摸鱼躲猫猫": "发起单人躲猫猫小游戏；选择时发送 /躲 序号",
         }
         return self._reply(
             "/帮助",
@@ -291,7 +297,7 @@ class GroupCommandHandler:
             received_at,
             {
                 "{指令列表}": "\n".join(
-                    f"{item.command}：{descriptions.get(item.command, item.description)}"
+                    f"{'/开始摸鱼躲藏' if item.command == '/摸鱼躲猫猫' else item.command}：{descriptions.get(item.command, item.description)}"
                     for item in commands
                 )
             },

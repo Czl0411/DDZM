@@ -193,20 +193,37 @@ def test_random_event_commands_join_count_rounds_and_settle_on_exit():
     assert "领取 4 摸鱼币" in _latest_reply(factory)
 
 
-def test_hide_and_seek_command_lists_seven_places_and_patrols_three(monkeypatch):
+def test_hide_and_seek_short_commands_list_places_and_patrol(monkeypatch):
     service, _, factory = _service()
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     _receive(service, "join", "u1", "/入职 小明", now)
     monkeypatch.setattr("dzmm_bot.core.repository.randbelow", lambda _: 0)
 
-    _receive(service, "start", "u1", "/摸鱼躲猫猫 发起游戏", now)
+    _receive(service, "start", "u1", "/开始摸鱼躲藏", now)
     started_reply = _latest_reply(factory)
-    _receive(service, "choose", "u1", "/摸鱼躲猫猫 躲 7", now)
+    _receive(service, "choose", "u1", "/躲 7", now)
     finished_reply = _latest_reply(factory)
 
     assert "1（" in started_reply and "7（" in started_reply
     assert "【系统巡查】巡查" in finished_reply
     assert "躲藏成功" in finished_reply
+
+
+def test_hide_and_seek_found_template_receives_frozen_penalty_amount(monkeypatch):
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _receive(service, "join", "u1", "/入职 小明", now)
+    repository.set_reply_template(
+        "/摸鱼躲猫猫",
+        "found",
+        "{昵称}，扣除 {惩罚金额} {货币}，当前余额 {余额} {货币}。",
+    )
+    monkeypatch.setattr("dzmm_bot.core.repository.randbelow", lambda _: 0)
+
+    _receive(service, "start", "u1", "/开始摸鱼躲藏", now)
+    _receive(service, "choose", "u1", "/躲 1", now)
+
+    assert _latest_reply(factory) == "小明，扣除 1 摸鱼币，当前余额 -1 摸鱼币。"
 
 
 def test_disabled_command_does_not_reply_or_change_data():
@@ -299,3 +316,14 @@ def test_help_lists_only_enabled_commands_and_uses_its_template():
 
     assert "/帮助" in _latest_reply(factory)
     assert "/打卡" not in _latest_reply(factory)
+
+
+def test_help_uses_short_hide_and_seek_start_command():
+    service, _, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+
+    _receive(service, "help", "platform-xiaoming", "/帮助", received_at)
+
+    reply = _latest_reply(factory)
+    assert "/开始摸鱼躲藏：发起单人躲猫猫小游戏；选择时发送 /躲 序号" in reply
+    assert "/摸鱼躲猫猫：" not in reply

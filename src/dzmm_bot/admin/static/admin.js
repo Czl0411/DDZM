@@ -129,6 +129,10 @@ function escapeHtml(value) {
   })[character]);
 }
 
+function commandLabel(command) {
+  return command === "/摸鱼躲猫猫" ? "/开始摸鱼躲藏" : command;
+}
+
 function closeTemplateModal() {
   templateModal.hidden = true;
   delete templateModal.dataset.command;
@@ -408,7 +412,7 @@ function openTemplateModal(button) {
   const templates = JSON.parse(button.dataset.commandTemplates);
   templateModal.dataset.command = button.dataset.command;
   templateModal.dataset.templates = button.dataset.commandTemplates;
-  templateModalTitle.textContent = `配置 ${button.dataset.command} 回复`;
+  templateModalTitle.textContent = `配置 ${commandLabel(button.dataset.command)} 回复`;
   templateModalContext.textContent = button.dataset.commandDescription;
   templateModalScenario.innerHTML = templates
     .map((template) => `<option value="${escapeHtml(template.scenario)}">${escapeHtml(template.label)}</option>`)
@@ -537,7 +541,7 @@ async function loadGameView(view) {
       configurationVersion = commands[0]?.version ?? configurationVersion;
       document.querySelector("#command-list").innerHTML = commands.map((command) => `
         <article class="command-card">
-          <div class="command-heading"><div><b>${escapeHtml(command.command)}</b><small>${escapeHtml(command.description)}</small></div>
+          <div class="command-heading"><div><b>${escapeHtml(commandLabel(command.command))}</b><small>${escapeHtml(command.description)}</small></div>
           <div class="command-actions"><button class="secondary" data-command-templates="${escapeHtml(JSON.stringify(command.templates))}" data-command="${escapeHtml(command.command)}" data-command-description="${escapeHtml(command.description)}" type="button">配置回复</button>
           <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></div></div>
         </article>`).join("") || "<p class=\"muted\">暂无指令。</p>";

@@ -47,3 +47,12 @@ def test_hide_and_seek_migration_creates_game_tables():
     assert "hide_and_seek_daily_plays" in migration
     assert "hide_and_seek_games" in migration
     assert "ux_hide_and_seek_one_selecting_user" in migration
+
+
+def test_hide_and_seek_command_migration_preserves_custom_templates():
+    migration = (ROOT / "migrations/versions/20260806_14_hide_and_seek_commands.py").read_text()
+
+    assert 'down_revision: str | None = "20260806_13"' in migration
+    assert "old_started_template" in migration
+    assert "old_found_template" in migration
+    assert "/开始摸鱼躲藏" in migration

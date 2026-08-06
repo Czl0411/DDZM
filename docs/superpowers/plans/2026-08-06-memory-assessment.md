@@ -91,14 +91,11 @@ memory_assessment_participants(
 )
 memory_assessment_rounds(
     id, game_id FK, sequence, answer, display_seconds, state,
-    outbound_message_id FK NULL, platform_message_id NULL,
-    sent_at NULL, recall_due_at NULL, recalled_at NULL,
-    lease_token NULL, lease_expires_at NULL,
     UNIQUE(game_id, sequence)
 )
 ```
 
-Add an index permitting only one `memory_assessment_games` record in states `waiting_opponent`, `showing_answer`, `awaiting_answer`, or `awaiting_decision`; use PostgreSQL partial-index syntax with a matching SQLite predicate. Seed the singleton settings and five level rows in the migration. Add equivalent SQLAlchemy models and read/write validations: positive counts and seconds, non-empty unique character set with no whitespace, positive level length/reward, and a duel difficulty level that exists in the submitted level set.
+Add an index permitting only one `memory_assessment_games` record in states `waiting_opponent`, `showing_answer`, `awaiting_answer`, or `awaiting_decision`; use PostgreSQL partial-index syntax with a matching SQLite predicate. Seed the singleton settings and five level rows in the migration. Add equivalent SQLAlchemy models and read/write validations: positive counts and seconds, non-empty unique character set with no whitespace, positive level length/reward, and a duel difficulty level that exists in the submitted level set. The outbound-message linkage, platform message ID, recall times, and leasing columns are deliberately deferred to Task 4 so migrations have no circular foreign-key dependency.
 
 - [ ] **Step 4: Implement repository settings reads and writes**
 
@@ -291,7 +288,7 @@ Expected: FAIL because no typed directive, recall claim, or confirmation endpoin
 
 - [ ] **Step 3: Add persistent send/recall handoff**
 
-Add `memory_round_id` to `outbound_messages`, update `enqueue_outbound`, claim/response models, and `confirm_sent`. For memory rounds, `confirm_sent` records the returned Aikda platform message ID and `recall_due_at = sent_at + display_seconds`, while the game remains `showing_answer`.
+Add nullable `memory_round_id` to `outbound_messages`, then add nullable `outbound_message_id`, `platform_message_id`, `sent_at`, `recall_due_at`, `recalled_at`, `lease_token`, and `lease_expires_at` to `memory_assessment_rounds`. Update `enqueue_outbound`, claim/response models, and `confirm_sent`. For memory rounds, `confirm_sent` records the returned Aikda platform message ID and `recall_due_at = sent_at + display_seconds`, while the game remains `showing_answer`.
 
 Add repository claim logic that leases one due, unsatisfied round with `FOR UPDATE SKIP LOCKED`; confirming `message:recall` ACK sets `recalled_at`, state `awaiting_answer`, and duel `answer_deadline = recalled_at + timeout`. A failed recall leaves the lease to expire and prevents all answers; after the normal retry ceiling, cancel the unshown round and return the daily slot or both duel entry freezes with explicit compensating balance transactions. Expose only the claim/confirm operations needed by the Worker.
 

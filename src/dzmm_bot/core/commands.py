@@ -251,10 +251,22 @@ class GroupCommandHandler:
                 platform_id, int(parts[1]), received_at
             )
             if result.status in {"won", "found"}:
-                patrols = "、".join(
+                first_patrols = "、".join(
                     f"{number}（{name}）"
-                    for number, name in zip(result.patrol_numbers, result.patrol_scenes)
+                    for number, name in zip(result.patrol_numbers[:3], result.patrol_scenes[:3])
                 )
+                patrols = f"第一轮：{first_patrols}"
+                patrol_process = f"【系统巡查·第一轮】巡查 {first_patrols}"
+                if len(result.patrol_numbers) > 3:
+                    second_patrols = "、".join(
+                        f"{number}（{name}）"
+                        for number, name in zip(result.patrol_numbers[3:], result.patrol_scenes[3:])
+                    )
+                    patrols += f"\n第二轮：{second_patrols}"
+                    patrol_process += (
+                        "\n奇怪，人躲哪里去了......."
+                        f"\n【系统巡查·第二轮】巡查 {second_patrols}"
+                    )
                 return self._reply(
                     "/摸鱼躲猫猫",
                     result.status,
@@ -262,6 +274,7 @@ class GroupCommandHandler:
                     {
                         "{昵称}": result.display_name,
                         "{巡查地点}": patrols,
+                        "{巡查过程}": patrol_process,
                         "{奖励}": result.win_reward,
                         "{余额}": result.balance,
                         "{惩罚金额}": result.entry_fee,

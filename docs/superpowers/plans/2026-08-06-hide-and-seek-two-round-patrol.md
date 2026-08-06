@@ -4,7 +4,7 @@
 
 **Goal:** 让单人躲猫猫以固定的“第一轮 3 个地点、第二轮 2 个地点”方式完成巡查与结算。
 
-**Architecture:** 在现有 `HideAndSeekGameRecord` 上记录当前巡查轮次，仓储层按轮抽取未巡查地点；命令层将每轮结果拆成独立群消息，最后一条包含结算文案。巡查数量不进入管理端设置，保持固定常量。
+**Architecture:** 仓储层一次抽取最多 5 个不重复地点，前 3 个是第一轮，后 2 个仅在第一轮未命中时纳入结果；命令层将两轮过程组装为一条群消息。巡查数量不进入管理端设置，保持固定常量。
 
 **Tech Stack:** Python 3.13、SQLAlchemy、FastAPI、pytest、Alembic。
 
@@ -20,9 +20,7 @@
 ### Task 1: 保存并执行双轮巡查
 
 **Files:**
-- Modify: `src/dzmm_bot/core/schema.py`
 - Modify: `src/dzmm_bot/core/repository.py`
-- Create: `migrations/versions/20260806_16_hide_and_seek_two_round_patrol.py`
 - Test: `tests/core/test_repository.py`
 
 **Interfaces:**
@@ -32,7 +30,7 @@
 - [ ] **Step 1: Write the failing repository tests**
 
 ```python
-assert result.patrol_rounds == ((1, 2, 3), (4, 5))
+assert result.patrol_numbers == (1, 2, 3, 4, 5)
 assert result.status == "won"
 ```
 
@@ -40,7 +38,7 @@ assert result.status == "won"
 
 Run: `.venv/bin/pytest tests/core/test_repository.py -k hide_and_seek -v`
 
-- [ ] **Step 3: Add the minimum game-state field, migration, and repository selection logic**
+- [ ] **Step 3: Add the minimum repository selection logic**
 
 ```python
 first_patrol = _sample_distinct(remaining_numbers, 3)
@@ -56,28 +54,29 @@ Run: `.venv/bin/pytest tests/core/test_repository.py -k hide_and_seek -v`
 **Files:**
 - Modify: `src/dzmm_bot/core/commands.py`
 - Modify: `src/dzmm_bot/core/reply_templates.py`
+- Create: `migrations/versions/20260806_16_hide_and_seek_two_round_patrol.py`
 - Test: `tests/core/test_group_commands.py`
 
 **Interfaces:**
-- Consumes: `HideAndSeekGameResult.patrol_rounds`。
-- Produces: 第一轮和第二轮分别发送的 `GroupReply`，最后一条携带结算文本。
+- Consumes: `HideAndSeekGameResult.patrol_numbers`。
+- Produces: 一条包含第一轮、过渡文案、第二轮与结算文本的群回复。
 
 - [ ] **Step 1: Write the failing command test**
 
 ```python
-assert replies[0].text.startswith("【系统巡查·第一轮】")
-assert replies[1].text.startswith("【系统巡查·第二轮】")
+assert "【系统巡查·第一轮】" in reply
+assert "奇怪，人躲哪里去了......." in reply
+assert "【系统巡查·第二轮】" in reply
 ```
 
 - [ ] **Step 2: Run the focused test and verify it fails**
 
 Run: `.venv/bin/pytest tests/core/test_group_commands.py -k hide_and_seek -v`
 
-- [ ] **Step 3: Render one system reply per patrol round, then the final settlement**
+- [ ] **Step 3: Render both patrol rounds in the existing settlement reply**
 
 ```python
-for round_number, patrols in enumerate(result.patrol_rounds, start=1):
-    replies.append(GroupReply(f"【系统巡查·第{round_number}轮】巡查 {patrols}"))
+patrols = "【系统巡查·第一轮】巡查 ...\n奇怪，人躲哪里去了.......\n【系统巡查·第二轮】巡查 ..."
 ```
 
 - [ ] **Step 4: Run the focused test and verify it passes**

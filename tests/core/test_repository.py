@@ -98,7 +98,7 @@ def test_hide_and_seek_rewards_unpatrolled_scene_without_opening_charge(reposito
     assert started.status == "started"
     assert len(started.candidates) == 7
     assert finished.status == "won"
-    assert finished.patrol_numbers == (1, 2, 3)
+    assert finished.patrol_numbers == (1, 2, 3, 4, 5)
     assert repository.find_user("u1").balance == 3
     assert repository.today_income(user.id, now) == 3
 
@@ -114,7 +114,21 @@ def test_hide_and_seek_found_charges_frozen_penalty(repository, monkeypatch):
 
     assert finished.status == "found"
     assert finished.entry_fee == started.entry_fee == 1
+    assert finished.patrol_numbers == (1, 2, 3)
     assert repository.find_user("u1").balance == -1
+
+
+def test_hide_and_seek_runs_second_patrol_when_first_round_misses(repository, monkeypatch):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    monkeypatch.setattr("dzmm_bot.core.repository.randbelow", lambda _: 0)
+
+    repository.start_hide_and_seek("u1", now)
+    finished = repository.choose_hide_and_seek("u1", 4, now)
+
+    assert finished.status == "found"
+    assert finished.patrol_numbers == (1, 2, 3, 4, 5)
+    assert len(set(finished.patrol_numbers)) == 5
 
 
 def test_hide_and_seek_timeout_returns_daily_play_without_balance_change(repository):

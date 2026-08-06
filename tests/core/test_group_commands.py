@@ -206,7 +206,9 @@ def test_hide_and_seek_short_commands_list_places_and_patrol(monkeypatch):
 
     assert "1（" in started_reply and "7（" in started_reply
     assert "开局不扣除" in started_reply
-    assert "【系统巡查】巡查" in finished_reply
+    assert "【系统巡查·第一轮】巡查" in finished_reply
+    assert "奇怪，人躲哪里去了......." in finished_reply
+    assert "【系统巡查·第二轮】巡查" in finished_reply
     assert "躲藏成功" in finished_reply
 
 

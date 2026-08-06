@@ -65,3 +65,11 @@ def test_hide_and_seek_penalty_timing_migration_preserves_custom_start_copy():
     assert "old_started_template" in migration
     assert "old_expired_template" in migration
     assert "开局不扣除" in migration
+
+
+def test_hide_and_seek_two_round_patrol_migration_updates_default_templates_only():
+    migration = (ROOT / "migrations/versions/20260806_16_hide_and_seek_two_round_patrol.py").read_text()
+
+    assert 'down_revision: str | None = "20260806_15"' in migration
+    assert "old_found_template" in migration
+    assert 'new_found_template = "{巡查过程}' in migration

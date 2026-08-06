@@ -711,11 +711,24 @@ class CoreRepository:
                     return HideAndSeekGameResult("expired", display_name=user.display_name)
                 if not isinstance(scene_number, int) or not 1 <= scene_number <= len(game.candidates):
                     return HideAndSeekGameResult("invalid_scene", display_name=user.display_name)
-                patrol_numbers = _sample_distinct(list(range(1, len(game.candidates) + 1)), 3)
+                first_patrol_numbers = _sample_distinct(
+                    list(range(1, len(game.candidates) + 1)), 3
+                )
                 game.selected_number = scene_number
-                game.patrol_numbers = patrol_numbers
+                patrol_numbers = first_patrol_numbers
                 game.finished_at = now
-                game.state = "found" if scene_number in patrol_numbers else "won"
+                if scene_number in first_patrol_numbers:
+                    game.state = "found"
+                else:
+                    remaining_numbers = [
+                        number
+                        for number in range(1, len(game.candidates) + 1)
+                        if number not in first_patrol_numbers
+                    ]
+                    second_patrol_numbers = _sample_distinct(remaining_numbers, 2)
+                    patrol_numbers = first_patrol_numbers + second_patrol_numbers
+                    game.state = "found" if scene_number in second_patrol_numbers else "won"
+                game.patrol_numbers = patrol_numbers
                 if game.state == "found":
                     self._apply_balance_change(
                         user, -game.entry_fee, "hide_and_seek_penalty", now

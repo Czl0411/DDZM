@@ -486,6 +486,23 @@ def test_expired_lease_can_be_claimed_once_by_another_worker(
     assert repository.claim_outbound("c", now + timedelta(seconds=32), 30) is None
 
 
+def test_outbound_replies_for_one_inbound_are_claimed_in_reply_order(
+    repository, inbound, now
+):
+    stored, _ = repository.accept_inbound(inbound)
+    first = repository.enqueue_outbound(stored.id, "第一轮巡查", 0)
+    second = repository.enqueue_outbound(stored.id, "第二轮巡查", 1)
+
+    claimed_first = repository.claim_outbound("worker-a", now, 30)
+    assert claimed_first.id == first.id
+    assert repository.confirm_sent(
+        first.id, "worker-a", claimed_first.lease_token, "sent-1", now
+    )
+
+    claimed_second = repository.claim_outbound("worker-a", now, 30)
+    assert claimed_second.id == second.id
+
+
 def test_confirmed_outbound_is_not_claimed_again(
     repository, session_factory, inbound, now
 ):
@@ -1020,6 +1037,13 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
     assert "lease_token" in {
         column["name"] for column in inspector.get_columns("outbound_messages")
     }
+    assert "reply_index" in {
+        column["name"] for column in inspector.get_columns("outbound_messages")
+    }
+    assert {"inbound_message_id"} not in {
+        set(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("outbound_messages")
+    }
     assert "lease_token" in {
         column["name"] for column in inspector.get_columns("worker_commands")
     }
@@ -1034,7 +1058,7 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         help_command = connection.scalar(
             text("SELECT command FROM command_definitions WHERE command = '/帮助'")
         )
-    assert template_count == 13
+    assert template_count == 15
     assert help_command == "/帮助"
 
 

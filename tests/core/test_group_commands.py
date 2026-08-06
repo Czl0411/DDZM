@@ -39,6 +39,19 @@ def _latest_reply(factory):
         )
 
 
+def _replies_for(factory, inbound_id):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    with factory() as session:
+        return list(
+            session.scalars(
+                select(OutboundRecord.text)
+                .where(OutboundRecord.inbound_message_id == inbound_id)
+                .order_by(OutboundRecord.reply_index)
+            )
+        )
+
+
 def test_join_registers_employee_with_zero_balance_and_beijing_timestamp():
     from dzmm_bot.core.schema import UserRecord
 
@@ -201,15 +214,16 @@ def test_hide_and_seek_short_commands_list_places_and_patrol(monkeypatch):
 
     _receive(service, "start", "u1", "/开始摸鱼躲藏", now)
     started_reply = _latest_reply(factory)
-    _receive(service, "choose", "u1", "/躲 7", now)
-    finished_reply = _latest_reply(factory)
+    chosen = _receive(service, "choose", "u1", "/躲 7", now)
+    finished_replies = _replies_for(factory, chosen.message_id)
 
     assert "1（" in started_reply and "7（" in started_reply
     assert "开局不扣除" in started_reply
-    assert "【系统巡查·第一轮】巡查" in finished_reply
-    assert "奇怪，人躲哪里去了......." in finished_reply
-    assert "【系统巡查·第二轮】巡查" in finished_reply
-    assert "躲藏成功" in finished_reply
+    assert len(finished_replies) == 2
+    assert "【系统巡查·第一轮】巡查" in finished_replies[0]
+    assert "奇怪，人躲哪里去了......." in finished_replies[0]
+    assert "【系统巡查·第二轮】巡查" in finished_replies[1]
+    assert "躲藏成功" in finished_replies[1]
 
 
 def test_hide_and_seek_found_template_receives_frozen_penalty_amount(monkeypatch):
@@ -218,7 +232,7 @@ def test_hide_and_seek_found_template_receives_frozen_penalty_amount(monkeypatch
     _receive(service, "join", "u1", "/入职 小明", now)
     repository.set_reply_template(
         "/摸鱼躲猫猫",
-        "found",
+        "found_first_round",
         "{昵称}，扣除 {惩罚金额} {货币}，当前余额 {余额} {货币}。",
     )
     monkeypatch.setattr("dzmm_bot.core.repository.randbelow", lambda _: 0)
@@ -227,6 +241,21 @@ def test_hide_and_seek_found_template_receives_frozen_penalty_amount(monkeypatch
     _receive(service, "choose", "u1", "/躲 1", now)
 
     assert _latest_reply(factory) == "小明，扣除 1 摸鱼币，当前余额 -1 摸鱼币。"
+
+
+def test_hide_and_seek_first_round_found_sends_only_one_reply(monkeypatch):
+    service, _, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _receive(service, "join", "u1", "/入职 小明", now)
+    monkeypatch.setattr("dzmm_bot.core.repository.randbelow", lambda _: 0)
+
+    _receive(service, "start", "u1", "/开始摸鱼躲藏", now)
+    chosen = _receive(service, "choose", "u1", "/躲 1", now)
+    replies = _replies_for(factory, chosen.message_id)
+
+    assert len(replies) == 1
+    assert "【系统巡查·第一轮】巡查" in replies[0]
+    assert "【系统巡查·第二轮】" not in replies[0]
 
 
 def test_disabled_command_does_not_reply_or_change_data():

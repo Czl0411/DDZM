@@ -427,14 +427,16 @@ class OutboundRecord(Base):
             "status",
             "lease_expires_at",
             "created_at",
+            "reply_index",
             postgresql_where=text("status IN ('pending', 'leased')"),
         ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     inbound_message_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("inbound_messages.id"), unique=True
+        ForeignKey("inbound_messages.id")
     )
+    reply_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     lease_worker_id: Mapped[str | None] = mapped_column(String(255))

@@ -73,3 +73,21 @@ def test_hide_and_seek_two_round_patrol_migration_updates_default_templates_only
     assert 'down_revision: str | None = "20260806_15"' in migration
     assert "old_found_template" in migration
     assert 'new_found_template = "{巡查过程}' in migration
+
+
+def test_ordered_multi_reply_migration_removes_single_reply_constraint():
+    migration = (ROOT / "migrations/versions/20260806_17_ordered_multi_replies.py").read_text()
+
+    assert 'down_revision: str | None = "20260806_16"' in migration
+    assert "outbound_messages_inbound_message_id_key" in migration
+    assert 'sa.Column("reply_index", sa.Integer()' in migration
+
+
+def test_separate_patrol_template_migration_adds_first_round_scenarios():
+    migration = (
+        ROOT / "migrations/versions/20260806_18_hide_and_seek_patrol_reply_templates.py"
+    ).read_text()
+
+    assert 'down_revision: str | None = "20260806_17"' in migration
+    assert '"first_round_missed"' in migration
+    assert '"found_first_round"' in migration

@@ -64,6 +64,32 @@ def test_duplicate_message_does_not_invoke_handler_twice(session_factory, inboun
     assert handler.calls == 1
 
 
+def test_service_queues_multiple_replies_for_one_inbound_in_order(session_factory, inbound):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import OutboundRecord
+    from dzmm_bot.core.service import CoreService
+
+    class MultiReplyHandler:
+        def handle(self, message):
+            return ["第一条", "第二条"]
+
+    service = CoreService(CoreRepository(session_factory), MultiReplyHandler())
+    result = service.receive_inbound(inbound)
+    duplicate = service.receive_inbound(inbound)
+
+    with session_factory() as session:
+        replies = list(
+            session.scalars(
+                select(OutboundRecord)
+                .where(OutboundRecord.inbound_message_id == result.message_id)
+                .order_by(OutboundRecord.reply_index)
+            )
+        )
+    assert [reply.text for reply in replies] == ["第一条", "第二条"]
+    assert [reply.reply_index for reply in replies] == [0, 1]
+    assert duplicate.inserted is False
+
+
 def test_service_records_an_accepted_joined_message_once(session_factory):
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.service import CoreService
@@ -124,7 +150,7 @@ def test_enqueue_failure_rolls_back_inbound(session_factory, inbound):
     service = CoreService(repository, ReplyHandler())
     original_enqueue = repository.enqueue_outbound
 
-    def fail_enqueue(message_id, reply):
+    def fail_enqueue(message_id, reply, reply_index=0):
         raise RuntimeError("enqueue failed")
 
     repository.enqueue_outbound = fail_enqueue

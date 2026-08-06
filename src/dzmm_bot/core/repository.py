@@ -2299,11 +2299,13 @@ class CoreRepository:
             )
 
     def enqueue_outbound(
-        self, inbound_message_id: UUID | str, reply: str
+        self, inbound_message_id: UUID | str, reply: str, reply_index: int = 0
     ) -> OutboundRecord:
         with self._session() as session:
             record = OutboundRecord(
-                inbound_message_id=UUID(str(inbound_message_id)), text=reply
+                inbound_message_id=UUID(str(inbound_message_id)),
+                text=reply,
+                reply_index=reply_index,
             )
             session.add(record)
             session.flush()
@@ -2329,7 +2331,11 @@ class CoreRepository:
                         OutboundRecord.lease_expires_at <= now,
                     ),
                 )
-                .order_by(OutboundRecord.created_at, OutboundRecord.id)
+                .order_by(
+                    OutboundRecord.created_at,
+                    OutboundRecord.reply_index,
+                    OutboundRecord.id,
+                )
                 .with_for_update(skip_locked=True)
                 .limit(1)
             )

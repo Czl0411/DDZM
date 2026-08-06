@@ -8,7 +8,7 @@ from .repository import CoreRepository
 
 
 class CommandHandler(Protocol):
-    def handle(self, message: InboundMessage) -> str | None: ...
+    def handle(self, message: InboundMessage) -> str | list[str] | None: ...
 
 
 class NoopCommandHandler:
@@ -42,12 +42,14 @@ class CoreService:
             event_message_status = self._repository.record_random_event_round(
                 message.sender_platform_id, message.received_at, message.content
             )
+            replies = []
             if event_message_status == "observer_invalid":
-                self._repository.enqueue_outbound(
-                    stored.id,
-                    "当前随机事件进行中，旁观请用（内容）或 (内容) 的形式发言。",
-                )
+                replies.append("当前随机事件进行中，旁观请用（内容）或 (内容) 的形式发言。")
             reply = self._command_handler.handle(message)
-            if reply is not None:
-                self._repository.enqueue_outbound(stored.id, reply)
+            if isinstance(reply, list):
+                replies.extend(reply)
+            elif reply is not None:
+                replies.append(reply)
+            for reply_index, text in enumerate(replies):
+                self._repository.enqueue_outbound(stored.id, text, reply_index)
             return ReceiveResult(stored.id, True)

@@ -16,7 +16,7 @@ class GroupCommandHandler:
     def __init__(self, repository: CoreRepository) -> None:
         self._repository = repository
 
-    def handle(self, message: InboundMessage) -> str | None:
+    def handle(self, message: InboundMessage) -> str | list[str] | None:
         content = message.content.strip()
         if not content:
             return None
@@ -226,7 +226,7 @@ class GroupCommandHandler:
     def _event_reward(self, platform_id: str) -> int:
         return self._repository.last_random_event_reward(platform_id)
 
-    def _hide_and_seek(self, platform_id: str, content: str, received_at) -> str:
+    def _hide_and_seek(self, platform_id: str, content: str, received_at) -> str | list[str]:
         parts = content.split()
         if content == "/开始摸鱼躲藏":
             result = self._repository.start_hide_and_seek(platform_id, received_at)
@@ -255,31 +255,37 @@ class GroupCommandHandler:
                     f"{number}（{name}）"
                     for number, name in zip(result.patrol_numbers[:3], result.patrol_scenes[:3])
                 )
-                patrols = f"第一轮：{first_patrols}"
-                patrol_process = f"【系统巡查·第一轮】巡查 {first_patrols}"
-                if len(result.patrol_numbers) > 3:
-                    second_patrols = "、".join(
-                        f"{number}（{name}）"
-                        for number, name in zip(result.patrol_numbers[3:], result.patrol_scenes[3:])
+                values = {
+                    "{昵称}": result.display_name,
+                    "{巡查地点}": first_patrols,
+                    "{巡查过程}": f"【系统巡查·第一轮】巡查 {first_patrols}",
+                    "{奖励}": result.win_reward,
+                    "{余额}": result.balance,
+                    "{惩罚金额}": result.entry_fee,
+                }
+                if len(result.patrol_numbers) == 3:
+                    return self._reply(
+                        "/摸鱼躲猫猫", "found_first_round", received_at, values
                     )
-                    patrols += f"\n第二轮：{second_patrols}"
-                    patrol_process += (
-                        "\n奇怪，人躲哪里去了......."
-                        f"\n【系统巡查·第二轮】巡查 {second_patrols}"
-                    )
-                return self._reply(
-                    "/摸鱼躲猫猫",
-                    result.status,
-                    received_at,
-                    {
-                        "{昵称}": result.display_name,
-                        "{巡查地点}": patrols,
-                        "{巡查过程}": patrol_process,
-                        "{奖励}": result.win_reward,
-                        "{余额}": result.balance,
-                        "{惩罚金额}": result.entry_fee,
-                    },
+                second_patrols = "、".join(
+                    f"{number}（{name}）"
+                    for number, name in zip(result.patrol_numbers[3:], result.patrol_scenes[3:])
                 )
+                values["{巡查地点}"] = second_patrols
+                values["{巡查过程}"] = f"【系统巡查·第二轮】巡查 {second_patrols}"
+                return [
+                    self._reply(
+                        "/摸鱼躲猫猫",
+                        "first_round_missed",
+                        received_at,
+                        {
+                            "{昵称}": result.display_name,
+                            "{巡查地点}": first_patrols,
+                            "{巡查过程}": f"【系统巡查·第一轮】巡查 {first_patrols}",
+                        },
+                    ),
+                    self._reply("/摸鱼躲猫猫", result.status, received_at, values),
+                ]
             return self._hide_and_seek_status_reply(result.status, received_at)
         return self._reply("/摸鱼躲猫猫", "usage", received_at)
 

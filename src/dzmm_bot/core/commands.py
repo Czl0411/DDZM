@@ -8,7 +8,7 @@ from .repository import CoreRepository
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出"
+    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫"
 }
 
 
@@ -45,6 +45,8 @@ class GroupCommandHandler:
             return self._event_join(message.sender_platform_id, content, received_at)
         if command == "/退出":
             return self._event_leave(message.sender_platform_id, received_at)
+        if command == "/摸鱼躲猫猫":
+            return self._hide_and_seek(message.sender_platform_id, content, received_at)
         return self._help(received_at)
 
     def _join(self, platform_id: str, content: str, received_at) -> str:
@@ -219,6 +221,63 @@ class GroupCommandHandler:
 
     def _event_reward(self, platform_id: str) -> int:
         return self._repository.last_random_event_reward(platform_id)
+
+    def _hide_and_seek(self, platform_id: str, content: str, received_at) -> str:
+        parts = content.split()
+        if len(parts) == 2 and parts[1] == "发起游戏":
+            result = self._repository.start_hide_and_seek(platform_id, received_at)
+            if result.status == "started":
+                return self._reply(
+                    "/摸鱼躲猫猫",
+                    "started",
+                    received_at,
+                    {
+                        "{昵称}": result.display_name,
+                        "{入场费}": result.entry_fee,
+                        "{场景列表}": "\n".join(
+                            f"{number}（{name}）"
+                            for number, name in enumerate(result.candidates, start=1)
+                        ),
+                        "{选择超时分钟}": self._repository.get_hide_and_seek_settings().selection_timeout_minutes,
+                    },
+                )
+            return self._hide_and_seek_status_reply(result.status, received_at)
+        if len(parts) == 3 and parts[1] == "躲" and parts[2].isdigit():
+            result = self._repository.choose_hide_and_seek(
+                platform_id, int(parts[2]), received_at
+            )
+            if result.status in {"won", "found"}:
+                patrols = "、".join(
+                    f"{number}（{name}）"
+                    for number, name in zip(result.patrol_numbers, result.patrol_scenes)
+                )
+                return self._reply(
+                    "/摸鱼躲猫猫",
+                    result.status,
+                    received_at,
+                    {
+                        "{昵称}": result.display_name,
+                        "{巡查地点}": patrols,
+                        "{奖励}": result.win_reward,
+                        "{余额}": result.balance,
+                    },
+                )
+            return self._hide_and_seek_status_reply(result.status, received_at)
+        return self._reply("/摸鱼躲猫猫", "usage", received_at)
+
+    def _hide_and_seek_status_reply(self, status: str, received_at) -> str:
+        scenarios = {
+            "not_joined": "not_joined",
+            "random_event_active": "blocked",
+            "disabled": "disabled",
+            "daily_limit": "daily_limit",
+            "already_active": "already_active",
+            "not_enough_scenes": "not_enough_scenes",
+            "invalid_scene": "invalid_scene",
+            "no_active_game": "no_active_game",
+            "expired": "expired",
+        }
+        return self._reply("/摸鱼躲猫猫", scenarios[status], received_at)
 
     def _help(self, received_at) -> str:
         commands = self._repository.list_enabled_command_definitions()

@@ -146,6 +146,7 @@ class HideAndSeekGameResult:
     balance: int | None = None
     entry_fee: int = 0
     win_reward: int = 0
+    selection_timeout_minutes: int = 0
 
 
 @dataclass(frozen=True)
@@ -215,6 +216,7 @@ _COMMAND_DEFINITIONS = (
     ("/帮助", "查看当前可用指令"),
     ("/加入", "加入当前随机事件的指定角色"),
     ("/退出", "退出当前随机事件并结算奖励"),
+    ("/摸鱼躲猫猫", "发起单人躲猫猫小游戏"),
 )
 
 
@@ -753,6 +755,9 @@ class CoreRepository:
                             "cancelled",
                             display_name=user.display_name,
                             entry_fee=game.entry_fee,
+                            selection_timeout_minutes=int(
+                                (game.choice_deadline - game.created_at).total_seconds() // 60
+                            ),
                         )
                     )
         return cancelled
@@ -1829,6 +1834,10 @@ class CoreRepository:
         with self.transaction():
             if should_backfill:
                 self._backfill_current_day_history(now)
+            for game in self.expire_hide_and_seek_games(now):
+                self.enqueue_system_outbound(
+                    f"【摸鱼躲猫猫】{game.display_name} 未在 {game.selection_timeout_minutes} 分钟内选择地点，本局已取消，入场费和次数已返还。"
+                )
             self._settle_weekly_attendance_rewards(now)
             self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)

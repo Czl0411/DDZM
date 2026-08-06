@@ -128,6 +128,23 @@ def test_hide_and_seek_timeout_refunds_and_returns_daily_play(repository):
     assert repository.expire_hide_and_seek_games(now + timedelta(minutes=3)) == []
 
 
+def test_daily_jobs_enqueue_one_hide_and_seek_cancellation_message(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.start_hide_and_seek("u1", now)
+
+    repository.run_daily_jobs(now + timedelta(minutes=2))
+    repository.run_daily_jobs(now + timedelta(minutes=3))
+
+    with session_factory() as session:
+        texts = list(session.scalars(select(OutboundRecord.text)))
+    assert sum("躲猫猫" in text and "已取消" in text for text in texts) == 1
+
+
 def test_hide_and_seek_limits_active_game_and_invalid_scene(repository):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_user("u1", "小明", now, 0)

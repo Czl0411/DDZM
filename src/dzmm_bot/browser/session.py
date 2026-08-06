@@ -105,6 +105,7 @@ class BrowserSession:
             token_provider=self._token,
             request=self._request,
             socket_factory=self._socket_factory,
+            browser_authenticated=self._page_is_authenticated,
         )
 
     def _token(self) -> str:

@@ -243,6 +243,25 @@ def test_joined_event_without_payload_marks_the_gateway_ready(gateway):
     assert adapter.is_authenticated()
 
 
+def test_authentication_is_lost_when_the_browser_returns_to_sign_in():
+    """Fails if a stale socket keeps reporting ready after browser logout."""
+    socket = FakeSocket()
+    browser_authenticated = [True]
+    adapter = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "short-lived-token",
+        request=FakeRequest(),
+        socket_factory=lambda: socket,
+        browser_authenticated=lambda: browser_authenticated[0],
+        clock=lambda: NOW,
+    )
+
+    assert adapter.is_authenticated() is True
+    browser_authenticated[0] = False
+
+    assert adapter.is_authenticated() is False
+
+
 def test_send_raises_when_ack_rejects_message(gateway):
     """Fails if an Aikda rejection is incorrectly confirmed as delivered."""
     adapter, socket, _ = gateway

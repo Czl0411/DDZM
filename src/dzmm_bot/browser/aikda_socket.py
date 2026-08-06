@@ -20,6 +20,7 @@ class AikdaSocketGateway:
         token_provider: Callable[[], str],
         request: Callable[[str, dict[str, Any] | None], dict[str, Any]],
         socket_factory: Callable[[], Any] | None = None,
+        browser_authenticated: Callable[[], bool] = lambda: True,
         clock: Callable[[], datetime] = lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
     ) -> None:
         parsed = urlsplit(chat_url)
@@ -31,6 +32,7 @@ class AikdaSocketGateway:
         self._token_provider = token_provider
         self._request = request
         self._socket_factory = socket_factory or _socket_client
+        self._browser_authenticated = browser_authenticated
         self._clock = clock
         self._socket = None
         self._bot_id: str | None = None
@@ -88,6 +90,9 @@ class AikdaSocketGateway:
             raise RuntimeError(error)
 
     def is_authenticated(self) -> bool:
+        if not self._browser_authenticated():
+            self._authenticated = False
+            return False
         try:
             self._ensure_connected()
         except Exception:

@@ -42,6 +42,7 @@ from .schema import (
     RandomEventSettingsRecord,
     UserItemRecord,
     UserRecord,
+    WeeklyAttendanceSettlementRecord,
     WorkerCommandRecord,
     WorkerInstanceRecord,
 )
@@ -50,6 +51,7 @@ from .schema import (
 _DEFAULT_CURRENCY_NAME = "摸鱼币"
 _DEFAULT_ONBOARDING_BONUS = 0
 _DEFAULT_CHECKIN_REWARD = 5
+_DEFAULT_WEEKLY_ATTENDANCE_REWARD = 5
 _DEFAULT_ACTIVITY_RULES = (
     (1, 10, 1),
     (2, 25, 2),
@@ -364,6 +366,7 @@ class CoreRepository:
                     currency_name=_DEFAULT_CURRENCY_NAME,
                     onboarding_bonus=_DEFAULT_ONBOARDING_BONUS,
                     checkin_reward=_DEFAULT_CHECKIN_REWARD,
+                    weekly_attendance_reward=_DEFAULT_WEEKLY_ATTENDANCE_REWARD,
                 )
                 session.add(record)
                 session.flush()
@@ -1392,6 +1395,7 @@ class CoreRepository:
         with self.transaction():
             if should_backfill:
                 self._backfill_current_day_history(now)
+            self._settle_weekly_attendance_rewards(now)
             self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)
             self.run_random_event_jobs(now)
@@ -1528,6 +1532,58 @@ class CoreRepository:
                     raise RuntimeError("employee disappeared")
                 self._apply_balance_change(user, reward, "activity_reward", now)
 
+    def _settle_weekly_attendance_rewards(self, now: datetime) -> None:
+        if now.weekday() != 0:
+            return
+        week_start = now.date() - timedelta(days=7)
+        week_end = week_start + timedelta(days=7)
+        settings = self.get_game_settings()
+        with self._session() as session:
+            complete_user_ids = session.scalars(
+                select(DailyCheckinRecord.user_id)
+                .where(
+                    DailyCheckinRecord.checkin_date >= week_start,
+                    DailyCheckinRecord.checkin_date < week_end,
+                )
+                .group_by(DailyCheckinRecord.user_id)
+                .having(func.count(DailyCheckinRecord.id) == 7)
+            )
+            dialect_name = session.get_bind().dialect.name
+            for user_id in complete_user_ids:
+                values = {
+                    "id": uuid4(),
+                    "user_id": user_id,
+                    "week_start": week_start,
+                    "reward": settings.weekly_attendance_reward,
+                    "settled_at": now,
+                }
+                if dialect_name == "postgresql":
+                    statement = postgresql_insert(WeeklyAttendanceSettlementRecord).values(
+                        **values
+                    )
+                elif dialect_name == "sqlite":
+                    statement = sqlite_insert(WeeklyAttendanceSettlementRecord).values(
+                        **values
+                    )
+                else:
+                    raise ValueError(f"unsupported database dialect: {dialect_name}")
+                settlement_id = session.scalar(
+                    statement.on_conflict_do_nothing(
+                        index_elements=[
+                            WeeklyAttendanceSettlementRecord.user_id,
+                            WeeklyAttendanceSettlementRecord.week_start,
+                        ]
+                    ).returning(WeeklyAttendanceSettlementRecord.id)
+                )
+                if settlement_id is None:
+                    continue
+                user = session.get(UserRecord, user_id)
+                if user is None:
+                    raise RuntimeError("employee disappeared")
+                self._apply_balance_change(
+                    user, settings.weekly_attendance_reward, "weekly_attendance", now
+                )
+
     def _enqueue_due_income_reports(self, now: datetime) -> None:
         settings = self.get_activity_settings()
         current_time = now.strftime("%H:%M")
@@ -1603,7 +1659,11 @@ class CoreRepository:
         return "\n".join(lines)
 
     def set_game_settings(
-        self, currency_name: str, onboarding_bonus: int, checkin_reward: int
+        self,
+        currency_name: str,
+        onboarding_bonus: int,
+        checkin_reward: int,
+        weekly_attendance_reward: int,
     ) -> GameSettingsRecord:
         currency_name = currency_name.strip()
         if not 1 <= len(currency_name) <= 12:
@@ -1612,6 +1672,8 @@ class CoreRepository:
             raise ValueError("入职初始余额需在 0 至 999 之间")
         if not 0 <= checkin_reward <= 999:
             raise ValueError("打卡奖励需在 0 至 999 之间")
+        if not 0 <= weekly_attendance_reward <= 999:
+            raise ValueError("每周全勤奖需在 0 至 999 之间")
         with self._session() as session:
             record = session.get(GameSettingsRecord, 1)
             if record is None:
@@ -1620,6 +1682,7 @@ class CoreRepository:
             record.currency_name = currency_name
             record.onboarding_bonus = onboarding_bonus
             record.checkin_reward = checkin_reward
+            record.weekly_attendance_reward = weekly_attendance_reward
             session.flush()
             return record
 
@@ -1684,6 +1747,24 @@ class CoreRepository:
                 self._apply_balance_change(employee, reward, "checkin", checked_in_at)
                 session.flush()
                 return True
+
+    def consecutive_checkin_days(self, user_id: UUID, now: datetime) -> int:
+        today = now.astimezone(BEIJING).date()
+        with self._session() as session:
+            checkin_dates = set(
+                session.scalars(
+                    select(DailyCheckinRecord.checkin_date).where(
+                        DailyCheckinRecord.user_id == user_id,
+                        DailyCheckinRecord.checkin_date <= today,
+                    )
+                )
+            )
+        current = today if today in checkin_dates else today - timedelta(days=1)
+        days = 0
+        while current in checkin_dates:
+            days += 1
+            current -= timedelta(days=1)
+        return days
 
     def list_users(self) -> list[UserRecord]:
         with self._session() as session:

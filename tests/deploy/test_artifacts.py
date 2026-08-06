@@ -29,3 +29,10 @@ def test_deployment_runs_migrations_with_the_private_environment():
     assert 'rsync -a --delete --exclude .git --exclude .venv "$dzmm_release_dir/"' in deploy
     assert "chown -R dzmm:dzmm /opt/dzmm/current" in deploy
     assert "runuser -u dzmm -- /opt/dzmm/venv/bin/playwright install chromium" in deploy
+
+
+def test_weekly_attendance_migration_preserves_custom_me_templates():
+    migration = (ROOT / "migrations/versions/20260806_11_weekly_attendance.py").read_text()
+
+    assert "weekly_attendance_settlements" in migration
+    assert "连续打卡：{连续打卡天数} 天。" in migration

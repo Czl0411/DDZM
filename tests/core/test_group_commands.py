@@ -110,7 +110,7 @@ def test_checkin_awards_five_once_per_beijing_date_and_uses_beijing_dates():
 
 def test_updated_economy_applies_to_future_join_and_checkin_only():
     service, repository, factory = _service()
-    repository.set_game_settings("工分", 3, 7)
+    repository.set_game_settings("工分", 3, 7, 5)
     received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
 
     _receive(service, "join", "platform-xiaoming", "/入职 小明", received_at)
@@ -142,7 +142,7 @@ def test_balance_inventory_and_shop_require_employee_and_return_persisted_data()
 def test_me_alias_shows_balance_level_and_today_income_without_count():
     service, repository, factory = _service()
     received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
-    repository.set_game_settings("摸鱼币", 3, 5)
+    repository.set_game_settings("摸鱼币", 3, 5, 5)
 
     _receive(service, "join", "platform-xiaoming", "/入职 小明", received_at)
     _receive(
@@ -159,6 +159,7 @@ def test_me_alias_shows_balance_level_and_today_income_without_count():
     assert "3 摸鱼币" in reply
     assert "LV1" in reply
     assert "今日收益：3 摸鱼币" in reply
+    assert "连续打卡：0 天" in reply
     assert "10" not in reply
 
 

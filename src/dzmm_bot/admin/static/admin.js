@@ -37,6 +37,7 @@ const settingsModal = document.querySelector("#settings-modal");
 const settingsCurrencyName = document.querySelector("#settings-currency-name");
 const settingsOnboardingBonus = document.querySelector("#settings-onboarding-bonus");
 const settingsCheckinReward = document.querySelector("#settings-checkin-reward");
+const settingsWeeklyAttendanceReward = document.querySelector("#settings-weekly-attendance-reward");
 const activitySettingsModal = document.querySelector("#activity-settings-modal");
 const activityRuleInputs = document.querySelector("#activity-rule-inputs");
 const incomeReportTimeInputs = document.querySelector("#income-report-time-inputs");
@@ -130,7 +131,8 @@ function renderSettings(settings) {
   document.querySelector("#settings-card").innerHTML = `
     <article><span>货币名称</span><strong>${escapeHtml(settings.currency_name)}</strong><small>余额、打卡和商店的计价单位</small></article>
     <article><span>入职初始余额</span><strong>${settings.onboarding_bonus}</strong><small>仅影响之后新入职的员工</small></article>
-    <article><span>每日打卡奖励</span><strong>${settings.checkin_reward}</strong><small>${escapeHtml(settings.reset_time_label)} 重置</small></article>`;
+    <article><span>每日打卡奖励</span><strong>${settings.checkin_reward}</strong><small>${escapeHtml(settings.reset_time_label)} 重置</small></article>
+    <article><span>每周全勤奖</span><strong>${settings.weekly_attendance_reward}</strong><small>上周全勤于周一自动入账</small></article>`;
 }
 
 function renderActivitySettings(settings) {
@@ -285,6 +287,7 @@ async function openSettingsModal() {
   settingsCurrencyName.value = settings.currency_name;
   settingsOnboardingBonus.value = settings.onboarding_bonus;
   settingsCheckinReward.value = settings.checkin_reward;
+  settingsWeeklyAttendanceReward.value = settings.weekly_attendance_reward;
   settingsModal.hidden = false;
   settingsCurrencyName.focus();
 }
@@ -729,6 +732,7 @@ settingsModal.addEventListener("click", async (event) => {
           currency_name: settingsCurrencyName.value.trim(),
           onboarding_bonus: Number(settingsOnboardingBonus.value),
           checkin_reward: Number(settingsCheckinReward.value),
+          weekly_attendance_reward: Number(settingsWeeklyAttendanceReward.value),
         }),
       });
       configurationVersion = gameSettings.version;

@@ -313,7 +313,10 @@ def create_app(
     ) -> GameSettingsResponse:
         try:
             record = repository.set_game_settings(
-                request.currency_name, request.onboarding_bonus, request.checkin_reward
+                request.currency_name,
+                request.onboarding_bonus,
+                request.checkin_reward,
+                request.weekly_attendance_reward,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -677,6 +680,7 @@ def _game_settings_response(record) -> GameSettingsResponse:
         currency_name=record.currency_name,
         onboarding_bonus=record.onboarding_bonus,
         checkin_reward=record.checkin_reward,
+        weekly_attendance_reward=record.weekly_attendance_reward,
     )
 
 

@@ -197,19 +197,26 @@ def test_game_settings_can_be_read_and_updated(client, headers):
     updated = client.patch(
         "/internal/game/settings",
         headers=headers,
-        json={"currency_name": "工分", "onboarding_bonus": 3, "checkin_reward": 7},
+        json={
+            "currency_name": "工分",
+            "onboarding_bonus": 3,
+            "checkin_reward": 7,
+            "weekly_attendance_reward": 9,
+        },
     )
 
     assert initial.json() == {
         "currency_name": "摸鱼币",
         "onboarding_bonus": 0,
         "checkin_reward": 5,
+        "weekly_attendance_reward": 5,
         "reset_time_label": "北京时间 00:00",
     }
     assert updated.json() == {
         "currency_name": "工分",
         "onboarding_bonus": 3,
         "checkin_reward": 7,
+        "weekly_attendance_reward": 9,
         "reset_time_label": "北京时间 00:00",
     }
 

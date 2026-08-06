@@ -60,6 +60,7 @@ class FakeCore:
             "currency_name": "摸鱼币",
             "onboarding_bonus": 0,
             "checkin_reward": 5,
+            "weekly_attendance_reward": 5,
             "reset_time_label": "北京时间 00:00",
         }
     )
@@ -525,6 +526,7 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
 
     assert 'id="employee-pagination"' in page
     assert 'id="shop-pagination"' in page
+    assert 'id="settings-weekly-attendance-reward"' in page
     assert "runMutation" in script
     assert "renderPagination" in script
     assert "/api/game/users?page=${page}&page_size=${pageSize}" in script
@@ -532,6 +534,7 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert '"保存中…"' in script
     assert '"上架中…"' in script
     assert "请填写场景名称、报名公告和每个事件的名称、开场白" in script
+    assert "weekly_attendance_reward" in script
 
 
 def test_admin_accepts_the_browser_item_form_json_body(client, headers):
@@ -553,25 +556,41 @@ def test_admin_proxies_game_settings(client, headers, core):
     updated = client.patch(
         "/api/game/settings",
         headers=headers,
-        json={"currency_name": "工分", "onboarding_bonus": 3, "checkin_reward": 7},
+        json={
+            "currency_name": "工分",
+            "onboarding_bonus": 3,
+            "checkin_reward": 7,
+            "weekly_attendance_reward": 9,
+        },
     )
 
     assert initial.json()["currency_name"] == "摸鱼币"
     assert updated.json()["currency_name"] == "工分"
     assert updated.json()["version"] == 1
     assert core.game_settings["checkin_reward"] == 7
+    assert core.game_settings["weekly_attendance_reward"] == 9
 
 
 def test_admin_rejects_stale_configuration_write(client, headers):
     first = client.patch(
         "/api/game/settings",
         headers=headers,
-        json={"currency_name": "工分", "onboarding_bonus": 3, "checkin_reward": 7},
+        json={
+            "currency_name": "工分",
+            "onboarding_bonus": 3,
+            "checkin_reward": 7,
+            "weekly_attendance_reward": 9,
+        },
     )
     second = client.patch(
         "/api/game/settings",
         headers={**headers, "Idempotency-Key": "stale-settings"},
-        json={"currency_name": "银元", "onboarding_bonus": 3, "checkin_reward": 7},
+        json={
+            "currency_name": "银元",
+            "onboarding_bonus": 3,
+            "checkin_reward": 7,
+            "weekly_attendance_reward": 9,
+        },
     )
 
     assert first.status_code == 200

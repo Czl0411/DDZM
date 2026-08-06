@@ -487,11 +487,75 @@ def test_reply_template_defaults_seed_once_and_preserve_an_edit(repository):
 def test_game_settings_default_to_the_initial_economy(repository):
     settings = repository.get_game_settings()
 
-    assert (settings.currency_name, settings.onboarding_bonus, settings.checkin_reward) == (
+    assert (
+        settings.currency_name,
+        settings.onboarding_bonus,
+        settings.checkin_reward,
+        settings.weekly_attendance_reward,
+    ) == (
         "摸鱼币",
         0,
         5,
+        5,
     )
+
+
+def test_weekly_attendance_rewards_a_complete_previous_beijing_week_once(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import BEIJING, BalanceTransactionRecord
+
+    monday = datetime(2026, 8, 10, 0, 0, tzinfo=BEIJING)
+    user, _ = repository.create_user(
+        "u1", "小明", monday - timedelta(days=8), 0
+    )
+    for offset in range(7, 0, -1):
+        repository.check_in(user, monday - timedelta(days=offset), 0)
+
+    repository.run_daily_jobs(monday)
+    repository.run_daily_jobs(monday + timedelta(minutes=1))
+
+    assert repository.find_user("u1").balance == 5
+    with session_factory() as session:
+        rewards = list(
+            session.scalars(
+                select(BalanceTransactionRecord).where(
+                    BalanceTransactionRecord.user_id == user.id,
+                    BalanceTransactionRecord.source == "weekly_attendance",
+                )
+            )
+        )
+    assert [reward.amount for reward in rewards] == [5]
+
+
+def test_weekly_attendance_requires_every_day_of_the_previous_beijing_week(repository):
+    from dzmm_bot.core.schema import BEIJING
+
+    monday = datetime(2026, 8, 10, 0, 0, tzinfo=BEIJING)
+    user, _ = repository.create_user(
+        "u1", "小明", monday - timedelta(days=8), 0
+    )
+    for offset in (7, 6, 5, 4, 2, 1):
+        repository.check_in(user, monday - timedelta(days=offset), 0)
+
+    repository.run_daily_jobs(monday)
+
+    assert repository.find_user("u1").balance == 0
+
+
+def test_consecutive_checkins_count_from_today_or_yesterday(repository):
+    from dzmm_bot.core.schema import BEIJING
+
+    now = datetime(2026, 8, 6, 12, 0, tzinfo=BEIJING)
+    user, _ = repository.create_user("u1", "小明", now - timedelta(days=3), 0)
+    repository.check_in(user, now - timedelta(days=2), 0)
+    repository.check_in(user, now - timedelta(days=1), 0)
+
+    assert repository.consecutive_checkin_days(user.id, now) == 2
+
+    repository.check_in(user, now, 0)
+
+    assert repository.consecutive_checkin_days(user.id, now) == 3
 
 
 def test_activity_settings_default_to_the_initial_rules(repository):
@@ -654,15 +718,21 @@ def test_due_income_report_is_queued_once_and_empty_slot_is_skipped(repository, 
 
 
 @pytest.mark.parametrize(
-    "currency_name,onboarding_bonus,checkin_reward",
-    [("", 0, 5), (" " * 13, 0, 5), ("工分", -1, 5), ("工分", 0, 1000)],
+    "currency_name,onboarding_bonus,checkin_reward,weekly_attendance_reward",
+    [
+        ("", 0, 5, 5),
+        (" " * 13, 0, 5, 5),
+        ("工分", -1, 5, 5),
+        ("工分", 0, 1000, 5),
+        ("工分", 0, 5, 1000),
+    ],
 )
 def test_game_settings_reject_invalid_values(
-    repository, currency_name, onboarding_bonus, checkin_reward
+    repository, currency_name, onboarding_bonus, checkin_reward, weekly_attendance_reward
 ):
     with pytest.raises(ValueError):
         repository.set_game_settings(
-            currency_name, onboarding_bonus, checkin_reward
+            currency_name, onboarding_bonus, checkin_reward, weekly_attendance_reward
         )
 
 

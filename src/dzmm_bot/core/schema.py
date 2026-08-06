@@ -109,6 +109,7 @@ class GameSettingsRecord(Base):
     currency_name: Mapped[str] = mapped_column(String(12), nullable=False)
     onboarding_bonus: Mapped[int] = mapped_column(Integer, nullable=False)
     checkin_reward: Mapped[int] = mapped_column(Integer, nullable=False)
+    weekly_attendance_reward: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class ActivityLevelRuleRecord(Base):
@@ -282,6 +283,17 @@ class DailyCheckinRecord(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     checkin_date: Mapped[date] = mapped_column(Date, nullable=False)
     checked_in_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class WeeklyAttendanceSettlementRecord(Base):
+    __tablename__ = "weekly_attendance_settlements"
+    __table_args__ = (UniqueConstraint("user_id", "week_start"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    reward: Mapped[int] = mapped_column(Integer, nullable=False)
+    settled_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
 class DailyActivityRecord(Base):

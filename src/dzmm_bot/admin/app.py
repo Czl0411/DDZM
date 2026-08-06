@@ -398,7 +398,12 @@ def create_app(
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
         if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     ) -> JSONResponse:
-        required = ("currency_name", "onboarding_bonus", "checkin_reward")
+        required = (
+            "currency_name",
+            "onboarding_bonus",
+            "checkin_reward",
+            "weekly_attendance_reward",
+        )
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
         return versioned_configuration_response(

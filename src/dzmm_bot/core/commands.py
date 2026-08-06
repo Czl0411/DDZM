@@ -116,6 +116,9 @@ class GroupCommandHandler:
                 "{余额}": employee.balance,
                 "{活跃等级}": f"LV{activity.level}",
                 "{今日收益}": self._repository.today_income(employee.id, received_at),
+                "{连续打卡天数}": self._repository.consecutive_checkin_days(
+                    employee.id, received_at
+                ),
             },
         )
 

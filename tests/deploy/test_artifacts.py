@@ -93,3 +93,15 @@ def test_separate_patrol_template_migration_adds_first_round_scenarios():
     assert '"found_first_round"' in migration
     assert '"created_at"' in migration
     assert '"updated_at"' in migration
+
+
+def test_memory_assessment_migration_creates_game_tables():
+    migration = (ROOT / "migrations/versions/20260806_19_memory_assessment.py").read_text()
+
+    assert 'down_revision: str | None = "20260806_18"' in migration
+    assert "memory_assessment_settings" in migration
+    assert "memory_assessment_level_rules" in migration
+    assert "memory_assessment_daily_plays" in migration
+    assert "memory_assessment_games" in migration
+    assert "memory_assessment_participants" in migration
+    assert "memory_assessment_rounds" in migration

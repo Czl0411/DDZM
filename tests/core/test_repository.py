@@ -79,6 +79,41 @@ def test_hide_and_seek_defaults_seed_ten_company_scenes(repository):
     assert {scene.name for scene in scenes} >= {"公司前台", "茶水间", "公司天台"}
 
 
+def test_memory_assessment_defaults_seed_five_levels(repository):
+    settings = repository.get_memory_assessment_settings()
+
+    assert settings.single_daily_limit == 1
+    assert settings.duel_base_pool == 5
+    assert [
+        (rule.level, rule.answer_length, rule.reward)
+        for rule in repository.list_memory_assessment_levels()
+    ] == [(1, 5, 1), (2, 7, 2), (3, 9, 3), (4, 11, 4), (5, 13, 5)]
+
+
+def test_memory_assessment_rejects_whitespace_character_set(repository):
+    from dzmm_bot.core.repository import MemoryAssessmentLevelRule
+
+    with pytest.raises(ValueError, match="字符集不能包含空白字符"):
+        repository.set_memory_assessment_settings(
+            single_daily_limit=1,
+            single_recall_seconds=3,
+            duel_recall_seconds=3,
+            duel_difficulty_level=5,
+            duel_base_pool=5,
+            duel_wrong_freeze=1,
+            duel_wrong_limit=10,
+            duel_answer_timeout_minutes=10,
+            character_set="Ab 1",
+            levels=[
+                MemoryAssessmentLevelRule(1, 5, 1),
+                MemoryAssessmentLevelRule(2, 7, 2),
+                MemoryAssessmentLevelRule(3, 9, 3),
+                MemoryAssessmentLevelRule(4, 11, 4),
+                MemoryAssessmentLevelRule(5, 13, 5),
+            ],
+        )
+
+
 def test_hide_and_seek_scene_name_must_be_unique(repository):
     repository.get_hide_and_seek_settings()
 

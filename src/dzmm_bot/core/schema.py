@@ -200,6 +200,96 @@ class HideAndSeekGameRecord(Base):
     finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
 
 
+class MemoryAssessmentSettingsRecord(Base):
+    __tablename__ = "memory_assessment_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    single_daily_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    single_recall_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    duel_recall_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    duel_difficulty_level: Mapped[int] = mapped_column(Integer, nullable=False)
+    duel_base_pool: Mapped[int] = mapped_column(Integer, nullable=False)
+    duel_wrong_freeze: Mapped[int] = mapped_column(Integer, nullable=False)
+    duel_wrong_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    duel_answer_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    character_set: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class MemoryAssessmentLevelRuleRecord(Base):
+    __tablename__ = "memory_assessment_level_rules"
+
+    level: Mapped[int] = mapped_column(Integer, primary_key=True)
+    answer_length: Mapped[int] = mapped_column(Integer, nullable=False)
+    reward: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class MemoryAssessmentDailyPlayRecord(Base):
+    __tablename__ = "memory_assessment_daily_plays"
+    __table_args__ = (UniqueConstraint("user_id", "play_date"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    play_date: Mapped[date] = mapped_column(Date, nullable=False)
+    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class MemoryAssessmentGameRecord(Base):
+    __tablename__ = "memory_assessment_games"
+    __table_args__ = (
+        Index(
+            "ux_memory_assessment_one_active_game",
+            "active_key",
+            unique=True,
+            sqlite_where=text("active_key IS NOT NULL"),
+            postgresql_where=text("active_key IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    active_key: Mapped[str | None] = mapped_column(String(32))
+    play_date: Mapped[date] = mapped_column(Date, nullable=False)
+    level: Mapped[int | None] = mapped_column(Integer)
+    reward: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    base_pool: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    answer_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    winner_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class MemoryAssessmentParticipantRecord(Base):
+    __tablename__ = "memory_assessment_participants"
+    __table_args__ = (UniqueConstraint("game_id", "user_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("memory_assessment_games.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    wrong_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    frozen_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class MemoryAssessmentRoundRecord(Base):
+    __tablename__ = "memory_assessment_rounds"
+    __table_args__ = (UniqueConstraint("game_id", "sequence"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("memory_assessment_games.id"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    display_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
 class RandomEventSceneRecord(Base):
     __tablename__ = "random_event_scenes"
 

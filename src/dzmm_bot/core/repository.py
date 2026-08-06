@@ -34,6 +34,12 @@ from .schema import (
     InboundRecord,
     ItemRecord,
     ManualLoginLeaseRecord,
+    MemoryAssessmentDailyPlayRecord,
+    MemoryAssessmentGameRecord,
+    MemoryAssessmentLevelRuleRecord,
+    MemoryAssessmentParticipantRecord,
+    MemoryAssessmentRoundRecord,
+    MemoryAssessmentSettingsRecord,
     OutboundRecord,
     RandomEventScheduleRecord,
     RandomEventDetailRecord,
@@ -96,6 +102,16 @@ _DEFAULT_HIDE_AND_SEEK_SCENES = (
     "楼下公园",
     "员工休息室",
 )
+_DEFAULT_MEMORY_ASSESSMENT_LEVELS = (
+    (1, 5, 1),
+    (2, 7, 2),
+    (3, 9, 3),
+    (4, 11, 4),
+    (5, 13, 5),
+)
+_DEFAULT_MEMORY_ASSESSMENT_CHARACTER_SET = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*_ -"
+).replace(" ", "")
 _ROLE_VARIABLE = re.compile(r"\{([^{}]*\S[^{}]*)\}")
 
 
@@ -147,6 +163,55 @@ class HideAndSeekGameResult:
     entry_fee: int = 0
     win_reward: int = 0
     selection_timeout_minutes: int = 0
+
+
+@dataclass(frozen=True)
+class MemoryAssessmentSettings:
+    enabled: bool
+    single_daily_limit: int
+    single_recall_seconds: int
+    duel_recall_seconds: int
+    duel_difficulty_level: int
+    duel_base_pool: int
+    duel_wrong_freeze: int
+    duel_wrong_limit: int
+    duel_answer_timeout_minutes: int
+    character_set: str
+
+
+@dataclass(frozen=True)
+class MemoryAssessmentLevelRule:
+    level: int
+    answer_length: int
+    reward: int
+
+
+@dataclass(frozen=True)
+class MemoryAssessmentGame:
+    id: UUID
+    mode: str
+    state: str
+    level: int | None
+    reward: int
+    base_pool: int
+
+
+@dataclass(frozen=True)
+class MemoryAssessmentParticipant:
+    user_id: UUID
+    state: str
+    wrong_count: int
+    frozen_amount: int
+
+
+@dataclass(frozen=True)
+class MemoryAssessmentRound:
+    id: UUID
+    game_id: UUID
+    sequence: int
+    answer: str
+    display_seconds: int
+    state: str
 
 
 @dataclass(frozen=True)
@@ -486,6 +551,104 @@ class CoreRepository:
             record.reminder_interval_minutes = reminder_interval_minutes
             session.flush()
             return _random_event_settings(record)
+
+    def get_memory_assessment_settings(self) -> MemoryAssessmentSettings:
+        with self._session() as session:
+            record = session.get(MemoryAssessmentSettingsRecord, 1)
+            if record is None:
+                record = MemoryAssessmentSettingsRecord(
+                    id=1,
+                    enabled=True,
+                    single_daily_limit=1,
+                    single_recall_seconds=3,
+                    duel_recall_seconds=3,
+                    duel_difficulty_level=5,
+                    duel_base_pool=5,
+                    duel_wrong_freeze=1,
+                    duel_wrong_limit=10,
+                    duel_answer_timeout_minutes=10,
+                    character_set=_DEFAULT_MEMORY_ASSESSMENT_CHARACTER_SET,
+                )
+                session.add(record)
+            if not session.scalar(select(MemoryAssessmentLevelRuleRecord.level).limit(1)):
+                session.add_all(
+                    [
+                        MemoryAssessmentLevelRuleRecord(
+                            level=level,
+                            answer_length=answer_length,
+                            reward=reward,
+                        )
+                        for level, answer_length, reward in _DEFAULT_MEMORY_ASSESSMENT_LEVELS
+                    ]
+                )
+            session.flush()
+            return _memory_assessment_settings(record)
+
+    def list_memory_assessment_levels(self) -> list[MemoryAssessmentLevelRule]:
+        self.get_memory_assessment_settings()
+        with self._session() as session:
+            records = list(
+                session.scalars(
+                    select(MemoryAssessmentLevelRuleRecord).order_by(
+                        MemoryAssessmentLevelRuleRecord.level
+                    )
+                )
+            )
+            return [_memory_assessment_level_rule(record) for record in records]
+
+    def set_memory_assessment_settings(
+        self,
+        *,
+        single_daily_limit: int,
+        single_recall_seconds: int,
+        duel_recall_seconds: int,
+        duel_difficulty_level: int,
+        duel_base_pool: int,
+        duel_wrong_freeze: int,
+        duel_wrong_limit: int,
+        duel_answer_timeout_minutes: int,
+        character_set: str,
+        levels: list[MemoryAssessmentLevelRule],
+    ) -> MemoryAssessmentSettings:
+        _validate_memory_assessment_settings(
+            single_daily_limit=single_daily_limit,
+            single_recall_seconds=single_recall_seconds,
+            duel_recall_seconds=duel_recall_seconds,
+            duel_difficulty_level=duel_difficulty_level,
+            duel_base_pool=duel_base_pool,
+            duel_wrong_freeze=duel_wrong_freeze,
+            duel_wrong_limit=duel_wrong_limit,
+            duel_answer_timeout_minutes=duel_answer_timeout_minutes,
+            character_set=character_set,
+            levels=levels,
+        )
+        self.get_memory_assessment_settings()
+        with self._session() as session:
+            record = session.get(MemoryAssessmentSettingsRecord, 1)
+            if record is None:
+                raise RuntimeError("记忆考核设置消失")
+            record.single_daily_limit = single_daily_limit
+            record.single_recall_seconds = single_recall_seconds
+            record.duel_recall_seconds = duel_recall_seconds
+            record.duel_difficulty_level = duel_difficulty_level
+            record.duel_base_pool = duel_base_pool
+            record.duel_wrong_freeze = duel_wrong_freeze
+            record.duel_wrong_limit = duel_wrong_limit
+            record.duel_answer_timeout_minutes = duel_answer_timeout_minutes
+            record.character_set = character_set
+            session.execute(delete(MemoryAssessmentLevelRuleRecord))
+            session.add_all(
+                [
+                    MemoryAssessmentLevelRuleRecord(
+                        level=rule.level,
+                        answer_length=rule.answer_length,
+                        reward=rule.reward,
+                    )
+                    for rule in levels
+                ]
+            )
+            session.flush()
+            return _memory_assessment_settings(record)
 
     def get_hide_and_seek_settings(self) -> HideAndSeekSettings:
         with self._session() as session:
@@ -2623,6 +2786,81 @@ def _hide_and_seek_settings(record: HideAndSeekSettingsRecord) -> HideAndSeekSet
         daily_limit=record.daily_limit,
         selection_timeout_minutes=record.selection_timeout_minutes,
     )
+
+
+def _memory_assessment_settings(
+    record: MemoryAssessmentSettingsRecord,
+) -> MemoryAssessmentSettings:
+    return MemoryAssessmentSettings(
+        enabled=record.enabled,
+        single_daily_limit=record.single_daily_limit,
+        single_recall_seconds=record.single_recall_seconds,
+        duel_recall_seconds=record.duel_recall_seconds,
+        duel_difficulty_level=record.duel_difficulty_level,
+        duel_base_pool=record.duel_base_pool,
+        duel_wrong_freeze=record.duel_wrong_freeze,
+        duel_wrong_limit=record.duel_wrong_limit,
+        duel_answer_timeout_minutes=record.duel_answer_timeout_minutes,
+        character_set=record.character_set,
+    )
+
+
+def _memory_assessment_level_rule(
+    record: MemoryAssessmentLevelRuleRecord,
+) -> MemoryAssessmentLevelRule:
+    return MemoryAssessmentLevelRule(
+        level=record.level,
+        answer_length=record.answer_length,
+        reward=record.reward,
+    )
+
+
+def _validate_memory_assessment_settings(
+    *,
+    single_daily_limit: int,
+    single_recall_seconds: int,
+    duel_recall_seconds: int,
+    duel_difficulty_level: int,
+    duel_base_pool: int,
+    duel_wrong_freeze: int,
+    duel_wrong_limit: int,
+    duel_answer_timeout_minutes: int,
+    character_set: str,
+    levels: list[MemoryAssessmentLevelRule],
+) -> None:
+    positive_values = {
+        "每日挑战次数": single_daily_limit,
+        "单人撤回秒数": single_recall_seconds,
+        "多人撤回秒数": duel_recall_seconds,
+        "基础奖池": duel_base_pool,
+        "答错冻结金额": duel_wrong_freeze,
+        "答错上限": duel_wrong_limit,
+        "作答超时": duel_answer_timeout_minutes,
+    }
+    if any(not isinstance(value, int) or value < 1 for value in positive_values.values()):
+        raise ValueError("记忆考核数值必须为正整数")
+    if not isinstance(character_set, str) or not character_set:
+        raise ValueError("字符集不能为空")
+    if any(character.isspace() for character in character_set):
+        raise ValueError("字符集不能包含空白字符")
+    if len(set(character_set)) < 2:
+        raise ValueError("字符集至少需要两个不同字符")
+    if not isinstance(levels, list) or not levels:
+        raise ValueError("至少需要一个等级")
+    expected_levels = list(range(1, len(levels) + 1))
+    actual_levels = [rule.level for rule in levels]
+    if actual_levels != expected_levels:
+        raise ValueError("等级必须从 1 开始连续排列")
+    if any(
+        not isinstance(rule.answer_length, int)
+        or rule.answer_length < 1
+        or not isinstance(rule.reward, int)
+        or rule.reward < 1
+        for rule in levels
+    ):
+        raise ValueError("等级长度和奖励必须为正整数")
+    if duel_difficulty_level not in actual_levels:
+        raise ValueError("多人难度必须是现有等级")
 
 
 def _hide_and_seek_scene(record: HideAndSeekSceneRecord) -> HideAndSeekScene:

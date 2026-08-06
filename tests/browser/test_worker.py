@@ -20,6 +20,7 @@ class FakeGateway:
     messages: list[InboundMessage] = field(default_factory=list)
     authenticated: bool = True
     sent: list[str] = field(default_factory=list)
+    retracted: list[str] = field(default_factory=list)
     send_error: Exception | None = None
 
     def read_new(self):
@@ -33,6 +34,9 @@ class FakeGateway:
 
     def is_authenticated(self):
         return self.authenticated
+
+    def retract(self, message_id):
+        self.retracted.append(message_id)
 
     def close(self):
         pass
@@ -244,3 +248,16 @@ def test_resume_listening_allows_polling_again(context):
     worker.run_once()
 
     assert core.submitted_ids == ["p-1"]
+
+
+def test_retract_test_command_withdraws_its_own_test_message(context):
+    worker, gateway, _, _, core, _ = context
+    core.commands = [WorkerCommand(COMMAND_ID, "retract_test", LEASE)]
+
+    worker.run_once()
+
+    assert gateway.sent == ["【撤回验证】这条消息会立即撤回。"]
+    assert gateway.retracted == ["sent-1"]
+    assert core.completions == [
+        (COMMAND_ID, "worker-a", LEASE, "completed", NOW)
+    ]

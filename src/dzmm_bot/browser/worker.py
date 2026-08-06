@@ -160,6 +160,11 @@ class BrowserWorker:
                 self._login_state = LoginState.AUTH_REQUIRED
                 self._listening = True
                 self._manual_auth_confirmed = False
+            elif command.command == "retract_test":
+                gateway = self._ensure_gateway()
+                platform_message_id = gateway.send("【撤回验证】这条消息会立即撤回。")
+                gateway.retract(platform_message_id)
+                _LOGGER.info("worker retraction test succeeded: %s", platform_message_id)
             else:
                 raise ValueError(f"unsupported worker command: {command.command}")
         except Exception:

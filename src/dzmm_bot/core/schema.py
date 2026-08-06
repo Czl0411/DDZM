@@ -140,6 +140,66 @@ class RandomEventSettingsRecord(Base):
     reminder_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class HideAndSeekSettingsRecord(Base):
+    __tablename__ = "hide_and_seek_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    entry_fee: Mapped[int] = mapped_column(Integer, nullable=False)
+    win_reward: Mapped[int] = mapped_column(Integer, nullable=False)
+    daily_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    selection_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class HideAndSeekSceneRecord(Base):
+    __tablename__ = "hide_and_seek_scenes"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class HideAndSeekDailyPlayRecord(Base):
+    __tablename__ = "hide_and_seek_daily_plays"
+    __table_args__ = (UniqueConstraint("user_id", "play_date"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    play_date: Mapped[date] = mapped_column(Date, nullable=False)
+    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class HideAndSeekGameRecord(Base):
+    __tablename__ = "hide_and_seek_games"
+    __table_args__ = (
+        Index(
+            "ux_hide_and_seek_one_selecting_user",
+            "user_id",
+            unique=True,
+            sqlite_where=text("state = 'selecting'"),
+            postgresql_where=text("state = 'selecting'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    play_date: Mapped[date] = mapped_column(Date, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    candidates: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    selected_number: Mapped[int | None] = mapped_column(Integer)
+    patrol_numbers: Mapped[list[int] | None] = mapped_column(JSON)
+    entry_fee: Mapped[int] = mapped_column(Integer, nullable=False)
+    win_reward: Mapped[int] = mapped_column(Integer, nullable=False)
+    choice_deadline: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
 class RandomEventSceneRecord(Base):
     __tablename__ = "random_event_scenes"
 

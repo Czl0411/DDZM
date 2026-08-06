@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
+from dzmm_bot.core.schema import BEIJING
 from dzmm_bot.runtime.contracts import InboundMessage, LoginState, WorkerHeartbeat
 
 
@@ -61,6 +62,107 @@ def test_random_event_settings_default_to_fixed_daily_times(repository):
         "20:00",
     ]
     assert "{可选身份}" in settings.signup_notice_template
+
+
+def test_hide_and_seek_defaults_seed_ten_company_scenes(repository):
+    settings = repository.get_hide_and_seek_settings()
+    scenes, total = repository.list_hide_and_seek_scenes_page(1, 20)
+
+    assert (
+        settings.enabled,
+        settings.entry_fee,
+        settings.win_reward,
+        settings.daily_limit,
+        settings.selection_timeout_minutes,
+    ) == (True, 1, 3, 2, 2)
+    assert total == 10
+    assert {scene.name for scene in scenes} >= {"公司前台", "茶水间", "公司天台"}
+
+
+def test_hide_and_seek_scene_name_must_be_unique(repository):
+    repository.get_hide_and_seek_settings()
+
+    with pytest.raises(ValueError, match="地点名称已存在"):
+        repository.create_hide_and_seek_scene("茶水间")
+
+
+def test_hide_and_seek_charges_then_rewards_unpatrolled_scene(repository, monkeypatch):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    user, _ = repository.create_user("u1", "小明", now, 0)
+    monkeypatch.setattr("dzmm_bot.core.repository.randbelow", lambda _: 0)
+
+    started = repository.start_hide_and_seek("u1", now)
+    finished = repository.choose_hide_and_seek("u1", 7, now)
+
+    assert started.status == "started"
+    assert len(started.candidates) == 7
+    assert finished.status == "won"
+    assert finished.patrol_numbers == (1, 2, 3)
+    assert repository.find_user("u1").balance == 2
+    assert repository.today_income(user.id, now) == 3
+
+
+def test_hide_and_seek_found_keeps_entry_fee(repository, monkeypatch):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    monkeypatch.setattr("dzmm_bot.core.repository.randbelow", lambda _: 0)
+
+    repository.start_hide_and_seek("u1", now)
+    finished = repository.choose_hide_and_seek("u1", 1, now)
+
+    assert finished.status == "found"
+    assert repository.find_user("u1").balance == -1
+
+
+def test_hide_and_seek_timeout_refunds_and_returns_daily_play(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.start_hide_and_seek("u1", now)
+
+    cancelled = repository.expire_hide_and_seek_games(now + timedelta(minutes=2))
+    restarted = repository.start_hide_and_seek("u1", now + timedelta(minutes=2, seconds=1))
+
+    assert [game.status for game in cancelled] == ["cancelled"]
+    assert repository.find_user("u1").balance == -1
+    assert restarted.status == "started"
+    assert repository.expire_hide_and_seek_games(now + timedelta(minutes=3)) == []
+
+
+def test_hide_and_seek_limits_active_game_and_invalid_scene(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+
+    assert repository.start_hide_and_seek("u1", now).status == "started"
+    assert repository.start_hide_and_seek("u1", now).status == "already_active"
+    assert repository.choose_hide_and_seek("u1", 8, now).status == "invalid_scene"
+    assert repository.find_user("u1").balance == -1
+
+
+def test_hide_and_seek_daily_limit_is_beijing_scoped(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+
+    repository.start_hide_and_seek("u1", now)
+    repository.choose_hide_and_seek("u1", 1, now)
+    repository.start_hide_and_seek("u1", now)
+    repository.choose_hide_and_seek("u1", 1, now)
+
+    assert repository.start_hide_and_seek("u1", now).status == "daily_limit"
+
+
+@pytest.mark.parametrize("state", ["signup", "in_progress"])
+def test_hide_and_seek_cannot_start_during_active_random_event(repository, state):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_random_event_scene("茶水间", "报名", ["开场"], 1, 1, [("员工", 1)])
+    repository.set_random_event_settings(["10:00"], "可选身份：{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    if state == "in_progress":
+        repository.create_user("u2", "小红", now, 0)
+        assert repository.join_random_event("u2", "员工", now) == "started"
+
+    assert repository.start_hide_and_seek("u1", now).status == "random_event_active"
 
 
 def test_random_event_settings_reject_duplicate_fixed_times(repository):

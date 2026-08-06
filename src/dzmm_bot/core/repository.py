@@ -25,6 +25,10 @@ from .schema import (
     DailyActivityRecord,
     DailyCheckinRecord,
     GameSettingsRecord,
+    HideAndSeekDailyPlayRecord,
+    HideAndSeekGameRecord,
+    HideAndSeekSceneRecord,
+    HideAndSeekSettingsRecord,
     IncomeReportDeliveryRecord,
     IncomeReportScheduleRecord,
     InboundRecord,
@@ -76,6 +80,22 @@ _DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE = (
     "可选身份：{可选身份}\n"
     "请使用 /加入 身份 报名，报名将在 {报名截止分钟} 分钟后截止。"
 )
+_DEFAULT_HIDE_AND_SEEK_ENTRY_FEE = 1
+_DEFAULT_HIDE_AND_SEEK_WIN_REWARD = 3
+_DEFAULT_HIDE_AND_SEEK_DAILY_LIMIT = 2
+_DEFAULT_HIDE_AND_SEEK_SELECTION_TIMEOUT_MINUTES = 2
+_DEFAULT_HIDE_AND_SEEK_SCENES = (
+    "公司前台",
+    "茶水间",
+    "开放办公区",
+    "会议室",
+    "总监办公室",
+    "资料室",
+    "健身房",
+    "公司天台",
+    "楼下公园",
+    "员工休息室",
+)
 _ROLE_VARIABLE = re.compile(r"\{([^{}]*\S[^{}]*)\}")
 
 
@@ -98,6 +118,34 @@ class RandomEventSettings:
     signup_notice_template: str
     signup_timeout_minutes: int
     reminder_interval_minutes: int
+
+
+@dataclass(frozen=True)
+class HideAndSeekSettings:
+    enabled: bool
+    entry_fee: int
+    win_reward: int
+    daily_limit: int
+    selection_timeout_minutes: int
+
+
+@dataclass(frozen=True)
+class HideAndSeekScene:
+    id: UUID
+    name: str
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class HideAndSeekGameResult:
+    status: str
+    display_name: str | None = None
+    candidates: tuple[str, ...] = ()
+    patrol_numbers: tuple[int, ...] = ()
+    patrol_scenes: tuple[str, ...] = ()
+    balance: int | None = None
+    entry_fee: int = 0
+    win_reward: int = 0
 
 
 @dataclass(frozen=True)
@@ -436,6 +484,301 @@ class CoreRepository:
             record.reminder_interval_minutes = reminder_interval_minutes
             session.flush()
             return _random_event_settings(record)
+
+    def get_hide_and_seek_settings(self) -> HideAndSeekSettings:
+        with self._session() as session:
+            record = session.get(HideAndSeekSettingsRecord, 1)
+            if record is None:
+                record = HideAndSeekSettingsRecord(
+                    id=1,
+                    enabled=True,
+                    entry_fee=_DEFAULT_HIDE_AND_SEEK_ENTRY_FEE,
+                    win_reward=_DEFAULT_HIDE_AND_SEEK_WIN_REWARD,
+                    daily_limit=_DEFAULT_HIDE_AND_SEEK_DAILY_LIMIT,
+                    selection_timeout_minutes=_DEFAULT_HIDE_AND_SEEK_SELECTION_TIMEOUT_MINUTES,
+                )
+                session.add(record)
+                session.add_all(
+                    [HideAndSeekSceneRecord(name=name) for name in _DEFAULT_HIDE_AND_SEEK_SCENES]
+                )
+                session.flush()
+            return _hide_and_seek_settings(record)
+
+    def set_hide_and_seek_settings(
+        self,
+        enabled: bool,
+        entry_fee: int,
+        win_reward: int,
+        daily_limit: int,
+        selection_timeout_minutes: int,
+    ) -> HideAndSeekSettings:
+        if not isinstance(enabled, bool):
+            raise ValueError("玩法开关无效")
+        if not isinstance(entry_fee, int) or not 0 <= entry_fee <= 999:
+            raise ValueError("入场费需在 0 至 999 之间")
+        if not isinstance(win_reward, int) or not 0 <= win_reward <= 999:
+            raise ValueError("胜利奖励需在 0 至 999 之间")
+        if not isinstance(daily_limit, int) or not 1 <= daily_limit <= 99:
+            raise ValueError("每日次数需在 1 至 99 之间")
+        if (
+            not isinstance(selection_timeout_minutes, int)
+            or not 1 <= selection_timeout_minutes <= 60
+        ):
+            raise ValueError("选择超时需在 1 至 60 分钟之间")
+        self.get_hide_and_seek_settings()
+        with self._session() as session:
+            record = session.get(HideAndSeekSettingsRecord, 1)
+            if record is None:
+                raise RuntimeError("躲猫猫设置消失")
+            record.enabled = enabled
+            record.entry_fee = entry_fee
+            record.win_reward = win_reward
+            record.daily_limit = daily_limit
+            record.selection_timeout_minutes = selection_timeout_minutes
+            session.flush()
+            return _hide_and_seek_settings(record)
+
+    def list_hide_and_seek_scenes_page(
+        self, page: int, page_size: int
+    ) -> tuple[list[HideAndSeekScene], int]:
+        self.get_hide_and_seek_settings()
+        with self._session() as session:
+            total = int(
+                session.scalar(select(func.count()).select_from(HideAndSeekSceneRecord))
+                or 0
+            )
+            records = list(
+                session.scalars(
+                    select(HideAndSeekSceneRecord)
+                    .order_by(HideAndSeekSceneRecord.name)
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            return [_hide_and_seek_scene(record) for record in records], total
+
+    def create_hide_and_seek_scene(self, name: str) -> HideAndSeekScene:
+        name = _validate_hide_and_seek_scene_name(name)
+        self.get_hide_and_seek_settings()
+        with self._session() as session:
+            if session.scalar(
+                select(HideAndSeekSceneRecord.id).where(HideAndSeekSceneRecord.name == name)
+            ) is not None:
+                raise ValueError("地点名称已存在")
+            record = HideAndSeekSceneRecord(name=name)
+            session.add(record)
+            session.flush()
+            return _hide_and_seek_scene(record)
+
+    def update_hide_and_seek_scene(
+        self, scene_id: UUID, name: str, enabled: bool
+    ) -> HideAndSeekScene:
+        name = _validate_hide_and_seek_scene_name(name)
+        if not isinstance(enabled, bool):
+            raise ValueError("地点状态无效")
+        self.get_hide_and_seek_settings()
+        with self._session() as session:
+            record = session.get(HideAndSeekSceneRecord, scene_id)
+            if record is None:
+                raise ValueError("躲猫猫地点不存在")
+            if session.scalar(
+                select(HideAndSeekSceneRecord.id).where(
+                    HideAndSeekSceneRecord.name == name,
+                    HideAndSeekSceneRecord.id != scene_id,
+                )
+            ) is not None:
+                raise ValueError("地点名称已存在")
+            record.name = name
+            record.enabled = enabled
+            session.flush()
+            return _hide_and_seek_scene(record)
+
+    def delete_hide_and_seek_scene(self, scene_id: UUID) -> bool:
+        self.get_hide_and_seek_settings()
+        with self._session() as session:
+            record = session.get(HideAndSeekSceneRecord, scene_id)
+            if record is None:
+                return False
+            session.delete(record)
+            return True
+
+    def start_hide_and_seek(
+        self, platform_id: str, now: datetime
+    ) -> HideAndSeekGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            settings = self.get_hide_and_seek_settings()
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return HideAndSeekGameResult("not_joined")
+                if not settings.enabled:
+                    return HideAndSeekGameResult("disabled", display_name=user.display_name)
+                if self._active_random_event(session) is not None:
+                    return HideAndSeekGameResult(
+                        "random_event_active", display_name=user.display_name
+                    )
+                active = session.scalar(
+                    select(HideAndSeekGameRecord)
+                    .where(
+                        HideAndSeekGameRecord.user_id == user.id,
+                        HideAndSeekGameRecord.state == "selecting",
+                    )
+                    .with_for_update()
+                )
+                if active is not None:
+                    return HideAndSeekGameResult("already_active", display_name=user.display_name)
+                scenes = list(
+                    session.scalars(
+                        select(HideAndSeekSceneRecord)
+                        .where(HideAndSeekSceneRecord.enabled.is_(True))
+                        .order_by(HideAndSeekSceneRecord.name)
+                    )
+                )
+                if len(scenes) < 7:
+                    return HideAndSeekGameResult(
+                        "not_enough_scenes", display_name=user.display_name
+                    )
+                play_date = now.date()
+                daily = session.scalar(
+                    select(HideAndSeekDailyPlayRecord)
+                    .where(
+                        HideAndSeekDailyPlayRecord.user_id == user.id,
+                        HideAndSeekDailyPlayRecord.play_date == play_date,
+                    )
+                    .with_for_update()
+                )
+                if daily is not None and daily.count >= settings.daily_limit:
+                    return HideAndSeekGameResult("daily_limit", display_name=user.display_name)
+                if daily is None:
+                    daily = HideAndSeekDailyPlayRecord(
+                        user_id=user.id, play_date=play_date, count=0
+                    )
+                    session.add(daily)
+                candidates = _sample_distinct([scene.name for scene in scenes], 7)
+                daily.count += 1
+                self._apply_balance_change(user, -settings.entry_fee, "hide_and_seek_entry", now)
+                session.add(
+                    HideAndSeekGameRecord(
+                        user_id=user.id,
+                        play_date=play_date,
+                        state="selecting",
+                        candidates=candidates,
+                        entry_fee=settings.entry_fee,
+                        win_reward=settings.win_reward,
+                        choice_deadline=now + timedelta(minutes=settings.selection_timeout_minutes),
+                    )
+                )
+                return HideAndSeekGameResult(
+                    "started",
+                    display_name=user.display_name,
+                    candidates=tuple(candidates),
+                    balance=user.balance,
+                    entry_fee=settings.entry_fee,
+                    win_reward=settings.win_reward,
+                )
+
+    def choose_hide_and_seek(
+        self, platform_id: str, scene_number: int, now: datetime
+    ) -> HideAndSeekGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return HideAndSeekGameResult("not_joined")
+                game = session.scalar(
+                    select(HideAndSeekGameRecord)
+                    .where(
+                        HideAndSeekGameRecord.user_id == user.id,
+                        HideAndSeekGameRecord.state == "selecting",
+                    )
+                    .with_for_update()
+                )
+                if game is None:
+                    return HideAndSeekGameResult("no_active_game", display_name=user.display_name)
+                if game.choice_deadline <= now:
+                    self._cancel_hide_and_seek_game(session, user, game, now)
+                    return HideAndSeekGameResult("expired", display_name=user.display_name)
+                if not isinstance(scene_number, int) or not 1 <= scene_number <= len(game.candidates):
+                    return HideAndSeekGameResult("invalid_scene", display_name=user.display_name)
+                patrol_numbers = _sample_distinct(list(range(1, len(game.candidates) + 1)), 3)
+                game.selected_number = scene_number
+                game.patrol_numbers = patrol_numbers
+                game.finished_at = now
+                game.state = "found" if scene_number in patrol_numbers else "won"
+                if game.state == "won":
+                    self._apply_balance_change(user, game.win_reward, "hide_and_seek_win", now)
+                patrol_scenes = tuple(game.candidates[number - 1] for number in patrol_numbers)
+                return HideAndSeekGameResult(
+                    game.state,
+                    display_name=user.display_name,
+                    patrol_numbers=tuple(patrol_numbers),
+                    patrol_scenes=patrol_scenes,
+                    balance=user.balance,
+                    entry_fee=game.entry_fee,
+                    win_reward=game.win_reward,
+                )
+
+    def expire_hide_and_seek_games(self, now: datetime) -> list[HideAndSeekGameResult]:
+        now = now.astimezone(BEIJING)
+        cancelled = []
+        with self.transaction():
+            with self._session() as session:
+                games = list(
+                    session.scalars(
+                        select(HideAndSeekGameRecord)
+                        .where(
+                            HideAndSeekGameRecord.state == "selecting",
+                            HideAndSeekGameRecord.choice_deadline <= now,
+                        )
+                        .with_for_update()
+                    )
+                )
+                for game in games:
+                    user = session.get(UserRecord, game.user_id, with_for_update=True)
+                    if user is None:
+                        continue
+                    self._cancel_hide_and_seek_game(session, user, game, now)
+                    cancelled.append(
+                        HideAndSeekGameResult(
+                            "cancelled",
+                            display_name=user.display_name,
+                            entry_fee=game.entry_fee,
+                        )
+                    )
+        return cancelled
+
+    def _cancel_hide_and_seek_game(
+        self,
+        session: Session,
+        user: UserRecord,
+        game: HideAndSeekGameRecord,
+        now: datetime,
+    ) -> None:
+        if game.state != "selecting":
+            return
+        game.state = "cancelled"
+        game.finished_at = now
+        self._apply_balance_change(user, game.entry_fee, "hide_and_seek_refund", now)
+        daily = session.scalar(
+            select(HideAndSeekDailyPlayRecord)
+            .where(
+                HideAndSeekDailyPlayRecord.user_id == user.id,
+                HideAndSeekDailyPlayRecord.play_date == game.play_date,
+            )
+            .with_for_update()
+        )
+        if daily is not None and daily.count > 0:
+            daily.count -= 1
 
     def schedule_random_events(self, now: datetime) -> list[RandomEventSchedule]:
         now = now.astimezone(BEIJING)
@@ -2227,6 +2570,37 @@ def _random_event_settings(record: RandomEventSettingsRecord) -> RandomEventSett
         signup_timeout_minutes=record.signup_timeout_minutes,
         reminder_interval_minutes=record.reminder_interval_minutes,
     )
+
+
+def _hide_and_seek_settings(record: HideAndSeekSettingsRecord) -> HideAndSeekSettings:
+    return HideAndSeekSettings(
+        enabled=record.enabled,
+        entry_fee=record.entry_fee,
+        win_reward=record.win_reward,
+        daily_limit=record.daily_limit,
+        selection_timeout_minutes=record.selection_timeout_minutes,
+    )
+
+
+def _hide_and_seek_scene(record: HideAndSeekSceneRecord) -> HideAndSeekScene:
+    return HideAndSeekScene(record.id, record.name, record.enabled)
+
+
+def _validate_hide_and_seek_scene_name(name: str) -> str:
+    if not isinstance(name, str):
+        raise ValueError("地点名称不能为空")
+    name = name.strip()
+    if not 1 <= len(name) <= 64:
+        raise ValueError("地点名称不能为空且不能超过 64 个字符")
+    return name
+
+
+def _sample_distinct(values: list, count: int) -> list:
+    pool = list(values)
+    sampled = []
+    for _ in range(count):
+        sampled.append(pool.pop(randbelow(len(pool))))
+    return sampled
 
 
 def _random_event_seat_summary(seats) -> str:

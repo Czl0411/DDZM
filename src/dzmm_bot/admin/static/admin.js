@@ -560,7 +560,6 @@ async function refresh() {
     }
     renderStatus(await response.json());
     await refreshLoginLease();
-    setResult("状态已更新", "success");
   } catch (error) {
     setResult(`状态读取失败（${error.message}）`, "error");
   } finally {

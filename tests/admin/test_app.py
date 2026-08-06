@@ -1112,6 +1112,15 @@ def test_admin_uses_standard_toast_notifications(client):
     assert "showNotification" in script
 
 
+def test_status_refresh_does_not_show_a_success_notification():
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+    refresh = script.split("async function refresh()", 1)[1].split(
+        "async function submitAction", 1
+    )[0]
+
+    assert 'setResult("状态已更新", "success")' not in refresh
+
+
 def test_random_event_scene_script_submits_openings_list():
     script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
 

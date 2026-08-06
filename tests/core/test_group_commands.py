@@ -174,13 +174,17 @@ def test_random_event_commands_join_count_rounds_and_settle_on_exit():
         2,
         [("员工", 2)],
     )
-    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.set_random_event_settings(
+        ["10:00"], "可选身份：{可选身份}；截止：{报名截止分钟}", 15, 5
+    )
     _receive(service, "join-1", "u1", "/入职 小明", now)
     _receive(service, "join-2", "u2", "/入职 小红", now)
     repository.schedule_random_events(now)
     repository.run_random_event_jobs(now)
+    assert "可选身份：员工 × 2；截止：15" in _latest_reply(factory)
 
     _receive(service, "event-join-1", "u1", "/加入 员工", now)
+    assert _latest_reply(factory) == "小明 已加入随机事件，担任 员工。\n剩余可选身份：员工 × 1"
     _receive(service, "event-join-2", "u2", "/加入 员工", now)
     _receive(service, "round-1", "u1", "第一句", now)
     _receive(service, "round-2", "u1", "第二句", now)

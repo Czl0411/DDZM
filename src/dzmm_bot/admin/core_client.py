@@ -57,6 +57,10 @@ class AdminCorePort(Protocol):
 
     def reschedule_random_event(self, schedule_id: str, scheduled_at: str) -> dict: ...
 
+    def create_today_random_event(self, event: dict) -> dict: ...
+
+    def delete_today_random_event(self, schedule_id: str) -> dict: ...
+
 
 class CoreClient:
     def __init__(
@@ -196,6 +200,16 @@ class CoreClient:
             f"/internal/game/random-events/today/{schedule_id}",
             json={"scheduled_at": scheduled_at},
         )
+        response.raise_for_status()
+        return response.json()
+
+    def create_today_random_event(self, event: dict) -> dict:
+        response = self._client.post("/internal/game/random-events/today", json=event)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_today_random_event(self, schedule_id: str) -> dict:
+        response = self._client.delete(f"/internal/game/random-events/today/{schedule_id}")
         response.raise_for_status()
         return response.json()
 

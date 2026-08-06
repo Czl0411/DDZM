@@ -49,23 +49,74 @@ def test_duplicate_platform_message_returns_existing_record(repository, inbound)
     assert second.id == first.id
 
 
-def test_random_event_schedule_respects_window_and_minimum_gap(repository):
+def test_random_event_settings_default_to_fixed_daily_times(repository):
+    settings = repository.get_random_event_settings()
+
+    assert settings.schedule_times == [
+        "00:00",
+        "02:00",
+        "10:00",
+        "14:00",
+        "16:00",
+        "20:00",
+    ]
+    assert "{可选身份}" in settings.signup_notice_template
+
+
+def test_random_event_settings_reject_duplicate_fixed_times(repository):
+    with pytest.raises(ValueError, match="固定场次"):
+        repository.set_random_event_settings(
+            ["10:00", "10:00"], "{可选身份}", 15, 5
+        )
+
+
+def test_random_event_schedule_uses_fixed_times(repository):
     from dzmm_bot.core.schema import BEIJING
 
     now = datetime(2026, 8, 6, 0, 0, tzinfo=BEIJING)
-    repository.set_random_event_settings("10:00", "24:00", 3, 90, 15, 5)
+    repository.set_random_event_settings(["10:00", "14:00", "20:00"], "{可选身份}", 15, 5)
 
     schedules = repository.schedule_random_events(now)
 
-    assert len(schedules) == 3
-    assert all(
-        "10:00" <= schedule.scheduled_at.strftime("%H:%M") < "24:00"
-        for schedule in schedules
+    assert [schedule.scheduled_at.strftime("%H:%M") for schedule in schedules] == [
+        "10:00",
+        "14:00",
+        "20:00",
+    ]
+
+
+def test_fixed_schedule_skips_times_missed_before_first_daily_run(repository):
+    from dzmm_bot.core.schema import BEIJING
+
+    now = datetime(2026, 8, 6, 12, 0, tzinfo=BEIJING)
+    repository.set_random_event_settings(["10:00", "14:00"], "{可选身份}", 15, 5)
+
+    schedules = repository.schedule_random_events(now)
+
+    assert [schedule.status for schedule in schedules] == ["skipped", "pending"]
+
+
+def test_today_random_event_can_be_added_and_pending_event_removed(repository):
+    from dzmm_bot.core.schema import BEIJING
+
+    now = datetime(2026, 8, 6, 12, 0, tzinfo=BEIJING)
+    scene = repository.create_random_event_scene(
+        "茶水间",
+        "报名公告。",
+        [{"name": "咖啡事故", "opening_text": "咖啡洒了。"}],
+        3,
+        10,
+        [("主持", 1), ("员工", 2)],
     )
-    assert all(
-        (right.scheduled_at - left.scheduled_at).total_seconds() >= 90 * 60
-        for left, right in zip(schedules, schedules[1:])
+
+    schedule = repository.create_today_random_event(
+        scene.id, "咖啡事故", datetime(2026, 8, 6, 14, 0, tzinfo=BEIJING), now
     )
+
+    assert schedule.scene_name == "茶水间"
+    assert schedule.event_name == "咖啡事故"
+    assert repository.delete_today_random_event(schedule.id, now) is True
+    assert repository.list_today_random_event_schedules(now) == []
 
 
 def test_random_event_scene_returns_named_event_templates(repository):
@@ -96,7 +147,7 @@ def test_random_event_lifecycle_rewards_only_completed_participant(
         2,
         [("员工", 2)],
     )
-    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.set_random_event_settings(["10:00"], "{可选身份}", 15, 5)
     first, _ = repository.create_user("u1", "小明", now, 0)
     second, _ = repository.create_user("u2", "小红", now, 0)
 
@@ -135,7 +186,7 @@ def test_full_random_event_sends_a_frozen_formal_opening(
         1,
         [("主持", 1), ("员工", 1)],
     )
-    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.set_random_event_settings(["10:00"], "{可选身份}", 15, 5)
     repository.create_user("u1", "小明", now, 0)
     repository.create_user("u2", "小红", now, 0)
     repository.schedule_random_events(now)
@@ -166,7 +217,7 @@ def test_full_random_event_renders_role_variables(repository, session_factory):
         1,
         [("主持", 1), ("员工", 2)],
     )
-    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.set_random_event_settings(["10:00"], "{可选身份}", 15, 5)
     repository.create_user("u1", "小明", now, 0)
     repository.create_user("u2", "小红", now, 0)
     repository.create_user("u3", "小李", now, 0)
@@ -190,7 +241,7 @@ def test_random_event_records_participant_details_and_can_trigger(repository):
     repository.create_random_event_scene(
         "茶水间", "报名", [{"name": "咖啡事故", "opening_text": "开始。"}], 1, 1, [("员工", 1)]
     )
-    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.set_random_event_settings(["10:00"], "{可选身份}", 15, 5)
     repository.create_user("u1", "小明", now, 0)
     schedule = repository.schedule_random_events(now)[0]
 
@@ -215,7 +266,7 @@ def test_in_progress_random_event_classifies_observer_parentheses(repository):
     repository.create_random_event_scene(
         "茶水间", "快点加入吧。", ["正式开始。"], 1, 1, [("员工", 1)]
     )
-    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.set_random_event_settings(["10:00"], "{可选身份}", 15, 5)
     repository.create_user("player", "小明", now, 0)
     repository.schedule_random_events(now)
     repository.run_random_event_jobs(now)
@@ -242,7 +293,7 @@ def test_cross_day_active_random_event_skips_next_days_due_schedule(repository):
     repository.create_random_event_scene(
         "会议室", "会议还没结束。", ["会议还没结束。"], 1, 10, [("主持", 1)]
     )
-    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.set_random_event_settings(["10:00"], "{可选身份}", 15, 5)
     repository.create_user("u1", "小明", first_day, 0)
     repository.schedule_random_events(first_day)
     repository.run_random_event_jobs(first_day)
@@ -252,9 +303,9 @@ def test_cross_day_active_random_event_skips_next_days_due_schedule(repository):
     repository.schedule_random_events(second_day)
     repository.run_random_event_jobs(second_day)
 
-    assert [event.status for event in repository.list_today_random_event_schedules(second_day)] == [
-        "skipped"
-    ]
+    schedules = repository.list_today_random_event_schedules(second_day)
+    assert [event.status for event in schedules] == ["in_progress", "skipped"]
+    assert schedules[0].is_cross_day is True
 
 
 def test_random_event_scene_can_be_updated_and_deleted(repository):

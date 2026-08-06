@@ -164,7 +164,7 @@
                 <div class="panel-heading">
                   <div>
                     <h2>随机事件规则</h2>
-                    <p class="muted">每天北京时间 00:00 在时段内生成计划；同一时间仅会进行一场事件。</p>
+                    <p class="muted">每日按固定时刻生成计划，场景与事件模板仍会随机选择；同一时间仅会进行一场事件。</p>
                   </div>
                   <button id="edit-random-event-settings" class="primary" type="button">编辑规则</button>
                 </div>
@@ -185,7 +185,7 @@
                     <h2>今日随机事件</h2>
                     <p class="muted">待开始事件可立即触发或调整；其他状态可查看玩家发言详情。</p>
                   </div>
-                  <button id="refresh-random-events" class="secondary" type="button">刷新列表</button>
+                  <div class="command-actions"><button id="add-today-random-event" class="primary" type="button">补充今日事件</button><button id="refresh-random-events" class="secondary" type="button">刷新列表</button></div>
                 </div>
                 <div id="today-random-event-list" class="data-list"></div>
               </section>
@@ -304,8 +304,10 @@
     <div id="random-event-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="random-event-settings-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-random-event-settings-modal></div>
       <section class="template-modal-card">
-        <div class="template-modal-heading"><div><p class="eyebrow">随机事件</p><h2 id="random-event-settings-modal-title">编辑事件规则</h2><p class="muted">所有时间均按北京时间计算；最小间隔至少 1 小时。</p></div><button class="text-button" data-close-random-event-settings-modal type="button">关闭</button></div>
-        <div class="event-input-grid"><label>开始时间<input id="random-event-start-time" type="time" required></label><label>结束时间<input id="random-event-end-time" pattern="(?:[01]\d|2[0-4]):[0-5]\d" placeholder="24:00" required></label><label>每天次数<input id="random-event-count" type="number" min="1" max="20" required></label><label>最小间隔（分钟）<input id="random-event-minimum-interval" type="number" min="60" required></label><label>报名超时（分钟）<input id="random-event-signup-timeout" type="number" min="1" required></label><label>提醒间隔（分钟）<input id="random-event-reminder-interval" type="number" min="1" required></label></div>
+        <div class="template-modal-heading"><div><p class="eyebrow">随机事件</p><h2 id="random-event-settings-modal-title">编辑事件规则</h2><p class="muted">所有时间均按北京时间计算。修改只影响之后新生成的每日计划。</p></div><button class="text-button" data-close-random-event-settings-modal type="button">关闭</button></div>
+        <label>每日固定触发时刻</label><div id="random-event-time-inputs" class="income-report-time-inputs"></div><button id="add-random-event-time" class="secondary" type="button">添加触发时刻</button>
+        <label for="random-event-signup-notice">报名补充说明</label><textarea id="random-event-signup-notice" rows="3" maxlength="2000"></textarea><div class="variable-pills"><button class="variable-chip" data-random-event-signup-variable="{可选身份}" type="button">{可选身份}</button><button class="variable-chip" data-random-event-signup-variable="{报名截止分钟}" type="button">{报名截止分钟}</button></div>
+        <div class="event-input-grid"><label>报名超时（分钟）<input id="random-event-signup-timeout" type="number" min="1" required></label><label>提醒间隔（分钟）<input id="random-event-reminder-interval" type="number" min="1" required></label></div>
         <div class="template-modal-actions"><button class="secondary" data-close-random-event-settings-modal type="button">取消</button><button id="save-random-event-settings" class="primary" type="button">保存规则</button></div>
       </section>
     </div>
@@ -324,6 +326,10 @@
     <div id="random-event-time-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="random-event-time-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-random-event-time-modal></div>
       <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">今日随机事件</p><h2 id="random-event-time-modal-title">调整开始时间</h2><p class="muted">只可调整尚未开始的事件。</p></div><button class="text-button" data-close-random-event-time-modal type="button">关闭</button></div><label for="random-event-scheduled-at">开始时间（北京时间）</label><input id="random-event-scheduled-at" type="datetime-local"><div class="template-modal-actions"><button class="secondary" data-close-random-event-time-modal type="button">取消</button><button id="save-random-event-time" class="primary" type="button">保存时间</button></div></section>
+    </div>
+    <div id="random-event-add-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="random-event-add-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-random-event-add-modal></div>
+      <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">今日随机事件</p><h2 id="random-event-add-modal-title">补充今日事件</h2><p class="muted">选择场景和一个事件模板，系统会冻结本次规则。</p></div><button class="text-button" data-close-random-event-add-modal type="button">关闭</button></div><label for="random-event-add-scene">场景</label><select id="random-event-add-scene"></select><label for="random-event-add-template">事件</label><select id="random-event-add-template"></select><label for="random-event-add-scheduled-at">开始时间（北京时间）</label><input id="random-event-add-scheduled-at" type="datetime-local"><div class="template-modal-actions"><button class="secondary" data-close-random-event-add-modal type="button">取消</button><button id="save-random-event-add" class="primary" type="button">补充事件</button></div></section>
     </div>
     <div id="random-event-details-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="random-event-details-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-random-event-details-modal></div>

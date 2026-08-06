@@ -71,6 +71,11 @@ _DEFAULT_RANDOM_EVENT_COUNT = 1
 _DEFAULT_RANDOM_EVENT_MINIMUM_INTERVAL_MINUTES = 60
 _DEFAULT_RANDOM_EVENT_SIGNUP_TIMEOUT_MINUTES = 15
 _DEFAULT_RANDOM_EVENT_REMINDER_INTERVAL_MINUTES = 5
+_DEFAULT_RANDOM_EVENT_TIMES = ("00:00", "02:00", "10:00", "14:00", "16:00", "20:00")
+_DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE = (
+    "可选身份：{可选身份}\n"
+    "请使用 /加入 身份 报名，报名将在 {报名截止分钟} 分钟后截止。"
+)
 _ROLE_VARIABLE = re.compile(r"\{([^{}]*\S[^{}]*)\}")
 
 
@@ -89,10 +94,8 @@ class ActivitySettings:
 
 @dataclass(frozen=True)
 class RandomEventSettings:
-    start_time: str
-    end_time: str
-    events_per_day: int
-    minimum_interval_minutes: int
+    schedule_times: list[str]
+    signup_notice_template: str
     signup_timeout_minutes: int
     reminder_interval_minutes: int
 
@@ -100,10 +103,12 @@ class RandomEventSettings:
 @dataclass(frozen=True)
 class RandomEventSchedule:
     id: UUID
+    event_date: date
     scheduled_at: datetime
     status: str
     scene_name: str | None = None
     event_name: str | None = None
+    is_cross_day: bool = False
 
 
 @dataclass(frozen=True)
@@ -382,6 +387,8 @@ class CoreRepository:
                     end_time=_DEFAULT_RANDOM_EVENT_END_TIME,
                     events_per_day=_DEFAULT_RANDOM_EVENT_COUNT,
                     minimum_interval_minutes=_DEFAULT_RANDOM_EVENT_MINIMUM_INTERVAL_MINUTES,
+                    schedule_times=list(_DEFAULT_RANDOM_EVENT_TIMES),
+                    signup_notice_template=_DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE,
                     signup_timeout_minutes=_DEFAULT_RANDOM_EVENT_SIGNUP_TIMEOUT_MINUTES,
                     reminder_interval_minutes=_DEFAULT_RANDOM_EVENT_REMINDER_INTERVAL_MINUTES,
                 )
@@ -391,37 +398,40 @@ class CoreRepository:
 
     def set_random_event_settings(
         self,
-        start_time: str,
-        end_time: str,
-        events_per_day: int,
-        minimum_interval_minutes: int,
+        schedule_times: list[str],
+        signup_notice_template: str,
         signup_timeout_minutes: int,
         reminder_interval_minutes: int,
     ) -> RandomEventSettings:
-        start_minutes = _event_time_minutes(start_time)
-        end_minutes = _event_time_minutes(end_time, allow_midnight=True)
-        if start_minutes is None or end_minutes is None or start_minutes >= end_minutes:
-            raise ValueError("随机事件时间窗无效")
-        if not isinstance(events_per_day, int) or events_per_day < 1:
-            raise ValueError("每日随机事件次数至少为 1")
-        if not isinstance(minimum_interval_minutes, int) or minimum_interval_minutes < 60:
-            raise ValueError("事件最小间隔至少为 1 小时")
+        if not isinstance(schedule_times, list) or not schedule_times:
+            raise ValueError("每日固定场次至少需要一个时间")
+        if any(_event_time_minutes(value) is None for value in schedule_times):
+            raise ValueError("固定场次必须使用 HH:mm 格式")
+        normalized_times = sorted(set(schedule_times))
+        if len(normalized_times) != len(schedule_times):
+            raise ValueError("固定场次不能重复")
+        signup_notice_template = _validate_signup_notice_template(signup_notice_template)
         if not isinstance(signup_timeout_minutes, int) or signup_timeout_minutes < 1:
             raise ValueError("报名超时至少为 1 分钟")
         if not isinstance(reminder_interval_minutes, int) or reminder_interval_minutes < 1:
             raise ValueError("提醒间隔至少为 1 分钟")
-        _validate_random_event_capacity(
-            start_minutes, end_minutes, events_per_day, minimum_interval_minutes
-        )
         with self._session() as session:
             record = session.get(RandomEventSettingsRecord, 1)
             if record is None:
-                record = RandomEventSettingsRecord(id=1)
+                record = RandomEventSettingsRecord(
+                    id=1,
+                    start_time=_DEFAULT_RANDOM_EVENT_START_TIME,
+                    end_time=_DEFAULT_RANDOM_EVENT_END_TIME,
+                    events_per_day=_DEFAULT_RANDOM_EVENT_COUNT,
+                    minimum_interval_minutes=_DEFAULT_RANDOM_EVENT_MINIMUM_INTERVAL_MINUTES,
+                    schedule_times=list(_DEFAULT_RANDOM_EVENT_TIMES),
+                    signup_notice_template=_DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE,
+                    signup_timeout_minutes=_DEFAULT_RANDOM_EVENT_SIGNUP_TIMEOUT_MINUTES,
+                    reminder_interval_minutes=_DEFAULT_RANDOM_EVENT_REMINDER_INTERVAL_MINUTES,
+                )
                 session.add(record)
-            record.start_time = start_time
-            record.end_time = end_time
-            record.events_per_day = events_per_day
-            record.minimum_interval_minutes = minimum_interval_minutes
+            record.schedule_times = normalized_times
+            record.signup_notice_template = signup_notice_template
             record.signup_timeout_minutes = signup_timeout_minutes
             record.reminder_interval_minutes = reminder_interval_minutes
             session.flush()
@@ -430,10 +440,6 @@ class CoreRepository:
     def schedule_random_events(self, now: datetime) -> list[RandomEventSchedule]:
         now = now.astimezone(BEIJING)
         settings = self.get_random_event_settings()
-        start_minutes = _event_time_minutes(settings.start_time)
-        end_minutes = _event_time_minutes(settings.end_time, allow_midnight=True)
-        if start_minutes is None or end_minutes is None:
-            raise RuntimeError("random event settings disappeared")
         with self._session() as session:
             existing = list(
                 session.scalars(
@@ -447,25 +453,11 @@ class CoreRepository:
                     if record.status == "pending" and record.scene_name is None:
                         self._fill_random_event_schedule_snapshot(session, record)
                 return [_random_event_schedule(record) for record in existing]
-            _validate_random_event_capacity(
-                start_minutes,
-                end_minutes,
-                settings.events_per_day,
-                settings.minimum_interval_minutes,
-            )
-            latest_first_minute = (
-                end_minutes
-                - 1
-                - (settings.events_per_day - 1) * settings.minimum_interval_minutes
-            )
-            extra_minutes = latest_first_minute - start_minutes
-            offsets = sorted(
-                randbelow(extra_minutes + 1)
-                for _ in range(settings.events_per_day)
-            )
             records = []
-            for index, offset in enumerate(offsets):
-                minute = start_minutes + offset + index * settings.minimum_interval_minutes
+            for scheduled_time in settings.schedule_times:
+                minute = _event_time_minutes(scheduled_time)
+                if minute is None:
+                    raise RuntimeError("random event schedule disappeared")
                 scheduled_at = now.replace(
                     hour=minute // 60,
                     minute=minute % 60,
@@ -473,7 +465,9 @@ class CoreRepository:
                     microsecond=0,
                 )
                 record = RandomEventScheduleRecord(
-                    event_date=now.date(), scheduled_at=scheduled_at
+                    event_date=now.date(),
+                    scheduled_at=scheduled_at,
+                    status="skipped" if scheduled_at < now.replace(second=0, microsecond=0) else "pending",
                 )
                 session.add(record)
                 self._fill_random_event_schedule_snapshot(session, record)
@@ -493,6 +487,17 @@ class CoreRepository:
                     .order_by(RandomEventScheduleRecord.scheduled_at)
                 )
             )
+            carryover = session.scalar(
+                select(RandomEventScheduleRecord)
+                .join(RandomEventRecord, RandomEventRecord.schedule_id == RandomEventScheduleRecord.id)
+                .where(
+                    RandomEventRecord.state.in_(("signup", "in_progress")),
+                    RandomEventScheduleRecord.event_date < now.date(),
+                )
+                .order_by(RandomEventScheduleRecord.scheduled_at)
+            )
+            if carryover is not None:
+                records.insert(0, carryover)
             names = {
                 schedule_id: (scene_name, event_name)
                 for schedule_id, scene_name, event_name in session.execute(
@@ -506,7 +511,11 @@ class CoreRepository:
                 )
             }
             return [
-                _random_event_schedule(record, *(names.get(record.id, (None, None))))
+                _random_event_schedule(
+                    record,
+                    *(names.get(record.id, (None, None))),
+                    is_cross_day=record.id == getattr(carryover, "id", None),
+                )
                 for record in records
             ]
 
@@ -515,40 +524,80 @@ class CoreRepository:
     ) -> RandomEventSchedule:
         now = now.astimezone(BEIJING)
         scheduled_at = scheduled_at.astimezone(BEIJING).replace(second=0, microsecond=0)
-        settings = self.get_random_event_settings()
-        start = _event_time_minutes(settings.start_time)
-        end = _event_time_minutes(settings.end_time, allow_midnight=True)
-        minute = scheduled_at.hour * 60 + scheduled_at.minute
-        if (
-            scheduled_at.date() != now.date()
-            or start is None
-            or end is None
-            or not start <= minute < end
-        ):
-            raise ValueError("调整时间必须在今日配置的时间窗内")
+        if scheduled_at.date() != now.date() or scheduled_at <= now:
+            raise ValueError("调整时间必须是今日未来时刻")
         with self._session() as session:
             record = session.get(RandomEventScheduleRecord, schedule_id)
             if record is None:
                 raise ValueError("随机事件不存在")
             if record.event_date != now.date() or record.status != "pending":
                 raise ValueError("仅待开始事件可以调整")
-            conflicts = list(
-                session.scalars(
-                    select(RandomEventScheduleRecord).where(
-                        RandomEventScheduleRecord.event_date == now.date(),
-                        RandomEventScheduleRecord.id != record.id,
-                    )
+            conflict = session.scalar(
+                select(RandomEventScheduleRecord.id).where(
+                    RandomEventScheduleRecord.event_date == now.date(),
+                    RandomEventScheduleRecord.id != record.id,
+                    RandomEventScheduleRecord.scheduled_at == scheduled_at,
                 )
             )
-            if any(
-                abs((other.scheduled_at - scheduled_at).total_seconds())
-                < settings.minimum_interval_minutes * 60
-                for other in conflicts
-            ):
-                raise ValueError("调整时间与其他随机事件间隔不足")
+            if conflict is not None:
+                raise ValueError("今日已有该时刻的随机事件")
             record.scheduled_at = scheduled_at
             session.flush()
             return _random_event_schedule(record)
+
+    def create_today_random_event(
+        self, scene_id: UUID, event_name: str, scheduled_at: datetime, now: datetime
+    ) -> RandomEventSchedule:
+        now = now.astimezone(BEIJING)
+        scheduled_at = scheduled_at.astimezone(BEIJING).replace(second=0, microsecond=0)
+        if scheduled_at.date() != now.date() or scheduled_at <= now:
+            raise ValueError("补充时间必须是今日未来时刻")
+        with self._session() as session:
+            if session.scalar(
+                select(RandomEventScheduleRecord.id).where(
+                    RandomEventScheduleRecord.event_date == now.date(),
+                    RandomEventScheduleRecord.scheduled_at == scheduled_at,
+                )
+            ) is not None:
+                raise ValueError("今日已有该时刻的随机事件")
+            scene = session.get(RandomEventSceneRecord, scene_id)
+            if scene is None or not scene.enabled:
+                raise ValueError("场景不存在或已停用")
+            template = session.scalar(
+                select(RandomEventSceneOpeningRecord).where(
+                    RandomEventSceneOpeningRecord.scene_id == scene.id,
+                    RandomEventSceneOpeningRecord.name == event_name,
+                )
+            )
+            if template is None:
+                raise ValueError("事件模板不存在")
+            seats = list(
+                session.scalars(
+                    select(RandomEventSceneSeatRecord)
+                    .where(RandomEventSceneSeatRecord.scene_id == scene.id)
+                    .order_by(RandomEventSceneSeatRecord.role)
+                )
+            )
+            record = RandomEventScheduleRecord(
+                event_date=now.date(), scheduled_at=scheduled_at, status="pending"
+            )
+            session.add(record)
+            self._set_random_event_schedule_snapshot(session, record, scene, template, seats)
+            session.flush()
+            return _random_event_schedule(record)
+
+    def delete_today_random_event(self, schedule_id: UUID, now: datetime) -> bool:
+        now = now.astimezone(BEIJING)
+        with self._session() as session:
+            record = session.get(RandomEventScheduleRecord, schedule_id)
+            if (
+                record is None
+                or record.event_date != now.date()
+                or record.status != "pending"
+            ):
+                return False
+            session.delete(record)
+            return True
 
     def trigger_random_event(
         self, schedule_id: UUID, now: datetime
@@ -773,7 +822,8 @@ class CoreRepository:
                     ):
                         open_seats = self._random_event_open_seats(session, active.id)
                         self.enqueue_system_outbound(
-                            f"【随机事件：{active.scene_name}】仍在报名：{open_seats}。"
+                            f"【随机事件：{active.scene_name}】仍在报名。\n"
+                            f"剩余可选身份：{open_seats}"
                         )
                         settings = self.get_random_event_settings()
                         active.next_reminder_at = now + timedelta(
@@ -1049,14 +1099,25 @@ class CoreRepository:
                 .order_by(RandomEventSceneSeatRecord.role)
             )
         )
+        self._set_random_event_schedule_snapshot(session, schedule, scene, template, seats)
+        return True
+
+    def _set_random_event_schedule_snapshot(
+        self,
+        session: Session,
+        schedule: RandomEventScheduleRecord,
+        scene: RandomEventSceneRecord,
+        template: RandomEventSceneOpeningRecord,
+        seats: list[RandomEventSceneSeatRecord],
+    ) -> None:
         schedule.scene_name = scene.name
         schedule.event_name = template.name
         schedule.signup_text = scene.signup_text
+        schedule.signup_notice_template = self.get_random_event_settings().signup_notice_template
         schedule.formal_opening_text = template.content
         schedule.reward = scene.reward
         schedule.target_rounds = scene.target_rounds
         schedule.seats = [{"role": seat.role, "capacity": seat.capacity} for seat in seats]
-        return True
 
     def _start_random_event_from_schedule(
         self, session: Session, schedule: RandomEventScheduleRecord, now: datetime
@@ -1101,7 +1162,13 @@ class CoreRepository:
         )
         self.enqueue_system_outbound(
             f"【随机事件：{schedule.scene_name}－{schedule.event_name}】\n{schedule.signup_text}\n"
-            f"使用 /加入 角色 报名，报名将在 {settings.signup_timeout_minutes} 分钟后截止。"
+            + _render_random_event_signup_notice(
+                schedule.signup_notice_template or settings.signup_notice_template,
+                _random_event_seat_summary(
+                    [(seat["role"], seat["capacity"]) for seat in schedule.seats]
+                ),
+                settings.signup_timeout_minutes,
+            )
         )
         return active
 
@@ -1153,8 +1220,19 @@ class CoreRepository:
                 or 0
             )
             if occupied < seat.capacity:
-                remaining.append(f"{seat.role} {seat.capacity - occupied}")
-        return "，".join(remaining) or "已满员"
+                remaining.append((seat.role, seat.capacity - occupied))
+        return _random_event_seat_summary(remaining)
+
+    def random_event_open_seats(self) -> str:
+        with self._session() as session:
+            event = session.scalar(
+                select(RandomEventRecord)
+                .where(RandomEventRecord.state == "signup")
+                .order_by(RandomEventRecord.started_at)
+            )
+            if event is None:
+                return "已满员"
+            return self._random_event_open_seats(session, event.id)
 
     def _finish_random_event(
         self, session: Session, event: RandomEventRecord, state: str, now: datetime
@@ -2109,6 +2187,16 @@ def _event_time_minutes(value: str, *, allow_midnight: bool = False) -> int | No
     return int(value[:2]) * 60 + int(value[3:])
 
 
+def _validate_signup_notice_template(template: str) -> str:
+    if not isinstance(template, str) or not template.strip() or len(template) > 2000:
+        raise ValueError("报名补充文案不能为空且不能超过 2000 个字符")
+    allowed = {"{可选身份}", "{报名截止分钟}"}
+    variables = set(re.findall(r"\{[^{}]+\}", template))
+    if not variables.issubset(allowed):
+        raise ValueError("报名补充文案包含不支持的变量")
+    return template.strip()
+
+
 def _validate_random_event_capacity(
     start_minutes: int,
     end_minutes: int,
@@ -2121,12 +2209,23 @@ def _validate_random_event_capacity(
 
 def _random_event_settings(record: RandomEventSettingsRecord) -> RandomEventSettings:
     return RandomEventSettings(
-        start_time=record.start_time,
-        end_time=record.end_time,
-        events_per_day=record.events_per_day,
-        minimum_interval_minutes=record.minimum_interval_minutes,
+        schedule_times=list(record.schedule_times),
+        signup_notice_template=record.signup_notice_template,
         signup_timeout_minutes=record.signup_timeout_minutes,
         reminder_interval_minutes=record.reminder_interval_minutes,
+    )
+
+
+def _random_event_seat_summary(seats) -> str:
+    return "、".join(f"{role} × {capacity}" for role, capacity in seats) or "已满员"
+
+
+def _render_random_event_signup_notice(
+    template: str, open_seats: str, signup_timeout_minutes: int
+) -> str:
+    return (
+        template.replace("{可选身份}", open_seats)
+        .replace("{报名截止分钟}", str(signup_timeout_minutes))
     )
 
 
@@ -2134,13 +2233,16 @@ def _random_event_schedule(
     record: RandomEventScheduleRecord,
     scene_name: str | None = None,
     event_name: str | None = None,
+    is_cross_day: bool = False,
 ) -> RandomEventSchedule:
     return RandomEventSchedule(
         id=record.id,
+        event_date=record.event_date,
         scheduled_at=record.scheduled_at,
         status=record.status,
         scene_name=record.scene_name or scene_name,
         event_name=record.event_name or event_name,
+        is_cross_day=is_cross_day,
     )
 
 

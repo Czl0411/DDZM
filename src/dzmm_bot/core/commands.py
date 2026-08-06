@@ -171,7 +171,11 @@ class GroupCommandHandler:
         if status == "joined":
             return self._reply(
                 "/加入", status, received_at,
-                {"{昵称}": employee.display_name, "{角色}": parts[1].strip()},
+                {
+                    "{昵称}": employee.display_name,
+                    "{角色}": parts[1].strip(),
+                    "{剩余席位}": self._repository.random_event_open_seats(),
+                },
             )
         if status == "started":
             return self._reply(

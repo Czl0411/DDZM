@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -173,10 +173,8 @@ class SetActivitySettingsRequest(ApiModel):
 
 
 class RandomEventSettingsResponse(ApiModel):
-    start_time: str
-    end_time: str
-    events_per_day: int
-    minimum_interval_minutes: int
+    schedule_times: list[str] = Field(min_length=1, max_length=24)
+    signup_notice_template: str = Field(min_length=1, max_length=2000)
     signup_timeout_minutes: int
     reminder_interval_minutes: int
 
@@ -231,10 +229,18 @@ class UpdateRandomEventSceneRequest(CreateRandomEventSceneRequest):
 
 class RandomEventScheduleResponse(ApiModel):
     id: UUID
+    event_date: date
     scheduled_at: datetime
     status: str
     scene_name: str | None
     event_name: str | None
+    is_cross_day: bool
+
+
+class CreateTodayRandomEventRequest(ApiModel):
+    scene_id: UUID
+    event_name: str = Field(min_length=1, max_length=64)
+    scheduled_at: datetime
 
 
 class RandomEventDetailResponse(ApiModel):

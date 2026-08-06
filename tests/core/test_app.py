@@ -668,17 +668,15 @@ def test_random_event_settings_are_available_through_internal_api(client, header
         "/internal/game/random-events/settings",
         headers=headers,
         json={
-            "start_time": "10:00",
-            "end_time": "24:00",
-            "events_per_day": 2,
-            "minimum_interval_minutes": 90,
+            "schedule_times": ["10:00", "14:00"],
+            "signup_notice_template": "可选身份：{可选身份}",
             "signup_timeout_minutes": 15,
             "reminder_interval_minutes": 5,
         },
     )
 
     assert response.status_code == 200
-    assert response.json()["events_per_day"] == 2
+    assert response.json()["schedule_times"] == ["10:00", "14:00"]
 
 
 def test_random_event_scene_is_created_through_internal_api(client, headers):
@@ -734,3 +732,37 @@ def test_random_event_scene_api_returns_named_events(client, headers):
 
     assert response.status_code == 201
     assert response.json()["events"] == [{"name": "咖啡事故", "opening_text": "开场"}]
+
+
+def test_today_random_event_can_be_added_and_removed_through_internal_api(
+    client, headers
+):
+    scene = client.post(
+        "/internal/game/random-events/scenes",
+        headers=headers,
+        json={
+            "name": "茶水间",
+            "signup_text": "报名",
+            "events": [{"name": "咖啡事故", "opening_text": "开场"}],
+            "reward": 1,
+            "target_rounds": 1,
+            "seats": [{"role": "员工", "capacity": 1}],
+        },
+    ).json()
+
+    created = client.post(
+        "/internal/game/random-events/today",
+        headers=headers,
+        json={
+            "scene_id": scene["id"],
+            "event_name": "咖啡事故",
+            "scheduled_at": "2026-08-04T21:00:00+08:00",
+        },
+    )
+
+    assert created.status_code == 200
+    assert created.json()["scene_name"] == "茶水间"
+    assert created.json()["event_name"] == "咖啡事故"
+    assert client.delete(
+        f"/internal/game/random-events/today/{created.json()['id']}", headers=headers
+    ).json() == {"accepted": True}

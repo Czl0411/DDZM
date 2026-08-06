@@ -42,6 +42,7 @@ from .api_models import (
     RandomEventSceneResponse,
     PaginatedRandomEventScenesResponse,
     CreateRandomEventSceneRequest,
+    CreateTodayRandomEventRequest,
     UpdateRandomEventSceneRequest,
     RandomEventScheduleResponse,
     RandomEventDetailsResponse,
@@ -370,10 +371,8 @@ def create_app(
     ) -> RandomEventSettingsResponse:
         try:
             settings = repository.set_random_event_settings(
-                request.start_time,
-                request.end_time,
-                request.events_per_day,
-                request.minimum_interval_minutes,
+                request.schedule_times,
+                request.signup_notice_template,
                 request.signup_timeout_minutes,
                 request.reminder_interval_minutes,
             )
@@ -483,6 +482,35 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _random_event_schedule_response(schedule)
+
+    @app.post(
+        "/internal/game/random-events/today",
+        response_model=RandomEventScheduleResponse,
+    )
+    def create_today_random_event(
+        request: CreateTodayRandomEventRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> RandomEventScheduleResponse:
+        try:
+            return _random_event_schedule_response(
+                repository.create_today_random_event(
+                    request.scene_id, request.event_name, request.scheduled_at, clock()
+                )
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+
+    @app.delete(
+        "/internal/game/random-events/today/{schedule_id}",
+        response_model=AcceptedResponse,
+    )
+    def delete_today_random_event(
+        schedule_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(
+            accepted=repository.delete_today_random_event(schedule_id, clock())
+        )
 
     @app.post(
         "/internal/game/random-events/today/{schedule_id}/trigger",
@@ -700,10 +728,8 @@ def _activity_settings_response(settings) -> ActivitySettingsResponse:
 
 def _random_event_settings_response(settings) -> RandomEventSettingsResponse:
     return RandomEventSettingsResponse(
-        start_time=settings.start_time,
-        end_time=settings.end_time,
-        events_per_day=settings.events_per_day,
-        minimum_interval_minutes=settings.minimum_interval_minutes,
+        schedule_times=settings.schedule_times,
+        signup_notice_template=settings.signup_notice_template,
         signup_timeout_minutes=settings.signup_timeout_minutes,
         reminder_interval_minutes=settings.reminder_interval_minutes,
     )
@@ -726,10 +752,12 @@ def _random_event_scene_response(scene) -> RandomEventSceneResponse:
 def _random_event_schedule_response(schedule) -> RandomEventScheduleResponse:
     return RandomEventScheduleResponse(
         id=schedule.id,
+        event_date=schedule.event_date,
         scheduled_at=schedule.scheduled_at,
         status=schedule.status,
         scene_name=schedule.scene_name,
         event_name=schedule.event_name,
+        is_cross_day=schedule.is_cross_day,
     )
 
 

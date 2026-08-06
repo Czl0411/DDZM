@@ -92,7 +92,7 @@ def test_service_warns_unwrapped_observer_during_random_event(session_factory):
     repository.create_random_event_scene(
         "茶水间", "快点加入吧。", ["正式开始。"], 1, 1, [("员工", 1)]
     )
-    repository.set_random_event_settings("10:00", "10:01", 1, 60, 15, 5)
+    repository.set_random_event_settings(["10:00"], "{可选身份}", 15, 5)
     repository.create_user("player", "小明", now, 0)
     repository.schedule_random_events(now)
     repository.run_random_event_jobs(now)

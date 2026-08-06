@@ -452,10 +452,8 @@ def create_app(
         if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     ) -> JSONResponse:
         required = (
-            "start_time",
-            "end_time",
-            "events_per_day",
-            "minimum_interval_minutes",
+            "schedule_times",
+            "signup_notice_template",
             "signup_timeout_minutes",
             "reminder_interval_minutes",
         )
@@ -595,6 +593,43 @@ def create_app(
             lambda: _relay_core(
                 lambda: core.reschedule_random_event(schedule_id, scheduled_at)
             ),
+            scope=f"random-event-schedule:{schedule_id}",
+        )
+
+    @app.post("/api/game/random-events/today")
+    def create_today_random_event(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = ("scene_id", "event_name", "scheduled_at")
+        if not all(isinstance(request.get(key), str) and request[key] for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid schedule")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.create_today_random_event(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="random-event-schedules",
+        )
+
+    @app.delete("/api/game/random-events/today/{schedule_id}")
+    def delete_today_random_event(
+        schedule_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(lambda: core.delete_today_random_event(schedule_id)),
             scope=f"random-event-schedule:{schedule_id}",
         )
 

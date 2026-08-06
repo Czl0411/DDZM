@@ -13,6 +13,7 @@ let employeePage = 1;
 let shopPage = 1;
 let randomEventScenePage = 1;
 let randomEventSceneOpeningTarget = null;
+let randomEventAddScenes = [];
 
 const pageSize = 20;
 
@@ -44,9 +45,11 @@ const incomeReportTimeInputs = document.querySelector("#income-report-time-input
 const randomEventSettingsModal = document.querySelector("#random-event-settings-modal");
 const randomEventSceneModal = document.querySelector("#random-event-scene-modal");
 const randomEventTimeModal = document.querySelector("#random-event-time-modal");
+const randomEventAddModal = document.querySelector("#random-event-add-modal");
 const randomEventDetailsModal = document.querySelector("#random-event-details-modal");
 const randomEventSceneSeats = document.querySelector("#random-event-scene-seats");
 const randomEventSceneOpenings = document.querySelector("#random-event-scene-openings");
+const randomEventTimeInputs = document.querySelector("#random-event-time-inputs");
 
 function headers() {
   return token ? {"X-Admin-Token": token} : {"X-Admin-Session": adminSession};
@@ -126,6 +129,7 @@ function closeRandomEventTimeModal() {
   randomEventTimeModal.hidden = true;
   delete randomEventTimeModal.dataset.scheduleId;
 }
+function closeRandomEventAddModal() { randomEventAddModal.hidden = true; }
 
 function renderSettings(settings) {
   document.querySelector("#settings-card").innerHTML = `
@@ -154,8 +158,8 @@ function formatBeijingInput(value) {
 
 function renderRandomEventSettings(settings) {
   document.querySelector("#random-event-settings-card").innerHTML = `
-    <article><span>每日随机次数</span><strong>${settings.events_per_day} 次</strong><small>${escapeHtml(settings.start_time)}–${escapeHtml(settings.end_time)}（北京时间）</small></article>
-    <article><span>最小事件间隔</span><strong>${settings.minimum_interval_minutes} 分钟</strong><small>计划生成时自动保证间隔</small></article>
+    <article><span>每日固定场次</span><strong>${settings.schedule_times.length} 场</strong><small>${escapeHtml(settings.schedule_times.join(" · "))}（北京时间）</small></article>
+    <article><span>报名补充说明</span><strong>已配置</strong><small>${escapeHtml(settings.signup_notice_template)}</small></article>
     <article><span>报名与提醒</span><strong>${settings.signup_timeout_minutes} / ${settings.reminder_interval_minutes} 分钟</strong><small>报名超时 / 未满员提醒</small></article>`;
 }
 
@@ -166,7 +170,7 @@ function renderRandomEventScenes(scenes) {
 
 function renderTodayRandomEvents(events) {
   document.querySelector("#today-random-event-list").innerHTML = events.map((event) => `
-    <article class="data-row"><div><b>${escapeHtml(event.scene_name || "未安排场景")}－${escapeHtml(event.event_name || "未安排事件")}－${eventStatusLabel(event.status)}</b><small>${formatHeartbeat(event.scheduled_at)}</small></div>${event.status === "pending" ? `<div class="command-actions"><button class="secondary" data-trigger-random-event="${event.id}" type="button">立即触发</button><button class="secondary" data-adjust-random-event="${event.id}" data-scheduled-at="${event.scheduled_at}" type="button">调整时间</button></div>` : event.status === "skipped" ? "" : `<button class="secondary" data-view-random-event-details="${event.id}" type="button">查看详情</button>`}</article>`).join("") || "<p class=\"muted\">今日计划将在每天北京时间 00:00 自动生成。</p>";
+    <article class="data-row"><div><b>${escapeHtml(event.scene_name || "未安排场景")}－${escapeHtml(event.event_name || "未安排事件")}－${eventStatusLabel(event.status)}${event.is_cross_day ? "（跨日）" : ""}</b><small>${formatHeartbeat(event.scheduled_at)}</small></div>${event.status === "pending" ? `<div class="command-actions"><button class="secondary" data-trigger-random-event="${event.id}" type="button">立即触发</button><button class="secondary" data-adjust-random-event="${event.id}" data-scheduled-at="${event.scheduled_at}" type="button">调整时间</button><button class="danger-button" data-delete-random-event="${event.id}" type="button">移除</button></div>` : event.status === "skipped" ? "" : `<button class="secondary" data-view-random-event-details="${event.id}" type="button">查看详情</button>`}</article>`).join("") || "<p class=\"muted\">今日计划将在每天北京时间 00:00 自动生成。</p>";
 }
 
 async function loadRandomEvents(page = randomEventScenePage) {
@@ -230,13 +234,34 @@ function insertRandomEventRoleVariable(role) {
 async function openRandomEventSettingsModal() {
   const settings = randomEventSettings || await requestGame("/api/game/random-events/settings");
   randomEventSettings = settings;
-  document.querySelector("#random-event-start-time").value = settings.start_time;
-  document.querySelector("#random-event-end-time").value = settings.end_time;
-  document.querySelector("#random-event-count").value = settings.events_per_day;
-  document.querySelector("#random-event-minimum-interval").value = settings.minimum_interval_minutes;
+  randomEventTimeInputs.innerHTML = "";
+  settings.schedule_times.forEach((value) => renderRandomEventTime(value));
+  document.querySelector("#random-event-signup-notice").value = settings.signup_notice_template;
   document.querySelector("#random-event-signup-timeout").value = settings.signup_timeout_minutes;
   document.querySelector("#random-event-reminder-interval").value = settings.reminder_interval_minutes;
   randomEventSettingsModal.hidden = false;
+}
+
+function renderRandomEventTime(value = "") {
+  const row = document.createElement("div");
+  row.className = "income-report-time-row";
+  row.innerHTML = `<input data-random-event-time type="time" value="${escapeHtml(value)}"><button class="text-button" data-remove-random-event-time type="button">删除</button>`;
+  randomEventTimeInputs.append(row);
+}
+
+function renderRandomEventAddTemplates() {
+  const scene = randomEventAddScenes.find((item) => item.id === document.querySelector("#random-event-add-scene").value);
+  document.querySelector("#random-event-add-template").innerHTML = (scene?.events || []).map((item) => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`).join("");
+}
+
+async function openRandomEventAddModal() {
+  const scenes = await requestGame("/api/game/random-events/scenes?page=1&page_size=100");
+  randomEventAddScenes = scenes.items.filter((scene) => scene.enabled && scene.events.length);
+  const sceneInput = document.querySelector("#random-event-add-scene");
+  sceneInput.innerHTML = randomEventAddScenes.map((scene) => `<option value="${scene.id}">${escapeHtml(scene.name)}</option>`).join("");
+  renderRandomEventAddTemplates();
+  document.querySelector("#random-event-add-scheduled-at").value = "";
+  randomEventAddModal.hidden = false;
 }
 
 function openRandomEventSceneModal(scene = null) {
@@ -644,6 +669,13 @@ document.querySelector("#edit-settings").addEventListener("click", () => void op
 document.querySelector("#edit-activity-settings").addEventListener("click", () => void openActivitySettingsModal());
 document.querySelector("#edit-random-event-settings").addEventListener("click", () => void openRandomEventSettingsModal());
 document.querySelector("#create-random-event-scene").addEventListener("click", () => openRandomEventSceneModal());
+document.querySelector("#add-today-random-event").addEventListener("click", async (event) => {
+  try {
+    await runMutation(event.currentTarget, "加载中…", openRandomEventAddModal);
+  } catch (error) {
+    setResult(`加载场景失败（${error.message}）`, "error");
+  }
+});
 document.querySelector("#refresh-random-events").addEventListener("click", async (event) => {
   try {
     await runMutation(event.currentTarget, "刷新中…", loadRandomEvents);
@@ -792,16 +824,33 @@ randomEventSettingsModal.addEventListener("click", async (event) => {
     closeRandomEventSettingsModal();
     return;
   }
+  if (event.target.id === "add-random-event-time") {
+    renderRandomEventTime();
+    return;
+  }
+  if (event.target.closest("[data-remove-random-event-time]")) {
+    event.target.closest(".income-report-time-row").remove();
+    return;
+  }
+  const signupVariable = event.target.closest("[data-random-event-signup-variable]");
+  if (signupVariable) {
+    const input = document.querySelector("#random-event-signup-notice");
+    input.setRangeText(signupVariable.dataset.randomEventSignupVariable, input.selectionStart, input.selectionEnd, "end");
+    input.focus();
+    return;
+  }
   if (event.target.id !== "save-random-event-settings") return;
   const button = event.target;
   const settings = {
-    start_time: document.querySelector("#random-event-start-time").value,
-    end_time: document.querySelector("#random-event-end-time").value.trim(),
-    events_per_day: Number(document.querySelector("#random-event-count").value),
-    minimum_interval_minutes: Number(document.querySelector("#random-event-minimum-interval").value),
+    schedule_times: [...randomEventTimeInputs.querySelectorAll("[data-random-event-time]")].map((input) => input.value).filter(Boolean),
+    signup_notice_template: document.querySelector("#random-event-signup-notice").value.trim(),
     signup_timeout_minutes: Number(document.querySelector("#random-event-signup-timeout").value),
     reminder_interval_minutes: Number(document.querySelector("#random-event-reminder-interval").value),
   };
+  if (!settings.schedule_times.length || !settings.signup_notice_template) {
+    setResult("请至少设置一个触发时刻和报名补充说明", "error");
+    return;
+  }
   try {
     await runMutation(button, "保存中…", async () => {
       randomEventSettings = await requestGame("/api/game/random-events/settings", {
@@ -924,6 +973,38 @@ document.querySelector("#random-event-scene-list").addEventListener("click", asy
     setResult(`更新失败（${error.message}）`, "error");
   }
 });
+document.querySelector("#random-event-add-scene").addEventListener("change", renderRandomEventAddTemplates);
+randomEventAddModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-random-event-add-modal]")) {
+    closeRandomEventAddModal();
+    return;
+  }
+  if (event.target.id !== "save-random-event-add") return;
+  const scheduledAt = document.querySelector("#random-event-add-scheduled-at").value;
+  if (!scheduledAt) {
+    setResult("请选择今日未来的开始时间", "error");
+    return;
+  }
+  const button = event.target;
+  try {
+    await runMutation(button, "补充中…", async () => {
+      const created = await requestGame("/api/game/random-events/today", {
+        method: "POST", headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify({
+          scene_id: document.querySelector("#random-event-add-scene").value,
+          event_name: document.querySelector("#random-event-add-template").value,
+          scheduled_at: `${scheduledAt}:00+08:00`,
+        }),
+      });
+      configurationVersion = created.version;
+      closeRandomEventAddModal();
+      await loadRandomEvents();
+    });
+    setResult("今日随机事件已补充", "success");
+  } catch (error) {
+    setResult(`补充失败（${error.message}）`, "error");
+  }
+});
 document.querySelector("#today-random-event-list").addEventListener("click", async (event) => {
   const adjustButton = event.target.closest("button[data-adjust-random-event]");
   if (adjustButton) {
@@ -940,6 +1021,23 @@ document.querySelector("#today-random-event-list").addEventListener("click", asy
     return;
   }
   const triggerButton = event.target.closest("button[data-trigger-random-event]");
+  const deleteButton = event.target.closest("button[data-delete-random-event]");
+  if (deleteButton) {
+    if (!window.confirm("确定移除这个待开始事件吗？")) return;
+    try {
+      await runMutation(deleteButton, "移除中…", async () => {
+        const removed = await requestGame(`/api/game/random-events/today/${deleteButton.dataset.deleteRandomEvent}`, {
+          method: "DELETE", headers: configurationHeaders(),
+        });
+        configurationVersion = removed.version;
+        await loadRandomEvents();
+      });
+      setResult("今日随机事件已移除", "success");
+    } catch (error) {
+      setResult(`移除失败（${error.message}）`, "error");
+    }
+    return;
+  }
   if (!triggerButton) return;
   try {
     await runMutation(triggerButton, "触发中…", async () => {
@@ -989,6 +1087,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !randomEventSettingsModal.hidden) closeRandomEventSettingsModal();
   if (event.key === "Escape" && !randomEventSceneModal.hidden) closeRandomEventSceneModal();
   if (event.key === "Escape" && !randomEventTimeModal.hidden) closeRandomEventTimeModal();
+  if (event.key === "Escape" && !randomEventAddModal.hidden) closeRandomEventAddModal();
 });
 document.querySelector("#item-form").addEventListener("submit", async (event) => {
   event.preventDefault();

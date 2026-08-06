@@ -79,10 +79,8 @@ class FakeCore:
     )
     random_event_settings: dict = field(
         default_factory=lambda: {
-            "start_time": "10:00",
-            "end_time": "24:00",
-            "events_per_day": 1,
-            "minimum_interval_minutes": 60,
+            "schedule_times": ["00:00", "02:00", "10:00", "14:00", "16:00", "20:00"],
+            "signup_notice_template": "可选身份：{可选身份}",
             "signup_timeout_minutes": 15,
             "reminder_interval_minutes": 5,
         }
@@ -216,6 +214,26 @@ class FakeCore:
         schedule = next(item for item in self.today_random_events if item["id"] == schedule_id)
         schedule["scheduled_at"] = scheduled_at
         return schedule
+
+    def create_today_random_event(self, event):
+        created = {
+            "id": f"schedule-{len(self.today_random_events) + 1}",
+            "event_date": "2026-08-04",
+            "scheduled_at": event["scheduled_at"],
+            "status": "pending",
+            "scene_name": "茶水间",
+            "event_name": event["event_name"],
+            "is_cross_day": False,
+        }
+        self.today_random_events.append(created)
+        return created
+
+    def delete_today_random_event(self, schedule_id):
+        before = len(self.today_random_events)
+        self.today_random_events = [
+            event for event in self.today_random_events if event["id"] != schedule_id
+        ]
+        return {"accepted": len(self.today_random_events) != before}
 
 
 class FakeConsole:
@@ -1011,10 +1029,8 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
         "/api/game/random-events/settings",
         headers=headers,
         json={
-            "start_time": "10:00",
-            "end_time": "24:00",
-            "events_per_day": 2,
-            "minimum_interval_minutes": 90,
+            "schedule_times": ["10:00", "14:00"],
+            "signup_notice_template": "可选身份：{可选身份}",
             "signup_timeout_minutes": 15,
             "reminder_interval_minutes": 5,
         },
@@ -1038,6 +1054,30 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
     assert scene.json()["name"] == "茶水间"
     assert scene.json()["openings"] == ["咖啡机突然发出一声巨响。"]
     assert client.get("/api/game/random-events/scenes", headers=headers).json()["items"]
+
+
+def test_admin_can_add_and_remove_today_random_event(client, headers):
+    created = client.post(
+        "/api/game/random-events/today",
+        headers={**headers, "Idempotency-Key": "event-create", "If-Match": "0"},
+        json={
+            "scene_id": "scene-1",
+            "event_name": "咖啡事故",
+            "scheduled_at": "2026-08-04T21:00:00+08:00",
+        },
+    )
+
+    assert created.status_code == 200
+    assert created.json()["status"] == "pending"
+    deleted = client.delete(
+        f"/api/game/random-events/today/{created.json()['id']}",
+        headers={
+            **headers,
+            "Idempotency-Key": "event-delete",
+            "If-Match": str(created.json()["version"]),
+        },
+    )
+    assert deleted.json()["accepted"] is True
 
 
 def test_random_event_scene_modal_uses_split_copy_fields(client):

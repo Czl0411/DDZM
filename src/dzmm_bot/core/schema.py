@@ -134,6 +134,8 @@ class RandomEventSettingsRecord(Base):
     end_time: Mapped[str] = mapped_column(String(5), nullable=False)
     events_per_day: Mapped[int] = mapped_column(Integer, nullable=False)
     minimum_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    schedule_times: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    signup_notice_template: Mapped[str] = mapped_column(Text, nullable=False)
     signup_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     reminder_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -188,6 +190,7 @@ class RandomEventScheduleRecord(Base):
     scene_name: Mapped[str | None] = mapped_column(String(64))
     event_name: Mapped[str | None] = mapped_column(String(64))
     signup_text: Mapped[str | None] = mapped_column(Text)
+    signup_notice_template: Mapped[str | None] = mapped_column(Text)
     formal_opening_text: Mapped[str | None] = mapped_column(Text)
     reward: Mapped[int | None] = mapped_column(Integer)
     target_rounds: Mapped[int | None] = mapped_column(Integer)

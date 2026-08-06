@@ -1104,6 +1104,14 @@ def test_admin_static_assets_disable_browser_cache(client):
     assert response.headers["cache-control"] == "no-store"
 
 
+def test_admin_uses_standard_toast_notifications(client):
+    page = client.get("/").text
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert 'id="notification-region"' in page
+    assert "showNotification" in script
+
+
 def test_random_event_scene_script_submits_openings_list():
     script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
 

@@ -23,6 +23,7 @@ const loginForm = document.querySelector("#login-form");
 const accountLoginForm = document.querySelector("#account-login-form");
 const loginError = document.querySelector("#login-error");
 const result = document.querySelector("#result");
+const notificationRegion = document.querySelector("#notification-region");
 const stateElement = document.querySelector("#state");
 const stateHelp = document.querySelector("#state-help");
 const loginStep = document.querySelector("#login-step");
@@ -58,6 +59,21 @@ function headers() {
 function setResult(message, type = "") {
   result.textContent = message;
   result.dataset.type = type;
+  if (message) showNotification(message, type);
+}
+
+function showNotification(message, type = "") {
+  const level = type || "info";
+  const title = ({success: "操作成功", error: "操作未完成", info: "提示"})[level] || "提示";
+  const notification = document.createElement("section");
+  notification.className = "notification";
+  notification.dataset.type = level;
+  notification.innerHTML = '<span class="notification-mark" aria-hidden="true"></span><div class="notification-copy"><b></b><p></p></div><button class="notification-close" type="button" aria-label="关闭提示">×</button>';
+  notification.querySelector("b").textContent = title;
+  notification.querySelector("p").textContent = message;
+  notification.querySelector("button").addEventListener("click", () => notification.remove());
+  notificationRegion.replaceChildren(notification);
+  window.setTimeout(() => notification.remove(), level === "error" ? 6500 : 3600);
 }
 
 function setAuthenticated(authenticated) {
@@ -934,7 +950,12 @@ randomEventSceneModal.addEventListener("click", async (event) => {
     });
     setResult(sceneId ? "随机事件场景已保存" : "随机事件场景已创建", "success");
   } catch (error) {
-    setResult(`创建失败（${error.message}）`, "error");
+    setResult(
+      error.message === "场景名称已存在"
+        ? "场景已存在，请直接编辑现有场景。"
+        : `创建失败（${error.message}）`,
+      "error",
+    );
   }
 });
 randomEventSceneModal.addEventListener("input", (event) => {

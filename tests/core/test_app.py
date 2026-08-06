@@ -699,6 +699,30 @@ def test_random_event_scene_is_created_through_internal_api(client, headers):
     assert response.json()["seats"] == [{"role": "员工", "capacity": 2}]
 
 
+def test_random_event_scene_duplicate_name_returns_clear_validation_error(client, headers):
+    payload = {
+        "name": "茶水间",
+        "signup_text": "今天的公司茶水间随机事件来啦，快点加入吧。",
+        "openings": ["咖啡机突然发出一声巨响。"],
+        "reward": 4,
+        "target_rounds": 10,
+        "seats": [{"role": "员工", "capacity": 2}],
+    }
+    assert (
+        client.post(
+            "/internal/game/random-events/scenes", headers=headers, json=payload
+        ).status_code
+        == 201
+    )
+
+    response = client.post(
+        "/internal/game/random-events/scenes", headers=headers, json=payload
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "场景名称已存在"
+
+
 def test_random_event_scene_requires_a_formal_opening(client, headers):
     response = client.post(
         "/internal/game/random-events/scenes",

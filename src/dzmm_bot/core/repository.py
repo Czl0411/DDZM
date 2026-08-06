@@ -631,6 +631,12 @@ class CoreRepository:
             name, signup_text, openings, reward, target_rounds, seats
         )
         with self._session() as session:
+            if session.scalar(
+                select(RandomEventSceneRecord.id).where(
+                    RandomEventSceneRecord.name == name
+                )
+            ) is not None:
+                raise ValueError("场景名称已存在")
             record = RandomEventSceneRecord(
                 name=name,
                 signup_text=signup_text,
@@ -743,6 +749,13 @@ class CoreRepository:
             record = session.get(RandomEventSceneRecord, scene_id, with_for_update=True)
             if record is None:
                 raise ValueError("场景不存在")
+            if session.scalar(
+                select(RandomEventSceneRecord.id).where(
+                    RandomEventSceneRecord.name == name,
+                    RandomEventSceneRecord.id != scene_id,
+                )
+            ) is not None:
+                raise ValueError("场景名称已存在")
             record.name = name
             record.signup_text = signup_text
             record.reward = reward

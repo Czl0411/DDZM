@@ -313,6 +313,7 @@ WorkerCommandKind = Literal[
     "start_auth",
     "finish_auth",
     "cancel_auth",
+    "retract_test",
 ]
 
 

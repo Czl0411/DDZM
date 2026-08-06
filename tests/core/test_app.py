@@ -585,6 +585,7 @@ def test_internal_status_returns_real_queue_counts_and_latest_heartbeat(
         "restart_browser",
         "start_auth",
         "finish_auth",
+        "retract_test",
     ],
 )
 def test_allowed_worker_command_can_be_enqueued(client, headers, command):

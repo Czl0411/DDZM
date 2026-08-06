@@ -1056,6 +1056,17 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
     assert client.get("/api/game/random-events/scenes", headers=headers).json()["items"]
 
 
+def test_random_event_scene_validation_identifies_missing_fields(client, headers):
+    response = client.post(
+        "/api/game/random-events/scenes",
+        headers=headers,
+        json={"name": "茶水间"},
+    )
+
+    assert response.status_code == 422
+    assert "signup_text" in response.json()["detail"]
+
+
 def test_admin_can_add_and_remove_today_random_event(client, headers):
     created = client.post(
         "/api/game/random-events/today",
@@ -1085,6 +1096,12 @@ def test_random_event_scene_modal_uses_split_copy_fields(client):
 
     assert 'id="random-event-scene-signup"' in page
     assert 'id="random-event-scene-openings"' in page
+
+
+def test_admin_static_assets_disable_browser_cache(client):
+    response = client.get("/static/admin.js")
+
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_random_event_scene_script_submits_openings_list():

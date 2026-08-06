@@ -169,12 +169,18 @@ def create_app(
     @app.get("/static/admin.js")
     def javascript() -> FileResponse:
         return FileResponse(
-            _ROOT / "static" / "admin.js", media_type="text/javascript"
+            _ROOT / "static" / "admin.js",
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-store"},
         )
 
     @app.get("/static/admin.css")
     def stylesheet() -> FileResponse:
-        return FileResponse(_ROOT / "static" / "admin.css", media_type="text/css")
+        return FileResponse(
+            _ROOT / "static" / "admin.css",
+            media_type="text/css",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/healthz")
     def health() -> dict[str, str]:
@@ -493,13 +499,19 @@ def create_app(
             scene = await request.json()
         except ValueError:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
+        if not isinstance(scene, dict):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "场景数据格式无效")
         required = ("name", "signup_text", "reward", "target_rounds", "seats")
-        if (
-            not isinstance(scene, dict)
-            or not all(key in scene for key in required)
-            or not isinstance(scene.get("events", scene.get("openings")), list)
-        ):
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid scene")
+        missing = [key for key in required if key not in scene]
+        if missing:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"缺少场景字段：{'、'.join(missing)}",
+            )
+        if not isinstance(scene.get("events", scene.get("openings")), list):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "事件模板必须是列表"
+            )
         return versioned_configuration_response(
             identity,
             idempotency_key,

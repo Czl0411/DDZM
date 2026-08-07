@@ -647,6 +647,39 @@ def test_admin_dashboard_serves_its_login_and_style_assets(client):
     assert "--surface" in stylesheet.text
 
 
+def test_admin_uses_a_grouped_desktop_console_shell(client):
+    page = client.get("/").text
+    stylesheet = Path("src/dzmm_bot/admin/static/admin.css").read_text()
+
+    assert 'id="page-breadcrumb"' in page
+    assert 'id="page-context"' in page
+    assert 'class="nav-group"' in page
+    assert 'id="employee-pagination"' in page
+    assert 'id="random-event-settings-modal"' in page
+    assert 'id="notification-region"' in page
+    assert 'data-view="undercover"' in page
+    assert ".side-nav-shell" in stylesheet
+    assert ".sidebar-footer" in stylesheet
+
+
+def test_admin_script_maps_navigation_views_to_console_page_context():
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert "const pageContext" in script
+    assert "function setPageContext(view)" in script
+    assert "undercover:" in script
+    assert "organization:" in script
+
+
+def test_admin_styles_define_console_data_and_modal_patterns():
+    stylesheet = Path("src/dzmm_bot/admin/static/admin.css").read_text()
+
+    assert ".page-context" in stylesheet
+    assert ".data-list > .data-row" in stylesheet
+    assert ".template-modal-actions" in stylesheet
+    assert "position: sticky" in stylesheet
+
+
 def test_admin_dashboard_exposes_game_navigation_and_proxies_game_data(
     client, headers
 ):

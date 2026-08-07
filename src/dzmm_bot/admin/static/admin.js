@@ -37,6 +37,19 @@ const randomEventCommandOptions = [
   ["/晋升", "/晋升"], ["/晋升申请列表", "/晋升申请列表"],
   ["/同意", "/同意"], ["/全部同意", "/全部同意"], ["/拒绝", "/拒绝"], ["/全部拒绝", "/全部拒绝"],
 ];
+const pageContext = {
+  overview: {crumb: "运营概览", title: "机器人运行状态", description: "查看服务、浏览器和人工登录状态。"},
+  events: {crumb: "游戏运营 / 随机事件", title: "随机事件运营", description: "安排今日场次，管理场景、角色席位与剧情事件。"},
+  "hide-and-seek": {crumb: "游戏运营 / 躲猫猫", title: "躲猫猫运营", description: "管理单人躲猫猫的经济规则与可用躲藏地点。"},
+  "memory-assessment": {crumb: "游戏运营 / 记忆考核", title: "记忆考核运营", description: "配置单人挑战与双人对战的难度、奖池和限制。"},
+  undercover: {crumb: "游戏运营 / 谁是卧底", title: "谁是卧底运营", description: "查看公开对局进度，并维护多人推理局的基础规则。"},
+  settings: {crumb: "玩法与资源 / 玩法配置", title: "玩法配置", description: "集中维护经济、打卡、全勤和日活跃度规则。"},
+  commands: {crumb: "玩法与资源 / 指令库", title: "指令库", description: "配置群内指令的启用状态与标准回复模板。"},
+  shop: {crumb: "玩法与资源 / 物品与商店", title: "物品与商店", description: "上架物品、维护库存，并查看当前兑换资源。"},
+  organization: {crumb: "人员与系统 / 职位与部门", title: "职位与部门", description: "维护群内组织结构，以及晋升和部门申请记录。"},
+  employees: {crumb: "人员与系统 / 员工", title: "员工管理", description: "查看员工资料、余额和当前群内身份。"},
+  admins: {crumb: "人员与系统 / 管理员", title: "管理员管理", description: "仅超级管理员可创建、停用或删除后台管理员账号。"},
+};
 
 const loginScreen = document.querySelector("#login-screen");
 const dashboard = document.querySelector("#dashboard");
@@ -79,6 +92,13 @@ const undercoverSettingsModal = document.querySelector("#undercover-settings-mod
 const rankModal = document.querySelector("#rank-modal");
 const departmentModal = document.querySelector("#department-modal");
 
+function setPageContext(view) {
+  const context = pageContext[view] || pageContext.overview;
+  document.querySelector("#page-breadcrumb").textContent = context.crumb;
+  document.querySelector("#dashboard-title").textContent = context.title;
+  document.querySelector("#page-context").textContent = context.description;
+}
+
 function headers() {
   return token ? {"X-Admin-Token": token} : {"X-Admin-Session": adminSession};
 }
@@ -109,6 +129,7 @@ function setAuthenticated(authenticated) {
   document.querySelector(".topbar-meta").hidden = !authenticated;
   document.querySelector("#nav-admins").hidden = !authenticated || identity?.role !== "super_admin";
   document.querySelector("#current-identity").textContent = authenticated ? `${identity?.username || "管理员"} · ${identity?.role === "super_admin" ? "超级管理员" : "管理员"}` : "";
+  if (authenticated) setPageContext("overview");
 }
 
 function actorId() {
@@ -713,6 +734,7 @@ function showView(view) {
 }
 
 async function loadGameView(view) {
+  setPageContext(view);
   showView(view);
   try {
     if (view === "overview") return refresh();

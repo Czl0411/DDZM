@@ -46,27 +46,42 @@
         <section id="dashboard" hidden aria-labelledby="dashboard-title">
           <div class="page-heading">
             <div>
-              <p class="eyebrow">运行概览</p>
+              <p id="page-breadcrumb" class="eyebrow">运营概览</p>
               <h1 id="dashboard-title">机器人运行状态</h1>
-              <p>在这里查看运行状态，并配置机器人在群内使用的基础玩法规则。</p>
+              <p id="page-context" class="page-context">查看服务、浏览器和人工登录状态。</p>
             </div>
             <button id="refresh" class="secondary" type="button">刷新状态</button>
           </div>
 
           <div class="dashboard-layout">
-            <nav class="side-nav" aria-label="管理菜单">
-              <button id="nav-overview" class="nav-item active" data-view="overview" type="button">运行概览</button>
-              <button id="nav-settings" class="nav-item" data-view="settings" type="button">玩法配置</button>
-              <button id="nav-events" class="nav-item" data-view="events" type="button">随机事件</button>
-              <button id="nav-hide-and-seek" class="nav-item" data-view="hide-and-seek" type="button">躲猫猫</button>
-              <button id="nav-memory-assessment" class="nav-item" data-view="memory-assessment" type="button">记忆考核</button>
-              <button id="nav-undercover" class="nav-item" data-view="undercover" type="button">谁是卧底</button>
-              <button id="nav-commands" class="nav-item" data-view="commands" type="button">指令库</button>
-              <button id="nav-organization" class="nav-item" data-view="organization" type="button">职位与部门</button>
-              <button id="nav-employees" class="nav-item" data-view="employees" type="button">员工</button>
-              <button id="nav-shop" class="nav-item" data-view="shop" type="button">物品与商店</button>
-              <button id="nav-admins" class="nav-item" data-view="admins" type="button" hidden>管理员</button>
-            </nav>
+            <aside class="side-nav-shell">
+              <nav class="side-nav" aria-label="管理菜单">
+                <div class="nav-group">
+                  <p class="nav-group-label">运营概览</p>
+                  <button id="nav-overview" class="nav-item active" data-view="overview" type="button">运行概览</button>
+                </div>
+                <div class="nav-group">
+                  <p class="nav-group-label">游戏运营</p>
+                  <button id="nav-events" class="nav-item" data-view="events" type="button">随机事件</button>
+                  <button id="nav-hide-and-seek" class="nav-item" data-view="hide-and-seek" type="button">躲猫猫</button>
+                  <button id="nav-memory-assessment" class="nav-item" data-view="memory-assessment" type="button">记忆考核</button>
+                  <button id="nav-undercover" class="nav-item" data-view="undercover" type="button">谁是卧底</button>
+                </div>
+                <div class="nav-group">
+                  <p class="nav-group-label">玩法与资源</p>
+                  <button id="nav-settings" class="nav-item" data-view="settings" type="button">玩法配置</button>
+                  <button id="nav-commands" class="nav-item" data-view="commands" type="button">指令库</button>
+                  <button id="nav-shop" class="nav-item" data-view="shop" type="button">物品与商店</button>
+                </div>
+                <div class="nav-group">
+                  <p class="nav-group-label">人员与系统</p>
+                  <button id="nav-organization" class="nav-item" data-view="organization" type="button">职位与部门</button>
+                  <button id="nav-employees" class="nav-item" data-view="employees" type="button">员工</button>
+                  <button id="nav-admins" class="nav-item" data-view="admins" type="button" hidden>管理员</button>
+                </div>
+              </nav>
+              <div class="sidebar-footer"><b>北京时间</b><span>配置保存后实时生效</span></div>
+            </aside>
             <div class="dashboard-views">
               <section id="overview-view" class="dashboard-view">
           <section class="status-grid" aria-label="系统状态">

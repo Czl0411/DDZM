@@ -112,6 +112,7 @@ _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
         "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门",
         "/职位", "/晋升", "/晋升申请列表",
         "/同意", "/全部同意", "/拒绝", "/全部拒绝",
+        "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏",
     }
 )
 _DEFAULT_HIDE_AND_SEEK_ENTRY_FEE = 1
@@ -216,6 +217,12 @@ def _undercover_card_text(role: str, civilian_word: str, undercover_word: str) -
     if role == "whiteboard":
         return "【谁是卧底】你的身份：白板。没有词语，请靠大家的描述判断。"
     raise ValueError("谁是卧底身份无效")
+
+
+def _undercover_role_label(role: str | None) -> str:
+    return {"civilian": "平民", "undercover": "卧底", "whiteboard": "白板"}.get(
+        role, "未知"
+    )
 
 
 @dataclass(frozen=True)
@@ -565,6 +572,11 @@ _COMMAND_DEFINITIONS = (
     ("/全部同意", "同意全部可处理的晋升申请"),
     ("/拒绝", "拒绝指定编号的晋升申请"),
     ("/全部拒绝", "拒绝全部可处理的晋升申请"),
+    ("/谁是卧底", "创建 4 至 8 人谁是卧底报名局"),
+    ("/开始投票", "在谁是卧底描述阶段发起投票"),
+    ("/投票", "在谁是卧底投票阶段投票给指定序号"),
+    ("/退出谁是卧底", "退出当前谁是卧底对局"),
+    ("/结束游戏", "结束当前谁是卧底对局"),
 )
 
 
@@ -1363,6 +1375,7 @@ class CoreRepository:
                         session_record.state = "closed"
                         session_record.active_key = None
                         session_record.finished_at = now
+                        self.enqueue_system_outbound("【谁是卧底】报名超时，本局已关闭。")
                         results.append("signup_expired")
                         continue
                     if (
@@ -1373,6 +1386,7 @@ class CoreRepository:
                         session_record.state = "closed"
                         session_record.active_key = None
                         session_record.finished_at = now
+                        self.enqueue_system_outbound("【谁是卧底】等待下一局超时，本局已关闭。")
                         results.append("expired")
                         continue
                     game = self._undercover_latest_game(session, session_record.id)
@@ -1382,12 +1396,43 @@ class CoreRepository:
                         and game.vote_deadline is not None
                         and game.vote_deadline <= now
                     ):
-                        results.append(
-                            self._settle_undercover_vote(
-                                session, session_record, game, now
-                            ).status
+                        result = self._settle_undercover_vote(
+                            session, session_record, game, now
                         )
+                        self._enqueue_undercover_vote_result(session, result)
+                        results.append(result.status)
         return results
+
+    def _enqueue_undercover_vote_result(
+        self, session: Session, result: UndercoverGameResult
+    ) -> None:
+        if result.status == "vote_expired":
+            self.enqueue_system_outbound("【谁是卧底】本轮无人投票，继续自由发言。")
+            return
+        if result.status == "tied":
+            seats = "、".join(f"{seat}号" for seat in result.tied_seats)
+            self.enqueue_system_outbound(
+                f"【谁是卧底】{seats}票数并列，请补充发言后重新投票。"
+            )
+            return
+        if result.status not in {"eliminated", "settled"} or result.game_id is None:
+            return
+        row = session.execute(
+            select(UserRecord.display_name, UndercoverGamePlayerRecord.role)
+            .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
+            .where(
+                UndercoverGamePlayerRecord.game_id == result.game_id,
+                UndercoverGamePlayerRecord.seat_number == result.eliminated_seat,
+            )
+        ).one_or_none()
+        if row is None:
+            return
+        message = f"【谁是卧底】{row[0]} 出局，身份：{_undercover_role_label(row[1])}。"
+        if result.status == "settled":
+            message += f"\n{_undercover_role_label(result.winner)}阵营获胜。发送 /继续 可开启下一局。"
+        else:
+            message += "请继续描述。"
+        self.enqueue_system_outbound(message)
 
     def end_undercover(self, platform_id: str, now: datetime) -> UndercoverGameResult:
         now = now.astimezone(BEIJING)
@@ -2991,6 +3036,8 @@ class CoreRepository:
                     raise ValueError("仅待开始事件可以立即触发")
                 if self._active_random_event(session) is not None:
                     raise ValueError("当前已有进行中的随机事件")
+                if self._active_undercover_session(session) is not None or self._active_memory_duel(session):
+                    raise ValueError("当前已有多人玩法进行中")
                 if not self._fill_random_event_schedule_snapshot(session, schedule):
                     schedule.status = "skipped"
                     raise ValueError("没有可用的随机事件场景")
@@ -3238,6 +3285,11 @@ class CoreRepository:
                 for schedule in due_schedules:
                     if active is not None:
                         schedule.status = "skipped"
+                        continue
+                    if (
+                        self._active_undercover_session(session) is not None
+                        or self._active_memory_duel(session)
+                    ):
                         continue
                     if not self._fill_random_event_schedule_snapshot(session, schedule):
                         schedule.status = "skipped"
@@ -3883,6 +3935,7 @@ class CoreRepository:
             self._settle_weekly_attendance_rewards(now)
             self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)
+            self.run_undercover_jobs(now)
             self.run_random_event_jobs(now)
         if should_backfill:
             self._current_day_history_backfilled = now.date()

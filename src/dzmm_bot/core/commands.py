@@ -9,7 +9,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
+    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏"
 }
 
 
@@ -43,6 +43,16 @@ class GroupCommandHandler:
         received_at = message.received_at.astimezone(_BEIJING)
         if command == "/入职":
             return self._join(message.sender_platform_id, content, received_at)
+        if command == "/谁是卧底":
+            return self._undercover_start(message.sender_platform_id, content, received_at)
+        if command == "/开始投票":
+            return self._undercover_start_vote(message.sender_platform_id, received_at)
+        if command == "/投票":
+            return self._undercover_vote(message.sender_platform_id, content, received_at)
+        if command == "/退出谁是卧底":
+            return self._undercover_leave(message.sender_platform_id, received_at)
+        if command == "/结束游戏":
+            return self._undercover_end(message.sender_platform_id, received_at)
         if command == "/打卡":
             return self._check_in(message.sender_platform_id, received_at)
         if command == "/余额":
@@ -86,6 +96,8 @@ class GroupCommandHandler:
                 message.sender_platform_id, content, received_at
             )
         if command == "/继续":
+            if self._repository.undercover_session_summary().state == "awaiting_continue":
+                return self._undercover_continue(message.sender_platform_id, received_at)
             return self._memory_assessment_continue(message.sender_platform_id, received_at)
         if command == "/收手":
             return self._memory_assessment_cash_out(message.sender_platform_id, received_at)
@@ -434,9 +446,166 @@ class GroupCommandHandler:
             },
         )
 
+    def _undercover_start(self, platform_id: str, content: str, received_at) -> str:
+        parts = content.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            return self._reply("/谁是卧底", "usage", received_at)
+        result = self._repository.start_undercover_signup(
+            platform_id, int(parts[1]), received_at
+        )
+        if result.status == "signup_started":
+            return self._reply(
+                "/谁是卧底",
+                "signup_started",
+                received_at,
+                {"{人数}": int(parts[1]), "{当前人数}": result.player_count},
+            )
+        scenarios = {
+            "not_joined": "not_joined",
+            "direct_chat_required": "direct_chat_required",
+            "disabled": "disabled",
+            "multiplayer_active": "multiplayer_active",
+            "already_active": "already_active",
+            "invalid_player_count": "invalid_player_count",
+        }
+        return self._reply("/谁是卧底", scenarios[result.status], received_at)
+
+    def _undercover_join(self, platform_id: str, received_at) -> str:
+        result = self._repository.join_undercover(platform_id, received_at)
+        if result.status == "joined_signup":
+            employee = self._repository.find_user(platform_id)
+            summary = self._repository.undercover_session_summary()
+            return self._reply(
+                "/加入",
+                "undercover_joined",
+                received_at,
+                {
+                    "{昵称}": employee.display_name,
+                    "{当前人数}": result.player_count,
+                    "{人数}": summary.target_player_count,
+                },
+            )
+        if result.status == "dealing":
+            return self._reply("/加入", "undercover_dealing", received_at)
+        scenarios = {
+            "queued": "undercover_queued",
+            "direct_chat_required": "undercover_direct_chat_required",
+            "already_joined": "undercover_already_joined",
+            "cannot_rejoin": "undercover_cannot_rejoin",
+            "not_joined": "undercover_not_joined",
+        }
+        return self._reply("/加入", scenarios.get(result.status, "invalid"), received_at)
+
+    def _undercover_start_vote(self, platform_id: str, received_at) -> str:
+        result = self._repository.start_undercover_vote(platform_id, received_at)
+        if result.status != "voting":
+            return self._reply("/开始投票", "cannot_start", received_at)
+        summary = self._repository.undercover_session_summary()
+        return self._reply(
+            "/开始投票",
+            "started",
+            received_at,
+            {
+                "{投票秒数}": self._repository.get_undercover_settings().vote_seconds,
+                "{存活玩家}": "、".join(
+                    f"{player.seat_number}号 {player.display_name}"
+                    for player in summary.players
+                    if player.state == "alive"
+                ),
+            },
+        )
+
+    def _undercover_vote(self, platform_id: str, content: str, received_at) -> str:
+        parts = content.split()
+        if len(parts) != 2 or not parts[1].isdigit() or int(parts[1]) < 1:
+            return self._reply("/投票", "usage", received_at)
+        result = self._repository.cast_undercover_vote(
+            platform_id, int(parts[1]), received_at
+        )
+        scenarios = {
+            "vote_recorded": "recorded",
+            "duplicate_vote": "duplicate",
+            "invalid_vote_target": "invalid_target",
+            "cannot_vote": "cannot_vote",
+        }
+        if result.status in scenarios:
+            return self._reply("/投票", scenarios[result.status], received_at)
+        if result.status == "tied":
+            return self._reply(
+                "/投票",
+                "tied",
+                received_at,
+                {"{并列玩家}": self._undercover_player_labels(result.tied_seats)},
+            )
+        if result.status in {"eliminated", "settled"}:
+            values = self._undercover_elimination_values(result)
+            if result.status == "settled":
+                values["{胜利阵营}"] = self._undercover_role_name(result.winner)
+            return self._reply("/投票", result.status, received_at, values)
+        return self._reply("/投票", "cannot_vote", received_at)
+
+    def _undercover_leave(self, platform_id: str, received_at) -> str:
+        result = self._repository.leave_undercover(platform_id, received_at)
+        if result.status == "left":
+            return self._reply("/退出谁是卧底", "left", received_at)
+        if result.status == "settled":
+            return self._reply(
+                "/退出谁是卧底",
+                "settled",
+                received_at,
+                {"{胜利阵营}": self._undercover_role_name(result.winner)},
+            )
+        return self._reply("/退出谁是卧底", "cannot_leave", received_at)
+
+    def _undercover_end(self, platform_id: str, received_at) -> str:
+        result = self._repository.end_undercover(platform_id, received_at)
+        return self._reply(
+            "/结束游戏",
+            "ended" if result.status == "ended" else "cannot_end",
+            received_at,
+        )
+
+    def _undercover_continue(self, platform_id: str, received_at) -> str:
+        result = self._repository.continue_undercover(platform_id, received_at)
+        if result.status == "dealing":
+            return self._reply("/继续", "undercover_dealing", received_at)
+        if result.status == "insufficient_players":
+            return self._reply("/继续", "undercover_insufficient", received_at)
+        return self._reply("/继续", "undercover_cannot_continue", received_at)
+
+    def _undercover_player_labels(self, seats: tuple[int, ...]) -> str:
+        names = {
+            player.seat_number: player.display_name
+            for player in self._repository.undercover_session_summary().players
+        }
+        return "、".join(f"{seat}号 {names.get(seat, '玩家')}" for seat in seats)
+
+    def _undercover_elimination_values(self, result) -> dict[str, str]:
+        summary = self._repository.undercover_session_summary()
+        player = next(
+            item
+            for item in summary.players
+            if item.seat_number == result.eliminated_seat
+        )
+        role_by_platform_id = dict(zip(result.player_ids, result.roles, strict=True))
+        return {
+            "{淘汰玩家}": f"{player.seat_number}号 {player.display_name}",
+            "{身份}": self._undercover_role_name(role_by_platform_id[player.platform_id]),
+        }
+
+    @staticmethod
+    def _undercover_role_name(role: str | None) -> str:
+        return {
+            "civilian": "平民",
+            "undercover": "卧底",
+            "whiteboard": "白板",
+        }.get(role, "未知")
+
     def _event_join(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)
         if len(parts) != 2 or not parts[1].strip():
+            if self._repository.undercover_session_summary().state is not None:
+                return self._undercover_join(platform_id, received_at)
             duel = self._repository.join_memory_assessment_duel(platform_id, received_at)
             if duel.status == "duel_started":
                 return self._memory_assessment_round_reply(

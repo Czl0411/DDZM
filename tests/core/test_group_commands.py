@@ -187,6 +187,83 @@ def test_me_alias_shows_balance_level_and_today_income_without_count():
     assert "10" not in reply
 
 
+def test_undercover_group_commands_signup_deal_vote_and_settle():
+    from dzmm_bot.core.schema import (
+        UndercoverGamePlayerRecord,
+        UndercoverGameRecord,
+        UndercoverWordSetRecord,
+        UserRecord,
+    )
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    platform_ids = ["undercover-1", "undercover-2", "undercover-3", "undercover-4"]
+    for number, platform_id in enumerate(platform_ids, start=1):
+        _receive(service, f"join-{number}", platform_id, f"/入职 员工{number}", now)
+    with factory.begin() as session:
+        session.add(
+            UndercoverWordSetRecord(
+                category="测试",
+                civilian_word="咖啡",
+                undercover_word="奶茶",
+                enabled=True,
+                created_at=now,
+            )
+        )
+    repository.upsert_direct_chats(
+        [(platform_id, f"direct-{platform_id}") for platform_id in platform_ids], now
+    )
+
+    _receive(service, "undercover-start", platform_ids[0], "/谁是卧底 4", now)
+    assert "报名开启" in _latest_reply(factory)
+    for index, platform_id in enumerate(platform_ids[1:], start=2):
+        _receive(service, f"undercover-join-{index}", platform_id, "/加入", now)
+    assert "正在私聊发放身份" in _latest_reply(factory)
+
+    with factory() as session:
+        game = session.scalar(select(UndercoverGameRecord))
+        assert game is not None
+        players = list(
+            session.execute(
+                select(
+                    UserRecord.platform_id,
+                    UndercoverGamePlayerRecord.role,
+                    UndercoverGamePlayerRecord.seat_number,
+                )
+                .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
+                .where(UndercoverGamePlayerRecord.game_id == game.id)
+            )
+        )
+    for platform_id in platform_ids:
+        repository.record_undercover_card_delivery(game.id, platform_id, True, now)
+    undercover_seat = next(seat for _, role, seat in players if role == "undercover")
+
+    _receive(service, "undercover-vote", platform_ids[0], "/开始投票", now)
+    assert "投票开始" in _latest_reply(factory)
+    for index, platform_id in enumerate(platform_ids, start=1):
+        _receive(
+            service,
+            f"undercover-ballot-{index}",
+            platform_id,
+            f"/投票 {undercover_seat}",
+            now,
+        )
+    assert "平民阵营获胜" in _latest_reply(factory)
+    assert repository.undercover_session_summary().state == "awaiting_continue"
+
+
+def test_help_lists_undercover_commands():
+    service, _, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+
+    _receive(service, "help-undercover", "employee", "/帮助", now)
+
+    reply = _latest_reply(factory)
+    assert "/谁是卧底：" in reply
+    assert "/开始投票：" in reply
+    assert "/退出谁是卧底：" in reply
+
+
 def test_department_join_application_keeps_employee_in_default_department_until_approved():
     service, _, factory = _service()
     now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)

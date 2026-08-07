@@ -377,12 +377,48 @@ def test_undercover_expires_awaiting_continuation_after_twenty_minutes(
     assert repository.undercover_session_summary().state is None
 
 
+def test_daily_jobs_notifies_group_when_undercover_signup_expires(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    assert repository.start_undercover_signup(platform_ids[0], 4, now).status == "signup_started"
+
+    repository.run_daily_jobs(now + timedelta(minutes=2))
+
+    with session_factory() as session:
+        notice = session.scalar(
+            select(OutboundRecord)
+            .where(OutboundRecord.inbound_message_id.is_(None))
+            .order_by(OutboundRecord.created_at.desc())
+        )
+    assert notice is not None
+    assert notice.text == "【谁是卧底】报名超时，本局已关闭。"
+
+
 def test_undercover_active_session_blocks_memory_assessment_duel(
     repository, session_factory, now
 ):
     _start_undercover_game(repository, session_factory, now)
 
     assert repository.start_memory_assessment_duel("undercover-1", now).status == "multiplayer_active"
+
+
+def test_due_random_event_waits_while_undercover_signup_is_active(
+    repository, session_factory, now
+):
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.create_random_event_scene("茶水间", "报名", ["开场"], 1, 1, [("员工", 1)])
+    repository.set_random_event_settings(["20:00"], "可选身份：{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+    assert repository.start_undercover_signup(platform_ids[0], 4, now).status == "signup_started"
+
+    repository.run_random_event_jobs(now)
+
+    schedules = repository.list_today_random_event_schedules(now)
+    assert schedules[0].status == "pending"
+    assert repository.active_random_event_state() is None
 
 
 def test_undercover_exit_rechecks_winner_and_manual_end_releases_session(
@@ -764,10 +800,7 @@ def test_memory_assessment_cannot_start_during_active_random_event(repository, s
     assert repository.start_memory_assessment_duel("u1", now).status == "random_event_active"
 
 
-@pytest.mark.parametrize("state", ["signup", "in_progress"])
-def test_memory_assessment_duel_cannot_be_joined_during_active_random_event(
-    repository, state
-):
+def test_random_event_waits_while_memory_assessment_duel_is_active(repository):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_user("u1", "小明", now, 0)
     repository.create_user("u2", "小红", now, 0)
@@ -777,12 +810,10 @@ def test_memory_assessment_duel_cannot_be_joined_during_active_random_event(
     repository.set_random_event_settings(["10:00"], "可选身份：{可选身份}", 15, 5)
     repository.schedule_random_events(now)
     repository.run_random_event_jobs(now)
-    if state == "in_progress":
-        assert repository.join_random_event("u2", "员工", now) == "joined"
-        assert repository.join_random_event("u3", "员工", now) == "started"
-
     assert waiting.status == "waiting_opponent"
-    assert repository.join_memory_assessment_duel("u2", now).status == "random_event_active"
+    assert repository.active_random_event_state() is None
+    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.join_memory_assessment_duel("u2", now).status == "duel_started"
 
 
 def test_due_outbound_recall_marks_memory_assessment_round_ready(repository, now):

@@ -515,6 +515,47 @@ def create_app(
             scope="hide-and-seek-settings",
         )
 
+    @app.get("/api/game/memory-assessment/settings")
+    def memory_assessment_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_memory_assessment_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/memory-assessment/settings")
+    def set_memory_assessment_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "enabled",
+            "single_daily_limit",
+            "single_recall_seconds",
+            "duel_recall_seconds",
+            "duel_difficulty_level",
+            "duel_base_pool",
+            "duel_wrong_freeze",
+            "duel_wrong_limit",
+            "duel_answer_timeout_minutes",
+            "character_set",
+            "levels",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_memory_assessment_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="memory-assessment-settings",
+        )
+
     @app.get("/api/game/hide-and-seek/scenes")
     def hide_and_seek_scenes(
         _: Annotated[None, Depends(authorize)],

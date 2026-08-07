@@ -99,6 +99,22 @@ class BrowserWorker:
 
         self._core.run_daily_jobs(now)
 
+        recall = self._core.claim_outbound_recall(
+            self._worker_id, self._clock(), self._lease_seconds
+        )
+        if recall is not None:
+            try:
+                gateway.retract(recall.platform_sent_id)
+            except Exception:
+                _LOGGER.exception("outbound retraction failed: %s", recall.id)
+            else:
+                self._core.confirm_outbound_recalled(
+                    recall.id,
+                    self._worker_id,
+                    recall.lease_token,
+                    self._clock(),
+                )
+
         outbound = self._core.claim_outbound(
             self._worker_id, self._clock(), self._lease_seconds
         )

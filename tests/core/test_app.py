@@ -141,7 +141,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫"
+        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降"
     }
     assert disabled.json()["enabled"] is False
     assert employees.json() == {
@@ -273,6 +273,40 @@ def test_hide_and_seek_settings_and_scenes_are_managed_over_core_api(client, hea
     assert updated.json()["entry_fee"] == 2
     assert created.status_code == 201
     assert scenes.json()["total"] == 11
+
+
+def test_memory_assessment_settings_are_managed_over_core_api(client, headers):
+    initial = client.get("/internal/game/memory-assessment/settings", headers=headers)
+    updated = client.patch(
+        "/internal/game/memory-assessment/settings",
+        headers=headers,
+        json={
+            "enabled": True,
+            "single_daily_limit": 1,
+            "single_recall_seconds": 4,
+            "duel_recall_seconds": 5,
+            "duel_difficulty_level": 5,
+            "duel_base_pool": 6,
+            "duel_wrong_freeze": 2,
+            "duel_wrong_limit": 8,
+            "duel_answer_timeout_minutes": 9,
+            "character_set": "ABC123",
+            "levels": [
+                {"level": level, "answer_length": level * 2 + 3, "reward": level}
+                for level in range(1, 6)
+            ],
+        },
+    )
+
+    assert initial.status_code == 200
+    assert initial.json()["single_recall_seconds"] == 3
+    assert updated.status_code == 200
+    assert updated.json()["duel_base_pool"] == 6
+    assert updated.json()["levels"][4] == {
+        "level": 5,
+        "answer_length": 13,
+        "reward": 5,
+    }
 
 
 def test_daily_jobs_require_the_core_token(client, headers):

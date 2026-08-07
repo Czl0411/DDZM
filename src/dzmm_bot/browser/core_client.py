@@ -18,6 +18,13 @@ class OutboundClaim:
 
 
 @dataclass(frozen=True)
+class OutboundRecallClaim:
+    id: UUID
+    platform_sent_id: str
+    lease_token: UUID
+
+
+@dataclass(frozen=True)
 class WorkerCommand:
     id: UUID
     command: str
@@ -39,6 +46,18 @@ class CorePort(Protocol):
         worker_id: str,
         lease_token: UUID,
         platform_sent_id: str,
+        now: datetime,
+    ) -> None: ...
+
+    def claim_outbound_recall(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> OutboundRecallClaim | None: ...
+
+    def confirm_outbound_recalled(
+        self,
+        message_id: UUID,
+        worker_id: str,
+        lease_token: UUID,
         now: datetime,
     ) -> None: ...
 
@@ -123,6 +142,37 @@ class CoreClient:
                 "worker_id": worker_id,
                 "lease_token": str(lease_token),
                 "platform_sent_id": platform_sent_id,
+                "now": now.isoformat(),
+            },
+        )
+
+    def claim_outbound_recall(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> OutboundRecallClaim | None:
+        data = self._post(
+            "/internal/outbound/recall/claim",
+            _claim_payload(worker_id, now, lease_seconds),
+        )
+        if data is None:
+            return None
+        return OutboundRecallClaim(
+            id=UUID(data["id"]),
+            platform_sent_id=data["platform_sent_id"],
+            lease_token=UUID(data["lease_token"]),
+        )
+
+    def confirm_outbound_recalled(
+        self,
+        message_id: UUID,
+        worker_id: str,
+        lease_token: UUID,
+        now: datetime,
+    ) -> None:
+        self._post(
+            f"/internal/outbound/{message_id}/recalled",
+            {
+                "worker_id": worker_id,
+                "lease_token": str(lease_token),
                 "now": now.isoformat(),
             },
         )

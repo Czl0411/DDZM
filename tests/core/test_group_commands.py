@@ -55,7 +55,7 @@ def _replies_for(factory, inbound_id):
 def test_join_registers_employee_with_zero_balance_and_beijing_timestamp():
     from dzmm_bot.core.schema import UserRecord
 
-    service, _, factory = _service()
+    service, repository, factory = _service()
     received_at = datetime(2026, 8, 5, 1, 5, tzinfo=UTC)
 
     _receive(service, "message-1", "platform-xiaoming", "/入职 小明", received_at)
@@ -256,6 +256,63 @@ def test_hide_and_seek_first_round_found_sends_only_one_reply(monkeypatch):
     assert len(replies) == 1
     assert "【系统巡查·第一轮】巡查" in replies[0]
     assert "【系统巡查·第二轮】" not in replies[0]
+
+
+def test_memory_assessment_single_uses_continue_and_cash_out_commands(monkeypatch):
+    from dzmm_bot.core.schema import MemoryAssessmentRoundRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _receive(service, "join", "u1", "/入职 小明", now)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    _receive(service, "start", "u1", "/记忆考核", now)
+    with factory() as session:
+        round_record = session.scalar(select(MemoryAssessmentRoundRecord))
+    _receive(service, "too-early", "u1", "AAAAA", now)
+    repository.mark_memory_assessment_round_recalled(round_record.id, now)
+    _receive(service, "answer", "u1", "AAAAA", now)
+    _receive(service, "cash-out", "u1", "/收手", now)
+
+    assert _latest_reply(factory) == "小明 收手成功，获得 1 摸鱼币。当前余额：1 摸鱼币。"
+
+
+def test_memory_assessment_prompt_is_queued_for_automatic_recall(monkeypatch):
+    from dzmm_bot.core.schema import MemoryAssessmentRoundRecord, OutboundRecord
+
+    service, _, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _receive(service, "join", "u1", "/入职 小明", now)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    _receive(service, "start", "u1", "/记忆考核", now)
+
+    with factory() as session:
+        outbound = session.scalar(
+            select(OutboundRecord).where(OutboundRecord.recall_after_seconds.is_not(None))
+        )
+        round_record = session.scalar(select(MemoryAssessmentRoundRecord))
+    assert outbound.recall_after_seconds == 3
+    assert round_record.outbound_message_id == outbound.id
+
+
+def test_memory_assessment_duel_is_joined_with_plain_join_command(monkeypatch):
+    from dzmm_bot.core.schema import MemoryAssessmentRoundRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _receive(service, "join-1", "u1", "/入职 小明", now)
+    _receive(service, "join-2", "u2", "/入职 小红", now)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    _receive(service, "duel", "u1", "/记忆考核 对战", now)
+    _receive(service, "duel-join", "u2", "/加入", now)
+    with factory() as session:
+        round_record = session.scalar(select(MemoryAssessmentRoundRecord))
+    repository.mark_memory_assessment_round_recalled(round_record.id, now)
+    _receive(service, "answer", "u1", "A" * 13, now)
+
+    assert "小明 最先答对，赢得奖池 10 摸鱼币。" in _latest_reply(factory)
 
 
 def test_disabled_command_does_not_reply_or_change_data():

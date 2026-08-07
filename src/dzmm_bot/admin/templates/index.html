@@ -59,6 +59,7 @@
               <button id="nav-settings" class="nav-item" data-view="settings" type="button">玩法配置</button>
               <button id="nav-events" class="nav-item" data-view="events" type="button">随机事件</button>
               <button id="nav-hide-and-seek" class="nav-item" data-view="hide-and-seek" type="button">躲猫猫</button>
+              <button id="nav-memory-assessment" class="nav-item" data-view="memory-assessment" type="button">记忆考核</button>
               <button id="nav-commands" class="nav-item" data-view="commands" type="button">指令库</button>
               <button id="nav-employees" class="nav-item" data-view="employees" type="button">员工</button>
               <button id="nav-shop" class="nav-item" data-view="shop" type="button">物品与商店</button>
@@ -211,6 +212,12 @@
                 </div>
                 <div id="hide-and-seek-scene-list" class="data-list"></div>
                 <nav id="hide-and-seek-scene-pagination" class="pagination" aria-label="躲猫猫场景分页"></nav>
+              </section>
+
+              <section id="memory-assessment-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">撤回记忆小游戏</p>
+                <div class="panel-heading"><div><h2>记忆考核规则</h2><p class="muted">考题自动展示后按秒撤回；单人每日限一次，双人对战为奖池制。</p></div><button id="edit-memory-assessment-settings" class="primary" type="button">编辑规则</button></div>
+                <div id="memory-assessment-settings-card" class="settings-card" aria-live="polite"></div>
               </section>
 
               <section id="employees-view" class="dashboard-view panel" hidden>
@@ -375,6 +382,17 @@
         <div class="template-modal-heading"><div><p class="eyebrow">摸鱼躲猫猫</p><h2 id="hide-and-seek-scene-modal-title">新增地点</h2><p class="muted">地点名称会直接展示给玩家。停用地点不会再进入后续游戏候选。</p></div><button class="text-button" data-close-hide-and-seek-scene-modal type="button">关闭</button></div>
         <label for="hide-and-seek-scene-name">地点名称</label><input id="hide-and-seek-scene-name" maxlength="64" placeholder="例如：公司茶水间" required>
         <div class="template-modal-actions"><button class="secondary" data-close-hide-and-seek-scene-modal type="button">取消</button><button id="save-hide-and-seek-scene" class="primary" type="button">创建地点</button></div>
+      </section>
+    </div>
+
+    <div id="memory-assessment-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="memory-assessment-settings-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-memory-assessment-settings-modal></div>
+      <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">记忆考核</p><h2 id="memory-assessment-settings-modal-title">编辑游戏规则</h2><p class="muted">字符集不能有空格或换行；等级使用“长度,奖励”逐行填写，例如 5,1。</p></div><button class="text-button" data-close-memory-assessment-settings-modal type="button">关闭</button></div>
+        <label><input id="memory-assessment-enabled" type="checkbox"> 启用记忆考核</label>
+        <div class="event-input-grid"><label>单人每日次数<input id="memory-assessment-daily-limit" type="number" min="1" max="99"></label><label>单人展示秒数<input id="memory-assessment-single-seconds" type="number" min="1" max="60"></label><label>对战展示秒数<input id="memory-assessment-duel-seconds" type="number" min="1" max="60"></label></div>
+        <div class="event-input-grid"><label>对战难度等级<input id="memory-assessment-duel-level" type="number" min="1" max="20"></label><label>每人基础奖池<input id="memory-assessment-base-pool" type="number" min="1" max="999"></label><label>答错冻结金额<input id="memory-assessment-wrong-freeze" type="number" min="1" max="999"></label><label>答错上限<input id="memory-assessment-wrong-limit" type="number" min="1" max="99"></label><label>作答超时（分钟）<input id="memory-assessment-timeout" type="number" min="1" max="60"></label></div>
+        <label>随机字符集<input id="memory-assessment-character-set" maxlength="200"></label><label>等级规则<textarea id="memory-assessment-levels" rows="5"></textarea></label>
+        <div class="template-modal-actions"><button class="secondary" data-close-memory-assessment-settings-modal type="button">取消</button><button id="save-memory-assessment-settings" class="primary" type="button">保存规则</button></div>
       </section>
     </div>
     <script src="/static/admin.js"></script>

@@ -49,6 +49,10 @@ class AdminCorePort(Protocol):
 
     def set_hide_and_seek_settings(self, settings: dict) -> dict: ...
 
+    def get_memory_assessment_settings(self) -> dict: ...
+
+    def set_memory_assessment_settings(self, settings: dict) -> dict: ...
+
     def list_hide_and_seek_scenes(self, page: int, page_size: int) -> dict: ...
 
     def create_hide_and_seek_scene(self, scene: dict) -> dict: ...
@@ -183,6 +187,16 @@ class CoreClient:
     def set_hide_and_seek_settings(self, settings: dict) -> dict:
         response = self._client.patch(
             "/internal/game/hide-and-seek/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_memory_assessment_settings(self) -> dict:
+        return self._get("/internal/game/memory-assessment/settings")
+
+    def set_memory_assessment_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/memory-assessment/settings", json=settings
         )
         response.raise_for_status()
         return response.json()

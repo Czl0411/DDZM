@@ -105,3 +105,12 @@ def test_memory_assessment_migration_creates_game_tables():
     assert "memory_assessment_games" in migration
     assert "memory_assessment_participants" in migration
     assert "memory_assessment_rounds" in migration
+
+
+def test_memory_assessment_recall_migration_links_rounds_to_outbound_messages():
+    migration = (ROOT / "migrations/versions/20260806_20_memory_assessment_recall.py").read_text()
+
+    assert 'down_revision: str | None = "20260806_19"' in migration
+    assert '"count"' in migration
+    assert "recall_after_seconds" in migration
+    assert "outbound_message_id" in migration

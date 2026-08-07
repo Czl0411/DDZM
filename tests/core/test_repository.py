@@ -114,6 +114,127 @@ def test_memory_assessment_rejects_whitespace_character_set(repository):
         )
 
 
+def test_memory_assessment_single_requires_recall_then_cash_out(repository, monkeypatch):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    user, _ = repository.create_user("u1", "小明", now, 0)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    started = repository.start_memory_assessment_single("u1", now)
+    before_recall = repository.answer_memory_assessment("u1", "AAAAA", now)
+    repository.mark_memory_assessment_round_recalled(started.round_id, now)
+    correct = repository.answer_memory_assessment("u1", "AAAAA", now)
+    cashed_out = repository.cash_out_memory_assessment("u1", now)
+
+    assert started.status == "started"
+    assert started.level == 1
+    assert started.answer == "AAAAA"
+    assert before_recall.status == "answer_not_ready"
+    assert correct.status == "correct"
+    assert cashed_out.status == "cashed_out"
+    assert cashed_out.reward == 1
+    assert repository.find_user("u1").balance == 1
+    assert repository.today_income(user.id, now) == 1
+    assert repository.start_memory_assessment_single("u1", now).status == "daily_limit"
+
+
+def test_memory_assessment_single_continues_and_loses_unclaimed_reward(
+    repository, monkeypatch
+):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    first_round = repository.start_memory_assessment_single("u1", now)
+    repository.mark_memory_assessment_round_recalled(first_round.round_id, now)
+    repository.answer_memory_assessment("u1", first_round.answer, now)
+    second_round = repository.continue_memory_assessment("u1", now)
+    repository.mark_memory_assessment_round_recalled(second_round.round_id, now)
+    failed = repository.answer_memory_assessment("u1", "wrong", now)
+
+    assert second_round.status == "continued"
+    assert second_round.level == 2
+    assert second_round.answer == "AAAAAAA"
+    assert failed.status == "failed"
+    assert repository.find_user("u1").balance == 0
+
+
+def test_memory_assessment_duel_freezes_pool_and_awards_first_exact_answer(
+    repository, monkeypatch
+):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_user("u2", "小红", now, 0)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    waiting = repository.start_memory_assessment_duel("u1", now)
+    started = repository.join_memory_assessment_duel("u2", now)
+    repository.mark_memory_assessment_round_recalled(started.round_id, now)
+    won = repository.answer_memory_assessment("u2", started.answer, now)
+
+    assert waiting.status == "waiting_opponent"
+    assert started.status == "duel_started"
+    assert started.answer == "A" * 13
+    assert repository.find_user("u1").balance == -5
+    assert won.status == "duel_won"
+    assert won.reward == 10
+    assert repository.find_user("u2").balance == 5
+
+
+def test_memory_assessment_duel_surrender_awards_remaining_player(repository, monkeypatch):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_user("u2", "小红", now, 0)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    repository.start_memory_assessment_duel("u1", now)
+    repository.join_memory_assessment_duel("u2", now)
+    surrendered = repository.surrender_memory_assessment_duel("u1", now)
+
+    assert surrendered.status == "duel_won"
+    assert surrendered.display_name == "小红"
+    assert surrendered.reward == 10
+    assert repository.find_user("u1").balance == -5
+    assert repository.find_user("u2").balance == 5
+
+
+def test_memory_assessment_duel_timeout_collects_the_pool(repository, monkeypatch):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_user("u2", "小红", now, 0)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    repository.start_memory_assessment_duel("u1", now)
+    repository.join_memory_assessment_duel("u2", now)
+    expired = repository.expire_memory_assessment_duels(now + timedelta(minutes=10))
+
+    assert [result.status for result in expired] == ["duel_collected"]
+    assert repository.find_user("u1").balance == -5
+    assert repository.find_user("u2").balance == -5
+
+
+def test_due_outbound_recall_marks_memory_assessment_round_ready(repository, now):
+    from dzmm_bot.core.schema import MemoryAssessmentRoundRecord
+
+    repository.create_user("u1", "小明", now, 0)
+    started = repository.start_memory_assessment_single("u1", now)
+    outbound = repository.enqueue_system_outbound(
+        "考题", recall_after_seconds=3, memory_round_id=started.round_id
+    )
+    sent = repository.claim_outbound("worker-a", now, 30)
+
+    assert repository.confirm_sent(
+        outbound.id, "worker-a", sent.lease_token, "platform-answer", now
+    )
+    assert repository.claim_outbound_recall("worker-a", now + timedelta(seconds=2), 30) is None
+    recall = repository.claim_outbound_recall("worker-a", now + timedelta(seconds=3), 30)
+    assert recall.platform_sent_id == "platform-answer"
+    assert repository.confirm_outbound_recalled(
+        outbound.id, "worker-a", recall.recall_lease_token, now + timedelta(seconds=3)
+    )
+    with repository._session() as session:
+        assert session.get(MemoryAssessmentRoundRecord, started.round_id).state == "awaiting_answer"
+
+
 def test_hide_and_seek_scene_name_must_be_unique(repository):
     repository.get_hide_and_seek_settings()
 

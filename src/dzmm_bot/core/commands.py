@@ -4,11 +4,12 @@ from dzmm_bot.runtime.contracts import InboundMessage
 
 from .reply_templates import render_template, template_definition
 from .repository import CoreRepository
+from .service import CommandReply
 
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫"
+    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降"
 }
 
 
@@ -28,7 +29,9 @@ class GroupCommandHandler:
         if command == "/me":
             command = "/我"
         if command not in _COMMANDS:
-            return None
+            return self._memory_assessment_answer(
+                message.sender_platform_id, content, message.received_at.astimezone(_BEIJING)
+            )
         self._repository.ensure_command_definitions()
         if not self._repository.is_command_enabled(command):
             return None
@@ -51,6 +54,16 @@ class GroupCommandHandler:
             return self._event_leave(message.sender_platform_id, received_at)
         if command == "/摸鱼躲猫猫":
             return self._hide_and_seek(message.sender_platform_id, content, received_at)
+        if command == "/记忆考核":
+            return self._memory_assessment_start(
+                message.sender_platform_id, content, received_at
+            )
+        if command == "/继续":
+            return self._memory_assessment_continue(message.sender_platform_id, received_at)
+        if command == "/收手":
+            return self._memory_assessment_cash_out(message.sender_platform_id, received_at)
+        if command == "/投降":
+            return self._memory_assessment_surrender(message.sender_platform_id, received_at)
         return self._help(received_at)
 
     def _join(self, platform_id: str, content: str, received_at) -> str:
@@ -165,6 +178,13 @@ class GroupCommandHandler:
     def _event_join(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)
         if len(parts) != 2 or not parts[1].strip():
+            duel = self._repository.join_memory_assessment_duel(platform_id, received_at)
+            if duel.status == "duel_started":
+                return self._memory_assessment_round_reply(
+                    "/记忆考核", "duel_started", duel, received_at
+                )
+            if duel.status == "not_joined":
+                return self._reply("/加入", "not_joined", received_at)
             return self._reply("/加入", "invalid", received_at)
         status = self._repository.join_random_event(
             platform_id, parts[1].strip(), received_at
@@ -303,12 +323,151 @@ class GroupCommandHandler:
         }
         return self._reply("/摸鱼躲猫猫", scenarios[status], received_at)
 
+    def _memory_assessment_start(
+        self, platform_id: str, content: str, received_at
+    ) -> str:
+        if content == "/记忆考核 对战":
+            result = self._repository.start_memory_assessment_duel(platform_id, received_at)
+            if result.status == "waiting_opponent":
+                return self._reply(
+                    "/记忆考核",
+                    "duel_waiting",
+                    received_at,
+                    {"{昵称}": result.display_name, "{等级}": result.level},
+                )
+            scenarios = {
+                "not_joined": "not_joined",
+                "disabled": "disabled",
+                "already_active": "already_active",
+            }
+            return self._reply("/记忆考核", scenarios[result.status], received_at)
+        if content != "/记忆考核":
+            return self._reply("/记忆考核", "usage", received_at)
+        result = self._repository.start_memory_assessment_single(platform_id, received_at)
+        if result.status == "started":
+            return self._memory_assessment_round_reply("/记忆考核", "started", result, received_at)
+        scenarios = {
+            "not_joined": "not_joined",
+            "disabled": "disabled",
+            "daily_limit": "daily_limit",
+            "already_active": "already_active",
+        }
+        return self._reply("/记忆考核", scenarios[result.status], received_at)
+
+    def _memory_assessment_answer(
+        self, platform_id: str, content: str, received_at
+    ) -> str | None:
+        result = self._repository.answer_memory_assessment(platform_id, content, received_at)
+        if result.status in {"no_active_game", "answer_not_ready"}:
+            return None
+        if result.status == "correct":
+            return self._reply(
+                "/记忆考核",
+                "correct",
+                received_at,
+                {
+                    "{昵称}": result.display_name,
+                    "{等级}": result.level,
+                    "{奖励}": result.reward,
+                },
+            )
+        if result.status == "completed":
+            return self._reply(
+                "/记忆考核",
+                "completed",
+                received_at,
+                {
+                    "{昵称}": result.display_name,
+                    "{等级}": result.level,
+                    "{奖励}": result.reward,
+                    "{余额}": result.balance,
+                },
+            )
+        if result.status == "failed":
+            return self._reply("/记忆考核", "failed", received_at)
+        if result.status == "duel_won":
+            return self._reply(
+                "/记忆考核",
+                "duel_won",
+                received_at,
+                {
+                    "{昵称}": result.display_name,
+                    "{奖励}": result.reward,
+                    "{余额}": result.balance,
+                },
+            )
+        if result.status == "duel_incorrect":
+            return self._reply(
+                "/记忆考核",
+                "duel_incorrect",
+                received_at,
+                {"{惩罚金额}": self._repository.get_memory_assessment_settings().duel_wrong_freeze},
+            )
+        if result.status == "duel_collected":
+            return self._reply("/记忆考核", "duel_collected", received_at)
+        return None
+
+    def _memory_assessment_continue(self, platform_id: str, received_at) -> str:
+        result = self._repository.continue_memory_assessment(platform_id, received_at)
+        if result.status == "continued":
+            return self._memory_assessment_round_reply("/继续", "continued", result, received_at)
+        return self._reply("/继续", "cannot_continue", received_at)
+
+    def _memory_assessment_cash_out(self, platform_id: str, received_at) -> str:
+        result = self._repository.cash_out_memory_assessment(platform_id, received_at)
+        if result.status == "cashed_out":
+            return self._reply(
+                "/收手",
+                "cashed_out",
+                received_at,
+                {
+                    "{昵称}": result.display_name,
+                    "{奖励}": result.reward,
+                    "{余额}": result.balance,
+                },
+            )
+        return self._reply("/收手", "cannot_cash_out", received_at)
+
+    def _memory_assessment_surrender(self, platform_id: str, received_at) -> str:
+        result = self._repository.surrender_memory_assessment_duel(platform_id, received_at)
+        if result.status == "duel_won":
+            return self._reply(
+                "/投降",
+                "lost",
+                received_at,
+                {
+                    "{昵称}": self._repository.find_user(platform_id).display_name,
+                    "{胜者}": result.display_name,
+                    "{奖励}": result.reward,
+                },
+            )
+        return self._reply("/投降", "cannot_surrender", received_at)
+
+    def _memory_assessment_round_reply(self, command: str, scenario: str, result, received_at) -> CommandReply:
+        return CommandReply(
+            self._reply(
+                command,
+                scenario,
+                received_at,
+                {
+                    "{昵称}": result.display_name,
+                    "{等级}": result.level,
+                    "{考核文本}": result.answer,
+                    "{撤回秒数}": result.display_seconds,
+                },
+            ),
+            recall_after_seconds=result.display_seconds,
+            memory_round_id=result.round_id,
+        )
+
     def _help(self, received_at) -> str:
         commands = self._repository.list_enabled_command_definitions()
         settings = self._repository.get_game_settings()
         descriptions = {
             "/打卡": f"每日领取 {settings.checkin_reward} {settings.currency_name}",
             "/摸鱼躲猫猫": "发起单人躲猫猫小游戏；选择时发送 /躲 序号",
+            "/记忆考核": "发起单人挑战；答对后发送 /继续 或 /收手",
+            "/投降": "退出正在进行的记忆考核对战",
         }
         return self._reply(
             "/帮助",

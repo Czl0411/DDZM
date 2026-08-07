@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 
-from dzmm_bot.browser.core_client import OutboundClaim, WorkerCommand
+from dzmm_bot.browser.core_client import OutboundClaim, OutboundRecallClaim, WorkerCommand
 from dzmm_bot.browser.worker import BrowserWorker
 from dzmm_bot.runtime.contracts import InboundMessage, LoginState
 
@@ -78,9 +78,11 @@ class FakeDesktop:
 @dataclass
 class FakeCore:
     pending: list[OutboundClaim] = field(default_factory=list)
+    pending_recalls: list[OutboundRecallClaim] = field(default_factory=list)
     commands: list[WorkerCommand] = field(default_factory=list)
     submitted_ids: list[str] = field(default_factory=list)
     confirmed: list[tuple] = field(default_factory=list)
+    recalls_confirmed: list[tuple] = field(default_factory=list)
     heartbeats: list[tuple] = field(default_factory=list)
     completions: list[tuple] = field(default_factory=list)
     audits: list[tuple] = field(default_factory=list)
@@ -96,6 +98,12 @@ class FakeCore:
         self.confirmed.append(
             (message_id, worker_id, lease_token, platform_sent_id, now)
         )
+
+    def claim_outbound_recall(self, worker_id, now, lease_seconds):
+        return self.pending_recalls.pop(0) if self.pending_recalls else None
+
+    def confirm_outbound_recalled(self, message_id, worker_id, lease_token, now):
+        self.recalls_confirmed.append((message_id, worker_id, lease_token, now))
 
     def heartbeat(self, worker_id, login_state, recorded_at):
         self.heartbeats.append((worker_id, login_state, recorded_at))
@@ -171,6 +179,18 @@ def test_sent_confirmation_includes_current_fencing_values(context):
     assert core.confirmed == [
         (OUTBOUND_ID, "worker-a", LEASE, "sent-1", NOW)
     ]
+
+
+def test_worker_retracts_a_due_outbound_with_current_fencing_values(context):
+    worker, gateway, _, _, core, _ = context
+    core.pending_recalls = [
+        OutboundRecallClaim(OUTBOUND_ID, "platform-message", LEASE)
+    ]
+
+    worker.run_once()
+
+    assert gateway.retracted == ["platform-message"]
+    assert core.recalls_confirmed == [(OUTBOUND_ID, "worker-a", LEASE, NOW)]
 
 
 def test_paused_worker_still_heartbeats_and_polls_commands(context):

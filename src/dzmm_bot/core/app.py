@@ -31,7 +31,9 @@ from .api_models import (
     ManualLoginActorRequest,
     ManualLoginLeaseResponse,
     OutboundClaimResponse,
+    OutboundRecallClaimResponse,
     QueueCountsResponse,
+    RecalledRequest,
     SentRequest,
     SetCommandEnabledRequest,
     SetCommandTemplateRequest,
@@ -49,6 +51,9 @@ from .api_models import (
     RescheduleRandomEventRequest,
     HideAndSeekSettingsResponse,
     SetHideAndSeekSettingsRequest,
+    MemoryAssessmentSettingsResponse,
+    SetMemoryAssessmentSettingsRequest,
+    MemoryAssessmentLevelRuleModel,
     HideAndSeekSceneResponse,
     PaginatedHideAndSeekScenesResponse,
     CreateHideAndSeekSceneRequest,
@@ -68,6 +73,7 @@ from .repository import (
     ManualLoginBusyError,
     ManualLoginLease,
     ManualLoginOwnerError,
+    MemoryAssessmentLevelRule,
 )
 from .reply_templates import definitions_for_command, template_definition
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
@@ -155,6 +161,41 @@ def create_app(
             request.lease_token,
             request.platform_sent_id,
             request.now,
+        )
+        return AcceptedResponse(accepted=accepted)
+
+    @app.post(
+        "/internal/outbound/recall/claim",
+        response_model=OutboundRecallClaimResponse | None,
+    )
+    def claim_outbound_recall(
+        request: ClaimRequest, _: Annotated[None, Depends(authorize)]
+    ) -> OutboundRecallClaimResponse | None:
+        record = repository.claim_outbound_recall(
+            request.worker_id, request.now, request.lease_seconds
+        )
+        if record is None:
+            return None
+        if record.platform_sent_id is None:
+            raise RuntimeError("待撤回消息缺少平台消息 ID")
+        return OutboundRecallClaimResponse(
+            id=record.id,
+            platform_sent_id=record.platform_sent_id,
+            lease_token=record.recall_lease_token,
+            lease_expires_at=record.recall_lease_expires_at,
+            attempt_count=record.recall_attempt_count,
+        )
+
+    @app.post(
+        "/internal/outbound/{message_id}/recalled", response_model=AcceptedResponse
+    )
+    def confirm_outbound_recalled(
+        message_id: UUID,
+        request: RecalledRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        accepted = repository.confirm_outbound_recalled(
+            message_id, request.worker_id, request.lease_token, request.now
         )
         return AcceptedResponse(accepted=accepted)
 
@@ -474,6 +515,48 @@ def create_app(
         _: Annotated[None, Depends(authorize)],
     ) -> AcceptedResponse:
         return AcceptedResponse(accepted=repository.delete_hide_and_seek_scene(scene_id))
+
+    @app.get(
+        "/internal/game/memory-assessment/settings",
+        response_model=MemoryAssessmentSettingsResponse,
+    )
+    def memory_assessment_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> MemoryAssessmentSettingsResponse:
+        return _memory_assessment_settings_response(repository)
+
+    @app.patch(
+        "/internal/game/memory-assessment/settings",
+        response_model=MemoryAssessmentSettingsResponse,
+    )
+    def set_memory_assessment_settings(
+        request: SetMemoryAssessmentSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> MemoryAssessmentSettingsResponse:
+        try:
+            repository.set_memory_assessment_settings(
+                enabled=request.enabled,
+                single_daily_limit=request.single_daily_limit,
+                single_recall_seconds=request.single_recall_seconds,
+                duel_recall_seconds=request.duel_recall_seconds,
+                duel_difficulty_level=request.duel_difficulty_level,
+                duel_base_pool=request.duel_base_pool,
+                duel_wrong_freeze=request.duel_wrong_freeze,
+                duel_wrong_limit=request.duel_wrong_limit,
+                duel_answer_timeout_minutes=request.duel_answer_timeout_minutes,
+                character_set=request.character_set,
+                levels=[
+                    MemoryAssessmentLevelRule(
+                        level=rule.level,
+                        answer_length=rule.answer_length,
+                        reward=rule.reward,
+                    )
+                    for rule in request.levels
+                ],
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _memory_assessment_settings_response(repository)
 
     @app.get(
         "/internal/game/random-events/scenes",
@@ -842,6 +925,32 @@ def _hide_and_seek_settings_response(settings) -> HideAndSeekSettingsResponse:
 
 def _hide_and_seek_scene_response(scene) -> HideAndSeekSceneResponse:
     return HideAndSeekSceneResponse(id=scene.id, name=scene.name, enabled=scene.enabled)
+
+
+def _memory_assessment_settings_response(
+    repository: CoreRepository,
+) -> MemoryAssessmentSettingsResponse:
+    settings = repository.get_memory_assessment_settings()
+    return MemoryAssessmentSettingsResponse(
+        enabled=settings.enabled,
+        single_daily_limit=settings.single_daily_limit,
+        single_recall_seconds=settings.single_recall_seconds,
+        duel_recall_seconds=settings.duel_recall_seconds,
+        duel_difficulty_level=settings.duel_difficulty_level,
+        duel_base_pool=settings.duel_base_pool,
+        duel_wrong_freeze=settings.duel_wrong_freeze,
+        duel_wrong_limit=settings.duel_wrong_limit,
+        duel_answer_timeout_minutes=settings.duel_answer_timeout_minutes,
+        character_set=settings.character_set,
+        levels=[
+            MemoryAssessmentLevelRuleModel(
+                level=rule.level,
+                answer_length=rule.answer_length,
+                reward=rule.reward,
+            )
+            for rule in repository.list_memory_assessment_levels()
+        ],
+    )
 
 
 def _random_event_scene_response(scene) -> RandomEventSceneResponse:

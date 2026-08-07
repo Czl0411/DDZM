@@ -16,6 +16,7 @@ let randomEventSceneOpeningTarget = null;
 let randomEventAddScenes = [];
 let hideAndSeekSettings = null;
 let hideAndSeekScenePage = 1;
+let memoryAssessmentSettings = null;
 
 const pageSize = 20;
 
@@ -55,6 +56,7 @@ const randomEventSceneOpenings = document.querySelector("#random-event-scene-ope
 const randomEventTimeInputs = document.querySelector("#random-event-time-inputs");
 const hideAndSeekSettingsModal = document.querySelector("#hide-and-seek-settings-modal");
 const hideAndSeekSceneModal = document.querySelector("#hide-and-seek-scene-modal");
+const memoryAssessmentSettingsModal = document.querySelector("#memory-assessment-settings-modal");
 
 function headers() {
   return token ? {"X-Admin-Token": token} : {"X-Admin-Session": adminSession};
@@ -210,6 +212,38 @@ function renderHideAndSeekScenes(scenes) {
     <article class="data-row"><div><b>${escapeHtml(scene.name)}${scene.enabled ? "" : "（已停用）"}</b><small>${scene.enabled ? "可被随机抽取为躲藏地点" : "不会进入新的躲猫猫游戏"}</small></div>
     <div class="command-actions"><button class="secondary" data-hide-and-seek-scene="${escapeHtml(JSON.stringify(scene))}" data-hide-and-seek-scene-action="edit" type="button">编辑</button><button class="secondary" data-hide-and-seek-scene="${escapeHtml(JSON.stringify(scene))}" data-hide-and-seek-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-hide-and-seek-scene="${escapeHtml(JSON.stringify(scene))}" data-hide-and-seek-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有地点。至少新增并启用 7 个地点后，玩家才能开始游戏。</p>";
 }
+
+function renderMemoryAssessmentSettings(settings) {
+  document.querySelector("#memory-assessment-settings-card").innerHTML = `
+    <article><span>游戏状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>考题展示后自动撤回</small></article>
+    <article><span>单人挑战</span><strong>每日 ${settings.single_daily_limit} 次 / ${settings.single_recall_seconds} 秒</strong><small>${settings.levels.map((rule) => `LV${rule.level}: ${rule.answer_length} 字符 / ${rule.reward} 奖励`).join(" · ")}</small></article>
+    <article><span>双人对战</span><strong>基础奖池 ${settings.duel_base_pool} / 答错冻结 ${settings.duel_wrong_freeze}</strong><small>难度 LV${settings.duel_difficulty_level}，${settings.duel_answer_timeout_minutes} 分钟超时，答错上限 ${settings.duel_wrong_limit} 次</small></article>`;
+}
+
+async function loadMemoryAssessment() {
+  memoryAssessmentSettings = await requestGame("/api/game/memory-assessment/settings");
+  configurationVersion = memoryAssessmentSettings.version;
+  renderMemoryAssessmentSettings(memoryAssessmentSettings);
+}
+
+async function openMemoryAssessmentSettingsModal() {
+  const settings = memoryAssessmentSettings || await requestGame("/api/game/memory-assessment/settings");
+  memoryAssessmentSettings = settings;
+  document.querySelector("#memory-assessment-enabled").checked = settings.enabled;
+  document.querySelector("#memory-assessment-daily-limit").value = settings.single_daily_limit;
+  document.querySelector("#memory-assessment-single-seconds").value = settings.single_recall_seconds;
+  document.querySelector("#memory-assessment-duel-seconds").value = settings.duel_recall_seconds;
+  document.querySelector("#memory-assessment-duel-level").value = settings.duel_difficulty_level;
+  document.querySelector("#memory-assessment-base-pool").value = settings.duel_base_pool;
+  document.querySelector("#memory-assessment-wrong-freeze").value = settings.duel_wrong_freeze;
+  document.querySelector("#memory-assessment-wrong-limit").value = settings.duel_wrong_limit;
+  document.querySelector("#memory-assessment-timeout").value = settings.duel_answer_timeout_minutes;
+  document.querySelector("#memory-assessment-character-set").value = settings.character_set;
+  document.querySelector("#memory-assessment-levels").value = settings.levels.map((rule) => `${rule.answer_length},${rule.reward}`).join("\n");
+  memoryAssessmentSettingsModal.hidden = false;
+}
+
+function closeMemoryAssessmentSettingsModal() { memoryAssessmentSettingsModal.hidden = true; }
 
 async function loadHideAndSeek(page = hideAndSeekScenePage) {
   const [settings, scenes] = await Promise.all([
@@ -536,6 +570,7 @@ async function loadGameView(view) {
     }
     if (view === "events") return loadRandomEvents();
     if (view === "hide-and-seek") return loadHideAndSeek();
+    if (view === "memory-assessment") return loadMemoryAssessment();
     if (view === "commands") {
       const commands = await requestGame("/api/game/commands");
       configurationVersion = commands[0]?.version ?? configurationVersion;
@@ -748,6 +783,7 @@ document.querySelector("#edit-random-event-settings").addEventListener("click", 
 document.querySelector("#create-random-event-scene").addEventListener("click", () => openRandomEventSceneModal());
 document.querySelector("#edit-hide-and-seek-settings").addEventListener("click", () => void openHideAndSeekSettingsModal());
 document.querySelector("#create-hide-and-seek-scene").addEventListener("click", () => openHideAndSeekSceneModal());
+document.querySelector("#edit-memory-assessment-settings").addEventListener("click", () => void openMemoryAssessmentSettingsModal());
 document.querySelector("#add-today-random-event").addEventListener("click", async (event) => {
   try {
     await runMutation(event.currentTarget, "加载中…", openRandomEventAddModal);
@@ -1187,6 +1223,43 @@ hideAndSeekSettingsModal.addEventListener("click", async (event) => {
       closeHideAndSeekSettingsModal();
     });
     setResult("躲猫猫规则已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+memoryAssessmentSettingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-memory-assessment-settings-modal]")) {
+    closeMemoryAssessmentSettingsModal();
+    return;
+  }
+  if (event.target.id !== "save-memory-assessment-settings") return;
+  const levels = document.querySelector("#memory-assessment-levels").value.trim().split("\n").filter(Boolean).map((line, index) => {
+    const [answerLength, reward] = line.split(",").map((value) => Number(value.trim()));
+    return {level: index + 1, answer_length: answerLength, reward};
+  });
+  const settings = {
+    enabled: document.querySelector("#memory-assessment-enabled").checked,
+    single_daily_limit: Number(document.querySelector("#memory-assessment-daily-limit").value),
+    single_recall_seconds: Number(document.querySelector("#memory-assessment-single-seconds").value),
+    duel_recall_seconds: Number(document.querySelector("#memory-assessment-duel-seconds").value),
+    duel_difficulty_level: Number(document.querySelector("#memory-assessment-duel-level").value),
+    duel_base_pool: Number(document.querySelector("#memory-assessment-base-pool").value),
+    duel_wrong_freeze: Number(document.querySelector("#memory-assessment-wrong-freeze").value),
+    duel_wrong_limit: Number(document.querySelector("#memory-assessment-wrong-limit").value),
+    duel_answer_timeout_minutes: Number(document.querySelector("#memory-assessment-timeout").value),
+    character_set: document.querySelector("#memory-assessment-character-set").value,
+    levels,
+  };
+  try {
+    await runMutation(event.target, "保存中…", async () => {
+      memoryAssessmentSettings = await requestGame("/api/game/memory-assessment/settings", {
+        method: "PATCH", headers: {"Content-Type": "application/json", ...configurationHeaders()}, body: JSON.stringify(settings),
+      });
+      configurationVersion = memoryAssessmentSettings.version;
+      renderMemoryAssessmentSettings(memoryAssessmentSettings);
+      closeMemoryAssessmentSettingsModal();
+    });
+    setResult("记忆考核规则已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
   }

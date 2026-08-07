@@ -45,6 +45,20 @@ class SentRequest(ApiModel):
     now: AwareDatetime
 
 
+class OutboundRecallClaimResponse(ApiModel):
+    id: UUID
+    platform_sent_id: str
+    lease_token: UUID
+    lease_expires_at: datetime
+    attempt_count: int
+
+
+class RecalledRequest(ApiModel):
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token: UUID
+    now: AwareDatetime
+
+
 class AcceptedResponse(ApiModel):
     accepted: bool
 
@@ -192,6 +206,30 @@ class HideAndSeekSettingsResponse(ApiModel):
 
 
 class SetHideAndSeekSettingsRequest(HideAndSeekSettingsResponse):
+    pass
+
+
+class MemoryAssessmentLevelRuleModel(ApiModel):
+    level: int = Field(ge=1, le=20)
+    answer_length: int = Field(ge=1, le=200)
+    reward: int = Field(ge=1, le=999)
+
+
+class MemoryAssessmentSettingsResponse(ApiModel):
+    enabled: bool
+    single_daily_limit: int = Field(ge=1, le=99)
+    single_recall_seconds: int = Field(ge=1, le=60)
+    duel_recall_seconds: int = Field(ge=1, le=60)
+    duel_difficulty_level: int = Field(ge=1, le=20)
+    duel_base_pool: int = Field(ge=1, le=999)
+    duel_wrong_freeze: int = Field(ge=1, le=999)
+    duel_wrong_limit: int = Field(ge=1, le=99)
+    duel_answer_timeout_minutes: int = Field(ge=1, le=60)
+    character_set: str = Field(min_length=2, max_length=200)
+    levels: list[MemoryAssessmentLevelRuleModel] = Field(min_length=1, max_length=20)
+
+
+class SetMemoryAssessmentSettingsRequest(MemoryAssessmentSettingsResponse):
     pass
 
 

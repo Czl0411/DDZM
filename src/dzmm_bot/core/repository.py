@@ -4,7 +4,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import re
-from secrets import randbelow
+from secrets import choice, randbelow
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, exists, func, or_, select, update
@@ -215,6 +215,19 @@ class MemoryAssessmentRound:
 
 
 @dataclass(frozen=True)
+class MemoryAssessmentGameResult:
+    status: str
+    display_name: str | None = None
+    game_id: UUID | None = None
+    round_id: UUID | None = None
+    answer: str | None = None
+    level: int | None = None
+    reward: int = 0
+    balance: int | None = None
+    display_seconds: int = 0
+
+
+@dataclass(frozen=True)
 class RandomEventSchedule:
     id: UUID
     event_date: date
@@ -282,6 +295,10 @@ _COMMAND_DEFINITIONS = (
     ("/加入", "加入当前随机事件的指定角色"),
     ("/退出", "退出当前随机事件并结算奖励"),
     ("/摸鱼躲猫猫", "发起单人躲猫猫小游戏；选择时发送 /躲 序号"),
+    ("/记忆考核", "发起单人记忆考核，或使用 /记忆考核 对战 发起双人对战"),
+    ("/继续", "继续当前单人记忆考核"),
+    ("/收手", "结算当前单人记忆考核的奖励"),
+    ("/投降", "退出当前记忆考核对战"),
 )
 
 
@@ -599,6 +616,7 @@ class CoreRepository:
     def set_memory_assessment_settings(
         self,
         *,
+        enabled: bool = True,
         single_daily_limit: int,
         single_recall_seconds: int,
         duel_recall_seconds: int,
@@ -622,11 +640,14 @@ class CoreRepository:
             character_set=character_set,
             levels=levels,
         )
+        if not isinstance(enabled, bool):
+            raise ValueError("玩法开关无效")
         self.get_memory_assessment_settings()
         with self._session() as session:
             record = session.get(MemoryAssessmentSettingsRecord, 1)
             if record is None:
                 raise RuntimeError("记忆考核设置消失")
+            record.enabled = enabled
             record.single_daily_limit = single_daily_limit
             record.single_recall_seconds = single_recall_seconds
             record.duel_recall_seconds = duel_recall_seconds
@@ -649,6 +670,667 @@ class CoreRepository:
             )
             session.flush()
             return _memory_assessment_settings(record)
+
+    def start_memory_assessment_single(
+        self, platform_id: str, now: datetime
+    ) -> MemoryAssessmentGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            settings = self.get_memory_assessment_settings()
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return MemoryAssessmentGameResult("not_joined")
+                if not settings.enabled:
+                    return MemoryAssessmentGameResult(
+                        "disabled", display_name=user.display_name
+                    )
+                active = session.scalar(
+                    select(MemoryAssessmentGameRecord)
+                    .where(MemoryAssessmentGameRecord.active_key == "global")
+                    .with_for_update()
+                )
+                if active is not None:
+                    return MemoryAssessmentGameResult(
+                        "already_active", display_name=user.display_name
+                    )
+                daily = session.scalar(
+                    select(MemoryAssessmentDailyPlayRecord)
+                    .where(
+                        MemoryAssessmentDailyPlayRecord.user_id == user.id,
+                        MemoryAssessmentDailyPlayRecord.play_date == now.date(),
+                    )
+                    .with_for_update()
+                )
+                if daily is not None and daily.count >= settings.single_daily_limit:
+                    return MemoryAssessmentGameResult(
+                        "daily_limit", display_name=user.display_name
+                    )
+                if daily is None:
+                    daily = MemoryAssessmentDailyPlayRecord(
+                        user_id=user.id, play_date=now.date(), count=0
+                    )
+                    session.add(daily)
+                rule = session.get(MemoryAssessmentLevelRuleRecord, 1)
+                if rule is None:
+                    raise RuntimeError("记忆考核等级规则消失")
+                game = MemoryAssessmentGameRecord(
+                    mode="single",
+                    state="showing_answer",
+                    active_key="global",
+                    play_date=now.date(),
+                    level=rule.level,
+                    reward=rule.reward,
+                    base_pool=0,
+                    created_at=now,
+                )
+                session.add(game)
+                session.flush()
+                answer = _memory_assessment_answer(
+                    settings.character_set, rule.answer_length
+                )
+                round_record = MemoryAssessmentRoundRecord(
+                    game_id=game.id,
+                    sequence=rule.level,
+                    answer=answer,
+                    display_seconds=settings.single_recall_seconds,
+                    state="showing",
+                )
+                session.add(round_record)
+                session.add(
+                    MemoryAssessmentParticipantRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        state="active",
+                        wrong_count=0,
+                        frozen_amount=0,
+                    )
+                )
+                daily.count += 1
+                session.flush()
+                return MemoryAssessmentGameResult(
+                    "started",
+                    display_name=user.display_name,
+                    game_id=game.id,
+                    round_id=round_record.id,
+                    answer=answer,
+                    level=rule.level,
+                    reward=rule.reward,
+                    balance=user.balance,
+                    display_seconds=settings.single_recall_seconds,
+                )
+
+    def mark_memory_assessment_round_recalled(
+        self, round_id: UUID, now: datetime
+    ) -> MemoryAssessmentRound:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                round_record = session.get(
+                    MemoryAssessmentRoundRecord, round_id, with_for_update=True
+                )
+                if round_record is None:
+                    raise ValueError("记忆考核轮次不存在")
+                game = session.get(
+                    MemoryAssessmentGameRecord, round_record.game_id, with_for_update=True
+                )
+                if game is None or game.state != "showing_answer":
+                    raise ValueError("记忆考核轮次不在展示中")
+                if round_record.state != "showing":
+                    raise ValueError("记忆考核轮次无法撤回")
+                round_record.state = "awaiting_answer"
+                game.state = "awaiting_answer"
+                session.flush()
+                return _memory_assessment_round(round_record)
+
+    def start_memory_assessment_duel(
+        self, platform_id: str, now: datetime
+    ) -> MemoryAssessmentGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            settings = self.get_memory_assessment_settings()
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return MemoryAssessmentGameResult("not_joined")
+                if not settings.enabled:
+                    return MemoryAssessmentGameResult(
+                        "disabled", display_name=user.display_name
+                    )
+                if session.scalar(
+                    select(MemoryAssessmentGameRecord)
+                    .where(MemoryAssessmentGameRecord.active_key == "global")
+                    .with_for_update()
+                ) is not None:
+                    return MemoryAssessmentGameResult(
+                        "already_active", display_name=user.display_name
+                    )
+                rule = session.get(
+                    MemoryAssessmentLevelRuleRecord, settings.duel_difficulty_level
+                )
+                if rule is None:
+                    raise RuntimeError("记忆考核多人难度规则消失")
+                game = MemoryAssessmentGameRecord(
+                    mode="duel",
+                    state="waiting_opponent",
+                    active_key="global",
+                    play_date=now.date(),
+                    level=rule.level,
+                    reward=0,
+                    base_pool=0,
+                    created_at=now,
+                )
+                session.add(game)
+                session.flush()
+                session.add(
+                    MemoryAssessmentParticipantRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        state="waiting",
+                        wrong_count=0,
+                        frozen_amount=0,
+                    )
+                )
+                return MemoryAssessmentGameResult(
+                    "waiting_opponent",
+                    display_name=user.display_name,
+                    game_id=game.id,
+                    level=rule.level,
+                )
+
+    def join_memory_assessment_duel(
+        self, platform_id: str, now: datetime
+    ) -> MemoryAssessmentGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            settings = self.get_memory_assessment_settings()
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return MemoryAssessmentGameResult("not_joined")
+                game = session.scalar(
+                    select(MemoryAssessmentGameRecord)
+                    .where(MemoryAssessmentGameRecord.active_key == "global")
+                    .with_for_update()
+                )
+                if game is None or game.mode != "duel" or game.state != "waiting_opponent":
+                    return MemoryAssessmentGameResult(
+                        "no_duel", display_name=user.display_name
+                    )
+                participants = list(
+                    session.scalars(
+                        select(MemoryAssessmentParticipantRecord)
+                        .where(MemoryAssessmentParticipantRecord.game_id == game.id)
+                        .with_for_update()
+                    )
+                )
+                if any(participant.user_id == user.id for participant in participants):
+                    return MemoryAssessmentGameResult(
+                        "already_joined", display_name=user.display_name
+                    )
+                if len(participants) != 1:
+                    raise RuntimeError("记忆考核对局参与者数量异常")
+                opponent = session.get(UserRecord, participants[0].user_id, with_for_update=True)
+                if opponent is None:
+                    raise RuntimeError("记忆考核对手消失")
+                self._apply_balance_change(
+                    opponent,
+                    -settings.duel_base_pool,
+                    "memory_assessment_duel_pool",
+                    now,
+                )
+                self._apply_balance_change(
+                    user,
+                    -settings.duel_base_pool,
+                    "memory_assessment_duel_pool",
+                    now,
+                )
+                participants[0].state = "active"
+                participants[0].frozen_amount = settings.duel_base_pool
+                game.state = "showing_answer"
+                game.base_pool = settings.duel_base_pool * 2
+                game.answer_deadline = now + timedelta(
+                    minutes=settings.duel_answer_timeout_minutes
+                )
+                answer = _memory_assessment_answer(
+                    settings.character_set,
+                    int(
+                        session.get(
+                            MemoryAssessmentLevelRuleRecord, game.level
+                        ).answer_length
+                    ),
+                )
+                round_record = MemoryAssessmentRoundRecord(
+                    game_id=game.id,
+                    sequence=1,
+                    answer=answer,
+                    display_seconds=settings.duel_recall_seconds,
+                    state="showing",
+                )
+                session.add(round_record)
+                session.add(
+                    MemoryAssessmentParticipantRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        state="active",
+                        wrong_count=0,
+                        frozen_amount=settings.duel_base_pool,
+                    )
+                )
+                session.flush()
+                return MemoryAssessmentGameResult(
+                    "duel_started",
+                    display_name=user.display_name,
+                    game_id=game.id,
+                    round_id=round_record.id,
+                    answer=answer,
+                    level=game.level,
+                    reward=game.base_pool,
+                    balance=user.balance,
+                    display_seconds=settings.duel_recall_seconds,
+                )
+
+    def surrender_memory_assessment_duel(
+        self, platform_id: str, now: datetime
+    ) -> MemoryAssessmentGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return MemoryAssessmentGameResult("not_joined")
+                game = self._active_memory_assessment(session, user.id)
+                if game is None or game.mode != "duel" or game.state == "waiting_opponent":
+                    return MemoryAssessmentGameResult(
+                        "cannot_surrender", display_name=user.display_name
+                    )
+                participant = self._memory_assessment_participant(session, game.id, user.id)
+                if participant.state != "active":
+                    return MemoryAssessmentGameResult(
+                        "cannot_surrender", display_name=user.display_name
+                    )
+                participant.state = "surrendered"
+                winner = self._remaining_memory_assessment_duel_participant(session, game.id)
+                if winner is None:
+                    return self._collect_memory_assessment_duel_pool(session, game, now)
+                return self._finish_memory_assessment_duel_with_winner(
+                    session, game, winner, now
+                )
+
+    def expire_memory_assessment_duels(self, now: datetime) -> list[MemoryAssessmentGameResult]:
+        now = now.astimezone(BEIJING)
+        expired = []
+        with self.transaction():
+            with self._session() as session:
+                games = list(
+                    session.scalars(
+                        select(MemoryAssessmentGameRecord)
+                        .where(
+                            MemoryAssessmentGameRecord.mode == "duel",
+                            MemoryAssessmentGameRecord.active_key == "global",
+                            MemoryAssessmentGameRecord.answer_deadline <= now,
+                        )
+                        .with_for_update()
+                    )
+                )
+                for game in games:
+                    expired.append(
+                        self._collect_memory_assessment_duel_pool(session, game, now)
+                    )
+        return expired
+
+    def answer_memory_assessment(
+        self, platform_id: str, answer: str, now: datetime
+    ) -> MemoryAssessmentGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return MemoryAssessmentGameResult("not_joined")
+                game = self._active_memory_assessment(session, user.id)
+                if game is None:
+                    return MemoryAssessmentGameResult(
+                        "no_active_game", display_name=user.display_name
+                    )
+                if game.mode == "duel":
+                    return self._answer_memory_assessment_duel(session, user, game, answer, now)
+                round_record = session.scalar(
+                    select(MemoryAssessmentRoundRecord)
+                    .where(MemoryAssessmentRoundRecord.game_id == game.id)
+                    .order_by(MemoryAssessmentRoundRecord.sequence.desc())
+                    .with_for_update()
+                )
+                if round_record is None:
+                    raise RuntimeError("记忆考核答案轮次消失")
+                if game.state != "awaiting_answer" or round_record.state != "awaiting_answer":
+                    return MemoryAssessmentGameResult(
+                        "answer_not_ready",
+                        display_name=user.display_name,
+                        game_id=game.id,
+                        round_id=round_record.id,
+                        level=game.level,
+                        reward=game.reward,
+                    )
+                if answer != round_record.answer:
+                    round_record.state = "failed"
+                    game.state = "failed"
+                    game.active_key = None
+                    game.finished_at = now
+                    self._memory_assessment_participant(session, game.id, user.id).state = "failed"
+                    return MemoryAssessmentGameResult(
+                        "failed",
+                        display_name=user.display_name,
+                        game_id=game.id,
+                        round_id=round_record.id,
+                        level=game.level,
+                        reward=game.reward,
+                        balance=user.balance,
+                    )
+                round_record.state = "answered"
+                is_final_level = session.scalar(
+                    select(MemoryAssessmentLevelRuleRecord.level)
+                    .where(MemoryAssessmentLevelRuleRecord.level > game.level)
+                    .limit(1)
+                ) is None
+                if not is_final_level:
+                    game.state = "awaiting_decision"
+                    return MemoryAssessmentGameResult(
+                        "correct",
+                        display_name=user.display_name,
+                        game_id=game.id,
+                        round_id=round_record.id,
+                        level=game.level,
+                        reward=game.reward,
+                        balance=user.balance,
+                    )
+                self._apply_balance_change(
+                    user, game.reward, "memory_assessment_single_reward", now
+                )
+                game.state = "settled"
+                game.active_key = None
+                game.finished_at = now
+                self._memory_assessment_participant(session, game.id, user.id).state = "settled"
+                return MemoryAssessmentGameResult(
+                    "completed",
+                    display_name=user.display_name,
+                    game_id=game.id,
+                    round_id=round_record.id,
+                    level=game.level,
+                    reward=game.reward,
+                    balance=user.balance,
+                )
+
+    def continue_memory_assessment(
+        self, platform_id: str, now: datetime
+    ) -> MemoryAssessmentGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            settings = self.get_memory_assessment_settings()
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return MemoryAssessmentGameResult("not_joined")
+                game = self._active_memory_assessment_single(session, user.id)
+                if game is None or game.state != "awaiting_decision":
+                    return MemoryAssessmentGameResult(
+                        "cannot_continue", display_name=user.display_name
+                    )
+                next_rule = session.get(
+                    MemoryAssessmentLevelRuleRecord, int(game.level or 0) + 1
+                )
+                if next_rule is None:
+                    raise RuntimeError("记忆考核已无下一等级")
+                answer = _memory_assessment_answer(
+                    settings.character_set, next_rule.answer_length
+                )
+                game.state = "showing_answer"
+                game.level = next_rule.level
+                game.reward = next_rule.reward
+                round_record = MemoryAssessmentRoundRecord(
+                    game_id=game.id,
+                    sequence=next_rule.level,
+                    answer=answer,
+                    display_seconds=settings.single_recall_seconds,
+                    state="showing",
+                )
+                session.add(round_record)
+                session.flush()
+                return MemoryAssessmentGameResult(
+                    "continued",
+                    display_name=user.display_name,
+                    game_id=game.id,
+                    round_id=round_record.id,
+                    answer=answer,
+                    level=next_rule.level,
+                    reward=next_rule.reward,
+                    balance=user.balance,
+                    display_seconds=settings.single_recall_seconds,
+                )
+
+    def cash_out_memory_assessment(
+        self, platform_id: str, now: datetime
+    ) -> MemoryAssessmentGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return MemoryAssessmentGameResult("not_joined")
+                game = self._active_memory_assessment_single(session, user.id)
+                if game is None or game.state != "awaiting_decision":
+                    return MemoryAssessmentGameResult(
+                        "cannot_cash_out", display_name=user.display_name
+                    )
+                self._apply_balance_change(
+                    user, game.reward, "memory_assessment_single_reward", now
+                )
+                game.state = "settled"
+                game.active_key = None
+                game.finished_at = now
+                self._memory_assessment_participant(session, game.id, user.id).state = "settled"
+                return MemoryAssessmentGameResult(
+                    "cashed_out",
+                    display_name=user.display_name,
+                    game_id=game.id,
+                    level=game.level,
+                    reward=game.reward,
+                    balance=user.balance,
+                )
+
+    def _active_memory_assessment_single(
+        self, session: Session, user_id: UUID
+    ) -> MemoryAssessmentGameRecord | None:
+        return session.scalar(
+            select(MemoryAssessmentGameRecord)
+            .join(
+                MemoryAssessmentParticipantRecord,
+                MemoryAssessmentParticipantRecord.game_id
+                == MemoryAssessmentGameRecord.id,
+            )
+            .where(
+                MemoryAssessmentGameRecord.mode == "single",
+                MemoryAssessmentGameRecord.active_key == "global",
+                MemoryAssessmentParticipantRecord.user_id == user_id,
+            )
+            .with_for_update()
+        )
+
+    def _active_memory_assessment(
+        self, session: Session, user_id: UUID
+    ) -> MemoryAssessmentGameRecord | None:
+        return session.scalar(
+            select(MemoryAssessmentGameRecord)
+            .join(
+                MemoryAssessmentParticipantRecord,
+                MemoryAssessmentParticipantRecord.game_id
+                == MemoryAssessmentGameRecord.id,
+            )
+            .where(
+                MemoryAssessmentGameRecord.active_key == "global",
+                MemoryAssessmentParticipantRecord.user_id == user_id,
+            )
+            .with_for_update()
+        )
+
+    def _answer_memory_assessment_duel(
+        self,
+        session: Session,
+        user: UserRecord,
+        game: MemoryAssessmentGameRecord,
+        answer: str,
+        now: datetime,
+    ) -> MemoryAssessmentGameResult:
+        participant = self._memory_assessment_participant(session, game.id, user.id)
+        round_record = session.scalar(
+            select(MemoryAssessmentRoundRecord)
+            .where(MemoryAssessmentRoundRecord.game_id == game.id)
+            .with_for_update()
+        )
+        if round_record is None:
+            raise RuntimeError("记忆考核对局答案轮次消失")
+        if game.state != "awaiting_answer" or round_record.state != "awaiting_answer":
+            return MemoryAssessmentGameResult(
+                "answer_not_ready",
+                display_name=user.display_name,
+                game_id=game.id,
+                round_id=round_record.id,
+            )
+        if participant.state != "active":
+            return MemoryAssessmentGameResult(
+                "duel_disqualified", display_name=user.display_name, game_id=game.id
+            )
+        if answer == round_record.answer:
+            round_record.state = "answered"
+            return self._finish_memory_assessment_duel_with_winner(
+                session, game, participant, now
+            )
+        settings = self.get_memory_assessment_settings()
+        participant.wrong_count += 1
+        participant.frozen_amount += settings.duel_wrong_freeze
+        game.base_pool += settings.duel_wrong_freeze
+        self._apply_balance_change(
+            user,
+            -settings.duel_wrong_freeze,
+            "memory_assessment_duel_wrong",
+            now,
+        )
+        if participant.wrong_count < settings.duel_wrong_limit:
+            return MemoryAssessmentGameResult(
+                "duel_incorrect",
+                display_name=user.display_name,
+                game_id=game.id,
+                reward=game.base_pool,
+                balance=user.balance,
+            )
+        participant.state = "disqualified"
+        winner = self._remaining_memory_assessment_duel_participant(session, game.id)
+        if winner is None:
+            return self._collect_memory_assessment_duel_pool(session, game, now)
+        return self._finish_memory_assessment_duel_with_winner(session, game, winner, now)
+
+    def _remaining_memory_assessment_duel_participant(
+        self, session: Session, game_id: UUID
+    ) -> MemoryAssessmentParticipantRecord | None:
+        participants = list(
+            session.scalars(
+                select(MemoryAssessmentParticipantRecord)
+                .where(
+                    MemoryAssessmentParticipantRecord.game_id == game_id,
+                    MemoryAssessmentParticipantRecord.state == "active",
+                )
+                .with_for_update()
+            )
+        )
+        return participants[0] if len(participants) == 1 else None
+
+    def _finish_memory_assessment_duel_with_winner(
+        self,
+        session: Session,
+        game: MemoryAssessmentGameRecord,
+        winner: MemoryAssessmentParticipantRecord,
+        now: datetime,
+    ) -> MemoryAssessmentGameResult:
+        user = session.get(UserRecord, winner.user_id, with_for_update=True)
+        if user is None:
+            raise RuntimeError("记忆考核胜者消失")
+        winner.state = "winner"
+        for participant in session.scalars(
+            select(MemoryAssessmentParticipantRecord).where(
+                MemoryAssessmentParticipantRecord.game_id == game.id,
+                MemoryAssessmentParticipantRecord.id != winner.id,
+                MemoryAssessmentParticipantRecord.state == "active",
+            )
+        ):
+            participant.state = "lost"
+        self._apply_balance_change(
+            user, game.base_pool, "memory_assessment_duel_reward", now
+        )
+        game.state = "settled"
+        game.active_key = None
+        game.winner_user_id = user.id
+        game.finished_at = now
+        return MemoryAssessmentGameResult(
+            "duel_won",
+            display_name=user.display_name,
+            game_id=game.id,
+            level=game.level,
+            reward=game.base_pool,
+            balance=user.balance,
+        )
+
+    def _collect_memory_assessment_duel_pool(
+        self, session: Session, game: MemoryAssessmentGameRecord, now: datetime
+    ) -> MemoryAssessmentGameResult:
+        game.state = "collected"
+        game.active_key = None
+        game.finished_at = now
+        return MemoryAssessmentGameResult(
+            "duel_collected", game_id=game.id, reward=game.base_pool
+        )
+
+    def _memory_assessment_participant(
+        self, session: Session, game_id: UUID, user_id: UUID
+    ) -> MemoryAssessmentParticipantRecord:
+        participant = session.scalar(
+            select(MemoryAssessmentParticipantRecord)
+            .where(
+                MemoryAssessmentParticipantRecord.game_id == game_id,
+                MemoryAssessmentParticipantRecord.user_id == user_id,
+            )
+            .with_for_update()
+        )
+        if participant is None:
+            raise RuntimeError("记忆考核参与者消失")
+        return participant
 
     def get_hide_and_seek_settings(self) -> HideAndSeekSettings:
         with self._session() as session:
@@ -2016,6 +2698,10 @@ class CoreRepository:
                 self.enqueue_system_outbound(
                     f"【摸鱼躲猫猫】{game.display_name} 未在 {game.selection_timeout_minutes} 分钟内选择地点，本局已取消，次数已返还。"
                 )
+            for game in self.expire_memory_assessment_duels(now):
+                self.enqueue_system_outbound(
+                    f"【记忆考核对战】作答超时，{game.reward} 摸鱼币奖池已由系统回收。"
+                )
             self._settle_weekly_attendance_rewards(now)
             self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)
@@ -2462,23 +3148,58 @@ class CoreRepository:
             )
 
     def enqueue_outbound(
-        self, inbound_message_id: UUID | str, reply: str, reply_index: int = 0
+        self,
+        inbound_message_id: UUID | str,
+        reply: str,
+        reply_index: int = 0,
+        *,
+        recall_after_seconds: int | None = None,
+        memory_round_id: UUID | None = None,
     ) -> OutboundRecord:
+        if recall_after_seconds is not None and recall_after_seconds < 1:
+            raise ValueError("撤回秒数必须为正整数")
         with self._session() as session:
             record = OutboundRecord(
                 inbound_message_id=UUID(str(inbound_message_id)),
                 text=reply,
                 reply_index=reply_index,
+                recall_after_seconds=recall_after_seconds,
             )
             session.add(record)
             session.flush()
+            if memory_round_id is not None:
+                round_record = session.get(
+                    MemoryAssessmentRoundRecord, memory_round_id, with_for_update=True
+                )
+                if round_record is None or round_record.state != "showing":
+                    raise ValueError("记忆考核轮次无法关联撤回消息")
+                round_record.outbound_message_id = record.id
             return record
 
-    def enqueue_system_outbound(self, text: str) -> OutboundRecord:
+    def enqueue_system_outbound(
+        self,
+        text: str,
+        *,
+        recall_after_seconds: int | None = None,
+        memory_round_id: UUID | None = None,
+    ) -> OutboundRecord:
+        if recall_after_seconds is not None and recall_after_seconds < 1:
+            raise ValueError("撤回秒数必须为正整数")
         with self._session() as session:
-            record = OutboundRecord(inbound_message_id=None, text=text)
+            record = OutboundRecord(
+                inbound_message_id=None,
+                text=text,
+                recall_after_seconds=recall_after_seconds,
+            )
             session.add(record)
             session.flush()
+            if memory_round_id is not None:
+                round_record = session.get(
+                    MemoryAssessmentRoundRecord, memory_round_id, with_for_update=True
+                )
+                if round_record is None or round_record.state != "showing":
+                    raise ValueError("记忆考核轮次无法关联撤回消息")
+                round_record.outbound_message_id = record.id
             return record
 
     def claim_outbound(
@@ -2534,8 +3255,8 @@ class CoreRepository:
         now: datetime,
     ) -> bool:
         with self._session() as session:
-            confirmed_id = session.scalar(
-                update(OutboundRecord)
+            record = session.scalar(
+                select(OutboundRecord)
                 .where(
                     OutboundRecord.id == UUID(str(message_id)),
                     OutboundRecord.status == "leased",
@@ -2543,16 +3264,94 @@ class CoreRepository:
                     OutboundRecord.lease_token == UUID(str(lease_token)),
                     OutboundRecord.lease_expires_at > now,
                 )
-                .values(
-                    status="sent",
-                    platform_sent_id=platform_sent_id,
-                    lease_worker_id=None,
-                    lease_token=None,
-                    lease_expires_at=None,
-                )
-                .returning(OutboundRecord.id)
+                .with_for_update()
             )
-            return confirmed_id is not None
+            if record is None:
+                return False
+            record.status = "sent"
+            record.platform_sent_id = platform_sent_id
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            if record.recall_after_seconds is not None:
+                record.recall_status = "pending"
+                record.recall_due_at = now + timedelta(
+                    seconds=record.recall_after_seconds
+                )
+            return True
+
+    def claim_outbound_recall(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> OutboundRecord | None:
+        with self._session() as session:
+            record = session.scalar(
+                select(OutboundRecord)
+                .where(
+                    OutboundRecord.status == "sent",
+                    OutboundRecord.platform_sent_id.is_not(None),
+                    OutboundRecord.recall_due_at <= now,
+                    OutboundRecord.recall_status.in_(("pending", "leased")),
+                    or_(
+                        OutboundRecord.recall_lease_expires_at.is_(None),
+                        OutboundRecord.recall_lease_expires_at <= now,
+                    ),
+                )
+                .order_by(OutboundRecord.recall_due_at, OutboundRecord.id)
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            if record is None:
+                return None
+            record.recall_status = "leased"
+            record.recall_lease_worker_id = worker_id
+            record.recall_lease_token = uuid4()
+            record.recall_lease_expires_at = now + timedelta(seconds=lease_seconds)
+            record.recall_attempt_count += 1
+            session.flush()
+            return record
+
+    def confirm_outbound_recalled(
+        self,
+        message_id: UUID | str,
+        worker_id: str,
+        lease_token: UUID | str,
+        now: datetime,
+    ) -> bool:
+        with self.transaction():
+            with self._session() as session:
+                record = session.scalar(
+                    select(OutboundRecord)
+                    .where(
+                        OutboundRecord.id == UUID(str(message_id)),
+                        OutboundRecord.recall_status == "leased",
+                        OutboundRecord.recall_lease_worker_id == worker_id,
+                        OutboundRecord.recall_lease_token == UUID(str(lease_token)),
+                        OutboundRecord.recall_lease_expires_at > now,
+                    )
+                    .with_for_update()
+                )
+                if record is None:
+                    return False
+                record.recall_status = "recalled"
+                record.recalled_at = now
+                record.recall_lease_worker_id = None
+                record.recall_lease_token = None
+                record.recall_lease_expires_at = None
+                round_record = session.scalar(
+                    select(MemoryAssessmentRoundRecord)
+                    .where(MemoryAssessmentRoundRecord.outbound_message_id == record.id)
+                    .with_for_update()
+                )
+                if round_record is not None:
+                    game = session.get(
+                        MemoryAssessmentGameRecord,
+                        round_record.game_id,
+                        with_for_update=True,
+                    )
+                    if game is not None and game.state == "showing_answer":
+                        round_record.state = "awaiting_answer"
+                        game.state = "awaiting_answer"
+                return True
 
     def start_manual_login(
         self, operator_id: str, operator_name: str, now: datetime
@@ -2813,6 +3612,21 @@ def _memory_assessment_level_rule(
         answer_length=record.answer_length,
         reward=record.reward,
     )
+
+
+def _memory_assessment_round(record: MemoryAssessmentRoundRecord) -> MemoryAssessmentRound:
+    return MemoryAssessmentRound(
+        id=record.id,
+        game_id=record.game_id,
+        sequence=record.sequence,
+        answer=record.answer,
+        display_seconds=record.display_seconds,
+        state=record.state,
+    )
+
+
+def _memory_assessment_answer(character_set: str, length: int) -> str:
+    return "".join(choice(character_set) for _ in range(length))
 
 
 def _validate_memory_assessment_settings(

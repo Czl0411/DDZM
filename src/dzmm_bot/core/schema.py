@@ -288,6 +288,9 @@ class MemoryAssessmentRoundRecord(Base):
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     display_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
+    outbound_message_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("outbound_messages.id"), unique=True
+    )
 
 
 class RandomEventSceneRecord(Base):
@@ -534,6 +537,14 @@ class OutboundRecord(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
     platform_sent_id: Mapped[str | None] = mapped_column(String(255))
+    recall_after_seconds: Mapped[int | None] = mapped_column(Integer)
+    recall_due_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    recall_status: Mapped[str | None] = mapped_column(String(32))
+    recall_lease_worker_id: Mapped[str | None] = mapped_column(String(255))
+    recall_lease_token: Mapped[UUID | None] = mapped_column(Uuid)
+    recall_lease_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    recall_attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    recalled_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )

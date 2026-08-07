@@ -97,6 +97,24 @@ class FakeCore:
         }
     )
     hide_and_seek_scenes: list[dict] = field(default_factory=list)
+    memory_assessment_settings: dict = field(
+        default_factory=lambda: {
+            "enabled": True,
+            "single_daily_limit": 1,
+            "single_recall_seconds": 3,
+            "duel_recall_seconds": 3,
+            "duel_difficulty_level": 5,
+            "duel_base_pool": 5,
+            "duel_wrong_freeze": 1,
+            "duel_wrong_limit": 10,
+            "duel_answer_timeout_minutes": 10,
+            "character_set": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+            "levels": [
+                {"level": level, "answer_length": level * 2 + 3, "reward": level}
+                for level in range(1, 6)
+            ],
+        }
+    )
     manual_login_lease: dict | None = None
 
     def status(self):
@@ -251,6 +269,13 @@ class FakeCore:
     def set_hide_and_seek_settings(self, settings):
         self.hide_and_seek_settings = settings
         return self.hide_and_seek_settings
+
+    def get_memory_assessment_settings(self):
+        return self.memory_assessment_settings
+
+    def set_memory_assessment_settings(self, settings):
+        self.memory_assessment_settings = settings
+        return self.memory_assessment_settings
 
     def list_hide_and_seek_scenes(self, page, page_size):
         return _page(self.hide_and_seek_scenes, page, page_size)
@@ -694,6 +719,29 @@ def test_admin_proxies_hide_and_seek_scene_creation_with_version_and_idempotency
     assert response.status_code == 201
     assert core.hide_and_seek_scenes[0]["name"] == "打印区"
     assert "version" in response.json()
+
+
+def test_admin_proxies_memory_assessment_settings_with_versioning(client, headers, core):
+    initial = client.get("/api/game/memory-assessment/settings", headers=headers)
+    response = client.patch(
+        "/api/game/memory-assessment/settings",
+        headers={
+            **headers,
+            "If-Match": str(initial.json()["version"]),
+            "Idempotency-Key": "memory-assessment-settings-1",
+        },
+        json={
+            **core.memory_assessment_settings,
+            "single_recall_seconds": 4,
+            "duel_base_pool": 6,
+        },
+    )
+
+    assert initial.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["single_recall_seconds"] == 4
+    assert response.json()["duel_base_pool"] == 6
+    assert response.json()["version"] == 1
 
 
 def test_admin_page_exposes_activity_settings_modal(client):
@@ -1172,6 +1220,16 @@ def test_admin_exposes_hide_and_seek_configuration_surface(client):
     assert 'id="hide-and-seek-settings-modal"' in page
     assert "loadHideAndSeek" in script
     assert '"/api/game/hide-and-seek/settings"' in script
+
+
+def test_admin_exposes_memory_assessment_configuration_surface(client):
+    page = client.get("/").text
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert 'data-view="memory-assessment"' in page
+    assert 'id="memory-assessment-settings-modal"' in page
+    assert "loadMemoryAssessment" in script
+    assert '"/api/game/memory-assessment/settings"' in script
 
 
 def test_admin_static_assets_disable_browser_cache(client):

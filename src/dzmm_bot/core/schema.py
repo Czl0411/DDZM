@@ -165,6 +165,20 @@ class HideAndSeekSceneRecord(Base):
     )
 
 
+class UndercoverWordSetRecord(Base):
+    __tablename__ = "undercover_word_sets"
+    __table_args__ = (UniqueConstraint("civilian_word", "undercover_word"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    civilian_word: Mapped[str] = mapped_column(String(64), nullable=False)
+    undercover_word: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
 class HideAndSeekDailyPlayRecord(Base):
     __tablename__ = "hide_and_seek_daily_plays"
     __table_args__ = (UniqueConstraint("user_id", "play_date"),)

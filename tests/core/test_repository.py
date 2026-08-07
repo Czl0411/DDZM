@@ -1,6 +1,8 @@
 import os
+import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from threading import Barrier
 from uuid import uuid4
 
@@ -13,6 +15,22 @@ from sqlalchemy.orm import sessionmaker
 
 from dzmm_bot.core.schema import BEIJING
 from dzmm_bot.runtime.contracts import InboundMessage, LoginState, WorkerHeartbeat
+
+
+_UNDERCOVER_WORD_CATEGORIES = {
+    "办公职场", "饮食饮品", "日常用品", "地点场景", "交通出行",
+    "影视娱乐", "动物自然", "校园生活", "互联网科技",
+}
+
+
+def _undercover_word_migration_module():
+    path = Path("migrations/versions/20260807_25_undercover_word_sets.py")
+    spec = importlib.util.spec_from_file_location("undercover_word_sets_migration", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -88,6 +106,28 @@ def test_memory_assessment_defaults_seed_five_levels(repository):
         (rule.level, rule.answer_length, rule.reward)
         for rule in repository.list_memory_assessment_levels()
     ] == [(1, 5, 1), (2, 7, 2), (3, 9, 3), (4, 11, 4), (5, 13, 5)]
+
+
+def test_undercover_word_migration_seeds_nine_unique_categories():
+    rows = _undercover_word_migration_module()._seed_rows()
+
+    assert len(rows) == 900
+    assert {row["category"] for row in rows} == _UNDERCOVER_WORD_CATEGORIES
+    assert all(row["enabled"] for row in rows)
+    assert all(
+        sum(row["category"] == category for row in rows) == 100
+        for category in _UNDERCOVER_WORD_CATEGORIES
+    )
+    assert all(
+        row["civilian_word"].strip() and row["undercover_word"].strip()
+        for row in rows
+    )
+    assert len(
+        {
+            tuple(sorted((row["civilian_word"], row["undercover_word"])))
+            for row in rows
+        }
+    ) == 900
 
 
 def test_new_employee_has_default_rank_and_department(repository, now):
@@ -1517,6 +1557,7 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         "promotion_approvals",
         "department_requests",
         "department_approvals",
+        "undercover_word_sets",
     } <= set(inspector.get_table_names())
     assert "ux_inbound_messages_platform_message_id" in {
         index["name"] for index in inspector.get_indexes("inbound_messages")
@@ -1524,6 +1565,31 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
     assert "ix_outbound_messages_claim" in {
         index["name"] for index in inspector.get_indexes("outbound_messages")
     }
+
+
+def test_migration_seeds_undercover_word_library(migrated_postgres_url):
+    engine = create_engine(migrated_postgres_url)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT category, civilian_word, undercover_word, enabled "
+                "FROM undercover_word_sets"
+            )
+        ).mappings().all()
+
+    assert len(rows) == 900
+    assert {row["category"] for row in rows} == _UNDERCOVER_WORD_CATEGORIES
+    assert all(row["enabled"] for row in rows)
+    assert all(
+        sum(row["category"] == category for row in rows) == 100
+        for category in _UNDERCOVER_WORD_CATEGORIES
+    )
+    assert len(
+        {
+            tuple(sorted((row["civilian_word"], row["undercover_word"])))
+            for row in rows
+        }
+    ) == 900
     assert "ix_worker_commands_claim" in {
         index["name"] for index in inspector.get_indexes("worker_commands")
     }

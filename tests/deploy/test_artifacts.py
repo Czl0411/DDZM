@@ -136,3 +136,5 @@ def test_rank_department_command_migration_preserves_custom_me_template():
     assert 'templates.c.template == new_me_template' in migration
     assert '"/晋升申请列表"' in migration
     assert '"/全部拒绝"' in migration
+    assert '"enabled": True' in migration
+    assert '"created_at": now' in migration

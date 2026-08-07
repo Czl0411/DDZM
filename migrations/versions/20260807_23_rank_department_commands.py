@@ -85,6 +85,8 @@ def upgrade() -> None:
         "command_definitions",
         sa.column("command", sa.String()),
         sa.column("description", sa.Text()),
+        sa.column("enabled", sa.Boolean()),
+        sa.column("created_at", sa.DateTime(timezone=True)),
     )
     templates = sa.table(
         "command_reply_templates",
@@ -99,7 +101,12 @@ def upgrade() -> None:
         _insert_if_missing(
             connection,
             definitions,
-            {"command": command, "description": description},
+            {
+                "command": command,
+                "description": description,
+                "enabled": True,
+                "created_at": now,
+            },
             [definitions.c.command],
         )
     for command, scenario, template in reply_templates:

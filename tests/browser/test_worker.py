@@ -22,8 +22,11 @@ class FakeGateway:
     sent: list[str] = field(default_factory=list)
     retracted: list[str] = field(default_factory=list)
     send_error: Exception | None = None
+    read_error: Exception | None = None
 
     def read_new(self):
+        if self.read_error:
+            raise self.read_error
         return list(self.messages)
 
     def send(self, text):
@@ -161,13 +164,28 @@ def test_worker_runs_daily_jobs_after_submitting_messages(context):
     assert core.daily_job_times == [NOW]
 
 def test_worker_confirms_only_after_gateway_send_succeeds(context):
-    worker, gateway, _, _, core, _ = context
+    worker, gateway, session, _, core, _ = context
     core.pending = [OutboundClaim(OUTBOUND_ID, "in-1", "reply", LEASE)]
     gateway.send_error = RuntimeError("page unavailable")
 
     worker.run_once()
 
     assert core.confirmed == []
+    assert worker.login_state is LoginState.AUTH_REQUIRED
+    assert session.stops == 1
+    assert core.audits == [("authentication_lost", "worker-a", NOW)]
+
+
+def test_read_failure_resets_the_browser_session_and_marks_auth_required(context):
+    worker, gateway, session, _, core, _ = context
+    gateway.read_error = RuntimeError("socket disconnected")
+
+    worker.run_once()
+
+    assert worker.login_state is LoginState.AUTH_REQUIRED
+    assert session.stops == 1
+    assert core.audits == [("authentication_lost", "worker-a", NOW)]
+    assert core.heartbeats[-1] == ("worker-a", LoginState.AUTH_REQUIRED, NOW)
 
 
 def test_sent_confirmation_includes_current_fencing_values(context):

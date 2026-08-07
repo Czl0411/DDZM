@@ -64,13 +64,19 @@ class BrowserWorker:
             self._execute_command(command)
 
         if self._login_state is not LoginState.AUTH_IN_PROGRESS:
-            gateway = self._ensure_gateway()
-            if gateway.is_authenticated() or self._manual_auth_confirmed:
-                self._login_state = LoginState.READY
-                self._auth_loss_reported = False
-                self._auth_backoff = 1
+            try:
+                gateway = self._ensure_gateway()
+                authenticated = gateway.is_authenticated()
+            except Exception:
+                _LOGGER.exception("browser authentication check failed")
+                self._recover_browser_session()
             else:
-                self._transition_to_auth_required()
+                if authenticated or self._manual_auth_confirmed:
+                    self._login_state = LoginState.READY
+                    self._auth_loss_reported = False
+                    self._auth_backoff = 1
+                else:
+                    self._recover_browser_session()
 
         self._core.heartbeat(self._worker_id, self._login_state, self._clock())
 
@@ -91,6 +97,13 @@ class BrowserWorker:
             except NotImplementedError:
                 self._listening = False
                 messages = []
+            except Exception:
+                _LOGGER.exception("browser message read failed")
+                self._recover_browser_session()
+                self._core.heartbeat(
+                    self._worker_id, self._login_state, self._clock()
+                )
+                return
             for message in messages:
                 if message.platform_message_id in self._seen_message_ids:
                     continue
@@ -123,6 +136,11 @@ class BrowserWorker:
         try:
             platform_sent_id = gateway.send(outbound.text)
         except Exception:
+            _LOGGER.exception("outbound send failed: %s", outbound.id)
+            self._recover_browser_session()
+            self._core.heartbeat(
+                self._worker_id, self._login_state, self._clock()
+            )
             return
         self._core.confirm_sent(
             outbound.id,
@@ -145,6 +163,11 @@ class BrowserWorker:
                 "authentication_lost", self._worker_id, self._clock()
             )
             self._auth_loss_reported = True
+
+    def _recover_browser_session(self) -> None:
+        self._session.stop()
+        self._gateway = None
+        self._transition_to_auth_required()
 
     def _execute_command(self, command: WorkerCommand) -> None:
         status = "completed"

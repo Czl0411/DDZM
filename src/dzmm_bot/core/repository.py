@@ -156,6 +156,37 @@ _DEFAULT_MEMORY_ASSESSMENT_CHARACTER_SET = (
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*_ -"
 ).replace(" ", "")
 _ROLE_VARIABLE = re.compile(r"\{([^{}]*\S[^{}]*)\}")
+_PLATFORM_MESSAGE_MAX_CHARS = 1000
+_PLATFORM_MESSAGE_MAX_LINES = 10
+
+
+def _split_platform_message(text: str) -> list[str]:
+    """Split text without exceeding the target chat message limits."""
+    if not text:
+        return [text]
+
+    chunks: list[str] = []
+    chunk = ""
+    line_count = 1
+    for character in text:
+        if (
+            len(chunk) >= _PLATFORM_MESSAGE_MAX_CHARS
+            or (
+                character == "\n"
+                and line_count >= _PLATFORM_MESSAGE_MAX_LINES
+            )
+        ):
+            chunks.append(chunk)
+            chunk = ""
+            line_count = 1
+            if character == "\n":
+                continue
+        chunk += character
+        if character == "\n":
+            line_count += 1
+    if chunk:
+        chunks.append(chunk)
+    return chunks
 
 
 @dataclass(frozen=True)
@@ -4141,14 +4172,29 @@ class CoreRepository:
     ) -> OutboundRecord:
         if recall_after_seconds is not None and recall_after_seconds < 1:
             raise ValueError("撤回秒数必须为正整数")
+        chunks = _split_platform_message(reply)
+        if memory_round_id is not None and len(chunks) != 1:
+            raise ValueError("需撤回的消息超过平台发送限制")
         with self._session() as session:
-            record = OutboundRecord(
-                inbound_message_id=UUID(str(inbound_message_id)),
-                text=reply,
-                reply_index=reply_index,
-                recall_after_seconds=recall_after_seconds,
+            inbound_id = UUID(str(inbound_message_id))
+            latest_reply_index = session.scalar(
+                select(func.max(OutboundRecord.reply_index)).where(
+                    OutboundRecord.inbound_message_id == inbound_id
+                )
             )
-            session.add(record)
+            first_reply_index = reply_index
+            if latest_reply_index is not None and first_reply_index <= latest_reply_index:
+                first_reply_index = latest_reply_index + 1
+            records = [
+                OutboundRecord(
+                    inbound_message_id=inbound_id,
+                    text=chunk,
+                    reply_index=first_reply_index + index,
+                    recall_after_seconds=recall_after_seconds,
+                )
+                for index, chunk in enumerate(chunks)
+            ]
+            session.add_all(records)
             session.flush()
             if memory_round_id is not None:
                 round_record = session.get(
@@ -4156,8 +4202,8 @@ class CoreRepository:
                 )
                 if round_record is None or round_record.state != "showing":
                     raise ValueError("记忆考核轮次无法关联撤回消息")
-                round_record.outbound_message_id = record.id
-            return record
+                round_record.outbound_message_id = records[0].id
+            return records[0]
 
     def enqueue_system_outbound(
         self,
@@ -4168,13 +4214,20 @@ class CoreRepository:
     ) -> OutboundRecord:
         if recall_after_seconds is not None and recall_after_seconds < 1:
             raise ValueError("撤回秒数必须为正整数")
+        chunks = _split_platform_message(text)
+        if memory_round_id is not None and len(chunks) != 1:
+            raise ValueError("需撤回的消息超过平台发送限制")
         with self._session() as session:
-            record = OutboundRecord(
-                inbound_message_id=None,
-                text=text,
-                recall_after_seconds=recall_after_seconds,
-            )
-            session.add(record)
+            records = [
+                OutboundRecord(
+                    inbound_message_id=None,
+                    text=chunk,
+                    reply_index=index,
+                    recall_after_seconds=recall_after_seconds,
+                )
+                for index, chunk in enumerate(chunks)
+            ]
+            session.add_all(records)
             session.flush()
             if memory_round_id is not None:
                 round_record = session.get(
@@ -4182,8 +4235,8 @@ class CoreRepository:
                 )
                 if round_record is None or round_record.state != "showing":
                     raise ValueError("记忆考核轮次无法关联撤回消息")
-                round_record.outbound_message_id = record.id
-            return record
+                round_record.outbound_message_id = records[0].id
+            return records[0]
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int

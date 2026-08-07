@@ -34,8 +34,19 @@ def _latest_reply(factory):
     from dzmm_bot.core.schema import OutboundRecord
 
     with factory() as session:
-        return session.scalar(
-            select(OutboundRecord.text).order_by(OutboundRecord.created_at.desc())
+        latest = session.scalar(
+            select(OutboundRecord).order_by(OutboundRecord.created_at.desc())
+        )
+        if latest is None:
+            return None
+        if latest.inbound_message_id is None:
+            return latest.text
+        return "\n".join(
+            session.scalars(
+                select(OutboundRecord.text)
+                .where(OutboundRecord.inbound_message_id == latest.inbound_message_id)
+                .order_by(OutboundRecord.reply_index)
+            )
         )
 
 

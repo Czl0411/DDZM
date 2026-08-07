@@ -21,8 +21,18 @@ let hideAndSeekSettings = null;
 let hideAndSeekScenePage = 1;
 let memoryAssessmentSettings = null;
 let undercoverSettings = null;
+let commandDefinitions = [];
+let commandPage = 1;
+let administratorAccounts = [];
+let administratorPage = 1;
+let todayRandomEvents = [];
+let todayRandomEventPage = 1;
+let rankDefinitions = [];
+let rankPage = 1;
 
-const pageSize = 20;
+const pageSizeOptions = [5, 10, 15, 20, 50];
+const pageSizeByList = new Map();
+const listFilters = new Map();
 const randomEventCommandOptions = [
   ["/入职", "/入职"], ["/我的物品", "/我的物品"], ["/打卡", "/打卡"],
   ["/余额", "/余额"], ["/我", "/我（含 /me）"], ["/商店", "/商店"],
@@ -50,6 +60,146 @@ const pageContext = {
   employees: {crumb: "人员与系统 / 员工", title: "员工管理", description: "查看员工资料、余额和当前群内身份。"},
   admins: {crumb: "人员与系统 / 管理员", title: "管理员管理", description: "仅超级管理员可创建、停用或删除后台管理员账号。"},
 };
+
+function pageSizeFor(listKey) {
+  return pageSizeByList.get(listKey) || 20;
+}
+
+function filterList(listKey, items, textForItem) {
+  const query = (listFilters.get(listKey) || "").trim().toLocaleLowerCase();
+  if (!query) return items;
+  return items.filter((item) => textForItem(item).toLocaleLowerCase().includes(query));
+}
+
+function statusBadge(label, tone = "") {
+  return `<span class="status-badge"${tone ? ` data-tone="${tone}"` : ""}>${escapeHtml(label)}</span>`;
+}
+
+function renderPageSizeControl(listKey, onChange) {
+  const select = document.querySelector(`[data-list-page-size="${listKey}"]`);
+  if (!select) return;
+  select.value = String(pageSizeFor(listKey));
+  if (select.dataset.boundPageSize === "true") return;
+  select.dataset.boundPageSize = "true";
+  select.addEventListener("change", () => {
+    const next = Number(select.value);
+    if (!pageSizeOptions.includes(next)) return;
+    pageSizeByList.set(listKey, next);
+    onChange();
+  });
+}
+
+function activateManagementTab(group, paneKey) {
+  const view = group.closest(".dashboard-view");
+  group.querySelectorAll("[data-management-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.managementTab === paneKey);
+  });
+  view.querySelectorAll("[data-management-pane]").forEach((pane) => {
+    pane.hidden = pane.dataset.managementPane !== paneKey;
+  });
+}
+
+function initializeManagementTabs() {
+  document.querySelectorAll("[data-management-tabs]").forEach((group) => {
+    group.querySelectorAll("[data-management-tab]").forEach((button) => {
+      button.addEventListener("click", () => activateManagementTab(group, button.dataset.managementTab));
+    });
+  });
+}
+
+function renderLocalPagination(container, items, page, pageSize, unit, onPageChange) {
+  const pages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(Math.max(page, 1), pages);
+  const start = (safePage - 1) * pageSize;
+  renderPagination(container, {page: safePage, page_size: pageSize, total: items.length, pages}, unit, onPageChange);
+  return {items: items.slice(start, start + pageSize), page: safePage};
+}
+
+function initializePageSizeControls() {
+  renderPageSizeControl("random-event-scenes", () => {
+    randomEventScenePage = 1;
+    void loadRandomEvents();
+  });
+  renderPageSizeControl("random-event-today", () => {
+    todayRandomEventPage = 1;
+    renderTodayRandomEvents(todayRandomEvents);
+  });
+  renderPageSizeControl("hide-and-seek-scenes", () => {
+    hideAndSeekScenePage = 1;
+    void loadHideAndSeek();
+  });
+  renderPageSizeControl("employees", () => {
+    employeePage = 1;
+    void loadEmployees();
+  });
+  renderPageSizeControl("departments", () => {
+    departmentPage = 1;
+    void loadOrganization();
+  });
+  renderPageSizeControl("promotions", () => {
+    promotionPage = 1;
+    void loadOrganization();
+  });
+  renderPageSizeControl("department-requests", () => {
+    departmentRequestPage = 1;
+    void loadOrganization();
+  });
+  renderPageSizeControl("shop", () => {
+    shopPage = 1;
+    void loadShop();
+  });
+  renderPageSizeControl("commands", () => {
+    commandPage = 1;
+    renderCommands(commandDefinitions);
+  });
+  renderPageSizeControl("admins", () => {
+    administratorPage = 1;
+    renderAdministrators(administratorAccounts);
+  });
+  renderPageSizeControl("ranks", () => {
+    rankPage = 1;
+    renderRanks(rankDefinitions);
+  });
+}
+
+function initializeListFilters() {
+  document.querySelectorAll("[data-list-filter]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const listKey = input.dataset.listFilter;
+      listFilters.set(listKey, input.value);
+      if (listKey === "commands") {
+        commandPage = 1;
+        renderCommands(commandDefinitions);
+      } else if (listKey === "admins") {
+        administratorPage = 1;
+        renderAdministrators(administratorAccounts);
+      } else if (listKey === "random-event-today") {
+        todayRandomEventPage = 1;
+        renderTodayRandomEvents(todayRandomEvents);
+      } else if (listKey === "random-event-scenes") {
+        randomEventScenePage = 1;
+        void loadRandomEvents();
+      } else if (listKey === "hide-and-seek-scenes") {
+        hideAndSeekScenePage = 1;
+        void loadHideAndSeek();
+      } else if (listKey === "employees") {
+        employeePage = 1;
+        void loadEmployees();
+      } else if (listKey === "departments" || listKey === "promotions" || listKey === "department-requests") {
+        if (listKey === "departments") departmentPage = 1;
+        if (listKey === "promotions") promotionPage = 1;
+        if (listKey === "department-requests") departmentRequestPage = 1;
+        void loadOrganization();
+      } else if (listKey === "shop") {
+        shopPage = 1;
+        void loadShop();
+      } else if (listKey === "ranks") {
+        rankPage = 1;
+        renderRanks(rankDefinitions);
+      }
+    });
+  });
+}
 
 const loginScreen = document.querySelector("#login-screen");
 const dashboard = document.querySelector("#dashboard");
@@ -247,8 +397,9 @@ function renderRandomEventSettings(settings) {
 }
 
 function renderRandomEventScenes(scenes) {
-  document.querySelector("#random-event-scene-list").innerHTML = scenes.map((scene) => `
-    <article class="data-row"><div><b>${escapeHtml(scene.name)}${scene.enabled ? "" : "（已停用）"}</b><small>报名公告：${escapeHtml(scene.signup_text)}</small><small>事件模板：${scene.events.length} 条</small><small>席位：${scene.seats.map((seat) => `${escapeHtml(seat.role)} × ${seat.capacity}`).join(" · ")}</small></div><div class="command-actions"><strong>${scene.target_rounds} 轮 · ${scene.reward} 奖励</strong><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="edit" type="button">编辑</button><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有场景。新增一个场景后，系统才会在计划时刻发起事件。</p>";
+  const filtered = filterList("random-event-scenes", scenes, (scene) => `${scene.name} ${scene.signup_text} ${scene.events.map((item) => item.name).join(" ")}`);
+  document.querySelector("#random-event-scene-list").innerHTML = filtered.map((scene) => `
+    <article class="data-row"><div><b>${escapeHtml(scene.name)}</b><small>${statusBadge(scene.enabled ? "已启用" : "已停用", scene.enabled ? "success" : "warning")}</small><small>报名公告：${escapeHtml(scene.signup_text)}</small><small>事件模板：${scene.events.length} 条</small><small>席位：${scene.seats.map((seat) => `${escapeHtml(seat.role)} × ${seat.capacity}`).join(" · ")}</small></div><div class="command-actions"><strong>${scene.target_rounds} 轮 · ${scene.reward} 奖励</strong><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="edit" type="button">编辑</button><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">没有符合条件的场景。</p>";
 }
 
 function renderHideAndSeekSettings(settings) {
@@ -259,8 +410,9 @@ function renderHideAndSeekSettings(settings) {
 }
 
 function renderHideAndSeekScenes(scenes) {
-  document.querySelector("#hide-and-seek-scene-list").innerHTML = scenes.map((scene) => `
-    <article class="data-row"><div><b>${escapeHtml(scene.name)}${scene.enabled ? "" : "（已停用）"}</b><small>${scene.enabled ? "可被随机抽取为躲藏地点" : "不会进入新的躲猫猫游戏"}</small></div>
+  const filtered = filterList("hide-and-seek-scenes", scenes, (scene) => scene.name);
+  document.querySelector("#hide-and-seek-scene-list").innerHTML = filtered.map((scene) => `
+    <article class="data-row"><div><b>${escapeHtml(scene.name)}</b><small>${statusBadge(scene.enabled ? "已启用" : "已停用", scene.enabled ? "success" : "warning")}</small><small>${scene.enabled ? "可被随机抽取为躲藏地点" : "不会进入新的躲猫猫游戏"}</small></div>
     <div class="command-actions"><button class="secondary" data-hide-and-seek-scene="${escapeHtml(JSON.stringify(scene))}" data-hide-and-seek-scene-action="edit" type="button">编辑</button><button class="secondary" data-hide-and-seek-scene="${escapeHtml(JSON.stringify(scene))}" data-hide-and-seek-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-hide-and-seek-scene="${escapeHtml(JSON.stringify(scene))}" data-hide-and-seek-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有地点。至少新增并启用 7 个地点后，玩家才能开始游戏。</p>";
 }
 
@@ -269,6 +421,13 @@ function renderMemoryAssessmentSettings(settings) {
     <article><span>游戏状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>考题展示后自动撤回</small></article>
     <article><span>单人挑战</span><strong>每日 ${settings.single_daily_limit} 次 / ${settings.single_recall_seconds} 秒</strong><small>${settings.levels.map((rule) => `LV${rule.level}: ${rule.answer_length} 字符 / ${rule.reward} 奖励`).join(" · ")}</small></article>
     <article><span>双人对战</span><strong>基础奖池 ${settings.duel_base_pool} / 答错冻结 ${settings.duel_wrong_freeze}</strong><small>难度 LV${settings.duel_difficulty_level}，${settings.duel_answer_timeout_minutes} 分钟超时，答错上限 ${settings.duel_wrong_limit} 次</small></article>`;
+  const duelSummary = document.querySelector("[data-memory-assessment-duel-summary]");
+  if (duelSummary) {
+    duelSummary.innerHTML = `
+      <article><span>基础奖池</span><strong>${settings.duel_base_pool}</strong><small>创建双人局时投入</small></article>
+      <article><span>题目展示</span><strong>${settings.duel_recall_seconds} 秒</strong><small>展示后自动撤回</small></article>
+      <article><span>错误限制</span><strong>${settings.duel_wrong_limit} 次</strong><small>每次冻结 ${settings.duel_wrong_freeze}</small></article>`;
+  }
 }
 
 async function loadMemoryAssessment() {
@@ -346,7 +505,7 @@ async function openUndercoverSettingsModal() {
 async function loadHideAndSeek(page = hideAndSeekScenePage) {
   const [settings, scenes] = await Promise.all([
     requestGame("/api/game/hide-and-seek/settings"),
-    requestGame(`/api/game/hide-and-seek/scenes?page=${page}&page_size=${pageSize}`),
+    requestGame(`/api/game/hide-and-seek/scenes?page=${page}&page_size=${pageSizeFor("hide-and-seek-scenes")}`),
   ]);
   hideAndSeekSettings = settings;
   hideAndSeekScenePage = scenes.page;
@@ -378,18 +537,32 @@ function openHideAndSeekSceneModal(scene = null) {
 }
 
 function renderTodayRandomEvents(events) {
-  document.querySelector("#today-random-event-list").innerHTML = events.map((event) => `
-    <article class="data-row"><div><b>${escapeHtml(event.scene_name || "未安排场景")}－${escapeHtml(event.event_name || "未安排事件")}－${eventStatusLabel(event.status)}${event.is_cross_day ? "（跨日）" : ""}</b><small>${formatHeartbeat(event.scheduled_at)}</small></div>${event.status === "pending" ? `<div class="command-actions"><button class="secondary" data-trigger-random-event="${event.id}" type="button">立即触发</button><button class="secondary" data-adjust-random-event="${event.id}" data-scheduled-at="${event.scheduled_at}" type="button">调整时间</button><button class="danger-button" data-delete-random-event="${event.id}" type="button">移除</button></div>` : event.status === "skipped" ? "" : `<button class="secondary" data-view-random-event-details="${event.id}" type="button">查看详情</button>`}</article>`).join("") || "<p class=\"muted\">今日计划将在每天北京时间 00:00 自动生成。</p>";
+  const filtered = filterList("random-event-today", events, (event) => `${event.scene_name || ""} ${event.event_name || ""} ${eventStatusLabel(event.status)}`);
+  const pageData = renderLocalPagination(
+    document.querySelector("#today-random-event-pagination"),
+    filtered,
+    todayRandomEventPage,
+    pageSizeFor("random-event-today"),
+    "场次",
+    (page) => {
+      todayRandomEventPage = page;
+      renderTodayRandomEvents(todayRandomEvents);
+    },
+  );
+  todayRandomEventPage = pageData.page;
+  document.querySelector("#today-random-event-list").innerHTML = pageData.items.map((event) => `
+    <article class="data-row"><div><b>${escapeHtml(event.scene_name || "未安排场景")}－${escapeHtml(event.event_name || "未安排事件")}${event.is_cross_day ? "（跨日）" : ""}</b><small>${statusBadge(eventStatusLabel(event.status), event.status === "in_progress" ? "success" : event.status === "pending" ? "warning" : "")}</small><small>${formatHeartbeat(event.scheduled_at)}</small></div>${event.status === "pending" ? `<div class="command-actions"><button class="secondary" data-trigger-random-event="${event.id}" type="button">立即触发</button><button class="secondary" data-adjust-random-event="${event.id}" data-scheduled-at="${event.scheduled_at}" type="button">调整时间</button><button class="danger-button" data-delete-random-event="${event.id}" type="button">移除</button></div>` : event.status === "skipped" ? "" : `<button class="secondary" data-view-random-event-details="${event.id}" type="button">查看详情</button>`}</article>`).join("") || "<p class=\"muted\">暂无符合条件的今日场次。</p>";
 }
 
 async function loadRandomEvents(page = randomEventScenePage) {
   const [settings, scenes, today] = await Promise.all([
     requestGame("/api/game/random-events/settings"),
-    requestGame(`/api/game/random-events/scenes?page=${page}&page_size=${pageSize}`),
+    requestGame(`/api/game/random-events/scenes?page=${page}&page_size=${pageSizeFor("random-event-scenes")}`),
     requestGame("/api/game/random-events/today"),
   ]);
   randomEventSettings = settings;
   randomEventScenePage = scenes.page;
+  todayRandomEvents = today.items;
   configurationVersion = settings.version;
   renderRandomEventSettings(settings);
   renderRandomEventScenes(scenes.items);
@@ -635,9 +808,10 @@ function renderPagination(container, pageData, unit, onPageChange) {
 
 async function loadEmployees(page = employeePage) {
   const settings = gameSettings || await loadSettings();
-  const employees = await requestGame(`/api/game/users?page=${page}&page_size=${pageSize}`);
+  const employees = await requestGame(`/api/game/users?page=${page}&page_size=${pageSizeFor("employees")}`);
   employeePage = employees.page;
-  document.querySelector("#employee-list").innerHTML = employees.items.map((employee) => `
+  const filtered = filterList("employees", employees.items, (employee) => `${employee.display_name} ${employee.rank_name || ""} ${employee.department_name || ""}`);
+  document.querySelector("#employee-list").innerHTML = filtered.map((employee) => `
     <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
   renderPagination(document.querySelector("#employee-pagination"), employees, "位员工", loadEmployees);
 }
@@ -668,22 +842,38 @@ function openDepartmentModal(department = null) {
 }
 
 function renderRanks(ranks) {
-  document.querySelector("#rank-list").innerHTML = ranks.map((rank) => `
-    <article class="data-row"><div><b>${escapeHtml(rank.name)}（${escapeHtml(rank.level_label)}）${rank.enabled ? "" : "（已停用）"}</b><small>晋升价格 ${rank.promotion_price} · 投票权益 ${rank.vote_weight} · 多人小游戏 ${rank.multiplayer_game_limit < 0 ? "不限" : `${rank.multiplayer_game_limit} 次`}</small><small>${rank.has_group_management ? "显示群内管理资格" : "无群内管理资格"}</small></div><button class="secondary" data-rank="${escapeHtml(JSON.stringify(rank))}" type="button">编辑</button></article>`).join("") || "<p class=\"muted\">暂无职位配置。</p>";
+  const filtered = filterList("ranks", ranks, (rank) => `${rank.name} ${rank.level_label}`);
+  const pageData = renderLocalPagination(
+    document.querySelector("#rank-pagination"),
+    filtered,
+    rankPage,
+    pageSizeFor("ranks"),
+    "个职位",
+    (page) => {
+      rankPage = page;
+      renderRanks(rankDefinitions);
+    },
+  );
+  rankPage = pageData.page;
+  document.querySelector("#rank-list").innerHTML = pageData.items.map((rank) => `
+    <article class="data-row"><div><b>${escapeHtml(rank.name)}（${escapeHtml(rank.level_label)}）</b><small>${statusBadge(rank.enabled ? "已启用" : "已停用", rank.enabled ? "success" : "warning")}</small><small>晋升价格 ${rank.promotion_price} · 投票权益 ${rank.vote_weight} · 多人小游戏 ${rank.multiplayer_game_limit < 0 ? "不限" : `${rank.multiplayer_game_limit} 次`}</small><small>${rank.has_group_management ? "显示群内管理资格" : "无群内管理资格"}</small></div><button class="secondary" data-rank="${escapeHtml(JSON.stringify(rank))}" type="button">编辑</button></article>`).join("") || "<p class=\"muted\">暂无符合条件的职位。</p>";
 }
 
 function renderDepartments(departments) {
-  document.querySelector("#department-list").innerHTML = departments.map((department) => `
-    <article class="data-row"><div><b>${escapeHtml(department.name)}${department.enabled ? "" : "（已停用）"}</b><small>${escapeHtml(department.description || "暂无部门说明")}</small></div><div class="command-actions"><button class="secondary" data-department="${escapeHtml(JSON.stringify(department))}" data-department-action="edit" type="button">编辑</button>${department.is_default ? "" : `<button class="danger-button" data-department="${escapeHtml(JSON.stringify(department))}" data-department-action="delete" type="button">删除</button>`}</div></article>`).join("") || "<p class=\"muted\">还没有部门。</p>";
+  const filtered = filterList("departments", departments, (department) => `${department.name} ${department.description || ""}`);
+  document.querySelector("#department-list").innerHTML = filtered.map((department) => `
+    <article class="data-row"><div><b>${escapeHtml(department.name)}</b><small>${statusBadge(department.enabled ? "已启用" : "已停用", department.enabled ? "success" : "warning")}</small><small>${escapeHtml(department.description || "暂无部门说明")}</small></div><div class="command-actions"><button class="secondary" data-department="${escapeHtml(JSON.stringify(department))}" data-department-action="edit" type="button">编辑</button>${department.is_default ? "" : `<button class="danger-button" data-department="${escapeHtml(JSON.stringify(department))}" data-department-action="delete" type="button">删除</button>`}</div></article>`).join("") || "<p class=\"muted\">没有符合条件的部门。</p>";
 }
 
 function renderPromotions(promotions, currencyName) {
-  document.querySelector("#promotion-list").innerHTML = promotions.map((promotion) => `
+  const filtered = filterList("promotions", promotions, (promotion) => `${promotion.number} ${promotion.applicant_name} ${promotion.source_rank_name} ${promotion.target_rank_name} ${promotion.state}`);
+  document.querySelector("#promotion-list").innerHTML = filtered.map((promotion) => `
     <article class="data-row"><div><b>#${promotion.number} ${escapeHtml(promotion.applicant_name)}：${escapeHtml(promotion.source_rank_name)} → ${escapeHtml(promotion.target_rank_name)}</b><small>${promotion.price} ${escapeHtml(currencyName)} · ${escapeHtml(promotion.state)} · 申请于 ${formatHeartbeat(promotion.requested_at)}</small></div></article>`).join("") || "<p class=\"muted\">暂无晋升申请记录。</p>";
 }
 
 function renderDepartmentRequests(requests) {
-  document.querySelector("#department-request-list").innerHTML = requests.map((request) => `
+  const filtered = filterList("department-requests", requests, (request) => `${request.number} ${request.applicant_name} ${request.source_department_name} ${request.target_department_name} ${request.state}`);
+  document.querySelector("#department-request-list").innerHTML = filtered.map((request) => `
     <article class="data-row"><div><b>#${request.number} ${escapeHtml(request.applicant_name)}：${escapeHtml(request.source_department_name)} → ${escapeHtml(request.target_department_name)}</b><small>${escapeHtml(request.state)} · 申请于 ${formatHeartbeat(request.requested_at)}${request.approver_name ? ` · ${escapeHtml(request.approver_name)} ${escapeHtml(request.decision)}` : ""}</small></div></article>`).join("") || "<p class=\"muted\">暂无部门申请记录。</p>";
 }
 
@@ -691,15 +881,16 @@ async function loadOrganization(departmentTarget = departmentPage, promotionTarg
   const settings = gameSettings || await loadSettings();
   const [ranks, departments, promotions, departmentRequests] = await Promise.all([
     requestGame("/api/game/ranks"),
-    requestGame(`/api/game/departments?page=${departmentTarget}&page_size=${pageSize}`),
-    requestGame(`/api/game/promotions?page=${promotionTarget}&page_size=${pageSize}`),
-    requestGame(`/api/game/department-requests?page=${departmentRequestTarget}&page_size=${pageSize}`),
+    requestGame(`/api/game/departments?page=${departmentTarget}&page_size=${pageSizeFor("departments")}`),
+    requestGame(`/api/game/promotions?page=${promotionTarget}&page_size=${pageSizeFor("promotions")}`),
+    requestGame(`/api/game/department-requests?page=${departmentRequestTarget}&page_size=${pageSizeFor("department-requests")}`),
   ]);
   departmentPage = departments.page;
   promotionPage = promotions.page;
   departmentRequestPage = departmentRequests.page;
   configurationVersion = departments.version;
-  renderRanks(ranks);
+  rankDefinitions = ranks;
+  renderRanks(rankDefinitions);
   renderDepartments(departments.items);
   renderPromotions(promotions.items, settings.currency_name);
   renderDepartmentRequests(departmentRequests.items);
@@ -710,18 +901,59 @@ async function loadOrganization(departmentTarget = departmentPage, promotionTarg
 
 async function loadShop(page = shopPage) {
   const settings = gameSettings || await loadSettings();
-  const items = await requestGame(`/api/game/items?page=${page}&page_size=${pageSize}`);
+  const items = await requestGame(`/api/game/items?page=${page}&page_size=${pageSizeFor("shop")}`);
   shopPage = items.page;
-  document.querySelector("#shop-list").innerHTML = items.items.map((item) => `
+  const filtered = filterList("shop", items.items, (item) => `${item.name} ${item.description}`);
+  document.querySelector("#shop-list").innerHTML = filtered.map((item) => `
     <article class="data-row"><div><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.description)}</small></div><strong>${item.price} ${escapeHtml(settings.currency_name)} · 库存 ${item.stock}</strong></article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
   renderPagination(document.querySelector("#shop-pagination"), items, "件物品", loadShop);
 }
 
+function renderCommands(commands) {
+  const filtered = filterList("commands", commands, (command) => `${command.command} ${commandLabel(command.command)} ${command.description}`);
+  const pageData = renderLocalPagination(
+    document.querySelector("#command-pagination"),
+    filtered,
+    commandPage,
+    pageSizeFor("commands"),
+    "条指令",
+    (page) => {
+      commandPage = page;
+      renderCommands(commandDefinitions);
+    },
+  );
+  commandPage = pageData.page;
+  document.querySelector("#command-list").innerHTML = pageData.items.map((command) => `
+    <article class="command-card">
+      <div class="command-heading"><div><b>${escapeHtml(commandLabel(command.command))}</b><small>${statusBadge(command.enabled ? "已启用" : "已停用", command.enabled ? "success" : "warning")}</small><small>${escapeHtml(command.description)}</small></div>
+      <div class="command-actions"><button class="secondary" data-command-templates="${escapeHtml(JSON.stringify(command.templates))}" data-command="${escapeHtml(command.command)}" data-command-description="${escapeHtml(command.description)}" type="button">配置回复</button>
+      <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></div></div>
+    </article>`).join("") || "<p class=\"muted\">暂无指令。</p>";
+}
+
+function renderAdministrators(accounts) {
+  const filtered = filterList("admins", accounts, (account) => account.username);
+  const pageData = renderLocalPagination(
+    document.querySelector("#admin-pagination"),
+    filtered,
+    administratorPage,
+    pageSizeFor("admins"),
+    "位管理员",
+    (page) => {
+      administratorPage = page;
+      renderAdministrators(administratorAccounts);
+    },
+  );
+  administratorPage = pageData.page;
+  document.querySelector("#admin-account-list").innerHTML = pageData.items.map((account) => `
+    <article class="data-row"><div><b>${escapeHtml(account.username)}</b><small>${statusBadge(account.active ? "可登录" : "已停用", account.active ? "success" : "warning")}</small><small>${account.active ? "可登录，可运营" : "所有会话已失效"}</small></div>
+    <div class="command-actions"><button class="secondary" data-admin-action="toggle" data-admin-id="${account.id}" data-admin-active="${account.active}" type="button">${account.active ? "停用" : "启用"}</button><button class="secondary" data-admin-action="password" data-admin-id="${account.id}" type="button">重置密码</button><button class="danger-button" data-admin-action="delete" data-admin-id="${account.id}" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有普通管理员账号。</p>";
+}
+
 async function loadAdministrators() {
   const accounts = await requestGame("/api/admins", {cache: "no-store"});
-  document.querySelector("#admin-account-list").innerHTML = accounts.map((account) => `
-    <article class="data-row"><div><b>${escapeHtml(account.username)}</b><small>${account.active ? "可登录，可运营" : "已停用，所有会话已失效"}</small></div>
-    <div class="command-actions"><button class="secondary" data-admin-action="toggle" data-admin-id="${account.id}" data-admin-active="${account.active}" type="button">${account.active ? "停用" : "启用"}</button><button class="secondary" data-admin-action="password" data-admin-id="${account.id}" type="button">重置密码</button><button class="danger-button" data-admin-action="delete" data-admin-id="${account.id}" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有普通管理员账号。</p>";
+  administratorAccounts = accounts;
+  renderAdministrators(administratorAccounts);
 }
 
 function showView(view) {
@@ -749,12 +981,8 @@ async function loadGameView(view) {
     if (view === "commands") {
       const commands = await requestGame("/api/game/commands");
       configurationVersion = commands[0]?.version ?? configurationVersion;
-      document.querySelector("#command-list").innerHTML = commands.map((command) => `
-        <article class="command-card">
-          <div class="command-heading"><div><b>${escapeHtml(commandLabel(command.command))}</b><small>${escapeHtml(command.description)}</small></div>
-          <div class="command-actions"><button class="secondary" data-command-templates="${escapeHtml(JSON.stringify(command.templates))}" data-command="${escapeHtml(command.command)}" data-command-description="${escapeHtml(command.description)}" type="button">配置回复</button>
-          <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></div></div>
-        </article>`).join("") || "<p class=\"muted\">暂无指令。</p>";
+      commandDefinitions = commands;
+      renderCommands(commandDefinitions);
       return;
     }
     if (view === "organization") return loadOrganization();
@@ -1721,6 +1949,14 @@ document.querySelector("#admin-account-list").addEventListener("click", async (e
     setResult(`更新失败（${error.message}）`, "error");
   }
 });
+
+document.querySelectorAll("[data-open-memory-assessment-settings]").forEach((button) => {
+  button.addEventListener("click", () => void openMemoryAssessmentSettingsModal());
+});
+
+initializeManagementTabs();
+initializePageSizeControls();
+initializeListFilters();
 
 async function restoreIdentity() {
   if (identity || (!token && !adminSession)) return;

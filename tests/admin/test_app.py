@@ -798,8 +798,8 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert 'id="department-request-list"' in page
     assert "runMutation" in script
     assert "renderPagination" in script
-    assert "/api/game/users?page=${page}&page_size=${pageSize}" in script
-    assert "/api/game/items?page=${page}&page_size=${pageSize}" in script
+    assert "/api/game/users?page=${page}&page_size=${pageSizeFor(\"employees\")}" in script
+    assert "/api/game/items?page=${page}&page_size=${pageSizeFor(\"shop\")}" in script
     assert '"保存中…"' in script
     assert '"上架中…"' in script
     assert "请填写场景名称、报名公告和每个事件的名称、开场白" in script
@@ -1539,6 +1539,55 @@ def test_admin_account_list_bypasses_browser_cache():
     script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
 
     assert 'requestGame("/api/admins", {cache: "no-store"})' in script
+
+
+def test_admin_styles_define_unified_management_components():
+    stylesheet = Path("src/dzmm_bot/admin/static/admin.css").read_text()
+
+    for selector in (
+        ".management-tabs",
+        ".management-tab",
+        ".management-pane",
+        ".list-toolbar",
+        ".list-scroll",
+        ".page-size-select",
+        ".data-table",
+        ".status-badge",
+    ):
+        assert selector in stylesheet
+    assert "max-height" in stylesheet
+    assert "overflow-y: auto" in stylesheet
+
+
+def test_admin_groups_management_content_into_tabs_and_bounded_lists(client):
+    page = client.get("/").text
+
+    assert 'data-management-tabs="events"' in page
+    assert 'data-management-tab="today"' in page
+    assert 'data-management-pane="scenes"' in page
+    assert 'class="list-scroll"' in page
+    assert 'class="list-toolbar"' in page
+
+
+def test_admin_script_supports_tabs_and_configurable_page_sizes():
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert "function initializeManagementTabs()" in script
+    assert "function renderPageSizeControl(" in script
+    assert "const pageSizeOptions = [5, 10, 15, 20, 50]" in script
+    assert "function renderLocalPagination(" in script
+
+
+def test_admin_script_supports_management_filters_and_status_badges():
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert "function initializeListFilters()" in script
+    assert "function statusBadge(" in script
+    assert 'data-list-filter="commands"' in Path("src/dzmm_bot/admin/templates/index.html").read_text()
+    assert 'data-list-filter="employees"' in Path("src/dzmm_bot/admin/templates/index.html").read_text()
+    assert 'data-list-filter="random-event-scenes"' in Path("src/dzmm_bot/admin/templates/index.html").read_text()
+    assert 'data-list-page-size="shop"' in Path("src/dzmm_bot/admin/templates/index.html").read_text()
+    assert 'data-list-page-size="ranks"' in Path("src/dzmm_bot/admin/templates/index.html").read_text()
 
 
 def test_admin_updates_random_event_scene_with_named_events(client, headers):

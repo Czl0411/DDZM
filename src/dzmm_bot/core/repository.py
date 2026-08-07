@@ -3520,8 +3520,11 @@ class CoreRepository:
                 if employee is None:
                     return DepartmentRequestResult("not_joined")
                 source_department = session.get(DepartmentRecord, employee.department_id)
+                employee_rank = session.get(RankRecord, employee.rank_id)
                 if source_department is None:
                     raise RuntimeError("employee department is missing")
+                if employee_rank is None:
+                    raise RuntimeError("employee rank is missing")
                 target_department = session.scalar(
                     select(DepartmentRecord).where(DepartmentRecord.name == normalized_name)
                 )
@@ -3535,6 +3538,23 @@ class CoreRepository:
                     and target_department.is_default
                 ):
                     return DepartmentRequestResult("unknown_department")
+                if employee_rank.is_board:
+                    existing = session.scalar(
+                        select(DepartmentRequestRecord)
+                        .where(
+                            DepartmentRequestRecord.applicant_id == employee.id,
+                            DepartmentRequestRecord.state == "pending",
+                        )
+                        .with_for_update()
+                    )
+                    if existing is not None:
+                        existing.state = "cancelled"
+                        existing.decided_at = requested_at
+                    employee.department_id = target_department.id
+                    session.flush()
+                    return DepartmentRequestResult(
+                        "joined" if source_department.id == default_department.id else "switched"
+                    )
                 existing = session.scalar(
                     select(DepartmentRequestRecord).where(
                         DepartmentRequestRecord.applicant_id == employee.id,
@@ -3554,6 +3574,36 @@ class CoreRepository:
                 session.add(request)
                 session.flush()
                 return DepartmentRequestResult("requested", request)
+
+    def reconcile_board_department_requests(self, now: datetime) -> int:
+        with self.transaction():
+            with self._session() as session:
+                requests = list(
+                    session.scalars(
+                        select(DepartmentRequestRecord)
+                        .join(UserRecord, DepartmentRequestRecord.applicant_id == UserRecord.id)
+                        .join(RankRecord, UserRecord.rank_id == RankRecord.id)
+                        .join(
+                            DepartmentRecord,
+                            DepartmentRequestRecord.target_department_id == DepartmentRecord.id,
+                        )
+                        .where(
+                            DepartmentRequestRecord.state == "pending",
+                            RankRecord.is_board.is_(True),
+                            DepartmentRecord.enabled.is_(True),
+                        )
+                        .with_for_update()
+                    )
+                )
+                for request in requests:
+                    applicant = session.get(UserRecord, request.applicant_id, with_for_update=True)
+                    if applicant is None:
+                        continue
+                    applicant.department_id = request.target_department_id
+                    request.state = "approved"
+                    request.decided_at = now
+                session.flush()
+                return len(requests)
 
     def decide_department_requests(
         self,
@@ -3614,8 +3664,13 @@ class CoreRepository:
                         or target_department is None
                         or not target_department.enabled
                         or applicant.id == approver.id
-                        or approver.department_id != request.target_department_id
-                        or approver_rank.sort_order <= applicant_rank.sort_order
+                        or (
+                            not approver_rank.is_board
+                            and (
+                                approver.department_id != request.target_department_id
+                                or approver_rank.sort_order <= applicant_rank.sort_order
+                            )
+                        )
                     ):
                         results.append(DepartmentDecisionResult(number, "not_authorized"))
                         continue
@@ -3651,7 +3706,7 @@ class CoreRepository:
             source_department = aliased(DepartmentRecord)
             target_department = aliased(DepartmentRecord)
             applicant_rank = aliased(RankRecord)
-            rows = session.execute(
+            statement = (
                 select(
                     DepartmentRequestRecord,
                     UserRecord,
@@ -3670,13 +3725,17 @@ class CoreRepository:
                 .join(applicant_rank, UserRecord.rank_id == applicant_rank.id)
                 .where(
                     DepartmentRequestRecord.state == "pending",
-                    DepartmentRequestRecord.target_department_id == approver.department_id,
-                    UserRecord.id != approver.id,
-                    applicant_rank.sort_order < approver_rank.sort_order,
                     target_department.enabled.is_(True),
                 )
                 .order_by(DepartmentRequestRecord.number)
             )
+            if not approver_rank.is_board:
+                statement = statement.where(
+                    DepartmentRequestRecord.target_department_id == approver.department_id,
+                    UserRecord.id != approver.id,
+                    applicant_rank.sort_order < approver_rank.sort_order,
+                )
+            rows = session.execute(statement)
             return [
                 DepartmentRequestSummary(
                     number=request.number,

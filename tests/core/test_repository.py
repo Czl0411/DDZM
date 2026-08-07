@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
@@ -167,6 +167,71 @@ def test_department_application_enforces_approver_eligibility_and_expiry(
     later = now + timedelta(hours=24)
     assert repository.decide_department_requests("eligible", [expired.number], "approved", later)[0].status == "expired"
     assert repository.get_user_profile("applicant").department.name == "未分配部门"
+
+
+def test_board_member_changes_department_without_creating_an_approval_request(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import DepartmentRequestRecord, RankRecord, UserRecord
+
+    board_member, _ = repository.create_user("board", "董事", now, 0)
+    with session_factory.begin() as session:
+        board_rank = session.scalar(select(RankRecord).where(RankRecord.is_board.is_(True)))
+        board_record = session.get(UserRecord, board_member.id)
+        assert board_rank is not None
+        assert board_record is not None
+        board_record.rank_id = board_rank.id
+
+    result = repository.request_department_change("board", "核心技术部", now)
+
+    assert result.status == "joined"
+    assert repository.get_user_profile("board").department.name == "核心技术部"
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(DepartmentRequestRecord)) == 0
+
+
+def test_board_member_can_list_and_decide_cross_department_requests(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    repository.create_user("applicant", "小明", now, 0)
+    board_member, _ = repository.create_user("board", "董事", now, 0)
+    with session_factory.begin() as session:
+        board_rank = session.scalar(select(RankRecord).where(RankRecord.is_board.is_(True)))
+        board_record = session.get(UserRecord, board_member.id)
+        assert board_rank is not None
+        assert board_record is not None
+        board_record.rank_id = board_rank.id
+
+    request = repository.request_department_change("applicant", "核心技术部", now)
+    assert request.status == "requested"
+
+    approvable = repository.list_approvable_department_requests("board", now)
+    assert [item.number for item in approvable] == [request.number]
+    assert [result.status for result in repository.decide_department_requests(
+        "board", [request.number], "approved", now
+    )] == ["approved"]
+    assert repository.get_user_profile("applicant").department.name == "核心技术部"
+
+
+def test_existing_board_department_request_is_completed_without_approval(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    board_member, _ = repository.create_user("board", "董事", now, 0)
+    request = repository.request_department_change("board", "核心技术部", now)
+    assert request.status == "requested"
+    with session_factory.begin() as session:
+        board_rank = session.scalar(select(RankRecord).where(RankRecord.is_board.is_(True)))
+        board_record = session.get(UserRecord, board_member.id)
+        assert board_rank is not None
+        assert board_record is not None
+        board_record.rank_id = board_rank.id
+
+    assert repository.reconcile_board_department_requests(now) == 1
+    assert repository.get_user_profile("board").department.name == "核心技术部"
 
 
 def test_eligible_approval_charges_once_and_records_audit(repository, session_factory, now):

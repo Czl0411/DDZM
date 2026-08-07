@@ -230,6 +230,29 @@ def test_department_commands_apply_only_after_target_department_approval():
     assert "核心技术部" in _latest_reply(factory)
 
 
+def test_board_members_can_directly_change_departments_and_review_all_requests():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, _, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _receive(service, "join-1", "u1", "/入职 小明", now)
+    _receive(service, "join-2", "board", "/入职 董事", now)
+    with factory.begin() as session:
+        board_rank = session.scalar(select(RankRecord).where(RankRecord.is_board.is_(True)))
+        board = session.scalar(select(UserRecord).where(UserRecord.platform_id == "board"))
+        assert board_rank is not None
+        assert board is not None
+        board.rank_id = board_rank.id
+
+    _receive(service, "board-change", "board", "/加入部门 核心技术部", now)
+    assert _latest_reply(factory) == "董事已直接加入核心技术部。"
+    _receive(service, "board-switch", "board", "/切换部门 学院", now)
+    assert _latest_reply(factory) == "董事已直接切换至学院。"
+    _receive(service, "apply", "u1", "/加入部门 核心技术部", now)
+    _receive(service, "list", "board", "/部门申请列表", now)
+    assert "1. 小明：未分配部门 → 核心技术部" in _latest_reply(factory)
+
+
 def test_promotion_request_list_and_numbered_approval():
     from dzmm_bot.core.schema import RankRecord, UserRecord
 

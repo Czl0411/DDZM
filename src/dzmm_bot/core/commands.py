@@ -193,6 +193,13 @@ class GroupCommandHandler:
                 received_at,
                 {"{昵称}": profile.user.display_name, "{部门}": parts[1].strip()},
             )
+        if result.status == "joined":
+            return self._reply(
+                "/加入部门",
+                "joined",
+                received_at,
+                {"{昵称}": profile.user.display_name, "{部门}": parts[1].strip()},
+            )
         if result.status == "already_pending":
             return self._reply("/加入部门", "already_pending", received_at)
         return self._reply("/加入部门", "unknown_department", received_at)
@@ -213,6 +220,13 @@ class GroupCommandHandler:
             return self._reply(
                 "/切换部门",
                 "requested",
+                received_at,
+                {"{昵称}": profile.user.display_name, "{部门}": parts[1].strip()},
+            )
+        if result.status == "switched":
+            return self._reply(
+                "/切换部门",
+                "switched",
                 received_at,
                 {"{昵称}": profile.user.display_name, "{部门}": parts[1].strip()},
             )

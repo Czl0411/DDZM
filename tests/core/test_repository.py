@@ -90,6 +90,41 @@ def test_memory_assessment_defaults_seed_five_levels(repository):
     ] == [(1, 5, 1), (2, 7, 2), (3, 9, 3), (4, 11, 4), (5, 13, 5)]
 
 
+def test_new_employee_has_default_rank_and_department(repository, now):
+    repository.create_user("employee-1", "小明", now, 0)
+
+    profile = repository.get_user_profile("employee-1")
+
+    assert profile.rank.name == "实习生"
+    assert profile.rank.level_label == "LV1"
+    assert profile.department.name == "未分配部门"
+
+
+def test_eligible_approval_charges_once_and_records_audit(repository, session_factory, now):
+    from dzmm_bot.core.schema import PromotionApprovalRecord, RankRecord, UserRecord
+
+    applicant, _ = repository.create_user("employee-1", "小明", now, 0)
+    approver, _ = repository.create_user("employee-2", "小红", now, 0)
+    with session_factory.begin() as session:
+        applicant_record = session.get(UserRecord, applicant.id)
+        approver_record = session.get(UserRecord, approver.id)
+        rank_two = session.scalar(select(RankRecord).where(RankRecord.sort_order == 2))
+        assert applicant_record is not None
+        assert approver_record is not None
+        assert rank_two is not None
+        applicant_record.balance = 80
+        approver_record.rank_id = rank_two.id
+
+    request = repository.request_promotion("employee-1", now)
+    results = repository.decide_promotions("employee-2", [request.number], "approved", now)
+
+    assert [result.status for result in results] == ["approved"]
+    assert repository.find_user("employee-1").balance == 0
+    assert repository.get_user_profile("employee-1").rank.sort_order == 2
+    with session_factory() as session:
+        assert session.scalar(select(PromotionApprovalRecord)) is not None
+
+
 def test_memory_assessment_rejects_whitespace_character_set(repository):
     from dzmm_bot.core.repository import MemoryAssessmentLevelRule
 

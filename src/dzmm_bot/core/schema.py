@@ -431,7 +431,73 @@ class UserRecord(Base):
     platform_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(64), nullable=False)
     balance: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rank_id: Mapped[UUID | None] = mapped_column(ForeignKey("ranks.id"))
+    department_id: Mapped[UUID | None] = mapped_column(ForeignKey("departments.id"))
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class RankRecord(Base):
+    __tablename__ = "ranks"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    sort_order: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    level_label: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)
+    promotion_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    vote_weight: Mapped[int] = mapped_column(Integer, nullable=False)
+    multiplayer_game_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    has_group_management: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_board: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class DepartmentRecord(Base):
+    __tablename__ = "departments"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class PromotionRequestRecord(Base):
+    __tablename__ = "promotion_requests"
+    __table_args__ = (
+        Index(
+            "ux_promotion_requests_pending_employee",
+            "applicant_id",
+            unique=True,
+            sqlite_where=text("state = 'pending'"),
+            postgresql_where=text("state = 'pending'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, unique=True, default=uuid4, nullable=False)
+    number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    applicant_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    source_rank_id: Mapped[UUID] = mapped_column(ForeignKey("ranks.id"), nullable=False)
+    target_rank_id: Mapped[UUID] = mapped_column(ForeignKey("ranks.id"), nullable=False)
+    price: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class PromotionApprovalRecord(Base):
+    __tablename__ = "promotion_approvals"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    request_id: Mapped[UUID] = mapped_column(
+        ForeignKey("promotion_requests.id"), unique=True, nullable=False
+    )
+    approver_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
 class DailyCheckinRecord(Base):

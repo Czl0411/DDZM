@@ -50,6 +50,10 @@ from .schema import (
     RandomEventSceneOpeningRecord,
     RandomEventSceneSeatRecord,
     RandomEventSettingsRecord,
+    DepartmentRecord,
+    RankRecord,
+    PromotionApprovalRecord,
+    PromotionRequestRecord,
     UserItemRecord,
     UserRecord,
     WeeklyAttendanceSettlementRecord,
@@ -117,6 +121,30 @@ _DEFAULT_MEMORY_ASSESSMENT_LEVELS = (
     (3, 9, 3),
     (4, 11, 4),
     (5, 13, 5),
+)
+_DEFAULT_RANKS = (
+    (1, "实习生", "LV1", 0, 0, 0, False, False),
+    (2, "正式员工", "LV2", 80, 1, 0, False, False),
+    (3, "小组长", "LV3", 200, 1, 0, False, False),
+    (4, "副主管", "LV4", 500, 1, 1, False, False),
+    (5, "主管", "LV5", 500, 1, 1, False, False),
+    (6, "部门副经理", "LV6", 800, 2, 2, False, False),
+    (7, "部门经理", "LV7", 800, 2, 2, False, False),
+    (8, "部门副总监", "LV8", 1000, 3, 3, True, False),
+    (9, "部门总监", "LV9", 1000, 3, 3, True, False),
+    (10, "公司负责人", "LV10", 2000, 5, 5, True, False),
+    (11, "核心董事会", "LvMax", 0, 10, -1, True, True),
+)
+_DEFAULT_DEPARTMENTS = (
+    ("未分配部门", "", True),
+    ("色色事业部", "", False),
+    ("小游戏娱乐部", "", False),
+    ("次元外联部", "", False),
+    ("风纪监察部", "", False),
+    ("核心技术部", "", False),
+    ("摸鱼研究部", "", False),
+    ("抽象艺术部", "", False),
+    ("学院", "", False),
 )
 _DEFAULT_MEMORY_ASSESSMENT_CHARACTER_SET = (
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*_ -"
@@ -279,6 +307,31 @@ class RandomEventScene:
 class PersonalActivity:
     level: int
     reward: int
+
+
+@dataclass(frozen=True)
+class UserProfile:
+    user: UserRecord
+    rank: RankRecord
+    department: DepartmentRecord
+
+
+@dataclass(frozen=True)
+class PromotionRequestResult:
+    status: str
+    request: PromotionRequestRecord | None = None
+
+    @property
+    def number(self) -> int:
+        if self.request is None:
+            raise RuntimeError("promotion request is missing")
+        return self.request.number
+
+
+@dataclass(frozen=True)
+class PromotionDecisionResult:
+    number: int
+    status: str
 
 
 @dataclass(frozen=True)
@@ -3083,6 +3136,7 @@ class CoreRepository:
     ) -> tuple[UserRecord, bool]:
         with self.transaction():
             with self._session() as session:
+                default_rank, default_department = self._ensure_organization_defaults(session)
                 existing = session.scalar(
                     select(UserRecord).where(UserRecord.platform_id == platform_id)
                 )
@@ -3092,6 +3146,8 @@ class CoreRepository:
                     platform_id=platform_id,
                     display_name=display_name,
                     balance=0,
+                    rank_id=default_rank.id,
+                    department_id=default_department.id,
                     joined_at=joined_at,
                 )
                 session.add(record)
@@ -3100,6 +3156,155 @@ class CoreRepository:
                     record, initial_balance, "onboarding", joined_at
                 )
                 return record, True
+
+    def get_user_profile(self, platform_id: str) -> UserProfile | None:
+        with self._session() as session:
+            self._ensure_organization_defaults(session)
+            row = session.execute(
+                select(UserRecord, RankRecord, DepartmentRecord)
+                .join(RankRecord, UserRecord.rank_id == RankRecord.id)
+                .join(DepartmentRecord, UserRecord.department_id == DepartmentRecord.id)
+                .where(UserRecord.platform_id == platform_id)
+            ).first()
+            if row is None:
+                return None
+            user, rank, department = row
+            return UserProfile(user, rank, department)
+
+    def list_ranks(self) -> list[RankRecord]:
+        with self._session() as session:
+            self._ensure_organization_defaults(session)
+            return list(session.scalars(select(RankRecord).order_by(RankRecord.sort_order)))
+
+    def list_departments(self) -> list[DepartmentRecord]:
+        with self._session() as session:
+            self._ensure_organization_defaults(session)
+            return list(session.scalars(select(DepartmentRecord).order_by(DepartmentRecord.name)))
+
+    def request_promotion(
+        self, platform_id: str, requested_at: datetime
+    ) -> PromotionRequestResult:
+        with self.transaction():
+            with self._session() as session:
+                self._ensure_organization_defaults(session)
+                employee = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if employee is None:
+                    return PromotionRequestResult("not_joined")
+                rank = session.get(RankRecord, employee.rank_id)
+                if rank is None:
+                    raise RuntimeError("employee rank is missing")
+                if rank.is_board:
+                    return PromotionRequestResult("board_cannot_apply")
+                existing = session.scalar(
+                    select(PromotionRequestRecord).where(
+                        PromotionRequestRecord.applicant_id == employee.id,
+                        PromotionRequestRecord.state == "pending",
+                    )
+                )
+                if existing is not None:
+                    return PromotionRequestResult("already_pending", existing)
+                target = session.scalar(
+                    select(RankRecord)
+                    .where(
+                        RankRecord.enabled.is_(True),
+                        RankRecord.is_board.is_(False),
+                        RankRecord.sort_order > rank.sort_order,
+                    )
+                    .order_by(RankRecord.sort_order)
+                )
+                if target is None:
+                    return PromotionRequestResult("no_next_rank")
+                request = PromotionRequestRecord(
+                    applicant_id=employee.id,
+                    source_rank_id=rank.id,
+                    target_rank_id=target.id,
+                    price=target.promotion_price,
+                    state="pending",
+                    requested_at=requested_at,
+                    expires_at=requested_at + timedelta(hours=24),
+                )
+                session.add(request)
+                session.flush()
+                return PromotionRequestResult("requested", request)
+
+    def decide_promotions(
+        self,
+        approver_platform_id: str,
+        numbers: list[int],
+        decision: str,
+        decided_at: datetime,
+    ) -> list[PromotionDecisionResult]:
+        if decision not in {"approved", "rejected"}:
+            raise ValueError("晋升审批结果无效")
+        requested_numbers = list(dict.fromkeys(numbers))
+        if not requested_numbers:
+            return []
+        with self.transaction():
+            with self._session() as session:
+                self._ensure_organization_defaults(session)
+                approver = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == approver_platform_id)
+                    .with_for_update()
+                )
+                if approver is None:
+                    return [PromotionDecisionResult(number, "not_joined") for number in requested_numbers]
+                approver_rank = session.get(RankRecord, approver.rank_id)
+                if approver_rank is None:
+                    raise RuntimeError("approver rank is missing")
+                results: list[PromotionDecisionResult] = []
+                for number in requested_numbers:
+                    request = session.scalar(
+                        select(PromotionRequestRecord)
+                        .where(PromotionRequestRecord.number == number)
+                        .with_for_update()
+                    )
+                    if request is None:
+                        results.append(PromotionDecisionResult(number, "not_found"))
+                        continue
+                    if request.state != "pending":
+                        results.append(PromotionDecisionResult(number, "already_decided"))
+                        continue
+                    if request.expires_at <= decided_at:
+                        request.state = "expired"
+                        request.decided_at = decided_at
+                        results.append(PromotionDecisionResult(number, "expired"))
+                        continue
+                    applicant = session.get(UserRecord, request.applicant_id)
+                    applicant_rank = None if applicant is None else session.get(RankRecord, applicant.rank_id)
+                    if (
+                        applicant is None
+                        or applicant_rank is None
+                        or applicant.id == approver.id
+                        or approver_rank.sort_order <= applicant_rank.sort_order
+                    ):
+                        results.append(PromotionDecisionResult(number, "not_authorized"))
+                        continue
+                    if decision == "approved" and applicant.balance < request.price:
+                        results.append(PromotionDecisionResult(number, "insufficient_balance"))
+                        continue
+                    request.state = decision
+                    request.decided_at = decided_at
+                    if decision == "approved":
+                        applicant.rank_id = request.target_rank_id
+                        self._apply_balance_change(
+                            applicant, -request.price, "promotion", decided_at
+                        )
+                    session.add(
+                        PromotionApprovalRecord(
+                            request_id=request.id,
+                            approver_id=approver.id,
+                            decision=decision,
+                            decided_at=decided_at,
+                        )
+                    )
+                    results.append(PromotionDecisionResult(number, decision))
+                session.flush()
+                return results
 
     def check_in(self, user: UserRecord, checked_in_at: datetime, reward: int) -> bool:
         with self.transaction():
@@ -3157,6 +3362,59 @@ class CoreRepository:
             return list(
                 session.scalars(select(UserRecord).order_by(UserRecord.joined_at))
             )
+
+    @staticmethod
+    def _ensure_organization_defaults(
+        session: Session,
+    ) -> tuple[RankRecord, DepartmentRecord]:
+        if not session.scalar(select(RankRecord.id).limit(1)):
+            session.add_all(
+                [
+                    RankRecord(
+                        sort_order=sort_order,
+                        name=name,
+                        level_label=level_label,
+                        promotion_price=promotion_price,
+                        vote_weight=vote_weight,
+                        multiplayer_game_limit=multiplayer_game_limit,
+                        has_group_management=has_group_management,
+                        is_board=is_board,
+                        enabled=True,
+                    )
+                    for (
+                        sort_order,
+                        name,
+                        level_label,
+                        promotion_price,
+                        vote_weight,
+                        multiplayer_game_limit,
+                        has_group_management,
+                        is_board,
+                    ) in _DEFAULT_RANKS
+                ]
+            )
+        if not session.scalar(select(DepartmentRecord.id).limit(1)):
+            session.add_all(
+                [
+                    DepartmentRecord(
+                        name=name,
+                        description=description,
+                        is_default=is_default,
+                        enabled=True,
+                    )
+                    for name, description, is_default in _DEFAULT_DEPARTMENTS
+                ]
+            )
+        session.flush()
+        default_rank = session.scalar(
+            select(RankRecord).where(RankRecord.sort_order == 1)
+        )
+        default_department = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.is_default.is_(True))
+        )
+        if default_rank is None or default_department is None:
+            raise RuntimeError("organization defaults are missing")
+        return default_rank, default_department
 
     def list_users_page(
         self, page: int, page_size: int

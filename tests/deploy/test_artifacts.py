@@ -29,6 +29,7 @@ def test_deployment_runs_migrations_with_the_private_environment():
     assert 'rsync -a --delete --exclude .git --exclude .venv "$dzmm_release_dir/"' in deploy
     assert "chown -R dzmm:dzmm /opt/dzmm/current" in deploy
     assert "runuser -u dzmm -- /opt/dzmm/venv/bin/playwright install chromium" in deploy
+    assert "systemctl restart dzmm-core.service dzmm-admin-web.service dzmm-browser-worker.service" in deploy
 
 
 def test_weekly_attendance_migration_preserves_custom_me_templates():

@@ -20,6 +20,7 @@ from .api_models import (
     CompleteWorkerCommandRequest,
     CommandDefinitionResponse,
     CommandTemplateResponse,
+    CreateDepartmentRequest,
     CreateItemRequest,
     DailyJobsRequest,
     GameSettingsResponse,
@@ -60,7 +61,16 @@ from .api_models import (
     UpdateHideAndSeekSceneRequest,
     ItemResponse,
     PaginatedItemsResponse,
+    PaginatedDepartmentsResponse,
+    PaginatedPromotionRequestsResponse,
     PaginatedUsersResponse,
+    PromotionRequestResponse,
+    RankResponse,
+    DepartmentResponse,
+    SetBoardMembershipRequest,
+    UpdateDepartmentRequest,
+    UpdateRankRequest,
+    UserProfileResponse,
     UserResponse,
     WorkerCommandRequest,
     WorkerCommandResponse,
@@ -297,6 +307,128 @@ def create_app(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _template_response(definition, record)
 
+    @app.get("/internal/game/ranks", response_model=list[RankResponse])
+    def game_ranks(
+        _: Annotated[None, Depends(authorize)],
+    ) -> list[RankResponse]:
+        return [_rank_response(rank) for rank in repository.list_ranks()]
+
+    @app.patch("/internal/game/ranks/{rank_id}", response_model=RankResponse)
+    def update_game_rank(
+        rank_id: UUID,
+        request: UpdateRankRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> RankResponse:
+        try:
+            rank = repository.update_rank(rank_id, **request.model_dump())
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        if rank is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "rank not found")
+        return _rank_response(rank)
+
+    @app.get(
+        "/internal/game/departments", response_model=PaginatedDepartmentsResponse
+    )
+    def game_departments(
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> PaginatedDepartmentsResponse:
+        departments, total = repository.list_departments_page(page, page_size)
+        return PaginatedDepartmentsResponse(
+            items=[_department_response(department) for department in departments],
+            page=page,
+            page_size=page_size,
+            total=total,
+            pages=(total + page_size - 1) // page_size,
+        )
+
+    @app.post(
+        "/internal/game/departments",
+        response_model=DepartmentResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_game_department(
+        request: CreateDepartmentRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> DepartmentResponse:
+        try:
+            department = repository.create_department(
+                request.name, request.description
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _department_response(department)
+
+    @app.put(
+        "/internal/game/departments/{department_id}", response_model=DepartmentResponse
+    )
+    def update_game_department(
+        department_id: UUID,
+        request: UpdateDepartmentRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> DepartmentResponse:
+        try:
+            department = repository.update_department(
+                department_id, **request.model_dump()
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        if department is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "department not found")
+        return _department_response(department)
+
+    @app.delete(
+        "/internal/game/departments/{department_id}", response_model=AcceptedResponse
+    )
+    def delete_game_department(
+        department_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        try:
+            deleted = repository.delete_department(department_id)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error))
+        if not deleted:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "department not found")
+        return AcceptedResponse(accepted=True)
+
+    @app.get(
+        "/internal/game/promotions",
+        response_model=PaginatedPromotionRequestsResponse,
+    )
+    def game_promotions(
+        _: Annotated[None, Depends(authorize)],
+        state: str | None = Query(None, pattern="^(pending|approved|rejected|expired)$"),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> PaginatedPromotionRequestsResponse:
+        records, total = repository.list_promotion_requests_page(
+            state, page, page_size, clock()
+        )
+        return PaginatedPromotionRequestsResponse(
+            items=[_promotion_request_response(record) for record in records],
+            page=page,
+            page_size=page_size,
+            total=total,
+            pages=(total + page_size - 1) // page_size,
+        )
+
+    @app.post(
+        "/internal/game/users/{platform_id}/board-membership",
+        response_model=UserProfileResponse,
+    )
+    def set_board_membership(
+        platform_id: str,
+        request: SetBoardMembershipRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> UserProfileResponse:
+        profile = repository.set_board_membership(platform_id, request.member)
+        if profile is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        return _user_profile_response(profile)
+
     @app.get("/internal/game/users", response_model=PaginatedUsersResponse)
     def game_users(
         _: Annotated[None, Depends(authorize)],
@@ -306,12 +438,7 @@ def create_app(
         records, total = repository.list_users_page(page, page_size)
         return PaginatedUsersResponse(
             items=[
-                UserResponse(
-                    platform_id=record.platform_id,
-                    display_name=record.display_name,
-                    balance=record.balance,
-                    joined_at=record.joined_at,
-                )
+                _user_response(repository.get_user_profile(record.platform_id))
                 for record in records
             ],
             page=page,
@@ -881,6 +1008,70 @@ def _item_response(record) -> ItemResponse:
         price=record.price,
         stock=record.stock,
         enabled=record.enabled,
+    )
+
+
+def _rank_response(record) -> RankResponse:
+    return RankResponse(
+        id=record.id,
+        sort_order=record.sort_order,
+        name=record.name,
+        level_label=record.level_label,
+        promotion_price=record.promotion_price,
+        vote_weight=record.vote_weight,
+        multiplayer_game_limit=record.multiplayer_game_limit,
+        has_group_management=record.has_group_management,
+        is_board=record.is_board,
+        enabled=record.enabled,
+    )
+
+
+def _department_response(record) -> DepartmentResponse:
+    return DepartmentResponse(
+        id=record.id,
+        name=record.name,
+        description=record.description,
+        is_default=record.is_default,
+        enabled=record.enabled,
+    )
+
+
+def _user_response(profile) -> UserResponse:
+    if profile is None:
+        raise RuntimeError("employee profile is missing")
+    return UserResponse(
+        platform_id=profile.user.platform_id,
+        display_name=profile.user.display_name,
+        balance=profile.user.balance,
+        joined_at=profile.user.joined_at,
+        rank_name=profile.rank.name,
+        rank_level_label=profile.rank.level_label,
+        department_name=profile.department.name,
+    )
+
+
+def _user_profile_response(profile) -> UserProfileResponse:
+    return UserProfileResponse(
+        platform_id=profile.user.platform_id,
+        display_name=profile.user.display_name,
+        balance=profile.user.balance,
+        rank=_rank_response(profile.rank),
+        department=_department_response(profile.department),
+    )
+
+
+def _promotion_request_response(record) -> PromotionRequestResponse:
+    return PromotionRequestResponse(
+        number=record.number,
+        applicant_platform_id=record.applicant_platform_id,
+        applicant_name=record.applicant_name,
+        source_rank_name=record.source_rank_name,
+        target_rank_name=record.target_rank_name,
+        price=record.price,
+        state=record.state,
+        requested_at=record.requested_at,
+        expires_at=record.expires_at,
+        decided_at=record.decided_at,
     )
 
 

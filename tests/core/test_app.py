@@ -141,7 +141,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降"
+        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/加入部门", "/切换部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
     }
     assert disabled.json()["enabled"] is False
     assert employees.json() == {
@@ -167,6 +167,41 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
         "total": 1,
         "pages": 1,
     }
+
+
+def test_rank_department_and_promotion_management_endpoints(app_context, client, headers):
+    ranks = client.get("/internal/game/ranks", headers=headers)
+    departments = client.get(
+        "/internal/game/departments?page=1&page_size=20", headers=headers
+    )
+    created_department = client.post(
+        "/internal/game/departments",
+        headers=headers,
+        json={"name": "运营部", "description": "负责运营。"},
+    )
+    app_context.repository.create_user("u1", "小明", NOW, 80)
+    requested = app_context.repository.request_promotion("u1", NOW)
+    promotions = client.get(
+        "/internal/game/promotions?state=pending&page=1&page_size=20",
+        headers=headers,
+    )
+    board = client.post(
+        "/internal/game/users/u1/board-membership",
+        headers=headers,
+        json={"member": True},
+    )
+
+    assert ranks.status_code == 200
+    assert ranks.json()[0]["name"] == "实习生"
+    assert departments.status_code == 200
+    assert departments.json()["items"][0]["name"] == "未分配部门"
+    assert created_department.status_code == 201
+    assert created_department.json()["name"] == "运营部"
+    assert requested.status == "requested"
+    assert promotions.status_code == 200
+    assert promotions.json()["items"][0]["number"] == requested.number
+    assert board.status_code == 200
+    assert board.json()["rank"]["name"] == "核心董事会"
 
 
 def test_game_management_returns_paginated_employees_and_items(

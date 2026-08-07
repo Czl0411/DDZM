@@ -122,6 +122,89 @@ class UserResponse(ApiModel):
     display_name: str
     balance: int
     joined_at: datetime
+    rank_name: str
+    rank_level_label: str
+    department_name: str
+
+
+class RankResponse(ApiModel):
+    id: UUID
+    sort_order: int
+    name: str
+    level_label: str
+    promotion_price: int
+    vote_weight: int
+    multiplayer_game_limit: int
+    has_group_management: bool
+    is_board: bool
+    enabled: bool
+
+
+class UpdateRankRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=64)
+    promotion_price: int = Field(ge=0, le=99999)
+    vote_weight: int = Field(ge=0, le=99)
+    multiplayer_game_limit: int = Field(ge=-1, le=999)
+    has_group_management: bool
+    enabled: bool
+
+
+class DepartmentResponse(ApiModel):
+    id: UUID
+    name: str
+    description: str
+    is_default: bool
+    enabled: bool
+
+
+class CreateDepartmentRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=64)
+    description: str = Field(default="", max_length=2000)
+
+
+class UpdateDepartmentRequest(CreateDepartmentRequest):
+    enabled: bool
+
+
+class PaginatedDepartmentsResponse(ApiModel):
+    items: list[DepartmentResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
+class PromotionRequestResponse(ApiModel):
+    number: int
+    applicant_platform_id: str
+    applicant_name: str
+    source_rank_name: str
+    target_rank_name: str
+    price: int
+    state: str
+    requested_at: datetime
+    expires_at: datetime
+    decided_at: datetime | None
+
+
+class PaginatedPromotionRequestsResponse(ApiModel):
+    items: list[PromotionRequestResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
+class SetBoardMembershipRequest(ApiModel):
+    member: bool
+
+
+class UserProfileResponse(ApiModel):
+    platform_id: str
+    display_name: str
+    balance: int
+    rank: RankResponse
+    department: DepartmentResponse
 
 
 class ItemResponse(ApiModel):

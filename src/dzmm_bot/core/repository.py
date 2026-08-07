@@ -354,6 +354,20 @@ class PromotionRequestSummary:
 
 
 @dataclass(frozen=True)
+class PromotionRequestAdminSummary:
+    number: int
+    applicant_platform_id: str
+    applicant_name: str
+    source_rank_name: str
+    target_rank_name: str
+    price: int
+    state: str
+    requested_at: datetime
+    expires_at: datetime
+    decided_at: datetime | None
+
+
+@dataclass(frozen=True)
 class ManualLoginLease:
     operator_id: str
     operator_name: str
@@ -3207,7 +3221,157 @@ class CoreRepository:
     def list_departments(self) -> list[DepartmentRecord]:
         with self._session() as session:
             self._ensure_organization_defaults(session)
-            return list(session.scalars(select(DepartmentRecord).order_by(DepartmentRecord.name)))
+            return list(
+                session.scalars(
+                    select(DepartmentRecord).order_by(
+                        DepartmentRecord.is_default.desc(), DepartmentRecord.name
+                    )
+                )
+            )
+
+    def update_rank(
+        self,
+        rank_id: UUID,
+        *,
+        name: str,
+        promotion_price: int,
+        vote_weight: int,
+        multiplayer_game_limit: int,
+        has_group_management: bool,
+        enabled: bool,
+    ) -> RankRecord | None:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("职位名称不能为空")
+        with self._session() as session:
+            self._ensure_organization_defaults(session)
+            rank = session.get(RankRecord, rank_id)
+            if rank is None:
+                return None
+            if rank.is_board and not enabled:
+                raise ValueError("核心董事会不能停用")
+            conflict = session.scalar(
+                select(RankRecord.id).where(
+                    RankRecord.name == normalized_name, RankRecord.id != rank_id
+                )
+            )
+            if conflict is not None:
+                raise ValueError("职位名称已存在")
+            rank.name = normalized_name
+            rank.promotion_price = promotion_price
+            rank.vote_weight = vote_weight
+            rank.multiplayer_game_limit = multiplayer_game_limit
+            rank.has_group_management = has_group_management
+            rank.enabled = enabled
+            session.flush()
+            return rank
+
+    def list_departments_page(
+        self, page: int, page_size: int
+    ) -> tuple[list[DepartmentRecord], int]:
+        with self._session() as session:
+            self._ensure_organization_defaults(session)
+            total = int(
+                session.scalar(select(func.count()).select_from(DepartmentRecord)) or 0
+            )
+            departments = list(
+                session.scalars(
+                    select(DepartmentRecord)
+                    .order_by(DepartmentRecord.is_default.desc(), DepartmentRecord.name)
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            return departments, total
+
+    def create_department(self, name: str, description: str) -> DepartmentRecord:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("部门名称不能为空")
+        with self._session() as session:
+            self._ensure_organization_defaults(session)
+            if session.scalar(
+                select(DepartmentRecord.id).where(DepartmentRecord.name == normalized_name)
+            ) is not None:
+                raise ValueError("部门已存在")
+            department = DepartmentRecord(
+                name=normalized_name,
+                description=description.strip(),
+                is_default=False,
+                enabled=True,
+            )
+            session.add(department)
+            session.flush()
+            return department
+
+    def update_department(
+        self, department_id: UUID, *, name: str, description: str, enabled: bool
+    ) -> DepartmentRecord | None:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("部门名称不能为空")
+        with self._session() as session:
+            self._ensure_organization_defaults(session)
+            department = session.get(DepartmentRecord, department_id)
+            if department is None:
+                return None
+            if department.is_default and (
+                department.name != normalized_name or not enabled
+            ):
+                raise ValueError("未分配部门不能重命名或停用")
+            conflict = session.scalar(
+                select(DepartmentRecord.id).where(
+                    DepartmentRecord.name == normalized_name,
+                    DepartmentRecord.id != department_id,
+                )
+            )
+            if conflict is not None:
+                raise ValueError("部门已存在")
+            department.name = normalized_name
+            department.description = description.strip()
+            department.enabled = enabled
+            session.flush()
+            return department
+
+    def delete_department(self, department_id: UUID) -> bool:
+        with self._session() as session:
+            self._ensure_organization_defaults(session)
+            department = session.get(DepartmentRecord, department_id)
+            if department is None:
+                return False
+            if department.is_default:
+                raise ValueError("未分配部门不能删除")
+            has_employee = session.scalar(
+                select(exists().where(UserRecord.department_id == department_id))
+            )
+            if has_employee:
+                raise ValueError("部门仍有员工，不能删除")
+            session.delete(department)
+            return True
+
+    def set_board_membership(
+        self, platform_id: str, member: bool
+    ) -> UserProfile | None:
+        with self.transaction():
+            with self._session() as session:
+                self._ensure_organization_defaults(session)
+                employee = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if employee is None:
+                    return None
+                target_order = 11 if member else 10
+                target_rank = session.scalar(
+                    select(RankRecord).where(RankRecord.sort_order == target_order)
+                )
+                department = session.get(DepartmentRecord, employee.department_id)
+                if target_rank is None or department is None:
+                    raise RuntimeError("organization defaults are missing")
+                employee.rank_id = target_rank.id
+                session.flush()
+                return UserProfile(employee, target_rank, department)
 
     def join_department(
         self, platform_id: str, department_name: str
@@ -3422,6 +3586,50 @@ class CoreRepository:
                 )
                 for request, employee, source, target in rows
             ]
+
+    def list_promotion_requests_page(
+        self, state: str | None, page: int, page_size: int, now: datetime
+    ) -> tuple[list[PromotionRequestAdminSummary], int]:
+        with self._session() as session:
+            self._expire_promotion_requests(session, now)
+            source_rank = aliased(RankRecord)
+            target_rank = aliased(RankRecord)
+            statement = (
+                select(PromotionRequestRecord, UserRecord, source_rank, target_rank)
+                .join(UserRecord, PromotionRequestRecord.applicant_id == UserRecord.id)
+                .join(source_rank, PromotionRequestRecord.source_rank_id == source_rank.id)
+                .join(target_rank, PromotionRequestRecord.target_rank_id == target_rank.id)
+            )
+            count_statement = select(func.count()).select_from(PromotionRequestRecord)
+            if state is not None:
+                statement = statement.where(PromotionRequestRecord.state == state)
+                count_statement = count_statement.where(
+                    PromotionRequestRecord.state == state
+                )
+            total = int(session.scalar(count_statement) or 0)
+            rows = session.execute(
+                statement.order_by(PromotionRequestRecord.number.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+            return (
+                [
+                    PromotionRequestAdminSummary(
+                        number=request.number,
+                        applicant_platform_id=employee.platform_id,
+                        applicant_name=employee.display_name,
+                        source_rank_name=source.name,
+                        target_rank_name=target.name,
+                        price=request.price,
+                        state=request.state,
+                        requested_at=request.requested_at,
+                        expires_at=request.expires_at,
+                        decided_at=request.decided_at,
+                    )
+                    for request, employee, source, target in rows
+                ],
+                total,
+            )
 
     @staticmethod
     def _expire_promotion_requests(session: Session, now: datetime) -> None:

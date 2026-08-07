@@ -97,6 +97,8 @@ _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
     {
         "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助",
         "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降",
+        "/加入部门", "/切换部门", "/职位", "/晋升", "/晋升申请列表",
+        "/同意", "/全部同意", "/拒绝", "/全部拒绝",
     }
 )
 _DEFAULT_HIDE_AND_SEEK_ENTRY_FEE = 1
@@ -335,6 +337,23 @@ class PromotionDecisionResult:
 
 
 @dataclass(frozen=True)
+class DepartmentChangeResult:
+    status: str
+    department: DepartmentRecord | None = None
+
+
+@dataclass(frozen=True)
+class PromotionRequestSummary:
+    number: int
+    applicant_platform_id: str
+    applicant_name: str
+    source_rank_name: str
+    target_rank_name: str
+    price: int
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
 class ManualLoginLease:
     operator_id: str
     operator_name: str
@@ -364,6 +383,15 @@ _COMMAND_DEFINITIONS = (
     ("/继续", "继续当前单人记忆考核"),
     ("/收手", "结算当前单人记忆考核的奖励"),
     ("/投降", "退出当前记忆考核对战"),
+    ("/加入部门", "从未分配状态加入一个部门"),
+    ("/切换部门", "切换至一个已开放部门"),
+    ("/职位", "查看职位和对应群内权益"),
+    ("/晋升", "申请下一档职位"),
+    ("/晋升申请列表", "查看可处理的晋升申请"),
+    ("/同意", "同意指定编号的晋升申请"),
+    ("/全部同意", "同意全部可处理的晋升申请"),
+    ("/拒绝", "拒绝指定编号的晋升申请"),
+    ("/全部拒绝", "拒绝全部可处理的晋升申请"),
 )
 
 
@@ -3181,6 +3209,54 @@ class CoreRepository:
             self._ensure_organization_defaults(session)
             return list(session.scalars(select(DepartmentRecord).order_by(DepartmentRecord.name)))
 
+    def join_department(
+        self, platform_id: str, department_name: str
+    ) -> DepartmentChangeResult:
+        with self.transaction():
+            with self._session() as session:
+                _, default_department = self._ensure_organization_defaults(session)
+                employee = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if employee is None:
+                    return DepartmentChangeResult("not_joined")
+                department = session.scalar(
+                    select(DepartmentRecord).where(DepartmentRecord.name == department_name)
+                )
+                if department is None or not department.enabled:
+                    return DepartmentChangeResult("unknown_department")
+                if employee.department_id != default_department.id:
+                    return DepartmentChangeResult("already_assigned")
+                employee.department_id = department.id
+                session.flush()
+                return DepartmentChangeResult("joined", department)
+
+    def switch_department(
+        self, platform_id: str, department_name: str
+    ) -> DepartmentChangeResult:
+        with self.transaction():
+            with self._session() as session:
+                self._ensure_organization_defaults(session)
+                employee = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if employee is None:
+                    return DepartmentChangeResult("not_joined")
+                department = session.scalar(
+                    select(DepartmentRecord).where(DepartmentRecord.name == department_name)
+                )
+                if department is None or not department.enabled:
+                    return DepartmentChangeResult("unknown_department")
+                if employee.department_id == department.id:
+                    return DepartmentChangeResult("already_in_department", department)
+                employee.department_id = department.id
+                session.flush()
+                return DepartmentChangeResult("switched", department)
+
     def request_promotion(
         self, platform_id: str, requested_at: datetime
     ) -> PromotionRequestResult:
@@ -3305,6 +3381,58 @@ class CoreRepository:
                     results.append(PromotionDecisionResult(number, decision))
                 session.flush()
                 return results
+
+    def list_approvable_promotions(
+        self, approver_platform_id: str, now: datetime
+    ) -> list[PromotionRequestSummary]:
+        with self._session() as session:
+            self._expire_promotion_requests(session, now)
+            approver = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == approver_platform_id)
+            )
+            if approver is None:
+                return []
+            approver_rank = session.get(RankRecord, approver.rank_id)
+            if approver_rank is None:
+                raise RuntimeError("approver rank is missing")
+            source_rank = aliased(RankRecord)
+            target_rank = aliased(RankRecord)
+            rows = session.execute(
+                select(PromotionRequestRecord, UserRecord, source_rank, target_rank)
+                .join(UserRecord, PromotionRequestRecord.applicant_id == UserRecord.id)
+                .join(source_rank, PromotionRequestRecord.source_rank_id == source_rank.id)
+                .join(target_rank, PromotionRequestRecord.target_rank_id == target_rank.id)
+                .join(RankRecord, UserRecord.rank_id == RankRecord.id)
+                .where(
+                    PromotionRequestRecord.state == "pending",
+                    UserRecord.id != approver.id,
+                    RankRecord.sort_order < approver_rank.sort_order,
+                )
+                .order_by(PromotionRequestRecord.number)
+            )
+            return [
+                PromotionRequestSummary(
+                    number=request.number,
+                    applicant_platform_id=employee.platform_id,
+                    applicant_name=employee.display_name,
+                    source_rank_name=source.name,
+                    target_rank_name=target.name,
+                    price=request.price,
+                    expires_at=request.expires_at,
+                )
+                for request, employee, source, target in rows
+            ]
+
+    @staticmethod
+    def _expire_promotion_requests(session: Session, now: datetime) -> None:
+        session.execute(
+            update(PromotionRequestRecord)
+            .where(
+                PromotionRequestRecord.state == "pending",
+                PromotionRequestRecord.expires_at <= now,
+            )
+            .values(state="expired", decided_at=now)
+        )
 
     def check_in(self, user: UserRecord, checked_in_at: datetime, reward: int) -> bool:
         with self.transaction():

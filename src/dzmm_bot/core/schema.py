@@ -500,6 +500,45 @@ class PromotionApprovalRecord(Base):
     decided_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class DepartmentRequestRecord(Base):
+    __tablename__ = "department_requests"
+    __table_args__ = (
+        Index(
+            "ux_department_requests_pending_employee",
+            "applicant_id",
+            unique=True,
+            sqlite_where=text("state = 'pending'"),
+            postgresql_where=text("state = 'pending'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, unique=True, default=uuid4, nullable=False)
+    number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    applicant_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    source_department_id: Mapped[UUID] = mapped_column(
+        ForeignKey("departments.id"), nullable=False
+    )
+    target_department_id: Mapped[UUID] = mapped_column(
+        ForeignKey("departments.id"), nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class DepartmentApprovalRecord(Base):
+    __tablename__ = "department_approvals"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    request_id: Mapped[UUID] = mapped_column(
+        ForeignKey("department_requests.id"), unique=True, nullable=False
+    )
+    approver_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class DailyCheckinRecord(Base):
     __tablename__ = "daily_checkins"
     __table_args__ = (UniqueConstraint("user_id", "checkin_date"),)

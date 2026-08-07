@@ -100,6 +100,75 @@ def test_new_employee_has_default_rank_and_department(repository, now):
     assert profile.department.name == "未分配部门"
 
 
+def test_department_application_changes_department_only_after_eligible_approval(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
+
+    applicant, _ = repository.create_user("employee-1", "小明", now, 0)
+    approver, _ = repository.create_user("employee-2", "小红", now, 0)
+    with session_factory.begin() as session:
+        target = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
+        )
+        rank_two = session.scalar(select(RankRecord).where(RankRecord.sort_order == 2))
+        approver_record = session.get(UserRecord, approver.id)
+        assert target is not None
+        assert rank_two is not None
+        assert approver_record is not None
+        approver_record.department_id = target.id
+        approver_record.rank_id = rank_two.id
+
+    request = repository.request_department_change("employee-1", "核心技术部", now)
+
+    assert request.status == "requested"
+    assert repository.get_user_profile("employee-1").department.name == "未分配部门"
+    assert [result.status for result in repository.decide_department_requests(
+        "employee-2", [request.number], "approved", now
+    )] == ["approved"]
+    assert repository.get_user_profile("employee-1").department.name == "核心技术部"
+
+
+def test_department_application_enforces_approver_eligibility_and_expiry(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
+
+    for platform_id in ("applicant", "same-rank", "other-department", "eligible"):
+        repository.create_user(platform_id, platform_id, now, 0)
+    with session_factory.begin() as session:
+        target = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
+        )
+        other = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "学院")
+        )
+        rank_two = session.scalar(select(RankRecord).where(RankRecord.sort_order == 2))
+        assert target is not None
+        assert other is not None
+        assert rank_two is not None
+        for platform_id in ("other-department", "eligible"):
+            employee = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            assert employee is not None
+            employee.rank_id = rank_two.id
+        session.scalar(select(UserRecord).where(UserRecord.platform_id == "same-rank")).department_id = target.id
+        session.scalar(select(UserRecord).where(UserRecord.platform_id == "other-department")).department_id = other.id
+        session.scalar(select(UserRecord).where(UserRecord.platform_id == "eligible")).department_id = target.id
+
+    request = repository.request_department_change("applicant", "核心技术部", now)
+    assert repository.decide_department_requests("same-rank", [request.number], "approved", now)[0].status == "not_authorized"
+    assert repository.decide_department_requests("other-department", [request.number], "approved", now)[0].status == "not_authorized"
+    assert repository.decide_department_requests("eligible", [request.number], "rejected", now)[0].status == "rejected"
+    assert repository.get_user_profile("applicant").department.name == "未分配部门"
+
+    expired = repository.request_department_change("applicant", "核心技术部", now)
+    later = now + timedelta(hours=24)
+    assert repository.decide_department_requests("eligible", [expired.number], "approved", later)[0].status == "expired"
+    assert repository.get_user_profile("applicant").department.name == "未分配部门"
+
+
 def test_eligible_approval_charges_once_and_records_audit(repository, session_factory, now):
     from dzmm_bot.core.schema import PromotionApprovalRecord, RankRecord, UserRecord
 

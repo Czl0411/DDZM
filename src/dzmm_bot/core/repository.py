@@ -51,6 +51,8 @@ from .schema import (
     RandomEventSceneSeatRecord,
     RandomEventSettingsRecord,
     DepartmentRecord,
+    DepartmentApprovalRecord,
+    DepartmentRequestRecord,
     RankRecord,
     PromotionApprovalRecord,
     PromotionRequestRecord,
@@ -343,6 +345,24 @@ class DepartmentChangeResult:
 
 
 @dataclass(frozen=True)
+class DepartmentRequestResult:
+    status: str
+    request: DepartmentRequestRecord | None = None
+
+    @property
+    def number(self) -> int:
+        if self.request is None:
+            raise RuntimeError("department request is missing")
+        return self.request.number
+
+
+@dataclass(frozen=True)
+class DepartmentDecisionResult:
+    number: int
+    status: str
+
+
+@dataclass(frozen=True)
 class PromotionRequestSummary:
     number: int
     applicant_platform_id: str
@@ -365,6 +385,31 @@ class PromotionRequestAdminSummary:
     requested_at: datetime
     expires_at: datetime
     decided_at: datetime | None
+
+
+@dataclass(frozen=True)
+class DepartmentRequestSummary:
+    number: int
+    applicant_platform_id: str
+    applicant_name: str
+    source_department_name: str
+    target_department_name: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
+class DepartmentRequestAdminSummary:
+    number: int
+    applicant_platform_id: str
+    applicant_name: str
+    source_department_name: str
+    target_department_name: str
+    state: str
+    requested_at: datetime
+    expires_at: datetime
+    decided_at: datetime | None
+    approver_name: str | None
+    decision: str | None
 
 
 @dataclass(frozen=True)
@@ -3420,6 +3465,259 @@ class CoreRepository:
                 employee.department_id = department.id
                 session.flush()
                 return DepartmentChangeResult("switched", department)
+
+    def request_department_change(
+        self, platform_id: str, department_name: str, requested_at: datetime
+    ) -> DepartmentRequestResult:
+        normalized_name = department_name.strip()
+        with self.transaction():
+            with self._session() as session:
+                _, default_department = self._ensure_organization_defaults(session)
+                employee = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if employee is None:
+                    return DepartmentRequestResult("not_joined")
+                source_department = session.get(DepartmentRecord, employee.department_id)
+                if source_department is None:
+                    raise RuntimeError("employee department is missing")
+                target_department = session.scalar(
+                    select(DepartmentRecord).where(DepartmentRecord.name == normalized_name)
+                )
+                if target_department is None or not target_department.enabled:
+                    return DepartmentRequestResult("unknown_department")
+                if target_department.id == source_department.id:
+                    return DepartmentRequestResult("already_in_department")
+                if (
+                    source_department.id != default_department.id
+                    and source_department.is_default is False
+                    and target_department.is_default
+                ):
+                    return DepartmentRequestResult("unknown_department")
+                existing = session.scalar(
+                    select(DepartmentRequestRecord).where(
+                        DepartmentRequestRecord.applicant_id == employee.id,
+                        DepartmentRequestRecord.state == "pending",
+                    )
+                )
+                if existing is not None:
+                    return DepartmentRequestResult("already_pending", existing)
+                request = DepartmentRequestRecord(
+                    applicant_id=employee.id,
+                    source_department_id=source_department.id,
+                    target_department_id=target_department.id,
+                    state="pending",
+                    requested_at=requested_at,
+                    expires_at=requested_at + timedelta(hours=24),
+                )
+                session.add(request)
+                session.flush()
+                return DepartmentRequestResult("requested", request)
+
+    def decide_department_requests(
+        self,
+        approver_platform_id: str,
+        numbers: list[int],
+        decision: str,
+        decided_at: datetime,
+    ) -> list[DepartmentDecisionResult]:
+        if decision not in {"approved", "rejected"}:
+            raise ValueError("部门审批结果无效")
+        requested_numbers = list(dict.fromkeys(numbers))
+        if not requested_numbers:
+            return []
+        with self.transaction():
+            with self._session() as session:
+                self._ensure_organization_defaults(session)
+                approver = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == approver_platform_id)
+                    .with_for_update()
+                )
+                if approver is None:
+                    return [
+                        DepartmentDecisionResult(number, "not_joined")
+                        for number in requested_numbers
+                    ]
+                approver_rank = session.get(RankRecord, approver.rank_id)
+                if approver_rank is None:
+                    raise RuntimeError("approver rank is missing")
+                results: list[DepartmentDecisionResult] = []
+                for number in requested_numbers:
+                    request = session.scalar(
+                        select(DepartmentRequestRecord)
+                        .where(DepartmentRequestRecord.number == number)
+                        .with_for_update()
+                    )
+                    if request is None:
+                        results.append(DepartmentDecisionResult(number, "not_found"))
+                        continue
+                    if request.state != "pending":
+                        results.append(DepartmentDecisionResult(number, "already_decided"))
+                        continue
+                    if request.expires_at <= decided_at:
+                        request.state = "expired"
+                        request.decided_at = decided_at
+                        results.append(DepartmentDecisionResult(number, "expired"))
+                        continue
+                    applicant = session.get(UserRecord, request.applicant_id)
+                    applicant_rank = None if applicant is None else session.get(RankRecord, applicant.rank_id)
+                    target_department = session.get(DepartmentRecord, request.target_department_id)
+                    if (
+                        applicant is None
+                        or applicant_rank is None
+                        or target_department is None
+                        or not target_department.enabled
+                        or applicant.id == approver.id
+                        or approver.department_id != request.target_department_id
+                        or approver_rank.sort_order <= applicant_rank.sort_order
+                    ):
+                        results.append(DepartmentDecisionResult(number, "not_authorized"))
+                        continue
+                    request.state = decision
+                    request.decided_at = decided_at
+                    if decision == "approved":
+                        applicant.department_id = request.target_department_id
+                    session.add(
+                        DepartmentApprovalRecord(
+                            request_id=request.id,
+                            approver_id=approver.id,
+                            decision=decision,
+                            decided_at=decided_at,
+                        )
+                    )
+                    results.append(DepartmentDecisionResult(number, decision))
+                session.flush()
+                return results
+
+    def list_approvable_department_requests(
+        self, approver_platform_id: str, now: datetime
+    ) -> list[DepartmentRequestSummary]:
+        with self._session() as session:
+            self._expire_department_requests(session, now)
+            approver = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == approver_platform_id)
+            )
+            if approver is None:
+                return []
+            approver_rank = session.get(RankRecord, approver.rank_id)
+            if approver_rank is None:
+                raise RuntimeError("approver rank is missing")
+            source_department = aliased(DepartmentRecord)
+            target_department = aliased(DepartmentRecord)
+            applicant_rank = aliased(RankRecord)
+            rows = session.execute(
+                select(
+                    DepartmentRequestRecord,
+                    UserRecord,
+                    source_department,
+                    target_department,
+                )
+                .join(UserRecord, DepartmentRequestRecord.applicant_id == UserRecord.id)
+                .join(
+                    source_department,
+                    DepartmentRequestRecord.source_department_id == source_department.id,
+                )
+                .join(
+                    target_department,
+                    DepartmentRequestRecord.target_department_id == target_department.id,
+                )
+                .join(applicant_rank, UserRecord.rank_id == applicant_rank.id)
+                .where(
+                    DepartmentRequestRecord.state == "pending",
+                    DepartmentRequestRecord.target_department_id == approver.department_id,
+                    UserRecord.id != approver.id,
+                    applicant_rank.sort_order < approver_rank.sort_order,
+                    target_department.enabled.is_(True),
+                )
+                .order_by(DepartmentRequestRecord.number)
+            )
+            return [
+                DepartmentRequestSummary(
+                    number=request.number,
+                    applicant_platform_id=employee.platform_id,
+                    applicant_name=employee.display_name,
+                    source_department_name=source.name,
+                    target_department_name=target.name,
+                    expires_at=request.expires_at,
+                )
+                for request, employee, source, target in rows
+            ]
+
+    def list_department_requests_page(
+        self, state: str | None, page: int, page_size: int, now: datetime
+    ) -> tuple[list[DepartmentRequestAdminSummary], int]:
+        with self._session() as session:
+            self._expire_department_requests(session, now)
+            source_department = aliased(DepartmentRecord)
+            target_department = aliased(DepartmentRecord)
+            approver = aliased(UserRecord)
+            statement = (
+                select(
+                    DepartmentRequestRecord,
+                    UserRecord,
+                    source_department,
+                    target_department,
+                    DepartmentApprovalRecord,
+                    approver,
+                )
+                .join(UserRecord, DepartmentRequestRecord.applicant_id == UserRecord.id)
+                .join(
+                    source_department,
+                    DepartmentRequestRecord.source_department_id == source_department.id,
+                )
+                .join(
+                    target_department,
+                    DepartmentRequestRecord.target_department_id == target_department.id,
+                )
+                .outerjoin(
+                    DepartmentApprovalRecord,
+                    DepartmentApprovalRecord.request_id == DepartmentRequestRecord.id,
+                )
+                .outerjoin(approver, DepartmentApprovalRecord.approver_id == approver.id)
+            )
+            count_statement = select(func.count()).select_from(DepartmentRequestRecord)
+            if state is not None:
+                statement = statement.where(DepartmentRequestRecord.state == state)
+                count_statement = count_statement.where(DepartmentRequestRecord.state == state)
+            total = int(session.scalar(count_statement) or 0)
+            rows = session.execute(
+                statement.order_by(DepartmentRequestRecord.number.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+            return (
+                [
+                    DepartmentRequestAdminSummary(
+                        number=request.number,
+                        applicant_platform_id=employee.platform_id,
+                        applicant_name=employee.display_name,
+                        source_department_name=source.name,
+                        target_department_name=target.name,
+                        state=request.state,
+                        requested_at=request.requested_at,
+                        expires_at=request.expires_at,
+                        decided_at=request.decided_at,
+                        approver_name=None if approval is None else approved_by.display_name,
+                        decision=None if approval is None else approval.decision,
+                    )
+                    for request, employee, source, target, approval, approved_by in rows
+                ],
+                total,
+            )
+
+    @staticmethod
+    def _expire_department_requests(session: Session, now: datetime) -> None:
+        session.execute(
+            update(DepartmentRequestRecord)
+            .where(
+                DepartmentRequestRecord.state == "pending",
+                DepartmentRequestRecord.expires_at <= now,
+            )
+            .values(state="expired", decided_at=now)
+        )
 
     def request_promotion(
         self, platform_id: str, requested_at: datetime

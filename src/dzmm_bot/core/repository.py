@@ -2194,6 +2194,11 @@ class CoreRepository:
                 return "participant"
         return "observer_invalid"
 
+    def active_random_event_state(self) -> str | None:
+        with self._session() as session:
+            event = self._active_random_event(session)
+            return None if event is None else event.state
+
     def classify_random_event_message(self, platform_id: str, content: str) -> str:
         if content.lstrip().startswith("/") or not content.strip():
             return "none"

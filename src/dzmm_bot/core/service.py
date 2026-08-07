@@ -54,6 +54,13 @@ class CoreService:
                 replies.append(
                     CommandReply("当前随机事件进行中，旁观请用（内容）或 (内容) 的形式发言。")
                 )
+            event_state = self._repository.active_random_event_state()
+            if event_state is not None and not _allows_random_event_command(
+                message.content, event_state
+            ):
+                for reply_index, reply in enumerate(replies):
+                    self._repository.enqueue_outbound(stored.id, reply.text, reply_index)
+                return ReceiveResult(stored.id, True)
             reply = self._command_handler.handle(message)
             if isinstance(reply, list):
                 replies.extend(
@@ -81,3 +88,14 @@ class CoreService:
                     memory_round_id=reply.memory_round_id,
                 )
             return ReceiveResult(stored.id, True)
+
+
+def _allows_random_event_command(content: str, event_state: str) -> bool:
+    parts = content.strip().split(maxsplit=1)
+    if not parts:
+        return False
+    if parts[0] == "/退出":
+        return True
+    return event_state == "signup" and parts[0] == "/加入" and len(parts) == 2 and bool(
+        parts[1].strip()
+    )

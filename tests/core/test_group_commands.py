@@ -206,6 +206,37 @@ def test_random_event_commands_join_count_rounds_and_settle_on_exit():
     assert "领取 4 摸鱼币" in _latest_reply(factory)
 
 
+@pytest.mark.parametrize("seat_count", [2, 1])
+def test_random_event_blocks_checkin_but_keeps_required_event_actions(seat_count):
+    from dzmm_bot.core.schema import UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "茶水间", "咖啡机突然发出一声巨响。", ["正式开始。"], 4, 1, [("员工", seat_count)]
+    )
+    repository.set_random_event_settings(["10:00"], "可选身份：{可选身份}", 15, 5)
+    _receive(service, "join-1", "u1", "/入职 小明", now)
+    _receive(service, "join-2", "u2", "/入职 小红", now)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+
+    if seat_count == 1:
+        _receive(service, "start-event", "u2", "/加入 员工", now)
+
+    checkin = _receive(service, f"checkin-{seat_count}", "u1", "/打卡", now)
+    assert _replies_for(factory, checkin.message_id) == []
+    with factory() as session:
+        employee = session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "u1")
+        )
+        assert employee.balance == 0
+
+    if seat_count == 2:
+        joined = _receive(service, "event-join", "u1", "/加入 员工", now)
+        assert "已加入随机事件" in _replies_for(factory, joined.message_id)[0]
+
+
 def test_hide_and_seek_short_commands_list_places_and_patrol(monkeypatch):
     service, _, factory = _service()
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)

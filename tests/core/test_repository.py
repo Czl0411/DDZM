@@ -130,6 +130,32 @@ def test_undercover_word_migration_seeds_nine_unique_categories():
     ) == 900
 
 
+def test_undercover_schema_declares_game_persistence_contract():
+    from dzmm_bot.core.schema import Base
+
+    tables = Base.metadata.tables
+
+    assert {
+        "undercover_settings",
+        "undercover_role_rules",
+        "direct_chats",
+        "undercover_sessions",
+        "undercover_session_members",
+        "undercover_games",
+        "undercover_game_players",
+        "undercover_votes",
+    } <= set(tables)
+    assert {"player_count"} == {
+        column.name
+        for column in tables["undercover_role_rules"].primary_key.columns
+    }
+    assert any(
+        {"game_id", "round_number", "voter_user_id"}
+        == {column.name for column in constraint.columns}
+        for constraint in tables["undercover_votes"].constraints
+    )
+
+
 def test_new_employee_has_default_rank_and_department(repository, now):
     repository.create_user("employee-1", "小明", now, 0)
 
@@ -1590,6 +1616,37 @@ def test_migration_seeds_undercover_word_library(migrated_postgres_url):
             for row in rows
         }
     ) == 900
+
+
+def test_undercover_migration_creates_game_tables_and_defaults(migrated_postgres_url):
+    engine = create_engine(migrated_postgres_url)
+    inspector = inspect(engine)
+
+    assert {
+        "undercover_settings",
+        "undercover_role_rules",
+        "direct_chats",
+        "undercover_sessions",
+        "undercover_session_members",
+        "undercover_games",
+        "undercover_game_players",
+        "undercover_votes",
+    } <= set(inspector.get_table_names())
+    assert "ux_undercover_one_active_session" in {
+        index["name"] for index in inspector.get_indexes("undercover_sessions")
+    }
+    assert {"destination_chatroom_id", "delivery_kind"} <= {
+        column["name"] for column in inspector.get_columns("outbound_messages")
+    }
+    with engine.connect() as connection:
+        rules = connection.execute(
+            text(
+                "SELECT player_count, civilian_count, undercover_count, whiteboard_count "
+                "FROM undercover_role_rules ORDER BY player_count"
+            )
+        ).all()
+
+    assert rules == [(4, 3, 1, 0), (5, 3, 1, 1), (6, 4, 1, 1), (7, 4, 2, 1), (8, 5, 2, 1)]
     assert "ix_worker_commands_claim" in {
         index["name"] for index in inspector.get_indexes("worker_commands")
     }

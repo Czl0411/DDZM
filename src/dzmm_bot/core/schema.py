@@ -179,6 +179,128 @@ class UndercoverWordSetRecord(Base):
     )
 
 
+class UndercoverSettingsRecord(Base):
+    __tablename__ = "undercover_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    vote_seconds: Mapped[int] = mapped_column(Integer, default=120, nullable=False)
+    whiteboard_win_remaining: Mapped[int] = mapped_column(
+        Integer, default=3, nullable=False
+    )
+
+
+class UndercoverRoleRuleRecord(Base):
+    __tablename__ = "undercover_role_rules"
+
+    player_count: Mapped[int] = mapped_column(Integer, primary_key=True)
+    civilian_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    undercover_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    whiteboard_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class DirectChatRecord(Base):
+    __tablename__ = "direct_chats"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    platform_user_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    chatroom_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    discovered_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class UndercoverSessionRecord(Base):
+    __tablename__ = "undercover_sessions"
+    __table_args__ = (
+        Index(
+            "ux_undercover_one_active_session",
+            "active_key",
+            unique=True,
+            sqlite_where=text("active_key IS NOT NULL"),
+            postgresql_where=text("active_key IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    active_key: Mapped[str | None] = mapped_column(String(32))
+    target_player_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    signup_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    await_continue_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, onupdate=beijing_now, nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class UndercoverSessionMemberRecord(Base):
+    __tablename__ = "undercover_session_members"
+    __table_args__ = (UniqueConstraint("session_id", "user_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("undercover_sessions.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    is_original: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    queued_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    left_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class UndercoverGameRecord(Base):
+    __tablename__ = "undercover_games"
+    __table_args__ = (UniqueConstraint("session_id", "round_number"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("undercover_sessions.id"), nullable=False
+    )
+    round_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    civilian_word: Mapped[str] = mapped_column(String(64), nullable=False)
+    undercover_word: Mapped[str] = mapped_column(String(64), nullable=False)
+    vote_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class UndercoverGamePlayerRecord(Base):
+    __tablename__ = "undercover_game_players"
+    __table_args__ = (
+        UniqueConstraint("game_id", "user_id"),
+        UniqueConstraint("game_id", "seat_number"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(ForeignKey("undercover_games.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    seat_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    card_delivery_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    card_outbound_message_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("outbound_messages.id"), unique=True
+    )
+
+
+class UndercoverVoteRecord(Base):
+    __tablename__ = "undercover_votes"
+    __table_args__ = (UniqueConstraint("game_id", "round_number", "voter_user_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(ForeignKey("undercover_games.id"), nullable=False)
+    round_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    voter_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    target_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class HideAndSeekDailyPlayRecord(Base):
     __tablename__ = "hide_and_seek_daily_plays"
     __table_args__ = (UniqueConstraint("user_id", "play_date"),)
@@ -650,6 +772,10 @@ class OutboundRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     inbound_message_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("inbound_messages.id")
+    )
+    destination_chatroom_id: Mapped[str | None] = mapped_column(String(255))
+    delivery_kind: Mapped[str] = mapped_column(
+        String(32), default="group", nullable=False
     )
     reply_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)

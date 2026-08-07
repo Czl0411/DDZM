@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from dzmm_bot.browser.aikda_socket import AikdaSocketGateway, _socket_client
-from dzmm_bot.runtime.contracts import InboundMessage
+from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage
 
 
 NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
@@ -62,6 +62,8 @@ class FakeRequest:
         self.calls.append((procedure, payload))
         if procedure == "user.getMe":
             return self.profile
+        if procedure == "chat.listAll":
+            return {"items": []}
         if procedure == "chatroom.getMessages":
             return {"messages": self.messages}
         raise AssertionError(f"unexpected procedure {procedure}")
@@ -233,6 +235,58 @@ def test_send_waits_for_server_join_before_emitting(gateway):
     adapter.send("余额：5 摸鱼币")
 
     assert socket.joined is True
+
+
+def test_gateway_discovers_only_direct_rooms_from_non_bot_history(gateway):
+    """Fails if group rooms or bot messages are considered employee direct chats."""
+    adapter, _, request = gateway
+    request.direct_rooms = [
+        {"data": {"chatroomId": "group-1", "chatType": "group"}},
+        {"data": {"chatroomId": "direct-1", "chatType": "one_on_one"}},
+        {"data": {"chatroomId": "direct-empty", "chatType": "one_on_one"}},
+    ]
+
+    def direct_request(procedure, payload=None):
+        request.calls.append((procedure, payload))
+        if procedure == "user.getMe":
+            return request.profile
+        if procedure == "chat.listAll":
+            return request.direct_rooms
+        if procedure == "chatroom.getMessages":
+            if payload["chatroomId"] == "direct-1":
+                return {"messages": [message("own", "bot-1", "已读"), message("dm", "employee-1", "你好")]}
+            return {"messages": [message("own-2", "bot-1", "已读")]}
+        raise AssertionError(f"unexpected procedure {procedure}")
+
+    adapter._request = direct_request
+
+    assert adapter.discover_direct_chats() == [
+        DirectChatRoom(platform_user_id="employee-1", chatroom_id="direct-1")
+    ]
+
+
+def test_send_to_uses_the_supplied_direct_chatroom(gateway):
+    """Fails if direct card messages are accidentally sent into the configured group."""
+    adapter, socket, _ = gateway
+
+    platform_message_id = adapter.send_to("direct-1", "你的身份：平民。词语：咖啡")
+
+    assert socket.calls == [
+        (
+            "message:send",
+            {
+                "chatroomId": "direct-1",
+                "message": {
+                    "message_id": platform_message_id,
+                    "sent_by": "bot-1",
+                    "chatroom_id": "direct-1",
+                    "sent_at": "2026-08-05T12:00:00Z",
+                    "content": {"type": "text", "text": "你的身份：平民。词语：咖啡"},
+                },
+            },
+            10,
+        )
+    ]
 
 
 def test_joined_event_without_payload_marks_the_gateway_ready(gateway):

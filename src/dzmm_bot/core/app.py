@@ -23,6 +23,7 @@ from .api_models import (
     CreateDepartmentRequest,
     CreateItemRequest,
     DailyJobsRequest,
+    DirectChatSyncRequest,
     FailedRequest,
     GameSettingsResponse,
     HealthResponse,
@@ -139,6 +140,16 @@ def create_app(
             message_id=result.message_id, accepted=result.inserted
         )
 
+    @app.post("/internal/direct-chats/sync", response_model=AcceptedResponse)
+    def sync_direct_chats(
+        request: DirectChatSyncRequest, _: Annotated[None, Depends(authorize)]
+    ) -> AcceptedResponse:
+        repository.upsert_direct_chats(
+            [(room.platform_user_id, room.chatroom_id) for room in request.rooms],
+            request.now,
+        )
+        return AcceptedResponse(accepted=True)
+
     @app.post(
         "/internal/outbound/claim",
         response_model=OutboundClaimResponse | None,
@@ -158,6 +169,8 @@ def create_app(
             lease_token=record.lease_token,
             lease_expires_at=record.lease_expires_at,
             attempt_count=record.attempt_count,
+            destination_chatroom_id=record.destination_chatroom_id,
+            delivery_kind=record.delivery_kind,
         )
 
     @app.post(

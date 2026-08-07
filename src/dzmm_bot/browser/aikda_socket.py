@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from dzmm_bot.runtime.contracts import InboundMessage
+from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage
 
 
 class AikdaSocketGateway:
@@ -55,26 +55,63 @@ class AikdaSocketGateway:
         return sorted(messages, key=lambda message: message.received_at)
 
     def send(self, text: str) -> str:
+        return self.send_to(self.chatroom_id, text)
+
+    def send_to(self, chatroom_id: str, text: str) -> str:
         self._ensure_connected()
+        if not chatroom_id:
+            raise ValueError("chatroom_id must be nonempty")
         if not text.strip():
             raise ValueError("text must be nonempty")
         message_id = str(uuid4())
         message = {
             "message_id": message_id,
             "sent_by": self._bot_id,
-            "chatroom_id": self.chatroom_id,
+            "chatroom_id": chatroom_id,
             "sent_at": _utc_iso(self._clock()),
             "content": {"type": "text", "text": text},
         }
         acknowledgement = self._socket.call(
             "message:send",
-            {"chatroomId": self.chatroom_id, "message": message},
+            {"chatroomId": chatroom_id, "message": message},
             timeout=10,
         )
         if not acknowledgement or acknowledgement.get("success") is not True:
             error = acknowledgement.get("error", "message acknowledgement failed") if acknowledgement else "message acknowledgement failed"
             raise RuntimeError(error)
         return message_id
+
+    def discover_direct_chats(self) -> list[DirectChatRoom]:
+        self._ensure_connected()
+        rooms = self._request("chat.listAll")
+        entries = rooms if isinstance(rooms, list) else rooms.get("items", [])
+        discovered: list[DirectChatRoom] = []
+        seen_users: set[str] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            data = entry.get("data")
+            if not isinstance(data, dict) or data.get("chatType") != "one_on_one":
+                continue
+            chatroom_id = data.get("chatroomId")
+            if not isinstance(chatroom_id, str) or not chatroom_id:
+                continue
+            history = self._request("chatroom.getMessages", {"chatroomId": chatroom_id})
+            user_id = next(
+                (
+                    message.get("sent_by")
+                    for message in history.get("messages", [])
+                    if isinstance(message, dict)
+                    and isinstance(message.get("sent_by"), str)
+                    and message["sent_by"] != self._bot_id
+                ),
+                None,
+            )
+            if user_id is None or user_id in seen_users:
+                continue
+            seen_users.add(user_id)
+            discovered.append(DirectChatRoom(user_id, chatroom_id))
+        return discovered
 
     def retract(self, message_id: str) -> None:
         self._ensure_connected()

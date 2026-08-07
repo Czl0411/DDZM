@@ -209,6 +209,81 @@ def test_undercover_requires_direct_chat_then_deals_configured_roles(
     assert sorted(result.roles) == ["civilian", "civilian", "civilian", "undercover"]
 
 
+def test_undercover_cards_are_direct_and_group_opening_waits_for_delivery(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import OutboundRecord, UndercoverGamePlayerRecord
+
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.start_undercover_signup(platform_ids[0], 4, now)
+    for platform_id in platform_ids[1:]:
+        result = repository.join_undercover(platform_id, now)
+
+    with session_factory() as session:
+        cards = list(
+            session.scalars(
+                select(OutboundRecord)
+                .where(OutboundRecord.delivery_kind == "undercover_card")
+                .order_by(OutboundRecord.id)
+            )
+        )
+        players = list(
+            session.scalars(
+                select(UndercoverGamePlayerRecord).where(
+                    UndercoverGamePlayerRecord.game_id == result.game_id
+                )
+            )
+        )
+
+    assert {card.destination_chatroom_id for card in cards} == {
+        f"direct-{platform_id}" for platform_id in platform_ids
+    }
+    assert len(cards) == len(players) == 4
+    assert {player.card_outbound_message_id for player in players} == {card.id for card in cards}
+
+    for index in range(4):
+        claimed = repository.claim_outbound(f"worker-{index}", now, 30)
+        assert claimed is not None
+        assert repository.confirm_sent(
+            claimed.id, f"worker-{index}", claimed.lease_token, f"sent-{index}", now
+        )
+
+    assert repository.undercover_session_summary().state == "speaking"
+    opening = repository.claim_outbound("worker-group", now, 30)
+    assert opening is not None
+    assert opening.delivery_kind == "group"
+    assert opening.destination_chatroom_id is None
+    assert opening.text == "【谁是卧底】所有身份已私聊发放，请开始描述。"
+
+
+def test_undercover_card_delivery_failure_restores_signup_without_public_cards(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.start_undercover_signup(platform_ids[0], 4, now)
+    for platform_id in platform_ids[1:]:
+        result = repository.join_undercover(platform_id, now)
+
+    card = repository.claim_outbound("worker-a", now, 30)
+    assert card is not None
+    assert repository.mark_outbound_failed(card.id, "worker-a", card.lease_token, now)
+
+    assert repository.undercover_session_summary().state == "signup"
+    with session_factory() as session:
+        pending_cards = list(
+            session.scalars(
+                select(OutboundRecord).where(OutboundRecord.delivery_kind == "undercover_card")
+            )
+        )
+    assert {record.status for record in pending_cards} == {"failed"}
+    notice = repository.claim_outbound("worker-group", now, 30)
+    assert notice is not None
+    assert notice.destination_chatroom_id is None
+    assert "私聊发放失败" in notice.text
+
+
 def test_undercover_tied_vote_requires_a_new_vote_round(repository, session_factory, now):
     result, platform_ids = _start_undercover_game(repository, session_factory, now)
 

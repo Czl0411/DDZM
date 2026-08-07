@@ -23,6 +23,16 @@ class InboundResponse(ApiModel):
     accepted: bool
 
 
+class DirectChatRoomRequest(ApiModel):
+    platform_user_id: str = Field(min_length=1, max_length=255)
+    chatroom_id: str = Field(min_length=1, max_length=255)
+
+
+class DirectChatSyncRequest(ApiModel):
+    rooms: list[DirectChatRoomRequest]
+    now: AwareDatetime
+
+
 class ClaimRequest(ApiModel):
     worker_id: str = Field(min_length=1, max_length=255)
     now: AwareDatetime
@@ -36,6 +46,8 @@ class OutboundClaimResponse(ApiModel):
     lease_token: UUID
     lease_expires_at: datetime
     attempt_count: int
+    destination_chatroom_id: str | None
+    delivery_kind: str
 
 
 class SentRequest(ApiModel):

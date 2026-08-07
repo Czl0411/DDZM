@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from dzmm_bot.core.schema import OutboundRecord, WorkerCommandRecord
+from dzmm_bot.core.schema import DirectChatRecord, OutboundRecord, WorkerCommandRecord
 
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
@@ -74,6 +74,23 @@ def test_internal_inbound_is_idempotent(client, headers, payload):
     assert second.status_code == 200
     assert second.json()["accepted"] is False
     assert second.json()["message_id"] == first.json()["message_id"]
+
+
+def test_direct_chat_sync_persists_discovered_room(app_context, headers):
+    response = app_context.client.post(
+        "/internal/direct-chats/sync",
+        headers=headers,
+        json={
+            "rooms": [{"platform_user_id": "employee-1", "chatroom_id": "direct-1"}],
+            "now": NOW.isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    with app_context.session_factory() as session:
+        record = session.scalar(select(DirectChatRecord))
+    assert record is not None
+    assert (record.platform_user_id, record.chatroom_id) == ("employee-1", "direct-1")
 
 
 def test_internal_inbound_executes_enabled_group_commands(app_context, headers, payload):

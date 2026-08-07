@@ -19,6 +19,12 @@ class InboundMessage:
 
 
 @dataclass(frozen=True)
+class DirectChatRoom:
+    platform_user_id: str
+    chatroom_id: str
+
+
+@dataclass(frozen=True)
 class OutboundMessage:
     inbound_message_id: str
     text: str
@@ -29,6 +35,8 @@ class OutboundMessage:
     lease_expires_at: datetime | None = None
     attempt_count: int = 0
     platform_sent_id: str | None = None
+    destination_chatroom_id: str | None = None
+    delivery_kind: str = "group"
 
 
 @dataclass(frozen=True)

@@ -5,7 +5,7 @@ from typing import Callable, Protocol
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from dzmm_bot.runtime.contracts import InboundMessage, LoginState
+from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
 from dzmm_bot.dzmm_source import DzmmMessageSource
 
 from .aikda_socket import AikdaSocketGateway
@@ -15,6 +15,10 @@ class ChatGateway(Protocol):
     def read_new(self) -> list[InboundMessage]: ...
 
     def send(self, text: str) -> str: ...
+
+    def send_to(self, chatroom_id: str, text: str) -> str: ...
+
+    def discover_direct_chats(self) -> list[DirectChatRoom]: ...
 
     def retract(self, message_id: str) -> None: ...
 
@@ -172,6 +176,12 @@ class _PlaywrightGateway:
         editor.fill(text)
         editor.press("Enter")
         return f"dzmm:{int(time() * 1000)}"
+
+    def send_to(self, chatroom_id: str, text: str) -> str:
+        raise NotImplementedError("direct messages require the Aikda socket gateway")
+
+    def discover_direct_chats(self) -> list[DirectChatRoom]:
+        raise NotImplementedError("direct messages require the Aikda socket gateway")
 
     def retract(self, message_id: str) -> None:
         raise NotImplementedError("message retraction requires the Aikda socket gateway")

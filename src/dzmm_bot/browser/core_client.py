@@ -6,7 +6,7 @@ from uuid import UUID
 
 import httpx
 
-from dzmm_bot.runtime.contracts import InboundMessage, LoginState
+from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,8 @@ class OutboundClaim:
     inbound_message_id: str | None
     text: str
     lease_token: UUID
+    destination_chatroom_id: str | None = None
+    delivery_kind: str = "group"
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,8 @@ class CorePort(Protocol):
     def submit_inbound(self, message: InboundMessage) -> None: ...
 
     def run_daily_jobs(self, now: datetime) -> None: ...
+
+    def sync_direct_chats(self, rooms: list[DirectChatRoom], now: datetime) -> None: ...
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int
@@ -120,6 +124,21 @@ class CoreClient:
     def run_daily_jobs(self, now: datetime) -> None:
         self._post("/internal/daily-jobs/run", {"now": now.isoformat()})
 
+    def sync_direct_chats(self, rooms: list[DirectChatRoom], now: datetime) -> None:
+        self._post(
+            "/internal/direct-chats/sync",
+            {
+                "rooms": [
+                    {
+                        "platform_user_id": room.platform_user_id,
+                        "chatroom_id": room.chatroom_id,
+                    }
+                    for room in rooms
+                ],
+                "now": now.isoformat(),
+            },
+        )
+
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int
     ) -> OutboundClaim | None:
@@ -134,6 +153,8 @@ class CoreClient:
             inbound_message_id=data["inbound_message_id"],
             text=data["text"],
             lease_token=UUID(data["lease_token"]),
+            destination_chatroom_id=data["destination_chatroom_id"],
+            delivery_kind=data["delivery_kind"],
         )
 
     def confirm_sent(

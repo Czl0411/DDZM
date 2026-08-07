@@ -208,6 +208,16 @@ def _split_platform_message(text: str) -> list[str]:
     return chunks
 
 
+def _undercover_card_text(role: str, civilian_word: str, undercover_word: str) -> str:
+    if role == "civilian":
+        return f"【谁是卧底】你的身份：平民。词语：{civilian_word}"
+    if role == "undercover":
+        return f"【谁是卧底】你的身份：卧底。词语：{undercover_word}"
+    if role == "whiteboard":
+        return "【谁是卧底】你的身份：白板。没有词语，请靠大家的描述判断。"
+    raise ValueError("谁是卧底身份无效")
+
+
 @dataclass(frozen=True)
 class ActivityLevelRule:
     level: int
@@ -1158,26 +1168,9 @@ class CoreRepository:
                 )
                 if player is None:
                     return UndercoverGameResult("card_delivery_ignored", game_id=game.id)
-                if not delivered:
-                    game.state = "discarded"
-                    game.finished_at = now
-                    session_record.state = "signup"
-                    session_record.signup_deadline = now + _UNDERCOVER_SIGNUP_TIMEOUT
-                    return UndercoverGameResult("delivery_failed", session_id=session_record.id, game_id=game.id)
-                player.card_delivery_state = "delivered"
-                pending = session.scalar(
-                    select(func.count())
-                    .select_from(UndercoverGamePlayerRecord)
-                    .where(
-                        UndercoverGamePlayerRecord.game_id == game.id,
-                        UndercoverGamePlayerRecord.card_delivery_state != "delivered",
-                    )
+                return self._record_undercover_card_delivery(
+                    session, session_record, game, player, delivered, now
                 )
-                if pending:
-                    return UndercoverGameResult("card_delivered", session_id=session_record.id, game_id=game.id)
-                game.state = "speaking"
-                session_record.state = "speaking"
-                return self._undercover_game_result(session, game, "speaking")
 
     def start_undercover_vote(self, platform_id: str, now: datetime) -> UndercoverGameResult:
         now = now.astimezone(BEIJING)
@@ -1549,17 +1542,30 @@ class CoreRepository:
             user = session.get(UserRecord, member.user_id)
             if user is None:
                 raise RuntimeError("谁是卧底参与者消失")
-            role = remaining_roles.pop(randbelow(len(remaining_roles)))
-            session.add(
-                UndercoverGamePlayerRecord(
-                    game_id=game.id,
-                    user_id=member.user_id,
-                    seat_number=seat_number,
-                    role=role,
-                    state="alive",
-                    card_delivery_state="pending",
+            direct_chat = session.scalar(
+                select(DirectChatRecord).where(
+                    DirectChatRecord.platform_user_id == user.platform_id
                 )
             )
+            if direct_chat is None:
+                raise RuntimeError("谁是卧底参与者缺少私聊房间")
+            role = remaining_roles.pop(randbelow(len(remaining_roles)))
+            player = UndercoverGamePlayerRecord(
+                game_id=game.id,
+                user_id=member.user_id,
+                seat_number=seat_number,
+                role=role,
+                state="alive",
+                card_delivery_state="pending",
+            )
+            session.add(player)
+            session.flush()
+            outbound = self.enqueue_system_outbound(
+                _undercover_card_text(role, game.civilian_word, game.undercover_word),
+                destination_chatroom_id=direct_chat.chatroom_id,
+                delivery_kind="undercover_card",
+            )
+            player.card_outbound_message_id = outbound.id
             member.state = "joined"
             member.is_original = True
             member.queued_at = None
@@ -1585,6 +1591,67 @@ class CoreRepository:
             .order_by(UndercoverGameRecord.round_number.desc())
             .with_for_update()
         )
+
+    def _record_undercover_card_delivery(
+        self,
+        session: Session,
+        session_record: UndercoverSessionRecord,
+        game: UndercoverGameRecord,
+        player: UndercoverGamePlayerRecord,
+        delivered: bool,
+        now: datetime,
+    ) -> UndercoverGameResult:
+        if not delivered:
+            player.card_delivery_state = "failed"
+            game.state = "discarded"
+            game.finished_at = now
+            session_record.state = "signup"
+            session_record.signup_deadline = now + _UNDERCOVER_SIGNUP_TIMEOUT
+            pending_card_ids = list(
+                session.scalars(
+                    select(UndercoverGamePlayerRecord.card_outbound_message_id).where(
+                        UndercoverGamePlayerRecord.game_id == game.id,
+                        UndercoverGamePlayerRecord.card_outbound_message_id.is_not(None),
+                    )
+                )
+            )
+            if pending_card_ids:
+                session.execute(
+                    update(OutboundRecord)
+                    .where(
+                        OutboundRecord.id.in_(pending_card_ids),
+                        OutboundRecord.status.in_(("pending", "leased")),
+                    )
+                    .values(
+                        status="failed",
+                        lease_worker_id=None,
+                        lease_token=None,
+                        lease_expires_at=None,
+                    )
+                )
+            self.enqueue_system_outbound(
+                "【谁是卧底】身份私聊发放失败，已返回报名阶段，请稍后重新报名。"
+            )
+            return UndercoverGameResult(
+                "delivery_failed", session_id=session_record.id, game_id=game.id
+            )
+        player.card_delivery_state = "delivered"
+        pending = session.scalar(
+            select(func.count())
+            .select_from(UndercoverGamePlayerRecord)
+            .where(
+                UndercoverGamePlayerRecord.game_id == game.id,
+                UndercoverGamePlayerRecord.card_delivery_state != "delivered",
+            )
+        )
+        if pending:
+            return UndercoverGameResult(
+                "card_delivered", session_id=session_record.id, game_id=game.id
+            )
+        game.state = "speaking"
+        session_record.state = "speaking"
+        self.enqueue_system_outbound("【谁是卧底】所有身份已私聊发放，请开始描述。")
+        return self._undercover_game_result(session, game, "speaking")
 
     def _undercover_active_player(
         self, session: Session, platform_id: str
@@ -5081,6 +5148,8 @@ class CoreRepository:
         *,
         recall_after_seconds: int | None = None,
         memory_round_id: UUID | None = None,
+        destination_chatroom_id: str | None = None,
+        delivery_kind: str = "group",
     ) -> OutboundRecord:
         if recall_after_seconds is not None and recall_after_seconds < 1:
             raise ValueError("撤回秒数必须为正整数")
@@ -5103,6 +5172,8 @@ class CoreRepository:
                     text=chunk,
                     reply_index=first_reply_index + index,
                     recall_after_seconds=recall_after_seconds,
+                    destination_chatroom_id=destination_chatroom_id,
+                    delivery_kind=delivery_kind,
                 )
                 for index, chunk in enumerate(chunks)
             ]
@@ -5123,6 +5194,8 @@ class CoreRepository:
         *,
         recall_after_seconds: int | None = None,
         memory_round_id: UUID | None = None,
+        destination_chatroom_id: str | None = None,
+        delivery_kind: str = "group",
     ) -> OutboundRecord:
         if recall_after_seconds is not None and recall_after_seconds < 1:
             raise ValueError("撤回秒数必须为正整数")
@@ -5136,6 +5209,8 @@ class CoreRepository:
                     text=chunk,
                     reply_index=index,
                     recall_after_seconds=recall_after_seconds,
+                    destination_chatroom_id=destination_chatroom_id,
+                    delivery_kind=delivery_kind,
                 )
                 for index, chunk in enumerate(chunks)
             ]
@@ -5226,6 +5301,22 @@ class CoreRepository:
                 record.recall_due_at = now + timedelta(
                     seconds=record.recall_after_seconds
                 )
+            if record.delivery_kind == "undercover_card":
+                player = session.scalar(
+                    select(UndercoverGamePlayerRecord)
+                    .where(UndercoverGamePlayerRecord.card_outbound_message_id == record.id)
+                    .with_for_update()
+                )
+                if player is not None:
+                    game = session.get(UndercoverGameRecord, player.game_id, with_for_update=True)
+                    if game is not None:
+                        session_record = session.get(
+                            UndercoverSessionRecord, game.session_id, with_for_update=True
+                        )
+                        if session_record is not None and game.state == "dealing":
+                            self._record_undercover_card_delivery(
+                                session, session_record, game, player, True, now
+                            )
             return True
 
     def mark_outbound_failed(
@@ -5253,6 +5344,22 @@ class CoreRepository:
             record.lease_worker_id = None
             record.lease_token = None
             record.lease_expires_at = None
+            if record.delivery_kind == "undercover_card":
+                player = session.scalar(
+                    select(UndercoverGamePlayerRecord)
+                    .where(UndercoverGamePlayerRecord.card_outbound_message_id == record.id)
+                    .with_for_update()
+                )
+                if player is not None:
+                    game = session.get(UndercoverGameRecord, player.game_id, with_for_update=True)
+                    if game is not None:
+                        session_record = session.get(
+                            UndercoverSessionRecord, game.session_id, with_for_update=True
+                        )
+                        if session_record is not None and game.state == "dealing":
+                            self._record_undercover_card_delivery(
+                                session, session_record, game, player, False, now
+                            )
             return True
 
     def claim_outbound_recall(

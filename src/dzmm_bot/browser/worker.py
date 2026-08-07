@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import logging
 from time import sleep as default_sleep
@@ -46,6 +46,7 @@ class BrowserWorker:
         self._auth_loss_reported = False
         self._auth_backoff = 1
         self._manual_auth_confirmed = False
+        self._last_direct_chat_sync_at: datetime | None = None
 
     @property
     def login_state(self) -> LoginState:
@@ -91,6 +92,7 @@ class BrowserWorker:
             return
 
         gateway = self._ensure_gateway()
+        self._sync_direct_chats(gateway, now)
         if self._listening:
             try:
                 messages = gateway.read_new()
@@ -134,7 +136,11 @@ class BrowserWorker:
         if outbound is None:
             return
         try:
-            platform_sent_id = gateway.send(outbound.text)
+            platform_sent_id = (
+                gateway.send_to(outbound.destination_chatroom_id, outbound.text)
+                if outbound.destination_chatroom_id is not None
+                else gateway.send(outbound.text)
+            )
         except Exception as error:
             if "请勿发送重复内容" in str(error):
                 _LOGGER.warning("outbound content rejected as duplicate: %s", outbound.id)
@@ -158,6 +164,21 @@ class BrowserWorker:
             platform_sent_id,
             self._clock(),
         )
+
+    def _sync_direct_chats(self, gateway: ChatGateway, now: datetime) -> None:
+        if (
+            self._last_direct_chat_sync_at is not None
+            and now - self._last_direct_chat_sync_at < timedelta(seconds=30)
+        ):
+            return
+        try:
+            self._core.sync_direct_chats(gateway.discover_direct_chats(), now)
+        except NotImplementedError:
+            return
+        except Exception:
+            _LOGGER.exception("direct chat discovery failed")
+            return
+        self._last_direct_chat_sync_at = now
 
     def _ensure_gateway(self) -> ChatGateway:
         if self._gateway is None:

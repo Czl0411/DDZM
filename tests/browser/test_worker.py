@@ -6,7 +6,7 @@ import pytest
 
 from dzmm_bot.browser.core_client import OutboundClaim, OutboundRecallClaim, WorkerCommand
 from dzmm_bot.browser.worker import BrowserWorker
-from dzmm_bot.runtime.contracts import InboundMessage, LoginState
+from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
 
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
@@ -20,6 +20,8 @@ class FakeGateway:
     messages: list[InboundMessage] = field(default_factory=list)
     authenticated: bool = True
     sent: list[str] = field(default_factory=list)
+    direct_rooms: list[DirectChatRoom] = field(default_factory=list)
+    sent_to: list[tuple[str, str]] = field(default_factory=list)
     retracted: list[str] = field(default_factory=list)
     send_error: Exception | None = None
     read_error: Exception | None = None
@@ -34,6 +36,15 @@ class FakeGateway:
             raise self.send_error
         self.sent.append(text)
         return f"sent-{len(self.sent)}"
+
+    def send_to(self, chatroom_id, text):
+        if self.send_error:
+            raise self.send_error
+        self.sent_to.append((chatroom_id, text))
+        return f"direct-{len(self.sent_to)}"
+
+    def discover_direct_chats(self):
+        return list(self.direct_rooms)
 
     def is_authenticated(self):
         return self.authenticated
@@ -91,6 +102,7 @@ class FakeCore:
     completions: list[tuple] = field(default_factory=list)
     audits: list[tuple] = field(default_factory=list)
     daily_job_times: list[datetime] = field(default_factory=list)
+    direct_chat_syncs: list[tuple[list[DirectChatRoom], datetime]] = field(default_factory=list)
 
     def submit_inbound(self, message):
         self.submitted_ids.append(message.platform_message_id)
@@ -128,6 +140,9 @@ class FakeCore:
 
     def run_daily_jobs(self, now):
         self.daily_job_times.append(now)
+
+    def sync_direct_chats(self, rooms, now):
+        self.direct_chat_syncs.append((rooms, now))
 
 
 @pytest.fixture
@@ -214,6 +229,28 @@ def test_sent_confirmation_includes_current_fencing_values(context):
     assert core.confirmed == [
         (OUTBOUND_ID, "worker-a", LEASE, "sent-1", NOW)
     ]
+
+
+def test_worker_syncs_direct_rooms_and_sends_targeted_claims(context):
+    worker, gateway, _, _, core, _ = context
+    gateway.direct_rooms = [DirectChatRoom("employee-1", "direct-1")]
+    core.pending = [
+        OutboundClaim(
+            OUTBOUND_ID,
+            None,
+            "你的身份：卧底。词语：咖啡",
+            LEASE,
+            destination_chatroom_id="direct-1",
+            delivery_kind="undercover_card",
+        )
+    ]
+
+    worker.run_once()
+
+    assert core.direct_chat_syncs == [([DirectChatRoom("employee-1", "direct-1")], NOW)]
+    assert gateway.sent == []
+    assert gateway.sent_to == [("direct-1", "你的身份：卧底。词语：咖啡")]
+    assert core.confirmed == [(OUTBOUND_ID, "worker-a", LEASE, "direct-1", NOW)]
 
 
 def test_worker_retracts_a_due_outbound_with_current_fencing_values(context):

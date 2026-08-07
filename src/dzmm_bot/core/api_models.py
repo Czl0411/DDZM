@@ -359,6 +359,33 @@ class SetMemoryAssessmentSettingsRequest(MemoryAssessmentSettingsResponse):
     pass
 
 
+class UndercoverRoleRuleModel(ApiModel):
+    player_count: int = Field(ge=4, le=8)
+    civilian_count: int = Field(ge=0, le=8)
+    undercover_count: int = Field(ge=0, le=8)
+    whiteboard_count: int = Field(ge=0, le=8)
+
+
+class UndercoverSettingsResponse(ApiModel):
+    enabled: bool
+    vote_seconds: int = Field(ge=1, le=3600)
+    whiteboard_win_remaining: int = Field(ge=2, le=8)
+    roles: list[UndercoverRoleRuleModel] = Field(min_length=5, max_length=5)
+
+
+class SetUndercoverSettingsRequest(UndercoverSettingsResponse):
+    pass
+
+
+class UndercoverSessionResponse(ApiModel):
+    state: str | None
+    target_player_count: int
+    player_count: int
+    queued_count: int
+    current_vote_round: int
+    vote_deadline: datetime | None
+
+
 class HideAndSeekSceneResponse(ApiModel):
     id: UUID
     name: str

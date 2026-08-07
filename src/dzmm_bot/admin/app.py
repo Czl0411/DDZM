@@ -716,6 +716,47 @@ def create_app(
             scope="memory-assessment-settings",
         )
 
+    @app.get("/api/game/undercover/settings")
+    def undercover_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_undercover_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/undercover/settings")
+    def set_undercover_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "enabled",
+            "vote_seconds",
+            "whiteboard_win_remaining",
+            "roles",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_undercover_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="undercover-settings",
+        )
+
+    @app.get("/api/game/undercover/session")
+    def undercover_session(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_undercover_session),
+            "version": repository.config_version(),
+        }
+
     @app.get("/api/game/hide-and-seek/scenes")
     def hide_and_seek_scenes(
         _: Annotated[None, Depends(authorize)],

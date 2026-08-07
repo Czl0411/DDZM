@@ -106,6 +106,58 @@ def test_internal_inbound_executes_enabled_group_commands(app_context, headers, 
     assert reply == "小明，欢迎入职摸鱼公司。当前余额：0 摸鱼币。"
 
 
+def test_undercover_settings_api_validates_roles_and_returns_public_session(client, headers):
+    initial = client.get("/internal/game/undercover/settings", headers=headers)
+    invalid = client.patch(
+        "/internal/game/undercover/settings",
+        headers=headers,
+        json={
+            "enabled": True,
+            "vote_seconds": 120,
+            "whiteboard_win_remaining": 3,
+            "roles": [
+                {"player_count": 4, "civilian_count": 3, "undercover_count": 2, "whiteboard_count": 0},
+                {"player_count": 5, "civilian_count": 3, "undercover_count": 1, "whiteboard_count": 1},
+                {"player_count": 6, "civilian_count": 4, "undercover_count": 1, "whiteboard_count": 1},
+                {"player_count": 7, "civilian_count": 4, "undercover_count": 2, "whiteboard_count": 1},
+                {"player_count": 8, "civilian_count": 5, "undercover_count": 2, "whiteboard_count": 1},
+            ],
+        },
+    )
+    updated = client.patch(
+        "/internal/game/undercover/settings",
+        headers=headers,
+        json={
+            "enabled": False,
+            "vote_seconds": 90,
+            "whiteboard_win_remaining": 2,
+            "roles": [
+                {"player_count": 4, "civilian_count": 3, "undercover_count": 1, "whiteboard_count": 0},
+                {"player_count": 5, "civilian_count": 3, "undercover_count": 1, "whiteboard_count": 1},
+                {"player_count": 6, "civilian_count": 4, "undercover_count": 1, "whiteboard_count": 1},
+                {"player_count": 7, "civilian_count": 4, "undercover_count": 2, "whiteboard_count": 1},
+                {"player_count": 8, "civilian_count": 5, "undercover_count": 2, "whiteboard_count": 1},
+            ],
+        },
+    )
+    session = client.get("/internal/game/undercover/session", headers=headers)
+
+    assert initial.status_code == 200
+    assert len(initial.json()["roles"]) == 5
+    assert invalid.status_code == 422
+    assert updated.status_code == 200
+    assert updated.json()["enabled"] is False
+    assert updated.json()["vote_seconds"] == 90
+    assert session.json() == {
+        "state": None,
+        "target_player_count": 0,
+        "player_count": 0,
+        "queued_count": 0,
+        "current_vote_round": 0,
+        "vote_deadline": None,
+    }
+
+
 def test_heartbeat_response_uses_beijing_time(client, headers):
     response = client.post(
         "/internal/heartbeat",
@@ -158,7 +210,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
+        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
     }
     assert disabled.json()["enabled"] is False
     assert employees.json() == {

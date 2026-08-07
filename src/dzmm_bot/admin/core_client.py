@@ -73,6 +73,12 @@ class AdminCorePort(Protocol):
 
     def set_memory_assessment_settings(self, settings: dict) -> dict: ...
 
+    def get_undercover_settings(self) -> dict: ...
+
+    def set_undercover_settings(self, settings: dict) -> dict: ...
+
+    def get_undercover_session(self) -> dict: ...
+
     def list_hide_and_seek_scenes(self, page: int, page_size: int) -> dict: ...
 
     def create_hide_and_seek_scene(self, scene: dict) -> dict: ...
@@ -271,6 +277,17 @@ class CoreClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def get_undercover_settings(self) -> dict:
+        return self._get("/internal/game/undercover/settings")
+
+    def set_undercover_settings(self, settings: dict) -> dict:
+        response = self._client.patch("/internal/game/undercover/settings", json=settings)
+        response.raise_for_status()
+        return response.json()
+
+    def get_undercover_session(self) -> dict:
+        return self._get("/internal/game/undercover/session")
 
     def list_hide_and_seek_scenes(self, page: int, page_size: int) -> dict:
         return self._get(

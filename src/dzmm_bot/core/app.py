@@ -57,6 +57,10 @@ from .api_models import (
     MemoryAssessmentSettingsResponse,
     SetMemoryAssessmentSettingsRequest,
     MemoryAssessmentLevelRuleModel,
+    UndercoverRoleRuleModel,
+    UndercoverSettingsResponse,
+    SetUndercoverSettingsRequest,
+    UndercoverSessionResponse,
     HideAndSeekSceneResponse,
     PaginatedHideAndSeekScenesResponse,
     CreateHideAndSeekSceneRequest,
@@ -88,6 +92,7 @@ from .repository import (
     ManualLoginLease,
     ManualLoginOwnerError,
     MemoryAssessmentLevelRule,
+    UndercoverRoleRule,
 )
 from .reply_templates import definitions_for_command, template_definition
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
@@ -742,6 +747,59 @@ def create_app(
         return _memory_assessment_settings_response(repository)
 
     @app.get(
+        "/internal/game/undercover/settings",
+        response_model=UndercoverSettingsResponse,
+    )
+    def undercover_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> UndercoverSettingsResponse:
+        return _undercover_settings_response(repository)
+
+    @app.patch(
+        "/internal/game/undercover/settings",
+        response_model=UndercoverSettingsResponse,
+    )
+    def set_undercover_settings(
+        request: SetUndercoverSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> UndercoverSettingsResponse:
+        try:
+            repository.set_undercover_settings(
+                request.enabled,
+                request.vote_seconds,
+                request.whiteboard_win_remaining,
+                [
+                    UndercoverRoleRule(
+                        player_count=role.player_count,
+                        civilian_count=role.civilian_count,
+                        undercover_count=role.undercover_count,
+                        whiteboard_count=role.whiteboard_count,
+                    )
+                    for role in request.roles
+                ],
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _undercover_settings_response(repository)
+
+    @app.get(
+        "/internal/game/undercover/session",
+        response_model=UndercoverSessionResponse,
+    )
+    def undercover_session(
+        _: Annotated[None, Depends(authorize)],
+    ) -> UndercoverSessionResponse:
+        summary = repository.undercover_session_summary()
+        return UndercoverSessionResponse(
+            state=summary.state,
+            target_player_count=summary.target_player_count,
+            player_count=summary.player_count,
+            queued_count=summary.queued_count,
+            current_vote_round=summary.current_vote_round,
+            vote_deadline=summary.vote_deadline,
+        )
+
+    @app.get(
         "/internal/game/random-events/scenes",
         response_model=PaginatedRandomEventScenesResponse,
     )
@@ -1215,6 +1273,24 @@ def _memory_assessment_settings_response(
                 reward=rule.reward,
             )
             for rule in repository.list_memory_assessment_levels()
+        ],
+    )
+
+
+def _undercover_settings_response(repository: CoreRepository) -> UndercoverSettingsResponse:
+    settings = repository.get_undercover_settings()
+    return UndercoverSettingsResponse(
+        enabled=settings.enabled,
+        vote_seconds=settings.vote_seconds,
+        whiteboard_win_remaining=settings.whiteboard_win_remaining,
+        roles=[
+            UndercoverRoleRuleModel(
+                player_count=rule.player_count,
+                civilian_count=rule.civilian_count,
+                undercover_count=rule.undercover_count,
+                whiteboard_count=rule.whiteboard_count,
+            )
+            for rule in repository.list_undercover_role_rules()
         ],
     )
 

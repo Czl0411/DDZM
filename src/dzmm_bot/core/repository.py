@@ -370,6 +370,8 @@ class UndercoverSessionSummary:
     target_player_count: int = 0
     player_count: int = 0
     queued_count: int = 0
+    current_vote_round: int = 0
+    vote_deadline: datetime | None = None
     players: tuple[UndercoverSessionPlayer, ...] = ()
 
 
@@ -1017,6 +1019,52 @@ class CoreRepository:
                 )
             ]
 
+    def set_undercover_settings(
+        self,
+        enabled: bool,
+        vote_seconds: int,
+        whiteboard_win_remaining: int,
+        roles: list[UndercoverRoleRule],
+    ) -> UndercoverSettings:
+        if not isinstance(enabled, bool):
+            raise ValueError("玩法开关无效")
+        if not isinstance(vote_seconds, int) or vote_seconds < 1:
+            raise ValueError("投票时长至少为 1 秒")
+        if not isinstance(whiteboard_win_remaining, int) or whiteboard_win_remaining < 2:
+            raise ValueError("白板胜利人数至少为 2")
+        if [rule.player_count for rule in roles] != [4, 5, 6, 7, 8]:
+            raise ValueError("必须配置 4 至 8 人的全部身份配比")
+        if any(
+            min(rule.civilian_count, rule.undercover_count, rule.whiteboard_count) < 0
+            or rule.civilian_count + rule.undercover_count + rule.whiteboard_count
+            != rule.player_count
+            or rule.undercover_count < 1
+            for rule in roles
+        ):
+            raise ValueError("身份配比必须合计等于对应人数，且至少有一名卧底")
+        self.get_undercover_settings()
+        with self._session() as session:
+            record = session.get(UndercoverSettingsRecord, 1)
+            if record is None:
+                raise RuntimeError("谁是卧底设置消失")
+            record.enabled = enabled
+            record.vote_seconds = vote_seconds
+            record.whiteboard_win_remaining = whiteboard_win_remaining
+            session.execute(delete(UndercoverRoleRuleRecord))
+            session.add_all(
+                [
+                    UndercoverRoleRuleRecord(
+                        player_count=rule.player_count,
+                        civilian_count=rule.civilian_count,
+                        undercover_count=rule.undercover_count,
+                        whiteboard_count=rule.whiteboard_count,
+                    )
+                    for rule in roles
+                ]
+            )
+            session.flush()
+            return _undercover_settings(record)
+
     def upsert_direct_chats(
         self, mappings: list[tuple[str, str]], now: datetime
     ) -> None:
@@ -1294,12 +1342,27 @@ class CoreRepository:
                 )
                 or 0
             )
+            player_count = len(players)
+            if game is None:
+                player_count = int(
+                    session.scalar(
+                        select(func.count())
+                        .select_from(UndercoverSessionMemberRecord)
+                        .where(
+                            UndercoverSessionMemberRecord.session_id == session_record.id,
+                            UndercoverSessionMemberRecord.state == "joined",
+                        )
+                    )
+                    or 0
+                )
             return UndercoverSessionSummary(
                 state=session_record.state,
                 game_id=None if game is None else game.id,
                 target_player_count=session_record.target_player_count,
-                player_count=len(players),
+                player_count=player_count,
                 queued_count=queued_count,
+                current_vote_round=0 if game is None else game.current_vote_round,
+                vote_deadline=None if game is None else game.vote_deadline,
                 players=tuple(players),
             )
 

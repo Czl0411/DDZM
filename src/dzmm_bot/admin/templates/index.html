@@ -60,6 +60,7 @@
               <button id="nav-events" class="nav-item" data-view="events" type="button">随机事件</button>
               <button id="nav-hide-and-seek" class="nav-item" data-view="hide-and-seek" type="button">躲猫猫</button>
               <button id="nav-memory-assessment" class="nav-item" data-view="memory-assessment" type="button">记忆考核</button>
+              <button id="nav-undercover" class="nav-item" data-view="undercover" type="button">谁是卧底</button>
               <button id="nav-commands" class="nav-item" data-view="commands" type="button">指令库</button>
               <button id="nav-organization" class="nav-item" data-view="organization" type="button">职位与部门</button>
               <button id="nav-employees" class="nav-item" data-view="employees" type="button">员工</button>
@@ -219,6 +220,15 @@
                 <p class="eyebrow">撤回记忆小游戏</p>
                 <div class="panel-heading"><div><h2>记忆考核规则</h2><p class="muted">考题自动展示后按秒撤回；单人每日限一次，双人对战为奖池制。</p></div><button id="edit-memory-assessment-settings" class="primary" type="button">编辑规则</button></div>
                 <div id="memory-assessment-settings-card" class="settings-card" aria-live="polite"></div>
+              </section>
+
+              <section id="undercover-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">群内多人推理局</p>
+                <div class="panel-heading"><div><h2>谁是卧底规则</h2><p class="muted">4–8 人报名开局，底牌仅通过机器人可访问的私聊发送；随机事件与记忆考核对战期间不可创建。</p></div><button id="edit-undercover-settings" class="primary" type="button">编辑规则</button></div>
+                <div id="undercover-settings-card" class="settings-card" aria-live="polite"></div>
+                <hr>
+                <div class="panel-heading"><div><h2>当前对局</h2><p class="muted">仅展示公开进度；词语、身份与私聊信息不会出现在管理端。</p></div></div>
+                <div id="undercover-session-card" class="settings-card" aria-live="polite"></div>
               </section>
 
               <section id="employees-view" class="dashboard-view panel" hidden>
@@ -414,6 +424,15 @@
         <div class="event-input-grid"><label>对战难度等级<input id="memory-assessment-duel-level" type="number" min="1" max="20"></label><label>每人基础奖池<input id="memory-assessment-base-pool" type="number" min="1" max="999"></label><label>答错冻结金额<input id="memory-assessment-wrong-freeze" type="number" min="1" max="999"></label><label>答错上限<input id="memory-assessment-wrong-limit" type="number" min="1" max="99"></label><label>作答超时（分钟）<input id="memory-assessment-timeout" type="number" min="1" max="60"></label></div>
         <label>随机字符集<input id="memory-assessment-character-set" maxlength="200"></label><label>等级规则<textarea id="memory-assessment-levels" rows="5"></textarea></label>
         <div class="template-modal-actions"><button class="secondary" data-close-memory-assessment-settings-modal type="button">取消</button><button id="save-memory-assessment-settings" class="primary" type="button">保存规则</button></div>
+      </section>
+    </div>
+    <div id="undercover-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="undercover-settings-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-undercover-settings-modal></div>
+      <section class="template-modal-card undercover-settings-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">谁是卧底</p><h2 id="undercover-settings-modal-title">编辑游戏规则</h2><p class="muted">角色配比仅用于 4–8 人新对局；每行总人数必须等于该场人数，且至少配置 1 名卧底。</p></div><button class="text-button" data-close-undercover-settings-modal type="button">关闭</button></div>
+        <label><input id="undercover-enabled" type="checkbox"> 启用谁是卧底</label>
+        <div class="event-input-grid"><label>投票时长（秒）<input id="undercover-vote-seconds" type="number" min="1" max="3600" required></label><label>白板胜利人数阈值<input id="undercover-whiteboard-threshold" type="number" min="2" max="8" required></label></div>
+        <div><label>4–8 人角色配比</label><div id="undercover-role-inputs" class="undercover-role-inputs"></div></div>
+        <div class="template-modal-actions"><button class="secondary" data-close-undercover-settings-modal type="button">取消</button><button id="save-undercover-settings" class="primary" type="button">保存规则</button></div>
       </section>
     </div>
     <div id="rank-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="rank-modal-title" hidden>

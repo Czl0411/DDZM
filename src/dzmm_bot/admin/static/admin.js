@@ -20,6 +20,7 @@ let randomEventAddScenes = [];
 let hideAndSeekSettings = null;
 let hideAndSeekScenePage = 1;
 let memoryAssessmentSettings = null;
+let undercoverSettings = null;
 
 const pageSize = 20;
 const randomEventCommandOptions = [
@@ -28,6 +29,8 @@ const randomEventCommandOptions = [
   ["/帮助", "/帮助"], ["/加入", "/加入"], ["/退出", "/退出"],
   ["/摸鱼躲猫猫", "/开始摸鱼躲藏、/躲"], ["/记忆考核", "/记忆考核"],
   ["/继续", "/继续"], ["/收手", "/收手"], ["/投降", "/投降"],
+  ["/谁是卧底", "/谁是卧底"], ["/开始投票", "/开始投票"], ["/投票", "/投票"],
+  ["/退出谁是卧底", "/退出谁是卧底"], ["/结束游戏", "/结束游戏"],
   ["/部门", "/部门"], ["/加入部门", "/加入部门"], ["/切换部门", "/切换部门"],
   ["/部门申请列表", "/部门申请列表"], ["/同意部门", "/同意部门"], ["/全部同意部门", "/全部同意部门"],
   ["/拒绝部门", "/拒绝部门"], ["/全部拒绝部门", "/全部拒绝部门"], ["/职位", "/职位"],
@@ -72,6 +75,7 @@ const randomEventTimeInputs = document.querySelector("#random-event-time-inputs"
 const hideAndSeekSettingsModal = document.querySelector("#hide-and-seek-settings-modal");
 const hideAndSeekSceneModal = document.querySelector("#hide-and-seek-scene-modal");
 const memoryAssessmentSettingsModal = document.querySelector("#memory-assessment-settings-modal");
+const undercoverSettingsModal = document.querySelector("#undercover-settings-modal");
 const rankModal = document.querySelector("#rank-modal");
 const departmentModal = document.querySelector("#department-modal");
 
@@ -270,6 +274,53 @@ async function openMemoryAssessmentSettingsModal() {
 }
 
 function closeMemoryAssessmentSettingsModal() { memoryAssessmentSettingsModal.hidden = true; }
+function closeUndercoverSettingsModal() { undercoverSettingsModal.hidden = true; }
+
+function undercoverStateLabel(state) {
+  return ({signup: "报名中", dealing: "发牌中", speaking: "发言中", voting: "投票中", tie_break: "并列补充发言", awaiting_continue: "等待下一局", ended: "已结束"})[state] || "暂无对局";
+}
+
+function renderUndercoverSettings(settings) {
+  document.querySelector("#undercover-settings-card").innerHTML = `
+    <article><span>游戏状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>仅影响之后新创建的对局</small></article>
+    <article><span>投票时长</span><strong>${settings.vote_seconds} 秒</strong><small>到时自动结算当轮投票</small></article>
+    <article><span>白板胜利阈值</span><strong>存活 ≤ ${settings.whiteboard_win_remaining} 人</strong><small>白板仍在场时优先判定</small></article>
+    <article><span>角色配比</span><strong>4–8 人共 ${settings.roles.length} 档</strong><small>${settings.roles.map((rule) => `${rule.player_count}人：平${rule.civilian_count}/卧${rule.undercover_count}/白${rule.whiteboard_count}`).join(" · ")}</small></article>`;
+}
+
+function renderUndercoverSession(session) {
+  const voteDeadline = session.vote_deadline ? ` · 截止 ${formatHeartbeat(session.vote_deadline)}` : "";
+  document.querySelector("#undercover-session-card").innerHTML = `
+    <article><span>对局状态</span><strong>${undercoverStateLabel(session.state)}</strong><small>${session.state ? "当前群内唯一的谁是卧底对局" : "可以由玩家使用 /谁是卧底 人数 发起"}</small></article>
+    <article><span>本局人数</span><strong>${session.player_count} / ${session.target_player_count || "—"}</strong><small>候场队列 ${session.queued_count} 人</small></article>
+    <article><span>投票进度</span><strong>${session.current_vote_round ? `第 ${session.current_vote_round} 轮` : "未开始"}</strong><small>${escapeHtml(voteDeadline || "暂无投票倒计时")}</small></article>`;
+}
+
+async function loadUndercover() {
+  const [settings, session] = await Promise.all([
+    requestGame("/api/game/undercover/settings"),
+    requestGame("/api/game/undercover/session"),
+  ]);
+  undercoverSettings = settings;
+  configurationVersion = settings.version;
+  renderUndercoverSettings(settings);
+  renderUndercoverSession(session);
+}
+
+function renderUndercoverRoleInputs(roles) {
+  document.querySelector("#undercover-role-inputs").innerHTML = roles.map((rule) => `
+    <div class="undercover-role-row" data-player-count="${rule.player_count}"><b>${rule.player_count} 人局</b><label>平民<input data-undercover-civilian type="number" min="0" max="8" value="${rule.civilian_count}"></label><label>卧底<input data-undercover-undercover type="number" min="0" max="8" value="${rule.undercover_count}"></label><label>白板<input data-undercover-whiteboard type="number" min="0" max="8" value="${rule.whiteboard_count}"></label></div>`).join("");
+}
+
+async function openUndercoverSettingsModal() {
+  const settings = undercoverSettings || await requestGame("/api/game/undercover/settings");
+  undercoverSettings = settings;
+  document.querySelector("#undercover-enabled").checked = settings.enabled;
+  document.querySelector("#undercover-vote-seconds").value = settings.vote_seconds;
+  document.querySelector("#undercover-whiteboard-threshold").value = settings.whiteboard_win_remaining;
+  renderUndercoverRoleInputs(settings.roles);
+  undercoverSettingsModal.hidden = false;
+}
 
 async function loadHideAndSeek(page = hideAndSeekScenePage) {
   const [settings, scenes] = await Promise.all([
@@ -672,6 +723,7 @@ async function loadGameView(view) {
     if (view === "events") return loadRandomEvents();
     if (view === "hide-and-seek") return loadHideAndSeek();
     if (view === "memory-assessment") return loadMemoryAssessment();
+    if (view === "undercover") return loadUndercover();
     if (view === "commands") {
       const commands = await requestGame("/api/game/commands");
       configurationVersion = commands[0]?.version ?? configurationVersion;
@@ -886,6 +938,7 @@ document.querySelector("#create-random-event-scene").addEventListener("click", (
 document.querySelector("#edit-hide-and-seek-settings").addEventListener("click", () => void openHideAndSeekSettingsModal());
 document.querySelector("#create-hide-and-seek-scene").addEventListener("click", () => openHideAndSeekSceneModal());
 document.querySelector("#edit-memory-assessment-settings").addEventListener("click", () => void openMemoryAssessmentSettingsModal());
+document.querySelector("#edit-undercover-settings").addEventListener("click", () => void openUndercoverSettingsModal());
 document.querySelector("#create-department").addEventListener("click", () => openDepartmentModal());
 document.querySelector("#add-today-random-event").addEventListener("click", async (event) => {
   try {
@@ -1471,6 +1524,38 @@ memoryAssessmentSettingsModal.addEventListener("click", async (event) => {
       closeMemoryAssessmentSettingsModal();
     });
     setResult("记忆考核规则已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+undercoverSettingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-undercover-settings-modal]")) {
+    closeUndercoverSettingsModal();
+    return;
+  }
+  if (event.target.id !== "save-undercover-settings") return;
+  const roles = [...document.querySelectorAll(".undercover-role-row")].map((row) => ({
+    player_count: Number(row.dataset.playerCount),
+    civilian_count: Number(row.querySelector("[data-undercover-civilian]").value),
+    undercover_count: Number(row.querySelector("[data-undercover-undercover]").value),
+    whiteboard_count: Number(row.querySelector("[data-undercover-whiteboard]").value),
+  }));
+  const settings = {
+    enabled: document.querySelector("#undercover-enabled").checked,
+    vote_seconds: Number(document.querySelector("#undercover-vote-seconds").value),
+    whiteboard_win_remaining: Number(document.querySelector("#undercover-whiteboard-threshold").value),
+    roles,
+  };
+  try {
+    await runMutation(event.target, "保存中…", async () => {
+      undercoverSettings = await requestGame("/api/game/undercover/settings", {
+        method: "PATCH", headers: {"Content-Type": "application/json", ...configurationHeaders()}, body: JSON.stringify(settings),
+      });
+      configurationVersion = undercoverSettings.version;
+      renderUndercoverSettings(undercoverSettings);
+      closeUndercoverSettingsModal();
+    });
+    setResult("谁是卧底规则已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
   }

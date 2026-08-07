@@ -118,6 +118,30 @@ class FakeCore:
             ],
         }
     )
+    undercover_settings: dict = field(
+        default_factory=lambda: {
+            "enabled": True,
+            "vote_seconds": 120,
+            "whiteboard_win_remaining": 3,
+            "roles": [
+                {"player_count": 4, "civilian_count": 3, "undercover_count": 1, "whiteboard_count": 0},
+                {"player_count": 5, "civilian_count": 3, "undercover_count": 1, "whiteboard_count": 1},
+                {"player_count": 6, "civilian_count": 4, "undercover_count": 1, "whiteboard_count": 1},
+                {"player_count": 7, "civilian_count": 4, "undercover_count": 2, "whiteboard_count": 1},
+                {"player_count": 8, "civilian_count": 5, "undercover_count": 2, "whiteboard_count": 1},
+            ],
+        }
+    )
+    undercover_session: dict = field(
+        default_factory=lambda: {
+            "state": None,
+            "target_player_count": 0,
+            "player_count": 0,
+            "queued_count": 0,
+            "current_vote_round": 0,
+            "vote_deadline": None,
+        }
+    )
     manual_login_lease: dict | None = None
 
     def status(self):
@@ -334,6 +358,16 @@ class FakeCore:
     def set_memory_assessment_settings(self, settings):
         self.memory_assessment_settings = settings
         return self.memory_assessment_settings
+
+    def get_undercover_settings(self):
+        return self.undercover_settings
+
+    def set_undercover_settings(self, settings):
+        self.undercover_settings = settings
+        return self.undercover_settings
+
+    def get_undercover_session(self):
+        return self.undercover_session
 
     def list_hide_and_seek_scenes(self, page, page_size):
         return _page(self.hide_and_seek_scenes, page, page_size)
@@ -861,6 +895,31 @@ def test_admin_proxies_memory_assessment_settings_with_versioning(client, header
     assert response.json()["version"] == 1
 
 
+def test_admin_proxies_undercover_settings_and_public_session(client, headers, core):
+    initial = client.get("/api/game/undercover/settings", headers=headers)
+    response = client.patch(
+        "/api/game/undercover/settings",
+        headers={
+            **headers,
+            "If-Match": str(initial.json()["version"]),
+            "Idempotency-Key": "undercover-settings-1",
+        },
+        json={
+            **core.undercover_settings,
+            "vote_seconds": 90,
+        },
+    )
+    session = client.get("/api/game/undercover/session", headers=headers)
+
+    assert initial.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["vote_seconds"] == 90
+    assert response.json()["version"] == 1
+    assert session.status_code == 200
+    assert session.json()["state"] is None
+    assert "roles" not in session.json()
+
+
 def test_admin_page_exposes_activity_settings_modal(client):
     page = client.get("/").text
     script = client.get("/static/admin.js").text
@@ -1358,6 +1417,18 @@ def test_admin_exposes_memory_assessment_configuration_surface(client):
     assert 'id="memory-assessment-settings-modal"' in page
     assert "loadMemoryAssessment" in script
     assert '"/api/game/memory-assessment/settings"' in script
+
+
+def test_admin_exposes_undercover_configuration_surface(client):
+    page = client.get("/").text
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert 'data-view="undercover"' in page
+    assert 'id="undercover-view"' in page
+    assert 'id="undercover-settings-modal"' in page
+    assert "loadUndercover" in script
+    assert '"/api/game/undercover/settings"' in script
+    assert '"/api/game/undercover/session"' in script
 
 
 def test_admin_static_assets_disable_browser_cache(client):

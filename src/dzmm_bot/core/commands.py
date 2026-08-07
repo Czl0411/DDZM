@@ -28,10 +28,15 @@ class GroupCommandHandler:
             command = "/摸鱼躲猫猫"
         if command == "/me":
             command = "/我"
-        if command not in _COMMANDS:
+        if command == "/答案":
+            parts = content.split(maxsplit=1)
+            if len(parts) != 2 or not parts[1].strip():
+                return None
             return self._memory_assessment_answer(
-                message.sender_platform_id, content, message.received_at.astimezone(_BEIJING)
+                message.sender_platform_id, parts[1].strip(), message.received_at.astimezone(_BEIJING)
             )
+        if command not in _COMMANDS:
+            return None
         self._repository.ensure_command_definitions()
         if not self._repository.is_command_enabled(command):
             return None
@@ -406,6 +411,8 @@ class GroupCommandHandler:
                 received_at,
                 {"{惩罚金额}": self._repository.get_memory_assessment_settings().duel_wrong_freeze},
             )
+        if result.status == "duel_disqualified":
+            return self._reply("/记忆考核", "duel_disqualified", received_at)
         if result.status == "duel_collected":
             return self._reply("/记忆考核", "duel_collected", received_at)
         return None

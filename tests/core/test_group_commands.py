@@ -360,12 +360,37 @@ def test_memory_assessment_single_uses_continue_and_cash_out_commands(monkeypatc
     _receive(service, "start", "u1", "/记忆考核", now)
     with factory() as session:
         round_record = session.scalar(select(MemoryAssessmentRoundRecord))
-    _receive(service, "too-early", "u1", "AAAAA", now)
+    _receive(service, "too-early", "u1", "/答案 AAAAA", now)
     repository.mark_memory_assessment_round_recalled(round_record.id, now)
-    _receive(service, "answer", "u1", "AAAAA", now)
+    _receive(service, "answer", "u1", "/答案 AAAAA", now)
     _receive(service, "cash-out", "u1", "/收手", now)
 
     assert _latest_reply(factory) == "小明 收手成功，获得 1 摸鱼币。当前余额：1 摸鱼币。"
+
+
+def test_memory_assessment_only_accepts_answers_prefixed_with_answer_command(monkeypatch):
+    from dzmm_bot.core.schema import MemoryAssessmentRoundRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _receive(service, "join", "u1", "/入职 小明", now)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    _receive(service, "start", "u1", "/记忆考核", now)
+    with factory() as session:
+        round_record = session.scalar(select(MemoryAssessmentRoundRecord))
+    repository.mark_memory_assessment_round_recalled(round_record.id, now)
+
+    casual = _receive(service, "casual", "u1", "今天正常聊天", now)
+    with factory() as session:
+        assert session.get(MemoryAssessmentRoundRecord, round_record.id).state == "awaiting_answer"
+    assert _replies_for(factory, casual.message_id) == []
+
+    answer = _receive(service, "answer", "u1", "/答案 AAAAA", now)
+
+    assert _replies_for(factory, answer.message_id) == [
+        "第 1 级通过。现在收手可获得 1 摸鱼币，或发送 /继续 挑战下一层。"
+    ]
 
 
 def test_memory_assessment_prompt_is_queued_for_automatic_recall(monkeypatch):
@@ -401,7 +426,7 @@ def test_memory_assessment_duel_is_joined_with_plain_join_command(monkeypatch):
     with factory() as session:
         round_record = session.scalar(select(MemoryAssessmentRoundRecord))
     repository.mark_memory_assessment_round_recalled(round_record.id, now)
-    _receive(service, "answer", "u1", "A" * 13, now)
+    _receive(service, "answer", "u1", "/答案 " + "A" * 13, now)
 
     assert "小明 最先答对，赢得奖池 10 摸鱼币。" in _latest_reply(factory)
 

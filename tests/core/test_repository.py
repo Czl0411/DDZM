@@ -213,6 +213,40 @@ def test_memory_assessment_duel_surrender_awards_remaining_player(repository, mo
     assert repository.find_user("u2").balance == 5
 
 
+def test_memory_assessment_duel_disqualification_keeps_other_player_answering(
+    repository, monkeypatch
+):
+    from dzmm_bot.core.repository import MemoryAssessmentLevelRule
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_user("u2", "小红", now, 0)
+    repository.set_memory_assessment_settings(
+        single_daily_limit=1,
+        single_recall_seconds=3,
+        duel_recall_seconds=3,
+        duel_difficulty_level=5,
+        duel_base_pool=5,
+        duel_wrong_freeze=1,
+        duel_wrong_limit=1,
+        duel_answer_timeout_minutes=10,
+        character_set="ABC123",
+        levels=[MemoryAssessmentLevelRule(level, level * 2 + 3, level) for level in range(1, 6)],
+    )
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    repository.start_memory_assessment_duel("u1", now)
+    started = repository.join_memory_assessment_duel("u2", now)
+    repository.mark_memory_assessment_round_recalled(started.round_id, now)
+
+    disqualified = repository.answer_memory_assessment("u1", "wrong", now)
+    won = repository.answer_memory_assessment("u2", started.answer, now)
+
+    assert disqualified.status == "duel_disqualified"
+    assert won.status == "duel_won"
+    assert won.display_name == "小红"
+
+
 def test_memory_assessment_duel_timeout_collects_the_pool(repository, monkeypatch):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_user("u1", "小明", now, 0)

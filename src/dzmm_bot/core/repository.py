@@ -1313,10 +1313,23 @@ class CoreRepository:
                 balance=user.balance,
             )
         participant.state = "disqualified"
-        winner = self._remaining_memory_assessment_duel_participant(session, game.id)
-        if winner is None:
+        active_participants = list(
+            session.scalars(
+                select(MemoryAssessmentParticipantRecord).where(
+                    MemoryAssessmentParticipantRecord.game_id == game.id,
+                    MemoryAssessmentParticipantRecord.state == "active",
+                )
+            )
+        )
+        if not active_participants:
             return self._collect_memory_assessment_duel_pool(session, game, now)
-        return self._finish_memory_assessment_duel_with_winner(session, game, winner, now)
+        return MemoryAssessmentGameResult(
+            "duel_disqualified",
+            display_name=user.display_name,
+            game_id=game.id,
+            reward=game.base_pool,
+            balance=user.balance,
+        )
 
     def _remaining_memory_assessment_duel_participant(
         self, session: Session, game_id: UUID

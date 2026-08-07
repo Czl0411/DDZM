@@ -86,6 +86,15 @@ _DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE = (
     "可选身份：{可选身份}\n"
     "请使用 /加入 身份 报名，报名将在 {报名截止分钟} 分钟后截止。"
 )
+_DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS = ("/加入", "/退出")
+_DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS = ("/退出",)
+_DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE = "当前有随机事件发生，监事不会处理。"
+_RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
+    {
+        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助",
+        "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降",
+    }
+)
 _DEFAULT_HIDE_AND_SEEK_ENTRY_FEE = 1
 _DEFAULT_HIDE_AND_SEEK_WIN_REWARD = 3
 _DEFAULT_HIDE_AND_SEEK_DAILY_LIMIT = 2
@@ -134,6 +143,9 @@ class RandomEventSettings:
     signup_notice_template: str
     signup_timeout_minutes: int
     reminder_interval_minutes: int
+    signup_allowed_commands: list[str]
+    in_progress_allowed_commands: list[str]
+    blocked_message: str
 
 
 @dataclass(frozen=True)
@@ -523,6 +535,9 @@ class CoreRepository:
                     signup_notice_template=_DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE,
                     signup_timeout_minutes=_DEFAULT_RANDOM_EVENT_SIGNUP_TIMEOUT_MINUTES,
                     reminder_interval_minutes=_DEFAULT_RANDOM_EVENT_REMINDER_INTERVAL_MINUTES,
+                    signup_allowed_commands=list(_DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS),
+                    in_progress_allowed_commands=list(_DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS),
+                    blocked_message=_DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE,
                 )
                 session.add(record)
                 session.flush()
@@ -534,6 +549,9 @@ class CoreRepository:
         signup_notice_template: str,
         signup_timeout_minutes: int,
         reminder_interval_minutes: int,
+        signup_allowed_commands: list[str] | None = None,
+        in_progress_allowed_commands: list[str] | None = None,
+        blocked_message: str | None = None,
     ) -> RandomEventSettings:
         if not isinstance(schedule_times, list) or not schedule_times:
             raise ValueError("每日固定场次至少需要一个时间")
@@ -560,12 +578,31 @@ class CoreRepository:
                     signup_notice_template=_DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE,
                     signup_timeout_minutes=_DEFAULT_RANDOM_EVENT_SIGNUP_TIMEOUT_MINUTES,
                     reminder_interval_minutes=_DEFAULT_RANDOM_EVENT_REMINDER_INTERVAL_MINUTES,
+                    signup_allowed_commands=list(_DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS),
+                    in_progress_allowed_commands=list(_DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS),
+                    blocked_message=_DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE,
                 )
                 session.add(record)
+            signup_allowed_commands = _validate_random_event_allowed_commands(
+                record.signup_allowed_commands
+                if signup_allowed_commands is None
+                else signup_allowed_commands
+            )
+            in_progress_allowed_commands = _validate_random_event_allowed_commands(
+                record.in_progress_allowed_commands
+                if in_progress_allowed_commands is None
+                else in_progress_allowed_commands
+            )
+            blocked_message = _validate_random_event_blocked_message(
+                record.blocked_message if blocked_message is None else blocked_message
+            )
             record.schedule_times = normalized_times
             record.signup_notice_template = signup_notice_template
             record.signup_timeout_minutes = signup_timeout_minutes
             record.reminder_interval_minutes = reminder_interval_minutes
+            record.signup_allowed_commands = signup_allowed_commands
+            record.in_progress_allowed_commands = in_progress_allowed_commands
+            record.blocked_message = blocked_message
             session.flush()
             return _random_event_settings(record)
 
@@ -3603,7 +3640,24 @@ def _random_event_settings(record: RandomEventSettingsRecord) -> RandomEventSett
         signup_notice_template=record.signup_notice_template,
         signup_timeout_minutes=record.signup_timeout_minutes,
         reminder_interval_minutes=record.reminder_interval_minutes,
+        signup_allowed_commands=list(record.signup_allowed_commands),
+        in_progress_allowed_commands=list(record.in_progress_allowed_commands),
+        blocked_message=record.blocked_message,
     )
+
+
+def _validate_random_event_allowed_commands(commands: list[str]) -> list[str]:
+    if not isinstance(commands, list) or any(
+        command not in _RANDOM_EVENT_CONFIGURABLE_COMMANDS for command in commands
+    ):
+        raise ValueError("随机事件允许指令无效")
+    return list(dict.fromkeys(commands))
+
+
+def _validate_random_event_blocked_message(message: str) -> str:
+    if not isinstance(message, str) or not message.strip() or len(message) > 2000:
+        raise ValueError("随机事件拦截提示不能为空且不能超过 2000 个字符")
+    return message.strip()
 
 
 def _hide_and_seek_settings(record: HideAndSeekSettingsRecord) -> HideAndSeekSettings:

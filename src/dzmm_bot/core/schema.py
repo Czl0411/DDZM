@@ -138,6 +138,9 @@ class RandomEventSettingsRecord(Base):
     signup_notice_template: Mapped[str] = mapped_column(Text, nullable=False)
     signup_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     reminder_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    signup_allowed_commands: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    in_progress_allowed_commands: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    blocked_message: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class HideAndSeekSettingsRecord(Base):

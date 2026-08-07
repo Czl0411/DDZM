@@ -737,11 +737,16 @@ def test_random_event_settings_are_available_through_internal_api(client, header
             "signup_notice_template": "可选身份：{可选身份}",
             "signup_timeout_minutes": 15,
             "reminder_interval_minutes": 5,
+            "signup_allowed_commands": ["/加入", "/退出", "/打卡"],
+            "in_progress_allowed_commands": ["/退出", "/打卡"],
+            "blocked_message": "当前有随机事件发生，监事不会处理。",
         },
     )
 
     assert response.status_code == 200
     assert response.json()["schedule_times"] == ["10:00", "14:00"]
+    assert response.json()["signup_allowed_commands"] == ["/加入", "/退出", "/打卡"]
+    assert response.json()["in_progress_allowed_commands"] == ["/退出", "/打卡"]
 
 
 def test_random_event_scene_is_created_through_internal_api(client, headers):

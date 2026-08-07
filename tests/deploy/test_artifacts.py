@@ -114,3 +114,12 @@ def test_memory_assessment_recall_migration_links_rounds_to_outbound_messages():
     assert '"count"' in migration
     assert "recall_after_seconds" in migration
     assert "outbound_message_id" in migration
+
+
+def test_random_event_command_gate_migration_adds_safe_defaults():
+    migration = (ROOT / "migrations/versions/20260807_21_random_event_command_gate.py").read_text()
+
+    assert 'down_revision: str | None = "20260806_20"' in migration
+    assert "signup_allowed_commands" in migration
+    assert "in_progress_allowed_commands" in migration
+    assert "blocked_message" in migration

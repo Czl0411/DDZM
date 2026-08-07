@@ -422,6 +422,9 @@ def create_app(
                 request.signup_notice_template,
                 request.signup_timeout_minutes,
                 request.reminder_interval_minutes,
+                request.signup_allowed_commands,
+                request.in_progress_allowed_commands,
+                request.blocked_message,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -910,6 +913,9 @@ def _random_event_settings_response(settings) -> RandomEventSettingsResponse:
         signup_notice_template=settings.signup_notice_template,
         signup_timeout_minutes=settings.signup_timeout_minutes,
         reminder_interval_minutes=settings.reminder_interval_minutes,
+        signup_allowed_commands=settings.signup_allowed_commands,
+        in_progress_allowed_commands=settings.in_progress_allowed_commands,
+        blocked_message=settings.blocked_message,
     )
 
 

@@ -465,6 +465,9 @@ def create_app(
             "signup_notice_template",
             "signup_timeout_minutes",
             "reminder_interval_minutes",
+            "signup_allowed_commands",
+            "in_progress_allowed_commands",
+            "blocked_message",
         )
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")

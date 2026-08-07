@@ -87,6 +87,9 @@ input { width: 100%; padding: 12px 13px; border: 1px solid #cfd6e4; border-radiu
 .activity-rule-inputs, .income-report-time-inputs { display: grid; gap: 10px; }
 .event-input-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .event-input-grid label { display: grid; gap: 6px; color: var(--muted); }
+.command-permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.command-permission-grid label { display: flex; gap: 7px; align-items: center; color: var(--ink); font-weight: 600; }
+.command-permission-grid input { width: auto; min-height: auto; }
 .scene-seat-inputs { display: grid; gap: 8px; }
 .scene-seat-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px auto; gap: 8px; align-items: center; }
 .scene-opening-inputs { display: grid; gap: 8px; }

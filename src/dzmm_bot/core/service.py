@@ -50,17 +50,16 @@ class CoreService:
                 message.sender_platform_id, message.received_at, message.content
             )
             replies: list[CommandReply] = []
-            if event_message_status == "observer_invalid":
-                replies.append(
-                    CommandReply("当前随机事件进行中，旁观请用（内容）或 (内容) 的形式发言。")
-                )
             event_state = self._repository.active_random_event_state()
-            if event_state is not None and not _allows_random_event_command(
-                message.content, event_state
-            ):
-                for reply_index, reply in enumerate(replies):
-                    self._repository.enqueue_outbound(stored.id, reply.text, reply_index)
-                return ReceiveResult(stored.id, True)
+            if event_state is not None:
+                if event_message_status in {"participant", "observer_valid"}:
+                    return ReceiveResult(stored.id, True)
+                settings = self._repository.get_random_event_settings()
+                if not _allows_random_event_command(message.content, event_state, settings):
+                    self._repository.enqueue_outbound(
+                        stored.id, settings.blocked_message, 0
+                    )
+                    return ReceiveResult(stored.id, True)
             reply = self._command_handler.handle(message)
             if isinstance(reply, list):
                 replies.extend(
@@ -90,12 +89,18 @@ class CoreService:
             return ReceiveResult(stored.id, True)
 
 
-def _allows_random_event_command(content: str, event_state: str) -> bool:
+def _allows_random_event_command(content: str, event_state: str, settings) -> bool:
     parts = content.strip().split(maxsplit=1)
     if not parts:
         return False
-    if parts[0] == "/退出":
-        return True
-    return event_state == "signup" and parts[0] == "/加入" and len(parts) == 2 and bool(
-        parts[1].strip()
+    command = {
+        "/me": "/我",
+        "/开始摸鱼躲藏": "/摸鱼躲猫猫",
+        "/躲": "/摸鱼躲猫猫",
+    }.get(parts[0], parts[0])
+    allowed = (
+        settings.signup_allowed_commands
+        if event_state == "signup"
+        else settings.in_progress_allowed_commands
     )
+    return command in allowed

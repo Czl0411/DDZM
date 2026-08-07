@@ -108,7 +108,7 @@ def test_service_records_an_accepted_joined_message_once(session_factory):
     assert repository.personal_activity("sender-1", received_at).level == 1
 
 
-def test_service_warns_unwrapped_observer_during_random_event(session_factory):
+def test_service_uses_random_event_block_message_for_unwrapped_observer(session_factory):
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import BEIJING, OutboundRecord
     from dzmm_bot.core.service import CoreService
@@ -133,7 +133,7 @@ def test_service_warns_unwrapped_observer_during_random_event(session_factory):
         warning = session.scalar(
             select(OutboundRecord).where(OutboundRecord.inbound_message_id == result.message_id)
         )
-    assert warning.text == "当前随机事件进行中，旁观请用（内容）或 (内容) 的形式发言。"
+    assert warning.text == "当前有随机事件发生，监事不会处理。"
 
 
 def test_enqueue_failure_rolls_back_inbound(session_factory, inbound):

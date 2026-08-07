@@ -83,6 +83,9 @@ class FakeCore:
             "signup_notice_template": "可选身份：{可选身份}",
             "signup_timeout_minutes": 15,
             "reminder_interval_minutes": 5,
+            "signup_allowed_commands": ["/加入", "/退出"],
+            "in_progress_allowed_commands": ["/退出"],
+            "blocked_message": "当前有随机事件发生，监事不会处理。",
         }
     )
     random_event_scenes: list[dict] = field(default_factory=list)
@@ -1146,6 +1149,9 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
             "signup_notice_template": "可选身份：{可选身份}",
             "signup_timeout_minutes": 15,
             "reminder_interval_minutes": 5,
+            "signup_allowed_commands": ["/加入", "/退出"],
+            "in_progress_allowed_commands": ["/退出"],
+            "blocked_message": "当前有随机事件发生，监事不会处理。",
         },
     )
     scene = client.post(
@@ -1209,6 +1215,14 @@ def test_random_event_scene_modal_uses_split_copy_fields(client):
 
     assert 'id="random-event-scene-signup"' in page
     assert 'id="random-event-scene-openings"' in page
+
+
+def test_random_event_settings_modal_exposes_command_permissions(client):
+    page = client.get("/").text
+
+    assert 'id="random-event-blocked-message"' in page
+    assert 'id="random-event-signup-command-permissions"' in page
+    assert 'id="random-event-progress-command-permissions"' in page
 
 
 def test_admin_exposes_hide_and_seek_configuration_surface(client):

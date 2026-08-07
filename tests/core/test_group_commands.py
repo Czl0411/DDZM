@@ -207,7 +207,7 @@ def test_random_event_commands_join_count_rounds_and_settle_on_exit():
 
 
 @pytest.mark.parametrize("seat_count", [2, 1])
-def test_random_event_blocks_checkin_but_keeps_required_event_actions(seat_count):
+def test_random_event_replies_when_blocking_checkin_but_keeps_required_event_actions(seat_count):
     from dzmm_bot.core.schema import UserRecord
 
     service, repository, factory = _service()
@@ -225,7 +225,9 @@ def test_random_event_blocks_checkin_but_keeps_required_event_actions(seat_count
         _receive(service, "start-event", "u2", "/加入 员工", now)
 
     checkin = _receive(service, f"checkin-{seat_count}", "u1", "/打卡", now)
-    assert _replies_for(factory, checkin.message_id) == []
+    assert _replies_for(factory, checkin.message_id) == [
+        "当前有随机事件发生，监事不会处理。"
+    ]
     with factory() as session:
         employee = session.scalar(
             select(UserRecord).where(UserRecord.platform_id == "u1")
@@ -235,6 +237,64 @@ def test_random_event_blocks_checkin_but_keeps_required_event_actions(seat_count
     if seat_count == 2:
         joined = _receive(service, "event-join", "u1", "/加入 员工", now)
         assert "已加入随机事件" in _replies_for(factory, joined.message_id)[0]
+
+
+@pytest.mark.parametrize("seat_count", [2, 1])
+def test_random_event_executes_checkin_when_admin_explicitly_allows_it(seat_count):
+    from dzmm_bot.core.schema import UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "茶水间", "咖啡机突然发出一声巨响。", ["正式开始。"], 4, 1, [("员工", seat_count)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"],
+        "可选身份：{可选身份}",
+        15,
+        5,
+        signup_allowed_commands=["/打卡"],
+        in_progress_allowed_commands=["/打卡"],
+        blocked_message="当前有随机事件发生，监事不会处理。",
+    )
+    _receive(service, "join-1", "u1", "/入职 小明", now)
+    _receive(service, "join-2", "u2", "/入职 小红", now)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    if seat_count == 1:
+        assert repository.join_random_event("u2", "员工", now) == "started"
+
+    checkin = _receive(service, f"checkin-allowed-{seat_count}", "u1", "/打卡", now)
+    assert _replies_for(factory, checkin.message_id) == [
+        "打卡成功，领取 5 摸鱼币。当前余额：5 摸鱼币。"
+    ]
+    with factory() as session:
+        employee = session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "u1")
+        )
+        assert employee.balance == 5
+
+
+def test_random_event_uses_the_configured_block_message():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "茶水间", "咖啡机突然发出一声巨响。", ["正式开始。"], 4, 1, [("员工", 2)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"],
+        "可选身份：{可选身份}",
+        15,
+        5,
+        blocked_message="活动进行中，监事暂不处理。",
+    )
+    _receive(service, "join", "u1", "/入职 小明", now)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+
+    blocked = _receive(service, "blocked", "u1", "/余额", now)
+
+    assert _replies_for(factory, blocked.message_id) == ["活动进行中，监事暂不处理。"]
 
 
 def test_hide_and_seek_short_commands_list_places_and_patrol(monkeypatch):

@@ -191,6 +191,9 @@ class RandomEventSettingsResponse(ApiModel):
     signup_notice_template: str = Field(min_length=1, max_length=2000)
     signup_timeout_minutes: int
     reminder_interval_minutes: int
+    signup_allowed_commands: list[str] = Field(max_length=32)
+    in_progress_allowed_commands: list[str] = Field(max_length=32)
+    blocked_message: str = Field(min_length=1, max_length=2000)
 
 
 class SetRandomEventSettingsRequest(RandomEventSettingsResponse):

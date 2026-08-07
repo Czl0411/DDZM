@@ -19,6 +19,13 @@ let hideAndSeekScenePage = 1;
 let memoryAssessmentSettings = null;
 
 const pageSize = 20;
+const randomEventCommandOptions = [
+  ["/入职", "/入职"], ["/我的物品", "/我的物品"], ["/打卡", "/打卡"],
+  ["/余额", "/余额"], ["/我", "/我（含 /me）"], ["/商店", "/商店"],
+  ["/帮助", "/帮助"], ["/加入", "/加入"], ["/退出", "/退出"],
+  ["/摸鱼躲猫猫", "/开始摸鱼躲藏、/躲"], ["/记忆考核", "/记忆考核"],
+  ["/继续", "/继续"], ["/收手", "/收手"], ["/投降", "/投降"],
+];
 
 const loginScreen = document.querySelector("#login-screen");
 const dashboard = document.querySelector("#dashboard");
@@ -192,7 +199,8 @@ function renderRandomEventSettings(settings) {
   document.querySelector("#random-event-settings-card").innerHTML = `
     <article><span>每日固定场次</span><strong>${settings.schedule_times.length} 场</strong><small>${escapeHtml(settings.schedule_times.join(" · "))}（北京时间）</small></article>
     <article><span>报名补充说明</span><strong>已配置</strong><small>${escapeHtml(settings.signup_notice_template)}</small></article>
-    <article><span>报名与提醒</span><strong>${settings.signup_timeout_minutes} / ${settings.reminder_interval_minutes} 分钟</strong><small>报名超时 / 未满员提醒</small></article>`;
+    <article><span>报名与提醒</span><strong>${settings.signup_timeout_minutes} / ${settings.reminder_interval_minutes} 分钟</strong><small>报名超时 / 未满员提醒</small></article>
+    <article><span>期间指令放行</span><strong>${settings.signup_allowed_commands.length} / ${settings.in_progress_allowed_commands.length}</strong><small>报名中 / 进行中</small></article>`;
 }
 
 function renderRandomEventScenes(scenes) {
@@ -350,7 +358,16 @@ async function openRandomEventSettingsModal() {
   document.querySelector("#random-event-signup-notice").value = settings.signup_notice_template;
   document.querySelector("#random-event-signup-timeout").value = settings.signup_timeout_minutes;
   document.querySelector("#random-event-reminder-interval").value = settings.reminder_interval_minutes;
+  document.querySelector("#random-event-blocked-message").value = settings.blocked_message;
+  renderRandomEventCommandPermissions("#random-event-signup-command-permissions", "signup", settings.signup_allowed_commands);
+  renderRandomEventCommandPermissions("#random-event-progress-command-permissions", "progress", settings.in_progress_allowed_commands);
   randomEventSettingsModal.hidden = false;
+}
+
+function renderRandomEventCommandPermissions(selector, phase, allowed) {
+  document.querySelector(selector).innerHTML = randomEventCommandOptions.map(([value, label]) =>
+    `<label><input data-random-event-${phase}-command type="checkbox" value="${value}"${allowed.includes(value) ? " checked" : ""}>${label}</label>`
+  ).join("");
 }
 
 function renderRandomEventTime(value = "") {
@@ -961,9 +978,12 @@ randomEventSettingsModal.addEventListener("click", async (event) => {
     signup_notice_template: document.querySelector("#random-event-signup-notice").value.trim(),
     signup_timeout_minutes: Number(document.querySelector("#random-event-signup-timeout").value),
     reminder_interval_minutes: Number(document.querySelector("#random-event-reminder-interval").value),
+    signup_allowed_commands: [...randomEventSettingsModal.querySelectorAll("[data-random-event-signup-command]:checked")].map((input) => input.value),
+    in_progress_allowed_commands: [...randomEventSettingsModal.querySelectorAll("[data-random-event-progress-command]:checked")].map((input) => input.value),
+    blocked_message: document.querySelector("#random-event-blocked-message").value.trim(),
   };
-  if (!settings.schedule_times.length || !settings.signup_notice_template) {
-    setResult("请至少设置一个触发时刻和报名补充说明", "error");
+  if (!settings.schedule_times.length || !settings.signup_notice_template || !settings.blocked_message) {
+    setResult("请至少设置一个触发时刻、报名补充说明和拦截提示", "error");
     return;
   }
   try {

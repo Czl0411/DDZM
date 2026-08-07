@@ -1285,6 +1285,16 @@ def test_random_event_details_modal_keeps_header_visible_and_scrolls_entries(cli
     assert "overflow-y: auto" in stylesheet
 
 
+def test_random_event_rules_modal_uses_internal_scroll_for_long_settings(client):
+    page = client.get("/").text
+    stylesheet = Path("src/dzmm_bot/admin/static/admin.css").read_text()
+
+    assert 'class="template-modal-card random-event-settings-modal-card"' in page
+    assert ".random-event-settings-modal-card" in stylesheet
+    assert "max-height: calc(100vh - 40px)" in stylesheet
+    assert "overflow-y: auto" in stylesheet
+
+
 def test_random_event_scene_script_submits_openings_list():
     script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
 

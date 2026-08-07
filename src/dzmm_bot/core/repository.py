@@ -689,6 +689,10 @@ class CoreRepository:
                     return MemoryAssessmentGameResult(
                         "disabled", display_name=user.display_name
                     )
+                if self._active_random_event(session) is not None:
+                    return MemoryAssessmentGameResult(
+                        "random_event_active", display_name=user.display_name
+                    )
                 active = session.scalar(
                     select(MemoryAssessmentGameRecord)
                     .where(MemoryAssessmentGameRecord.active_key == "global")
@@ -805,6 +809,10 @@ class CoreRepository:
                     return MemoryAssessmentGameResult(
                         "disabled", display_name=user.display_name
                     )
+                if self._active_random_event(session) is not None:
+                    return MemoryAssessmentGameResult(
+                        "random_event_active", display_name=user.display_name
+                    )
                 if session.scalar(
                     select(MemoryAssessmentGameRecord)
                     .where(MemoryAssessmentGameRecord.active_key == "global")
@@ -860,6 +868,10 @@ class CoreRepository:
                 )
                 if user is None:
                     return MemoryAssessmentGameResult("not_joined")
+                if self._active_random_event(session) is not None:
+                    return MemoryAssessmentGameResult(
+                        "random_event_active", display_name=user.display_name
+                    )
                 game = session.scalar(
                     select(MemoryAssessmentGameRecord)
                     .where(MemoryAssessmentGameRecord.active_key == "global")

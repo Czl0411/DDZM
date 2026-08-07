@@ -64,6 +64,7 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/记忆考核", "disabled", "玩法未开启", "记忆考核暂未开启。", ("{日期}",)),
     TemplateDefinition("/记忆考核", "daily_limit", "今日次数已用完", "你今天已经完成过记忆考核挑战，明天再来。", ("{日期}",)),
     TemplateDefinition("/记忆考核", "already_active", "考核正在进行", "当前有一场记忆考核正在进行，请稍后再试。", ("{日期}",)),
+    TemplateDefinition("/记忆考核", "random_event_active", "随机事件优先", "当前随机事件正在报名或进行中，暂不能发起或加入记忆考核。", ("{日期}",)),
     TemplateDefinition("/记忆考核", "started", "展示考题", "【记忆考核·第 {等级} 级】请记住：{考核文本}", ("{昵称}", "{等级}", "{考核文本}", "{撤回秒数}", "{日期}")),
     TemplateDefinition("/记忆考核", "duel_waiting", "等待对手", "{昵称} 发起了记忆考核对战，另一位员工请发送 /加入 入局。", ("{昵称}", "{等级}", "{日期}")),
     TemplateDefinition("/记忆考核", "duel_started", "对战考题", "【记忆考核对战·第 {等级} 级】请记住：{考核文本}", ("{昵称}", "{等级}", "{考核文本}", "{撤回秒数}", "{日期}")),

@@ -185,6 +185,8 @@ class GroupCommandHandler:
                 )
             if duel.status == "not_joined":
                 return self._reply("/加入", "not_joined", received_at)
+            if duel.status == "random_event_active":
+                return self._reply("/记忆考核", "random_event_active", received_at)
             return self._reply("/加入", "invalid", received_at)
         status = self._repository.join_random_event(
             platform_id, parts[1].strip(), received_at
@@ -351,6 +353,7 @@ class GroupCommandHandler:
             "disabled": "disabled",
             "daily_limit": "daily_limit",
             "already_active": "already_active",
+            "random_event_active": "random_event_active",
         }
         return self._reply("/记忆考核", scenarios[result.status], received_at)
 

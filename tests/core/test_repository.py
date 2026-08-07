@@ -212,6 +212,43 @@ def test_memory_assessment_duel_timeout_collects_the_pool(repository, monkeypatc
     assert repository.find_user("u2").balance == -5
 
 
+@pytest.mark.parametrize("state", ["signup", "in_progress"])
+def test_memory_assessment_cannot_start_during_active_random_event(repository, state):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_user("u2", "小红", now, 0)
+    repository.create_random_event_scene("茶水间", "报名", ["开场"], 1, 1, [("员工", 1)])
+    repository.set_random_event_settings(["10:00"], "可选身份：{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    if state == "in_progress":
+        assert repository.join_random_event("u2", "员工", now) == "started"
+
+    assert repository.start_memory_assessment_single("u1", now).status == "random_event_active"
+    assert repository.start_memory_assessment_duel("u1", now).status == "random_event_active"
+
+
+@pytest.mark.parametrize("state", ["signup", "in_progress"])
+def test_memory_assessment_duel_cannot_be_joined_during_active_random_event(
+    repository, state
+):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_user("u2", "小红", now, 0)
+    repository.create_user("u3", "小李", now, 0)
+    waiting = repository.start_memory_assessment_duel("u1", now)
+    repository.create_random_event_scene("茶水间", "报名", ["开场"], 1, 2, [("员工", 2)])
+    repository.set_random_event_settings(["10:00"], "可选身份：{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    if state == "in_progress":
+        assert repository.join_random_event("u2", "员工", now) == "joined"
+        assert repository.join_random_event("u3", "员工", now) == "started"
+
+    assert waiting.status == "waiting_opponent"
+    assert repository.join_memory_assessment_duel("u2", now).status == "random_event_active"
+
+
 def test_due_outbound_recall_marks_memory_assessment_round_ready(repository, now):
     from dzmm_bot.core.schema import MemoryAssessmentRoundRecord
 

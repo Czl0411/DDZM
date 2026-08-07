@@ -443,6 +443,17 @@ def test_undercover_exit_rechecks_winner_and_manual_end_releases_session(
     assert repository.undercover_session_summary().state is None
 
 
+def test_undercover_signup_member_can_end_the_pending_game(repository, session_factory, now):
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    assert repository.start_undercover_signup(platform_ids[0], 4, now).status == "signup_started"
+    assert repository.join_undercover(platform_ids[1], now).status == "joined_signup"
+
+    result = repository.end_undercover(platform_ids[1], now)
+
+    assert result.status == "ended"
+    assert repository.undercover_session_summary().state is None
+
+
 def test_new_employee_has_default_rank_and_department(repository, now):
     repository.create_user("employee-1", "小明", now, 0)
 

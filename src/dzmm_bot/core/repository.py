@@ -1501,6 +1501,23 @@ class CoreRepository:
         now = now.astimezone(BEIJING)
         with self.transaction():
             with self._session() as session:
+                signup = self._active_undercover_session(session)
+                if signup is not None and signup.state == "signup":
+                    user = self._undercover_user(session, platform_id)
+                    member = None if user is None else session.scalar(
+                        select(UndercoverSessionMemberRecord)
+                        .where(
+                            UndercoverSessionMemberRecord.session_id == signup.id,
+                            UndercoverSessionMemberRecord.user_id == user.id,
+                            UndercoverSessionMemberRecord.state == "joined",
+                        )
+                        .with_for_update()
+                    )
+                    if member is not None:
+                        signup.state = "closed"
+                        signup.active_key = None
+                        signup.finished_at = now
+                        return UndercoverGameResult("ended", session_id=signup.id)
                 session_record, game, player = self._undercover_active_player(session, platform_id)
                 if session_record is None or game is None or player is None:
                     return UndercoverGameResult("cannot_end")

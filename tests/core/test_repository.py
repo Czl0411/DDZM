@@ -180,6 +180,22 @@ def test_memory_assessment_duel_freezes_pool_and_awards_first_exact_answer(
     assert repository.find_user("u2").balance == 5
 
 
+def test_memory_assessment_duel_with_missing_round_ignores_answers(repository, monkeypatch):
+    from dzmm_bot.core.schema import MemoryAssessmentRoundRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_user("u2", "小红", now, 0)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    repository.start_memory_assessment_duel("u1", now)
+    repository.join_memory_assessment_duel("u2", now)
+    with repository._session() as session:
+        session.delete(session.scalar(select(MemoryAssessmentRoundRecord)))
+
+    assert repository.answer_memory_assessment("u1", "AAAAA", now).status == "answer_not_ready"
+
+
 def test_memory_assessment_duel_surrender_awards_remaining_player(repository, monkeypatch):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_user("u1", "小明", now, 0)

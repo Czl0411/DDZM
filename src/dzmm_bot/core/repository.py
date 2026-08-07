@@ -1034,7 +1034,13 @@ class CoreRepository:
                     .with_for_update()
                 )
                 if round_record is None:
-                    raise RuntimeError("记忆考核答案轮次消失")
+                    return MemoryAssessmentGameResult(
+                        "answer_not_ready",
+                        display_name=user.display_name,
+                        game_id=game.id,
+                        level=game.level,
+                        reward=game.reward,
+                    )
                 if game.state != "awaiting_answer" or round_record.state != "awaiting_answer":
                     return MemoryAssessmentGameResult(
                         "answer_not_ready",
@@ -1228,7 +1234,13 @@ class CoreRepository:
             .with_for_update()
         )
         if round_record is None:
-            raise RuntimeError("记忆考核对局答案轮次消失")
+            return MemoryAssessmentGameResult(
+                "answer_not_ready",
+                display_name=user.display_name,
+                game_id=game.id,
+                level=game.level,
+                reward=game.reward,
+            )
         if game.state != "awaiting_answer" or round_record.state != "awaiting_answer":
             return MemoryAssessmentGameResult(
                 "answer_not_ready",

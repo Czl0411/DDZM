@@ -33,6 +33,22 @@ class AdminCorePort(Protocol):
 
     def create_game_item(self, item: dict) -> dict: ...
 
+    def list_ranks(self) -> list[dict]: ...
+
+    def update_rank(self, rank_id: str, rank: dict) -> dict: ...
+
+    def list_departments(self, page: int, page_size: int) -> dict: ...
+
+    def create_department(self, department: dict) -> dict: ...
+
+    def update_department(self, department_id: str, department: dict) -> dict: ...
+
+    def delete_department(self, department_id: str) -> dict: ...
+
+    def list_promotions(self, state: str | None, page: int, page_size: int) -> dict: ...
+
+    def set_board_membership(self, platform_id: str, member: bool) -> dict: ...
+
     def get_game_settings(self) -> dict: ...
 
     def set_game_settings(self, settings: dict) -> dict: ...
@@ -152,6 +168,49 @@ class CoreClient:
 
     def create_game_item(self, item: dict) -> dict:
         response = self._client.post("/internal/game/items", json=item)
+        response.raise_for_status()
+        return response.json()
+
+    def list_ranks(self) -> list[dict]:
+        return self._get("/internal/game/ranks")
+
+    def update_rank(self, rank_id: str, rank: dict) -> dict:
+        response = self._client.patch(f"/internal/game/ranks/{rank_id}", json=rank)
+        response.raise_for_status()
+        return response.json()
+
+    def list_departments(self, page: int, page_size: int) -> dict:
+        return self._get(
+            "/internal/game/departments", params={"page": page, "page_size": page_size}
+        )
+
+    def create_department(self, department: dict) -> dict:
+        response = self._client.post("/internal/game/departments", json=department)
+        response.raise_for_status()
+        return response.json()
+
+    def update_department(self, department_id: str, department: dict) -> dict:
+        response = self._client.put(
+            f"/internal/game/departments/{department_id}", json=department
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_department(self, department_id: str) -> dict:
+        response = self._client.delete(f"/internal/game/departments/{department_id}")
+        response.raise_for_status()
+        return response.json()
+
+    def list_promotions(self, state: str | None, page: int, page_size: int) -> dict:
+        params = {"page": page, "page_size": page_size}
+        if state is not None:
+            params["state"] = state
+        return self._get("/internal/game/promotions", params=params)
+
+    def set_board_membership(self, platform_id: str, member: bool) -> dict:
+        response = self._client.post(
+            f"/internal/game/users/{platform_id}/board-membership", json={"member": member}
+        )
         response.raise_for_status()
         return response.json()
 

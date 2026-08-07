@@ -246,6 +246,22 @@ def test_positions_switch_department_and_reject_promotion():
     assert repository.find_user("u1").balance == 80
 
 
+def test_promotion_reply_uses_the_next_enabled_rank():
+    from dzmm_bot.core.schema import RankRecord
+
+    service, _, factory = _service()
+    now = datetime(2026, 8, 7, 10, 0, tzinfo=BEIJING)
+    _receive(service, "join", "u1", "/入职 小明", now)
+    with factory.begin() as session:
+        rank_two = session.scalar(select(RankRecord).where(RankRecord.sort_order == 2))
+        assert rank_two is not None
+        rank_two.enabled = False
+
+    requested = _receive(service, "promotion", "u1", "/晋升", now)
+
+    assert "实习生 → 小组长" in _replies_for(factory, requested.message_id)[0]
+
+
 def test_random_event_commands_join_count_rounds_and_settle_on_exit():
     service, repository, factory = _service()
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)

@@ -368,6 +368,149 @@ def create_app(
     ) -> dict:
         return core.list_game_users(page, page_size)
 
+    @app.get("/api/game/ranks")
+    def game_ranks(_: Annotated[None, Depends(authorize)]) -> list[dict]:
+        return _relay_core(core.list_ranks)
+
+    @app.patch("/api/game/ranks/{rank_id}")
+    def update_game_rank(
+        rank_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "name",
+            "promotion_price",
+            "vote_weight",
+            "multiplayer_game_limit",
+            "has_group_management",
+            "enabled",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid rank")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.update_rank(
+                    rank_id, {key: request[key] for key in required}
+                )
+            ),
+            scope=f"rank:{rank_id}",
+        )
+
+    @app.get("/api/game/departments")
+    def game_departments(
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        return {
+            **_relay_core(lambda: core.list_departments(page, page_size)),
+            "version": repository.config_version(),
+        }
+
+    @app.post("/api/game/departments", status_code=status.HTTP_201_CREATED)
+    def create_game_department(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        if not isinstance(request.get("name"), str) or not isinstance(
+            request.get("description", ""), str
+        ):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid department")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.create_department(
+                    {"name": request["name"], "description": request.get("description", "")}
+                )
+            ),
+            scope="departments",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    @app.put("/api/game/departments/{department_id}")
+    def update_game_department(
+        department_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = ("name", "description", "enabled")
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid department")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.update_department(
+                    department_id, {key: request[key] for key in required}
+                )
+            ),
+            scope=f"department:{department_id}",
+        )
+
+    @app.delete("/api/game/departments/{department_id}")
+    def delete_game_department(
+        department_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(lambda: core.delete_department(department_id)),
+            scope=f"department:{department_id}",
+        )
+
+    @app.get("/api/game/promotions")
+    def game_promotions(
+        _: Annotated[None, Depends(authorize)],
+        state: str | None = Query(None),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        return {
+            **_relay_core(lambda: core.list_promotions(state, page, page_size)),
+            "version": repository.config_version(),
+        }
+
+    @app.post("/api/game/users/{platform_id}/board-membership")
+    def set_board_membership(
+        platform_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(require_super_admin)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> JSONResponse:
+        if not isinstance(request.get("member"), bool):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid board membership")
+        return idempotent_response(
+            identity,
+            idempotency_key,
+            lambda: (
+                200,
+                {
+                    **_relay_core(
+                        lambda: core.set_board_membership(platform_id, request["member"])
+                    ),
+                    "board_member": request["member"],
+                },
+            ),
+            scope=f"board-membership:{platform_id}",
+        )
+
     @app.get("/api/game/items")
     def game_items(
         _: Annotated[None, Depends(authorize)],

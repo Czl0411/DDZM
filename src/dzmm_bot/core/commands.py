@@ -233,7 +233,7 @@ class GroupCommandHandler:
             target = next(
                 rank
                 for rank in self._repository.list_ranks()
-                if rank.sort_order == profile.rank.sort_order + 1
+                if rank.id == result.request.target_rank_id
             )
             return self._reply(
                 "/晋升",

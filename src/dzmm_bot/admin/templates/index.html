@@ -61,6 +61,7 @@
               <button id="nav-hide-and-seek" class="nav-item" data-view="hide-and-seek" type="button">躲猫猫</button>
               <button id="nav-memory-assessment" class="nav-item" data-view="memory-assessment" type="button">记忆考核</button>
               <button id="nav-commands" class="nav-item" data-view="commands" type="button">指令库</button>
+              <button id="nav-organization" class="nav-item" data-view="organization" type="button">职位与部门</button>
               <button id="nav-employees" class="nav-item" data-view="employees" type="button">员工</button>
               <button id="nav-shop" class="nav-item" data-view="shop" type="button">物品与商店</button>
               <button id="nav-admins" class="nav-item" data-view="admins" type="button" hidden>管理员</button>
@@ -225,6 +226,20 @@
                 <h2>员工</h2>
                 <div id="employee-list" class="data-list"></div>
                 <nav id="employee-pagination" class="pagination" aria-label="员工分页"></nav>
+              </section>
+
+              <section id="organization-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">群内组织</p>
+                <div class="panel-heading"><div><h2>职位配置</h2><p class="muted">职位决定群内展示、投票权益与多人小游戏发起次数；不会授予后台管理权限。</p></div></div>
+                <div id="rank-list" class="data-list"></div>
+                <hr>
+                <div class="panel-heading"><div><h2>部门配置</h2><p class="muted">员工可在群内自由加入或切换已开放部门。</p></div><button id="create-department" class="primary" type="button">新增部门</button></div>
+                <div id="department-list" class="data-list"></div>
+                <nav id="department-pagination" class="pagination" aria-label="部门分页"></nav>
+                <hr>
+                <div class="panel-heading"><div><h2>晋升审批记录</h2><p class="muted">申请在 24 小时后失效；同意时才会扣除对应摸鱼币。</p></div></div>
+                <div id="promotion-list" class="data-list"></div>
+                <nav id="promotion-pagination" class="pagination" aria-label="晋升记录分页"></nav>
               </section>
 
               <section id="shop-view" class="dashboard-view panel" hidden>
@@ -395,6 +410,18 @@
         <div class="event-input-grid"><label>对战难度等级<input id="memory-assessment-duel-level" type="number" min="1" max="20"></label><label>每人基础奖池<input id="memory-assessment-base-pool" type="number" min="1" max="999"></label><label>答错冻结金额<input id="memory-assessment-wrong-freeze" type="number" min="1" max="999"></label><label>答错上限<input id="memory-assessment-wrong-limit" type="number" min="1" max="99"></label><label>作答超时（分钟）<input id="memory-assessment-timeout" type="number" min="1" max="60"></label></div>
         <label>随机字符集<input id="memory-assessment-character-set" maxlength="200"></label><label>等级规则<textarea id="memory-assessment-levels" rows="5"></textarea></label>
         <div class="template-modal-actions"><button class="secondary" data-close-memory-assessment-settings-modal type="button">取消</button><button id="save-memory-assessment-settings" class="primary" type="button">保存规则</button></div>
+      </section>
+    </div>
+    <div id="rank-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="rank-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-rank-modal></div>
+      <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">职位配置</p><h2 id="rank-modal-title">编辑职位</h2><p class="muted">职级顺序与等级标签固定；核心董事会不可停用。</p></div><button class="text-button" data-close-rank-modal type="button">关闭</button></div>
+        <label>职位名称<input id="rank-name" maxlength="64"></label><div class="event-input-grid"><label>晋升价格<input id="rank-promotion-price" type="number" min="0" max="99999"></label><label>投票权益<input id="rank-vote-weight" type="number" min="0" max="99"></label><label>多人小游戏次数<input id="rank-game-limit" type="number" min="-1" max="999"></label></div><label><input id="rank-group-management" type="checkbox"> 显示群内管理资格</label><label><input id="rank-enabled" type="checkbox"> 启用职位</label><div class="template-modal-actions"><button class="secondary" data-close-rank-modal type="button">取消</button><button id="save-rank" class="primary" type="button">保存职位</button></div>
+      </section>
+    </div>
+    <div id="department-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="department-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-department-modal></div>
+      <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">部门配置</p><h2 id="department-modal-title">新增部门</h2><p class="muted">未分配部门是系统默认部门，不能重命名、停用或删除。</p></div><button class="text-button" data-close-department-modal type="button">关闭</button></div>
+        <label>部门名称<input id="department-name" maxlength="64"></label><label>部门说明<textarea id="department-description" rows="4" maxlength="2000"></textarea></label><label id="department-enabled-row"><input id="department-enabled" type="checkbox"> 启用部门</label><div class="template-modal-actions"><button class="secondary" data-close-department-modal type="button">取消</button><button id="save-department" class="primary" type="button">保存部门</button></div>
       </section>
     </div>
     <script src="/static/admin.js"></script>

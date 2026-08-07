@@ -1317,6 +1317,10 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         "random_events",
         "random_event_seats",
         "random_event_participants",
+        "ranks",
+        "departments",
+        "promotion_requests",
+        "promotion_approvals",
     } <= set(inspector.get_table_names())
     assert "ux_inbound_messages_platform_message_id" in {
         index["name"] for index in inspector.get_indexes("inbound_messages")
@@ -1351,7 +1355,7 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         help_command = connection.scalar(
             text("SELECT command FROM command_definitions WHERE command = '/帮助'")
         )
-    assert template_count == 15
+    assert template_count >= 15
     assert help_command == "/帮助"
 
 

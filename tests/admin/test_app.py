@@ -193,6 +193,55 @@ class FakeCore:
         self.items.append(item)
         return item
 
+    def list_ranks(self):
+        return getattr(self, "ranks", [])
+
+    def update_rank(self, rank_id, rank):
+        index = next(
+            index for index, item in enumerate(self.ranks) if item["id"] == rank_id
+        )
+        saved = {**self.ranks[index], **rank}
+        self.ranks[index] = saved
+        return saved
+
+    def list_departments(self, page, page_size):
+        return _page(getattr(self, "departments", []), page, page_size)
+
+    def create_department(self, department):
+        saved = {
+            **department,
+            "id": f"department-{len(getattr(self, 'departments', [])) + 1}",
+            "is_default": False,
+            "enabled": True,
+        }
+        self.departments = [*getattr(self, "departments", []), saved]
+        return saved
+
+    def update_department(self, department_id, department):
+        index = next(
+            index
+            for index, item in enumerate(self.departments)
+            if item["id"] == department_id
+        )
+        saved = {**self.departments[index], **department}
+        self.departments[index] = saved
+        return saved
+
+    def delete_department(self, department_id):
+        self.departments = [
+            item for item in self.departments if item["id"] != department_id
+        ]
+        return {"accepted": True}
+
+    def list_promotions(self, state, page, page_size):
+        records = getattr(self, "promotions", [])
+        if state is not None:
+            records = [item for item in records if item["state"] == state]
+        return _page(records, page, page_size)
+
+    def set_board_membership(self, platform_id, member):
+        return {"platform_id": platform_id, "member": member}
+
     def get_game_settings(self):
         return self.game_settings
 
@@ -612,6 +661,51 @@ def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):
     assert items.json()["items"][0]["name"] == "午休券20"
 
 
+def test_admin_proxies_rank_department_and_promotion_pages_with_board_boundary(
+    client, headers, core, admin_repository
+):
+    core.ranks = [{"id": "rank-1", "name": "实习生", "level_label": "LV1"}]
+    core.departments = [
+        {
+            "id": "department-1",
+            "name": "未分配部门",
+            "description": "",
+            "is_default": True,
+            "enabled": True,
+        }
+    ]
+    core.promotions = [{"number": 1, "applicant_name": "小明", "state": "pending"}]
+    admin_repository.create_account("alice", "strong-password")
+    session_token = client.post(
+        "/api/auth/login", json={"username": "alice", "password": "strong-password"}
+    ).json()["session_token"]
+
+    ranks = client.get("/api/game/ranks", headers=headers)
+    departments = client.get(
+        "/api/game/departments?page=1&page_size=20", headers=headers
+    )
+    promotions = client.get(
+        "/api/game/promotions?state=pending&page=1&page_size=20", headers=headers
+    )
+    forbidden = client.post(
+        "/api/game/users/user-1/board-membership",
+        headers={"X-Admin-Session": session_token},
+        json={"member": True},
+    )
+    granted = client.post(
+        "/api/game/users/user-1/board-membership",
+        headers={**headers, "Idempotency-Key": "grant-board"},
+        json={"member": True},
+    )
+
+    assert ranks.json()[0]["name"] == "实习生"
+    assert departments.json()["items"][0]["name"] == "未分配部门"
+    assert promotions.json()["items"][0]["number"] == 1
+    assert forbidden.status_code == 403
+    assert granted.status_code == 200
+    assert granted.json()["board_member"] is True
+
+
 def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     page = client.get("/").text
     script = client.get("/static/admin.js").text
@@ -619,6 +713,9 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert 'id="employee-pagination"' in page
     assert 'id="shop-pagination"' in page
     assert 'id="settings-weekly-attendance-reward"' in page
+    assert 'id="nav-organization"' in page
+    assert 'id="rank-modal"' in page
+    assert 'id="department-modal"' in page
     assert "runMutation" in script
     assert "renderPagination" in script
     assert "/api/game/users?page=${page}&page_size=${pageSize}" in script
@@ -627,6 +724,9 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert '"上架中…"' in script
     assert "请填写场景名称、报名公告和每个事件的名称、开场白" in script
     assert "weekly_attendance_reward" in script
+    assert "/api/game/ranks" in script
+    assert "/api/game/departments" in script
+    assert "/api/game/promotions" in script
 
 
 def test_admin_accepts_the_browser_item_form_json_body(client, headers):

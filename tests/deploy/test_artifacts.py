@@ -124,3 +124,15 @@ def test_random_event_command_gate_migration_adds_safe_defaults():
     assert "signup_allowed_commands" in migration
     assert "in_progress_allowed_commands" in migration
     assert "blocked_message" in migration
+
+
+def test_rank_department_command_migration_preserves_custom_me_template():
+    migration = (
+        ROOT / "migrations/versions/20260807_23_rank_department_commands.py"
+    ).read_text()
+
+    assert 'down_revision: str | None = "20260807_22"' in migration
+    assert 'templates.c.template == old_me_template' in migration
+    assert 'templates.c.template == new_me_template' in migration
+    assert '"/晋升申请列表"' in migration
+    assert '"/全部拒绝"' in migration

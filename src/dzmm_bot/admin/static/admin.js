@@ -11,6 +11,8 @@ let activitySettings = null;
 let randomEventSettings = null;
 let employeePage = 1;
 let shopPage = 1;
+let departmentPage = 1;
+let promotionPage = 1;
 let randomEventScenePage = 1;
 let randomEventSceneOpeningTarget = null;
 let randomEventAddScenes = [];
@@ -25,6 +27,9 @@ const randomEventCommandOptions = [
   ["/帮助", "/帮助"], ["/加入", "/加入"], ["/退出", "/退出"],
   ["/摸鱼躲猫猫", "/开始摸鱼躲藏、/躲"], ["/记忆考核", "/记忆考核"],
   ["/继续", "/继续"], ["/收手", "/收手"], ["/投降", "/投降"],
+  ["/加入部门", "/加入部门"], ["/切换部门", "/切换部门"], ["/职位", "/职位"],
+  ["/晋升", "/晋升"], ["/晋升申请列表", "/晋升申请列表"],
+  ["/同意", "/同意"], ["/全部同意", "/全部同意"], ["/拒绝", "/拒绝"], ["/全部拒绝", "/全部拒绝"],
 ];
 
 const loginScreen = document.querySelector("#login-screen");
@@ -64,6 +69,8 @@ const randomEventTimeInputs = document.querySelector("#random-event-time-inputs"
 const hideAndSeekSettingsModal = document.querySelector("#hide-and-seek-settings-modal");
 const hideAndSeekSceneModal = document.querySelector("#hide-and-seek-scene-modal");
 const memoryAssessmentSettingsModal = document.querySelector("#memory-assessment-settings-modal");
+const rankModal = document.querySelector("#rank-modal");
+const departmentModal = document.querySelector("#department-modal");
 
 function headers() {
   return token ? {"X-Admin-Token": token} : {"X-Admin-Session": adminSession};
@@ -168,6 +175,14 @@ function closeHideAndSeekSceneModal() {
   hideAndSeekSceneModal.hidden = true;
   delete hideAndSeekSceneModal.dataset.sceneId;
   delete hideAndSeekSceneModal.dataset.enabled;
+}
+function closeRankModal() {
+  rankModal.hidden = true;
+  delete rankModal.dataset.rank;
+}
+function closeDepartmentModal() {
+  departmentModal.hidden = true;
+  delete departmentModal.dataset.department;
 }
 
 function renderSettings(settings) {
@@ -548,8 +563,65 @@ async function loadEmployees(page = employeePage) {
   const employees = await requestGame(`/api/game/users?page=${page}&page_size=${pageSize}`);
   employeePage = employees.page;
   document.querySelector("#employee-list").innerHTML = employees.items.map((employee) => `
-    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
+    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
   renderPagination(document.querySelector("#employee-pagination"), employees, "位员工", loadEmployees);
+}
+
+function openRankModal(rank) {
+  rankModal.dataset.rank = JSON.stringify(rank);
+  document.querySelector("#rank-modal-title").textContent = `编辑职位：${rank.name}`;
+  document.querySelector("#rank-name").value = rank.name;
+  document.querySelector("#rank-promotion-price").value = rank.promotion_price;
+  document.querySelector("#rank-vote-weight").value = rank.vote_weight;
+  document.querySelector("#rank-game-limit").value = rank.multiplayer_game_limit;
+  document.querySelector("#rank-group-management").checked = rank.has_group_management;
+  document.querySelector("#rank-enabled").checked = rank.enabled;
+  document.querySelector("#rank-enabled").disabled = rank.is_board;
+  rankModal.hidden = false;
+}
+
+function openDepartmentModal(department = null) {
+  departmentModal.dataset.department = department ? JSON.stringify(department) : "";
+  document.querySelector("#department-modal-title").textContent = department ? `编辑部门：${department.name}` : "新增部门";
+  document.querySelector("#save-department").textContent = department ? "保存部门" : "创建部门";
+  document.querySelector("#department-name").value = department?.name || "";
+  document.querySelector("#department-description").value = department?.description || "";
+  document.querySelector("#department-enabled").checked = department?.enabled ?? true;
+  document.querySelector("#department-name").disabled = Boolean(department?.is_default);
+  document.querySelector("#department-enabled").disabled = Boolean(department?.is_default);
+  departmentModal.hidden = false;
+}
+
+function renderRanks(ranks) {
+  document.querySelector("#rank-list").innerHTML = ranks.map((rank) => `
+    <article class="data-row"><div><b>${escapeHtml(rank.name)}（${escapeHtml(rank.level_label)}）${rank.enabled ? "" : "（已停用）"}</b><small>晋升价格 ${rank.promotion_price} · 投票权益 ${rank.vote_weight} · 多人小游戏 ${rank.multiplayer_game_limit < 0 ? "不限" : `${rank.multiplayer_game_limit} 次`}</small><small>${rank.has_group_management ? "显示群内管理资格" : "无群内管理资格"}</small></div><button class="secondary" data-rank="${escapeHtml(JSON.stringify(rank))}" type="button">编辑</button></article>`).join("") || "<p class=\"muted\">暂无职位配置。</p>";
+}
+
+function renderDepartments(departments) {
+  document.querySelector("#department-list").innerHTML = departments.map((department) => `
+    <article class="data-row"><div><b>${escapeHtml(department.name)}${department.enabled ? "" : "（已停用）"}</b><small>${escapeHtml(department.description || "暂无部门说明")}</small></div><div class="command-actions"><button class="secondary" data-department="${escapeHtml(JSON.stringify(department))}" data-department-action="edit" type="button">编辑</button>${department.is_default ? "" : `<button class="danger-button" data-department="${escapeHtml(JSON.stringify(department))}" data-department-action="delete" type="button">删除</button>`}</div></article>`).join("") || "<p class=\"muted\">还没有部门。</p>";
+}
+
+function renderPromotions(promotions, currencyName) {
+  document.querySelector("#promotion-list").innerHTML = promotions.map((promotion) => `
+    <article class="data-row"><div><b>#${promotion.number} ${escapeHtml(promotion.applicant_name)}：${escapeHtml(promotion.source_rank_name)} → ${escapeHtml(promotion.target_rank_name)}</b><small>${promotion.price} ${escapeHtml(currencyName)} · ${escapeHtml(promotion.state)} · 申请于 ${formatHeartbeat(promotion.requested_at)}</small></div></article>`).join("") || "<p class=\"muted\">暂无晋升申请记录。</p>";
+}
+
+async function loadOrganization(departmentTarget = departmentPage, promotionTarget = promotionPage) {
+  const settings = gameSettings || await loadSettings();
+  const [ranks, departments, promotions] = await Promise.all([
+    requestGame("/api/game/ranks"),
+    requestGame(`/api/game/departments?page=${departmentTarget}&page_size=${pageSize}`),
+    requestGame(`/api/game/promotions?page=${promotionTarget}&page_size=${pageSize}`),
+  ]);
+  departmentPage = departments.page;
+  promotionPage = promotions.page;
+  configurationVersion = departments.version;
+  renderRanks(ranks);
+  renderDepartments(departments.items);
+  renderPromotions(promotions.items, settings.currency_name);
+  renderPagination(document.querySelector("#department-pagination"), departments, "个部门", (page) => loadOrganization(page, promotionPage));
+  renderPagination(document.querySelector("#promotion-pagination"), promotions, "条申请", (page) => loadOrganization(departmentPage, page));
 }
 
 async function loadShop(page = shopPage) {
@@ -599,6 +671,7 @@ async function loadGameView(view) {
         </article>`).join("") || "<p class=\"muted\">暂无指令。</p>";
       return;
     }
+    if (view === "organization") return loadOrganization();
     if (view === "employees") {
       return loadEmployees();
     }
@@ -801,6 +874,7 @@ document.querySelector("#create-random-event-scene").addEventListener("click", (
 document.querySelector("#edit-hide-and-seek-settings").addEventListener("click", () => void openHideAndSeekSettingsModal());
 document.querySelector("#create-hide-and-seek-scene").addEventListener("click", () => openHideAndSeekSceneModal());
 document.querySelector("#edit-memory-assessment-settings").addEventListener("click", () => void openMemoryAssessmentSettingsModal());
+document.querySelector("#create-department").addEventListener("click", () => openDepartmentModal());
 document.querySelector("#add-today-random-event").addEventListener("click", async (event) => {
   try {
     await runMutation(event.currentTarget, "加载中…", openRandomEventAddModal);
@@ -821,6 +895,111 @@ for (const button of document.querySelectorAll("button[data-action]")) {
 for (const button of document.querySelectorAll(".nav-item")) {
   button.addEventListener("click", () => void loadGameView(button.dataset.view));
 }
+document.querySelector("#employee-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-board-member]");
+  if (!button) return;
+  const member = button.dataset.boardActive !== "true";
+  if (!window.confirm(member ? "确认授予该员工核心董事会身份？" : "确认撤销该员工的核心董事会身份？")) return;
+  try {
+    await runMutation(button, "处理中…", async () => {
+      await requestGame(`/api/game/users/${button.dataset.boardMember}/board-membership`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({member}),
+      });
+      await loadEmployees();
+    });
+    setResult(member ? "已授予核心董事会身份" : "已撤销核心董事会身份", "success");
+  } catch (error) {
+    setResult(`操作失败（${error.message}）`, "error");
+  }
+});
+document.querySelector("#rank-list").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-rank]");
+  if (button) openRankModal(JSON.parse(button.dataset.rank));
+});
+document.querySelector("#department-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-department]");
+  if (!button) return;
+  const department = JSON.parse(button.dataset.department);
+  if (button.dataset.departmentAction === "edit") {
+    openDepartmentModal(department);
+    return;
+  }
+  if (!window.confirm(`确认删除部门“${department.name}”？`)) return;
+  try {
+    await runMutation(button, "删除中…", async () => {
+      const updated = await requestGame(`/api/game/departments/${department.id}`, {
+        method: "DELETE", headers: configurationHeaders(),
+      });
+      configurationVersion = updated.version;
+      await loadOrganization();
+    });
+    setResult("部门已删除", "success");
+  } catch (error) {
+    setResult(`删除失败（${error.message}）`, "error");
+  }
+});
+rankModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-rank-modal]")) {
+    closeRankModal();
+    return;
+  }
+  if (event.target.id !== "save-rank") return;
+  const rank = JSON.parse(rankModal.dataset.rank);
+  const payload = {
+    name: document.querySelector("#rank-name").value.trim(),
+    promotion_price: Number(document.querySelector("#rank-promotion-price").value),
+    vote_weight: Number(document.querySelector("#rank-vote-weight").value),
+    multiplayer_game_limit: Number(document.querySelector("#rank-game-limit").value),
+    has_group_management: document.querySelector("#rank-group-management").checked,
+    enabled: document.querySelector("#rank-enabled").checked,
+  };
+  try {
+    await runMutation(event.target, "保存中…", async () => {
+      const updated = await requestGame(`/api/game/ranks/${rank.id}`, {
+        method: "PATCH", headers: {"Content-Type": "application/json", ...configurationHeaders()}, body: JSON.stringify(payload),
+      });
+      configurationVersion = updated.version;
+      closeRankModal();
+      await loadOrganization();
+    });
+    setResult("职位配置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+departmentModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-department-modal]")) {
+    closeDepartmentModal();
+    return;
+  }
+  if (event.target.id !== "save-department") return;
+  const existing = departmentModal.dataset.department ? JSON.parse(departmentModal.dataset.department) : null;
+  const payload = {
+    name: document.querySelector("#department-name").value.trim(),
+    description: document.querySelector("#department-description").value.trim(),
+    enabled: document.querySelector("#department-enabled").checked,
+  };
+  try {
+    await runMutation(event.target, existing ? "保存中…" : "创建中…", async () => {
+      const updated = await requestGame(
+        existing ? `/api/game/departments/${existing.id}` : "/api/game/departments",
+        {
+          method: existing ? "PUT" : "POST",
+          headers: {"Content-Type": "application/json", ...configurationHeaders()},
+          body: JSON.stringify(existing ? payload : {name: payload.name, description: payload.description}),
+        },
+      );
+      configurationVersion = updated.version;
+      closeDepartmentModal();
+      await loadOrganization();
+    });
+    setResult(existing ? "部门配置已保存" : "部门已创建", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
 document.querySelector("#command-list").addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-command][data-enabled]");
   if (button) {

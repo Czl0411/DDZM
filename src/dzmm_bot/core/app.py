@@ -23,6 +23,7 @@ from .api_models import (
     CreateDepartmentRequest,
     CreateItemRequest,
     DailyJobsRequest,
+    FailedRequest,
     GameSettingsResponse,
     HealthResponse,
     HeartbeatRequest,
@@ -172,6 +173,22 @@ def create_app(
             request.worker_id,
             request.lease_token,
             request.platform_sent_id,
+            request.now,
+        )
+        return AcceptedResponse(accepted=accepted)
+
+    @app.post(
+        "/internal/outbound/{message_id}/failed", response_model=AcceptedResponse
+    )
+    def mark_outbound_failed(
+        message_id: UUID,
+        request: FailedRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        accepted = repository.mark_outbound_failed(
+            message_id,
+            request.worker_id,
+            request.lease_token,
             request.now,
         )
         return AcceptedResponse(accepted=accepted)

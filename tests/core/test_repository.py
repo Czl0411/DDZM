@@ -993,6 +993,24 @@ def test_confirmed_outbound_is_not_claimed_again(
     assert repository.claim_outbound("worker-b", now + timedelta(seconds=31), 30) is None
 
 
+def test_failed_outbound_is_not_claimed_again(repository, session_factory, inbound, now):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    stored, _ = repository.accept_inbound(inbound)
+    outbound = repository.enqueue_outbound(stored.id, "reply")
+    claimed = repository.claim_outbound("worker-a", now, 30)
+
+    assert repository.mark_outbound_failed(
+        outbound.id, "worker-a", claimed.lease_token, now
+    )
+    with session_factory() as session:
+        persisted = session.get(OutboundRecord, outbound.id)
+        assert persisted.status == "failed"
+        assert persisted.lease_worker_id is None
+        assert persisted.lease_token is None
+    assert repository.claim_outbound("worker-b", now + timedelta(seconds=31), 30) is None
+
+
 def test_stale_outbound_confirmation_is_rejected_after_reclaim(
     repository, session_factory, inbound, now
 ):

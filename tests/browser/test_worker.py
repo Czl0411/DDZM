@@ -85,6 +85,7 @@ class FakeCore:
     commands: list[WorkerCommand] = field(default_factory=list)
     submitted_ids: list[str] = field(default_factory=list)
     confirmed: list[tuple] = field(default_factory=list)
+    failed: list[tuple] = field(default_factory=list)
     recalls_confirmed: list[tuple] = field(default_factory=list)
     heartbeats: list[tuple] = field(default_factory=list)
     completions: list[tuple] = field(default_factory=list)
@@ -101,6 +102,9 @@ class FakeCore:
         self.confirmed.append(
             (message_id, worker_id, lease_token, platform_sent_id, now)
         )
+
+    def mark_outbound_failed(self, message_id, worker_id, lease_token, now):
+        self.failed.append((message_id, worker_id, lease_token, now))
 
     def claim_outbound_recall(self, worker_id, now, lease_seconds):
         return self.pending_recalls.pop(0) if self.pending_recalls else None
@@ -186,6 +190,19 @@ def test_read_failure_resets_the_browser_session_and_marks_auth_required(context
     assert session.stops == 1
     assert core.audits == [("authentication_lost", "worker-a", NOW)]
     assert core.heartbeats[-1] == ("worker-a", LoginState.AUTH_REQUIRED, NOW)
+
+
+def test_duplicate_content_rejection_is_marked_failed_without_resetting_browser(context):
+    worker, gateway, session, _, core, _ = context
+    core.pending = [OutboundClaim(OUTBOUND_ID, "in-1", "reply", LEASE)]
+    gateway.send_error = RuntimeError("请勿发送重复内容")
+
+    worker.run_once()
+
+    assert core.confirmed == []
+    assert core.failed == [(OUTBOUND_ID, "worker-a", LEASE, NOW)]
+    assert worker.login_state is LoginState.READY
+    assert session.stops == 0
 
 
 def test_sent_confirmation_includes_current_fencing_values(context):

@@ -49,6 +49,14 @@ class CorePort(Protocol):
         now: datetime,
     ) -> None: ...
 
+    def mark_outbound_failed(
+        self,
+        message_id: UUID,
+        worker_id: str,
+        lease_token: UUID,
+        now: datetime,
+    ) -> None: ...
+
     def claim_outbound_recall(
         self, worker_id: str, now: datetime, lease_seconds: int
     ) -> OutboundRecallClaim | None: ...
@@ -142,6 +150,22 @@ class CoreClient:
                 "worker_id": worker_id,
                 "lease_token": str(lease_token),
                 "platform_sent_id": platform_sent_id,
+                "now": now.isoformat(),
+            },
+        )
+
+    def mark_outbound_failed(
+        self,
+        message_id: UUID,
+        worker_id: str,
+        lease_token: UUID,
+        now: datetime,
+    ) -> None:
+        self._post(
+            f"/internal/outbound/{message_id}/failed",
+            {
+                "worker_id": worker_id,
+                "lease_token": str(lease_token),
                 "now": now.isoformat(),
             },
         )

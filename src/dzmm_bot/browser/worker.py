@@ -135,7 +135,16 @@ class BrowserWorker:
             return
         try:
             platform_sent_id = gateway.send(outbound.text)
-        except Exception:
+        except Exception as error:
+            if "请勿发送重复内容" in str(error):
+                _LOGGER.warning("outbound content rejected as duplicate: %s", outbound.id)
+                self._core.mark_outbound_failed(
+                    outbound.id,
+                    self._worker_id,
+                    outbound.lease_token,
+                    self._clock(),
+                )
+                return
             _LOGGER.exception("outbound send failed: %s", outbound.id)
             self._recover_browser_session()
             self._core.heartbeat(

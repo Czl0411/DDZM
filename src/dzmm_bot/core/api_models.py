@@ -45,6 +45,12 @@ class SentRequest(ApiModel):
     now: AwareDatetime
 
 
+class FailedRequest(ApiModel):
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token: UUID
+    now: AwareDatetime
+
+
 class OutboundRecallClaimResponse(ApiModel):
     id: UUID
     platform_sent_id: str

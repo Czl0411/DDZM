@@ -176,18 +176,47 @@ def test_me_alias_shows_balance_level_and_today_income_without_count():
     assert "10" not in reply
 
 
-def test_department_join_and_me_show_employee_profile():
+def test_department_join_application_keeps_employee_in_default_department_until_approved():
     service, _, factory = _service()
     now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
 
     _receive(service, "join", "platform-xiaoming", "/入职 小明", now)
     _receive(service, "department", "platform-xiaoming", "/加入部门 核心技术部", now)
-    assert _latest_reply(factory) == "小明已加入核心技术部。"
+    assert "已提交加入核心技术部申请" in _latest_reply(factory)
 
     _receive(service, "me", "platform-xiaoming", "/我", now)
     reply = _latest_reply(factory)
     assert "职位：实习生（LV1）" in reply
-    assert "部门：核心技术部" in reply
+    assert "部门：未分配部门" in reply
+
+
+def test_department_commands_apply_only_after_target_department_approval():
+    from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
+
+    service, _, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _receive(service, "join-1", "u1", "/入职 小明", now)
+    _receive(service, "join-2", "u2", "/入职 小红", now)
+    with factory.begin() as session:
+        target = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
+        )
+        rank_two = session.scalar(select(RankRecord).where(RankRecord.sort_order == 2))
+        approver = session.scalar(select(UserRecord).where(UserRecord.platform_id == "u2"))
+        assert target is not None
+        assert rank_two is not None
+        assert approver is not None
+        approver.department_id = target.id
+        approver.rank_id = rank_two.id
+
+    _receive(service, "apply", "u1", "/加入部门 核心技术部", now)
+    assert _latest_reply(factory) == "小明已提交加入核心技术部申请，等待该部门更高职位成员审批。"
+    _receive(service, "list", "u2", "/部门申请列表", now)
+    assert "1. 小明：未分配部门 → 核心技术部" in _latest_reply(factory)
+    _receive(service, "approve", "u2", "/同意部门 1", now)
+    assert _latest_reply(factory) == "小明已加入核心技术部。"
+    _receive(service, "departments", "u1", "/部门", now)
+    assert "核心技术部" in _latest_reply(factory)
 
 
 def test_promotion_request_list_and_numbered_approval():
@@ -217,7 +246,7 @@ def test_promotion_request_list_and_numbered_approval():
     assert _latest_reply(factory) == "小明已晋升为正式员工，扣除 80 摸鱼币。"
 
 
-def test_positions_switch_department_and_reject_promotion():
+def test_positions_and_reject_promotion():
     from dzmm_bot.core.schema import RankRecord, UserRecord
 
     service, repository, factory = _service()
@@ -236,10 +265,6 @@ def test_positions_switch_department_and_reject_promotion():
 
     _receive(service, "positions", "u1", "/职位", now)
     assert "正式员工（LV2）：晋升价格 80 摸鱼币" in _latest_reply(factory)
-    _receive(service, "department", "u1", "/加入部门 核心技术部", now)
-    _receive(service, "switch", "u1", "/切换部门 摸鱼研究部", now)
-    assert _latest_reply(factory) == "小明已切换至摸鱼研究部。"
-
     _receive(service, "apply", "u1", "/晋升", now)
     _receive(service, "reject", "u2", "/拒绝 1", now)
     assert _latest_reply(factory) == "已拒绝小明的晋升申请。"

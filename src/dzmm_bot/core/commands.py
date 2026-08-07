@@ -9,7 +9,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/加入部门", "/切换部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
+    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
 }
 
 
@@ -53,10 +53,18 @@ class GroupCommandHandler:
             return self._inventory(message.sender_platform_id, received_at)
         if command == "/商店":
             return self._shop(received_at)
+        if command == "/部门":
+            return self._departments(received_at)
         if command == "/加入部门":
             return self._join_department(message.sender_platform_id, content, received_at)
         if command == "/切换部门":
             return self._switch_department(message.sender_platform_id, content, received_at)
+        if command == "/部门申请列表":
+            return self._department_request_list(message.sender_platform_id, received_at)
+        if command in {"/同意部门", "/拒绝部门", "/全部同意部门", "/全部拒绝部门"}:
+            return self._department_decision(
+                message.sender_platform_id, command, content, received_at
+            )
         if command == "/职位":
             return self._positions(received_at)
         if command == "/晋升":
@@ -168,43 +176,115 @@ class GroupCommandHandler:
         parts = content.split(maxsplit=1)
         if len(parts) != 2 or not parts[1].strip():
             return self._reply("/加入部门", "usage", received_at)
-        result = self._repository.join_department(platform_id, parts[1].strip())
+        profile = self._repository.get_user_profile(platform_id)
+        if profile is None:
+            return self._reply("/加入部门", "not_joined", received_at)
+        if not profile.department.is_default:
+            return self._reply("/加入部门", "already_assigned", received_at)
+        result = self._repository.request_department_change(
+            platform_id, parts[1].strip(), received_at
+        )
         if result.status == "not_joined":
             return self._reply("/加入部门", "not_joined", received_at)
-        if result.status == "joined":
-            employee = self._repository.find_user(platform_id)
-            if employee is None or result.department is None:
-                raise RuntimeError("department assignment disappeared")
+        if result.status == "requested":
             return self._reply(
                 "/加入部门",
-                "joined",
+                "requested",
                 received_at,
-                {"{昵称}": employee.display_name, "{部门}": result.department.name},
+                {"{昵称}": profile.user.display_name, "{部门}": parts[1].strip()},
             )
-        if result.status == "already_assigned":
-            return self._reply("/加入部门", "already_assigned", received_at)
+        if result.status == "already_pending":
+            return self._reply("/加入部门", "already_pending", received_at)
         return self._reply("/加入部门", "unknown_department", received_at)
 
     def _switch_department(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)
         if len(parts) != 2 or not parts[1].strip():
             return self._reply("/切换部门", "usage", received_at)
-        result = self._repository.switch_department(platform_id, parts[1].strip())
-        if result.status == "not_joined":
+        profile = self._repository.get_user_profile(platform_id)
+        if profile is None:
             return self._reply("/切换部门", "not_joined", received_at)
-        if result.status == "switched":
-            employee = self._repository.find_user(platform_id)
-            if employee is None or result.department is None:
-                raise RuntimeError("department assignment disappeared")
+        if profile.department.is_default:
+            return self._reply("/切换部门", "must_join_first", received_at)
+        result = self._repository.request_department_change(
+            platform_id, parts[1].strip(), received_at
+        )
+        if result.status == "requested":
             return self._reply(
                 "/切换部门",
-                "switched",
+                "requested",
                 received_at,
-                {"{昵称}": employee.display_name, "{部门}": result.department.name},
+                {"{昵称}": profile.user.display_name, "{部门}": parts[1].strip()},
             )
         if result.status == "already_in_department":
             return self._reply("/切换部门", "already_in_department", received_at)
+        if result.status == "already_pending":
+            return self._reply("/切换部门", "already_pending", received_at)
         return self._reply("/切换部门", "unknown_department", received_at)
+
+    def _departments(self, received_at) -> str:
+        lines = [
+            f"{department.name}：{department.description or '暂无说明'}"
+            for department in self._repository.list_departments()
+            if department.enabled and not department.is_default
+        ]
+        return self._reply(
+            "/部门", "shown", received_at, {"{部门列表}": "\n".join(lines)}
+        )
+
+    def _department_request_list(self, platform_id: str, received_at) -> str:
+        requests = self._repository.list_approvable_department_requests(
+            platform_id, received_at
+        )
+        if not requests:
+            return self._reply("/部门申请列表", "empty", received_at)
+        lines = [
+            f"{request.number}. {request.applicant_name}：{request.source_department_name} → {request.target_department_name}（剩余 {max(0, int((request.expires_at - received_at).total_seconds() // 3600))} 小时）"
+            for request in requests
+        ]
+        return self._reply(
+            "/部门申请列表", "shown", received_at, {"{申请列表}": "\n".join(lines)}
+        )
+
+    def _department_decision(
+        self, platform_id: str, command: str, content: str, received_at
+    ) -> str:
+        decision = "approved" if "同意" in command else "rejected"
+        requests = self._repository.list_approvable_department_requests(
+            platform_id, received_at
+        )
+        if command.startswith("/全部"):
+            numbers = [request.number for request in requests]
+        else:
+            parts = content.split()[1:]
+            if not parts or any(not part.isdigit() or int(part) < 1 for part in parts):
+                return self._reply(command, "usage", received_at)
+            numbers = [int(part) for part in parts]
+        if not numbers:
+            return self._reply(command, "empty", received_at)
+        request_by_number = {request.number: request for request in requests}
+        results = self._repository.decide_department_requests(
+            platform_id, numbers, decision, received_at
+        )
+        replies: list[str] = []
+        for result in results:
+            request = request_by_number.get(result.number)
+            if result.status == "approved" and request is not None:
+                replies.append(
+                    self._reply(
+                        command,
+                        "approved",
+                        received_at,
+                        {"{昵称}": request.applicant_name, "{部门}": request.target_department_name},
+                    )
+                )
+            elif result.status == "rejected" and request is not None:
+                replies.append(
+                    self._reply(command, "rejected", received_at, {"{昵称}": request.applicant_name})
+                )
+            else:
+                replies.append(self._reply(command, "unavailable", received_at))
+        return "\n".join(replies)
 
     def _positions(self, received_at) -> str:
         currency_name = self._repository.get_game_settings().currency_name

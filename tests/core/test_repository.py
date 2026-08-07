@@ -156,6 +156,182 @@ def test_undercover_schema_declares_game_persistence_contract():
     )
 
 
+def _prepare_undercover_players(repository, session_factory, now, count=4):
+    from dzmm_bot.core.schema import UndercoverWordSetRecord
+
+    with session_factory.begin() as session:
+        session.add(
+            UndercoverWordSetRecord(
+                category="测试",
+                civilian_word="咖啡",
+                undercover_word="奶茶",
+                enabled=True,
+                created_at=now,
+            )
+        )
+    platform_ids = [f"undercover-{number}" for number in range(1, count + 1)]
+    for platform_id in platform_ids:
+        repository.create_user(platform_id, platform_id, now, 0)
+    repository.upsert_direct_chats(
+        [(platform_id, f"direct-{platform_id}") for platform_id in platform_ids], now
+    )
+    return platform_ids
+
+
+def _start_undercover_game(repository, session_factory, now, count=4):
+    platform_ids = _prepare_undercover_players(repository, session_factory, now, count)
+    first = repository.start_undercover_signup(platform_ids[0], count, now)
+    for platform_id in platform_ids[1:]:
+        result = repository.join_undercover(platform_id, now)
+    assert result.status == "dealing"
+    for platform_id in platform_ids:
+        result = repository.record_undercover_card_delivery(
+            result.game_id, platform_id, True, now
+        )
+    assert result.status == "speaking"
+    return result, platform_ids
+
+
+def test_undercover_requires_direct_chat_then_deals_configured_roles(
+    repository, session_factory, now
+):
+    repository.create_user("undercover-1", "甲", now, 0)
+
+    assert repository.start_undercover_signup("undercover-1", 4, now).status == "direct_chat_required"
+
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    assert repository.start_undercover_signup(platform_ids[0], 4, now).status == "signup_started"
+    for platform_id in platform_ids[1:]:
+        result = repository.join_undercover(platform_id, now)
+
+    assert result.status == "dealing"
+    assert result.player_count == 4
+    assert sorted(result.roles) == ["civilian", "civilian", "civilian", "undercover"]
+
+
+def test_undercover_tied_vote_requires_a_new_vote_round(repository, session_factory, now):
+    result, platform_ids = _start_undercover_game(repository, session_factory, now)
+
+    assert repository.start_undercover_vote(platform_ids[0], now).status == "voting"
+    for voter, target_seat in zip(platform_ids, (2, 3, 2, 3), strict=True):
+        result = repository.cast_undercover_vote(voter, target_seat, now)
+
+    assert result.status == "tied"
+    assert repository.start_undercover_vote(platform_ids[0], now).status == "voting"
+
+
+def test_undercover_unique_vote_eliminates_then_awaits_continuation_on_win(
+    repository, session_factory, now
+):
+    result, platform_ids = _start_undercover_game(repository, session_factory, now)
+    role_by_platform_id = dict(zip(result.player_ids, result.roles, strict=True))
+    undercover_platform_id = next(
+        platform_id
+        for platform_id, role in role_by_platform_id.items()
+        if role == "undercover"
+    )
+    summary = repository.undercover_session_summary()
+    undercover_seat = next(
+        player.seat_number
+        for player in summary.players
+        if player.platform_id == undercover_platform_id
+    )
+
+    repository.start_undercover_vote(platform_ids[0], now)
+    for voter in platform_ids:
+        result = repository.cast_undercover_vote(voter, undercover_seat, now)
+
+    assert result.status == "settled"
+    assert result.winner == "civilian"
+    assert repository.undercover_session_summary().state == "awaiting_continue"
+
+
+def test_undercover_continuation_keeps_original_players_then_uses_queue(
+    repository, session_factory, now
+):
+    result, platform_ids = _start_undercover_game(repository, session_factory, now)
+    role_by_platform_id = dict(zip(result.player_ids, result.roles, strict=True))
+    undercover_platform_id = next(
+        platform_id
+        for platform_id, role in role_by_platform_id.items()
+        if role == "undercover"
+    )
+    undercover_seat = next(
+        player.seat_number
+        for player in repository.undercover_session_summary().players
+        if player.platform_id == undercover_platform_id
+    )
+    repository.start_undercover_vote(platform_ids[0], now)
+    for voter in platform_ids:
+        repository.cast_undercover_vote(voter, undercover_seat, now)
+
+    repository.create_user("undercover-5", "undercover-5", now, 0)
+    repository.upsert_direct_chats([("undercover-5", "direct-undercover-5")], now)
+    assert repository.join_undercover("undercover-5", now).status == "queued"
+
+    result = repository.continue_undercover(platform_ids[0], now)
+
+    assert result.status == "dealing"
+    assert result.player_count == 5
+    assert set(result.player_ids) == {*platform_ids, "undercover-5"}
+    assert sorted(result.roles) == [
+        "civilian", "civilian", "civilian", "undercover", "whiteboard"
+    ]
+
+
+def test_undercover_expires_awaiting_continuation_after_twenty_minutes(
+    repository, session_factory, now
+):
+    result, platform_ids = _start_undercover_game(repository, session_factory, now)
+    role_by_platform_id = dict(zip(result.player_ids, result.roles, strict=True))
+    undercover_platform_id = next(
+        platform_id
+        for platform_id, role in role_by_platform_id.items()
+        if role == "undercover"
+    )
+    undercover_seat = next(
+        player.seat_number
+        for player in repository.undercover_session_summary().players
+        if player.platform_id == undercover_platform_id
+    )
+    repository.start_undercover_vote(platform_ids[0], now)
+    for voter in platform_ids:
+        repository.cast_undercover_vote(voter, undercover_seat, now)
+
+    assert repository.run_undercover_jobs(now + timedelta(minutes=20)) == ["expired"]
+    assert repository.undercover_session_summary().state is None
+
+
+def test_undercover_active_session_blocks_memory_assessment_duel(
+    repository, session_factory, now
+):
+    _start_undercover_game(repository, session_factory, now)
+
+    assert repository.start_memory_assessment_duel("undercover-1", now).status == "multiplayer_active"
+
+
+def test_undercover_exit_rechecks_winner_and_manual_end_releases_session(
+    repository, session_factory, now
+):
+    result, _ = _start_undercover_game(repository, session_factory, now)
+    role_by_platform_id = dict(zip(result.player_ids, result.roles, strict=True))
+    undercover_platform_id = next(
+        platform_id
+        for platform_id, role in role_by_platform_id.items()
+        if role == "undercover"
+    )
+
+    result = repository.leave_undercover(undercover_platform_id, now)
+
+    assert result.status == "settled"
+    assert result.winner == "civilian"
+    remaining_platform_id = next(
+        platform_id for platform_id in result.player_ids if platform_id != undercover_platform_id
+    )
+    assert repository.end_undercover(remaining_platform_id, now).status == "ended"
+    assert repository.undercover_session_summary().state is None
+
+
 def test_new_employee_has_default_rank_and_department(repository, now):
     repository.create_user("employee-1", "小明", now, 0)
 

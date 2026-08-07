@@ -261,6 +261,7 @@ class UndercoverGameRecord(Base):
     )
     round_number: Mapped[int] = mapped_column(Integer, nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_vote_round: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     civilian_word: Mapped[str] = mapped_column(String(64), nullable=False)
     undercover_word: Mapped[str] = mapped_column(String(64), nullable=False)
     vote_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)

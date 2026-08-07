@@ -24,6 +24,7 @@ from .schema import (
     CommandReplyTemplateRecord,
     DailyActivityRecord,
     DailyCheckinRecord,
+    DirectChatRecord,
     GameSettingsRecord,
     HideAndSeekDailyPlayRecord,
     HideAndSeekGameRecord,
@@ -41,6 +42,14 @@ from .schema import (
     MemoryAssessmentRoundRecord,
     MemoryAssessmentSettingsRecord,
     OutboundRecord,
+    UndercoverGamePlayerRecord,
+    UndercoverGameRecord,
+    UndercoverRoleRuleRecord,
+    UndercoverSessionMemberRecord,
+    UndercoverSessionRecord,
+    UndercoverSettingsRecord,
+    UndercoverVoteRecord,
+    UndercoverWordSetRecord,
     RandomEventScheduleRecord,
     RandomEventDetailRecord,
     RandomEventRecord,
@@ -155,6 +164,16 @@ _DEFAULT_DEPARTMENTS = (
 _DEFAULT_MEMORY_ASSESSMENT_CHARACTER_SET = (
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*_ -"
 ).replace(" ", "")
+_DEFAULT_UNDERCOVER_ROLE_RULES = (
+    (4, 3, 1, 0),
+    (5, 3, 1, 1),
+    (6, 4, 1, 1),
+    (7, 4, 2, 1),
+    (8, 5, 2, 1),
+)
+_UNDERCOVER_ACTIVE_KEY = "global"
+_UNDERCOVER_SIGNUP_TIMEOUT = timedelta(minutes=2)
+_UNDERCOVER_CONTINUE_TIMEOUT = timedelta(minutes=20)
 _ROLE_VARIABLE = re.compile(r"\{([^{}]*\S[^{}]*)\}")
 _PLATFORM_MESSAGE_MAX_CHARS = 1000
 _PLATFORM_MESSAGE_MAX_LINES = 10
@@ -302,6 +321,52 @@ class MemoryAssessmentGameResult:
     reward: int = 0
     balance: int | None = None
     display_seconds: int = 0
+
+
+@dataclass(frozen=True)
+class UndercoverSettings:
+    enabled: bool
+    vote_seconds: int
+    whiteboard_win_remaining: int
+
+
+@dataclass(frozen=True)
+class UndercoverRoleRule:
+    player_count: int
+    civilian_count: int
+    undercover_count: int
+    whiteboard_count: int
+
+
+@dataclass(frozen=True)
+class UndercoverSessionPlayer:
+    platform_id: str
+    display_name: str
+    seat_number: int
+    state: str
+
+
+@dataclass(frozen=True)
+class UndercoverSessionSummary:
+    state: str | None
+    game_id: UUID | None = None
+    target_player_count: int = 0
+    player_count: int = 0
+    queued_count: int = 0
+    players: tuple[UndercoverSessionPlayer, ...] = ()
+
+
+@dataclass(frozen=True)
+class UndercoverGameResult:
+    status: str
+    session_id: UUID | None = None
+    game_id: UUID | None = None
+    player_count: int = 0
+    player_ids: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
+    winner: str | None = None
+    eliminated_seat: int | None = None
+    tied_seats: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -887,6 +952,790 @@ class CoreRepository:
             session.flush()
             return _memory_assessment_settings(record)
 
+    def get_undercover_settings(self) -> UndercoverSettings:
+        with self._session() as session:
+            record = session.get(UndercoverSettingsRecord, 1)
+            if record is None:
+                record = UndercoverSettingsRecord(
+                    id=1,
+                    enabled=True,
+                    vote_seconds=120,
+                    whiteboard_win_remaining=3,
+                )
+                session.add(record)
+            if not session.scalar(select(UndercoverRoleRuleRecord.player_count).limit(1)):
+                session.add_all(
+                    [
+                        UndercoverRoleRuleRecord(
+                            player_count=player_count,
+                            civilian_count=civilian_count,
+                            undercover_count=undercover_count,
+                            whiteboard_count=whiteboard_count,
+                        )
+                        for (
+                            player_count,
+                            civilian_count,
+                            undercover_count,
+                            whiteboard_count,
+                        ) in _DEFAULT_UNDERCOVER_ROLE_RULES
+                    ]
+                )
+            session.flush()
+            return _undercover_settings(record)
+
+    def list_undercover_role_rules(self) -> list[UndercoverRoleRule]:
+        self.get_undercover_settings()
+        with self._session() as session:
+            return [
+                _undercover_role_rule(record)
+                for record in session.scalars(
+                    select(UndercoverRoleRuleRecord).order_by(
+                        UndercoverRoleRuleRecord.player_count
+                    )
+                )
+            ]
+
+    def upsert_direct_chats(
+        self, mappings: list[tuple[str, str]], now: datetime
+    ) -> None:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                for platform_user_id, chatroom_id in mappings:
+                    record = session.scalar(
+                        select(DirectChatRecord)
+                        .where(DirectChatRecord.platform_user_id == platform_user_id)
+                        .with_for_update()
+                    )
+                    if record is None:
+                        existing_room = session.scalar(
+                            select(DirectChatRecord)
+                            .where(DirectChatRecord.chatroom_id == chatroom_id)
+                            .with_for_update()
+                        )
+                        if existing_room is not None:
+                            existing_room.platform_user_id = platform_user_id
+                            existing_room.discovered_at = now
+                        else:
+                            session.add(
+                                DirectChatRecord(
+                                    platform_user_id=platform_user_id,
+                                    chatroom_id=chatroom_id,
+                                    discovered_at=now,
+                                )
+                            )
+                    else:
+                        record.chatroom_id = chatroom_id
+                        record.discovered_at = now
+
+    def start_undercover_signup(
+        self, platform_id: str, player_count: int, now: datetime
+    ) -> UndercoverGameResult:
+        now = now.astimezone(BEIJING)
+        if player_count not in range(4, 9):
+            return UndercoverGameResult("invalid_player_count")
+        with self.transaction():
+            settings = self.get_undercover_settings()
+            with self._session() as session:
+                user = self._undercover_user(session, platform_id)
+                if user is None:
+                    return UndercoverGameResult("not_joined")
+                if not settings.enabled:
+                    return UndercoverGameResult("disabled")
+                if not self._has_direct_chat(session, platform_id):
+                    return UndercoverGameResult("direct_chat_required")
+                if self._active_random_event(session) is not None or self._active_memory_duel(session):
+                    return UndercoverGameResult("multiplayer_active")
+                if self._active_undercover_session(session) is not None:
+                    return UndercoverGameResult("already_active")
+                session_record = UndercoverSessionRecord(
+                    state="signup",
+                    active_key=_UNDERCOVER_ACTIVE_KEY,
+                    target_player_count=player_count,
+                    signup_deadline=now + _UNDERCOVER_SIGNUP_TIMEOUT,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(session_record)
+                session.flush()
+                session.add(
+                    UndercoverSessionMemberRecord(
+                        session_id=session_record.id,
+                        user_id=user.id,
+                        state="joined",
+                        is_original=True,
+                        joined_at=now,
+                    )
+                )
+                return UndercoverGameResult(
+                    "signup_started",
+                    session_id=session_record.id,
+                    player_count=1,
+                )
+
+    def join_undercover(self, platform_id: str, now: datetime) -> UndercoverGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                session_record = self._active_undercover_session(session)
+                if session_record is None:
+                    return UndercoverGameResult("no_signup")
+                user = self._undercover_user(session, platform_id)
+                if user is None:
+                    return UndercoverGameResult("not_joined")
+                if not self._has_direct_chat(session, platform_id):
+                    return UndercoverGameResult("direct_chat_required")
+                member = session.scalar(
+                    select(UndercoverSessionMemberRecord)
+                    .where(
+                        UndercoverSessionMemberRecord.session_id == session_record.id,
+                        UndercoverSessionMemberRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if member is not None:
+                    return UndercoverGameResult(
+                        "cannot_rejoin" if member.state == "left" else "already_joined",
+                        session_id=session_record.id,
+                    )
+                if session_record.state == "signup":
+                    session.add(
+                        UndercoverSessionMemberRecord(
+                            session_id=session_record.id,
+                            user_id=user.id,
+                            state="joined",
+                            is_original=True,
+                            joined_at=now,
+                        )
+                    )
+                    session.flush()
+                    members = self._undercover_joined_members(session, session_record.id)
+                    if len(members) < session_record.target_player_count:
+                        return UndercoverGameResult(
+                            "joined_signup",
+                            session_id=session_record.id,
+                            player_count=len(members),
+                        )
+                    return self._start_undercover_game(
+                        session, session_record, members, now
+                    )
+                session.add(
+                    UndercoverSessionMemberRecord(
+                        session_id=session_record.id,
+                        user_id=user.id,
+                        state="queued",
+                        is_original=False,
+                        joined_at=now,
+                        queued_at=now,
+                    )
+                )
+                return UndercoverGameResult("queued", session_id=session_record.id)
+
+    def record_undercover_card_delivery(
+        self, game_id: UUID | str | None, platform_id: str, delivered: bool, now: datetime
+    ) -> UndercoverGameResult:
+        if game_id is None:
+            return UndercoverGameResult("no_game")
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                game = session.get(UndercoverGameRecord, UUID(str(game_id)), with_for_update=True)
+                if game is None:
+                    return UndercoverGameResult("no_game")
+                session_record = session.get(
+                    UndercoverSessionRecord, game.session_id, with_for_update=True
+                )
+                user = self._undercover_user(session, platform_id)
+                if session_record is None or user is None or game.state != "dealing":
+                    return UndercoverGameResult("card_delivery_ignored", game_id=game.id)
+                player = session.scalar(
+                    select(UndercoverGamePlayerRecord)
+                    .where(
+                        UndercoverGamePlayerRecord.game_id == game.id,
+                        UndercoverGamePlayerRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if player is None:
+                    return UndercoverGameResult("card_delivery_ignored", game_id=game.id)
+                if not delivered:
+                    game.state = "discarded"
+                    game.finished_at = now
+                    session_record.state = "signup"
+                    session_record.signup_deadline = now + _UNDERCOVER_SIGNUP_TIMEOUT
+                    return UndercoverGameResult("delivery_failed", session_id=session_record.id, game_id=game.id)
+                player.card_delivery_state = "delivered"
+                pending = session.scalar(
+                    select(func.count())
+                    .select_from(UndercoverGamePlayerRecord)
+                    .where(
+                        UndercoverGamePlayerRecord.game_id == game.id,
+                        UndercoverGamePlayerRecord.card_delivery_state != "delivered",
+                    )
+                )
+                if pending:
+                    return UndercoverGameResult("card_delivered", session_id=session_record.id, game_id=game.id)
+                game.state = "speaking"
+                session_record.state = "speaking"
+                return self._undercover_game_result(session, game, "speaking")
+
+    def start_undercover_vote(self, platform_id: str, now: datetime) -> UndercoverGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                session_record, game, player = self._undercover_active_player(session, platform_id)
+                if session_record is None or game is None or player is None:
+                    return UndercoverGameResult("cannot_start_vote")
+                if game.state not in ("speaking", "tie_break") or player.state != "alive":
+                    return UndercoverGameResult("cannot_start_vote", game_id=game.id)
+                game.current_vote_round += 1
+                game.state = "voting"
+                game.vote_deadline = now + timedelta(seconds=self.get_undercover_settings().vote_seconds)
+                session_record.state = "voting"
+                return self._undercover_game_result(session, game, "voting")
+
+    def cast_undercover_vote(
+        self, platform_id: str, target_seat: int, now: datetime
+    ) -> UndercoverGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                session_record, game, voter = self._undercover_active_player(session, platform_id)
+                if session_record is None or game is None or voter is None:
+                    return UndercoverGameResult("cannot_vote")
+                if game.state != "voting" or voter.state != "alive":
+                    return UndercoverGameResult("cannot_vote", game_id=game.id)
+                target = session.scalar(
+                    select(UndercoverGamePlayerRecord)
+                    .where(
+                        UndercoverGamePlayerRecord.game_id == game.id,
+                        UndercoverGamePlayerRecord.seat_number == target_seat,
+                        UndercoverGamePlayerRecord.state == "alive",
+                    )
+                    .with_for_update()
+                )
+                if target is None:
+                    return UndercoverGameResult("invalid_vote_target", game_id=game.id)
+                duplicate = session.scalar(
+                    select(UndercoverVoteRecord.id).where(
+                        UndercoverVoteRecord.game_id == game.id,
+                        UndercoverVoteRecord.round_number == game.current_vote_round,
+                        UndercoverVoteRecord.voter_user_id == voter.user_id,
+                    )
+                )
+                if duplicate is not None:
+                    return UndercoverGameResult("duplicate_vote", game_id=game.id)
+                session.add(
+                    UndercoverVoteRecord(
+                        game_id=game.id,
+                        round_number=game.current_vote_round,
+                        voter_user_id=voter.user_id,
+                        target_user_id=target.user_id,
+                        created_at=now,
+                    )
+                )
+                session.flush()
+                votes = int(
+                    session.scalar(
+                        select(func.count())
+                        .select_from(UndercoverVoteRecord)
+                        .where(
+                            UndercoverVoteRecord.game_id == game.id,
+                            UndercoverVoteRecord.round_number == game.current_vote_round,
+                        )
+                    )
+                    or 0
+                )
+                alive_count = self._undercover_living_count(session, game.id)
+                if votes < alive_count:
+                    return self._undercover_game_result(session, game, "vote_recorded")
+                return self._settle_undercover_vote(session, session_record, game, now)
+
+    def undercover_session_summary(self) -> UndercoverSessionSummary:
+        with self._session() as session:
+            session_record = self._active_undercover_session(session)
+            if session_record is None:
+                return UndercoverSessionSummary(None)
+            game = self._undercover_latest_game(session, session_record.id)
+            players: list[UndercoverSessionPlayer] = []
+            if game is not None:
+                players = [
+                    UndercoverSessionPlayer(
+                        platform_id=platform_id,
+                        display_name=display_name,
+                        seat_number=seat_number,
+                        state=state,
+                    )
+                    for platform_id, display_name, seat_number, state in session.execute(
+                        select(
+                            UserRecord.platform_id,
+                            UserRecord.display_name,
+                            UndercoverGamePlayerRecord.seat_number,
+                            UndercoverGamePlayerRecord.state,
+                        )
+                        .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
+                        .where(UndercoverGamePlayerRecord.game_id == game.id)
+                        .order_by(UndercoverGamePlayerRecord.seat_number)
+                    )
+                ]
+            queued_count = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(UndercoverSessionMemberRecord)
+                    .where(
+                        UndercoverSessionMemberRecord.session_id == session_record.id,
+                        UndercoverSessionMemberRecord.state == "queued",
+                    )
+                )
+                or 0
+            )
+            return UndercoverSessionSummary(
+                state=session_record.state,
+                game_id=None if game is None else game.id,
+                target_player_count=session_record.target_player_count,
+                player_count=len(players),
+                queued_count=queued_count,
+                players=tuple(players),
+            )
+
+    def continue_undercover(self, platform_id: str, now: datetime) -> UndercoverGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                session_record = self._active_undercover_session(session)
+                user = self._undercover_user(session, platform_id)
+                if session_record is None or user is None or session_record.state != "awaiting_continue":
+                    return UndercoverGameResult("cannot_continue")
+                member = session.scalar(
+                    select(UndercoverSessionMemberRecord)
+                    .where(
+                        UndercoverSessionMemberRecord.session_id == session_record.id,
+                        UndercoverSessionMemberRecord.user_id == user.id,
+                        UndercoverSessionMemberRecord.state != "left",
+                    )
+                    .with_for_update()
+                )
+                if member is None:
+                    return UndercoverGameResult("cannot_continue")
+                original_members = list(
+                    session.scalars(
+                        select(UndercoverSessionMemberRecord)
+                        .where(
+                            UndercoverSessionMemberRecord.session_id == session_record.id,
+                            UndercoverSessionMemberRecord.is_original.is_(True),
+                            UndercoverSessionMemberRecord.state == "joined",
+                        )
+                        .order_by(UndercoverSessionMemberRecord.joined_at)
+                        .with_for_update()
+                    )
+                )
+                queued_members = list(
+                    session.scalars(
+                        select(UndercoverSessionMemberRecord)
+                        .where(
+                            UndercoverSessionMemberRecord.session_id == session_record.id,
+                            UndercoverSessionMemberRecord.state == "queued",
+                        )
+                        .order_by(UndercoverSessionMemberRecord.queued_at)
+                        .with_for_update()
+                    )
+                )
+                candidates = [*original_members, *queued_members][:8]
+                if len(candidates) < 4:
+                    return UndercoverGameResult(
+                        "insufficient_players", session_id=session_record.id, player_count=len(candidates)
+                    )
+                session_record.target_player_count = len(candidates)
+                session_record.await_continue_deadline = None
+                return self._start_undercover_game(session, session_record, candidates, now)
+
+    def run_undercover_jobs(self, now: datetime) -> list[str]:
+        now = now.astimezone(BEIJING)
+        results: list[str] = []
+        with self.transaction():
+            with self._session() as session:
+                sessions = list(
+                    session.scalars(
+                        select(UndercoverSessionRecord)
+                        .where(UndercoverSessionRecord.active_key == _UNDERCOVER_ACTIVE_KEY)
+                        .with_for_update()
+                    )
+                )
+                for session_record in sessions:
+                    if (
+                        session_record.state == "signup"
+                        and session_record.signup_deadline is not None
+                        and session_record.signup_deadline <= now
+                    ):
+                        session_record.state = "closed"
+                        session_record.active_key = None
+                        session_record.finished_at = now
+                        results.append("signup_expired")
+                        continue
+                    if (
+                        session_record.state == "awaiting_continue"
+                        and session_record.await_continue_deadline is not None
+                        and session_record.await_continue_deadline <= now
+                    ):
+                        session_record.state = "closed"
+                        session_record.active_key = None
+                        session_record.finished_at = now
+                        results.append("expired")
+                        continue
+                    game = self._undercover_latest_game(session, session_record.id)
+                    if (
+                        game is not None
+                        and game.state == "voting"
+                        and game.vote_deadline is not None
+                        and game.vote_deadline <= now
+                    ):
+                        results.append(
+                            self._settle_undercover_vote(
+                                session, session_record, game, now
+                            ).status
+                        )
+        return results
+
+    def end_undercover(self, platform_id: str, now: datetime) -> UndercoverGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                session_record, game, player = self._undercover_active_player(session, platform_id)
+                if session_record is None or game is None or player is None:
+                    return UndercoverGameResult("cannot_end")
+                if player.state not in ("alive", "eliminated"):
+                    return UndercoverGameResult("cannot_end", game_id=game.id)
+                game.state = "ended"
+                game.finished_at = now
+                session_record.state = "closed"
+                session_record.active_key = None
+                session_record.finished_at = now
+                return UndercoverGameResult("ended", session_id=session_record.id, game_id=game.id)
+
+    def leave_undercover(self, platform_id: str, now: datetime) -> UndercoverGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                session_record = self._active_undercover_session(session)
+                user = self._undercover_user(session, platform_id)
+                if session_record is None or user is None:
+                    return UndercoverGameResult("cannot_leave")
+                member = session.scalar(
+                    select(UndercoverSessionMemberRecord)
+                    .where(
+                        UndercoverSessionMemberRecord.session_id == session_record.id,
+                        UndercoverSessionMemberRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if member is None or member.state == "left":
+                    return UndercoverGameResult("cannot_leave", session_id=session_record.id)
+                member.state = "left"
+                member.left_at = now
+                game = self._undercover_latest_game(session, session_record.id)
+                if game is None or game.state == "discarded":
+                    return UndercoverGameResult("left", session_id=session_record.id)
+                player = session.scalar(
+                    select(UndercoverGamePlayerRecord)
+                    .where(
+                        UndercoverGamePlayerRecord.game_id == game.id,
+                        UndercoverGamePlayerRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if player is None:
+                    return UndercoverGameResult("left", session_id=session_record.id, game_id=game.id)
+                player.state = "exited"
+                winner = self._undercover_winner(session, game.id)
+                if winner is None:
+                    return self._undercover_game_result(session, game, "left")
+                game.state = "settled"
+                game.finished_at = now
+                session_record.state = "awaiting_continue"
+                session_record.await_continue_deadline = now + _UNDERCOVER_CONTINUE_TIMEOUT
+                result = self._undercover_game_result(session, game, "settled")
+                return UndercoverGameResult(**{**result.__dict__, "winner": winner})
+
+    def _undercover_user(self, session: Session, platform_id: str) -> UserRecord | None:
+        return session.scalar(
+            select(UserRecord)
+            .where(UserRecord.platform_id == platform_id)
+            .with_for_update()
+        )
+
+    def _has_direct_chat(self, session: Session, platform_id: str) -> bool:
+        return session.scalar(
+            select(exists().where(DirectChatRecord.platform_user_id == platform_id))
+        )
+
+    def _active_undercover_session(self, session: Session) -> UndercoverSessionRecord | None:
+        return session.scalar(
+            select(UndercoverSessionRecord)
+            .where(UndercoverSessionRecord.active_key == _UNDERCOVER_ACTIVE_KEY)
+            .with_for_update()
+        )
+
+    def _active_memory_duel(self, session: Session) -> bool:
+        return bool(
+            session.scalar(
+                select(exists().where(
+                    MemoryAssessmentGameRecord.active_key == "global",
+                    MemoryAssessmentGameRecord.mode == "duel",
+                ))
+            )
+        )
+
+    def _undercover_joined_members(
+        self, session: Session, session_id: UUID
+    ) -> list[UndercoverSessionMemberRecord]:
+        return list(
+            session.scalars(
+                select(UndercoverSessionMemberRecord)
+                .where(
+                    UndercoverSessionMemberRecord.session_id == session_id,
+                    UndercoverSessionMemberRecord.state == "joined",
+                )
+                .order_by(UndercoverSessionMemberRecord.joined_at)
+                .with_for_update()
+            )
+        )
+
+    def _start_undercover_game(
+        self,
+        session: Session,
+        session_record: UndercoverSessionRecord,
+        members: list[UndercoverSessionMemberRecord],
+        now: datetime,
+    ) -> UndercoverGameResult:
+        rule = session.get(UndercoverRoleRuleRecord, len(members))
+        if rule is None:
+            raise RuntimeError("谁是卧底人数规则缺失")
+        word_set = session.scalar(
+            select(UndercoverWordSetRecord)
+            .where(UndercoverWordSetRecord.enabled.is_(True))
+            .order_by(func.random())
+            .limit(1)
+        )
+        if word_set is None:
+            raise RuntimeError("谁是卧底词库为空")
+        round_number = int(
+            session.scalar(
+                select(func.coalesce(func.max(UndercoverGameRecord.round_number), 0)).where(
+                    UndercoverGameRecord.session_id == session_record.id
+                )
+            )
+            or 0
+        ) + 1
+        game = UndercoverGameRecord(
+            session_id=session_record.id,
+            round_number=round_number,
+            state="dealing",
+            current_vote_round=0,
+            civilian_word=word_set.civilian_word,
+            undercover_word=word_set.undercover_word,
+            created_at=now,
+        )
+        session.add(game)
+        session.flush()
+        roles = [
+            *("civilian" for _ in range(rule.civilian_count)),
+            *("undercover" for _ in range(rule.undercover_count)),
+            *("whiteboard" for _ in range(rule.whiteboard_count)),
+        ]
+        remaining_roles = list(roles)
+        player_ids: list[str] = []
+        assigned_roles: list[str] = []
+        for seat_number, member in enumerate(members, start=1):
+            user = session.get(UserRecord, member.user_id)
+            if user is None:
+                raise RuntimeError("谁是卧底参与者消失")
+            role = remaining_roles.pop(randbelow(len(remaining_roles)))
+            session.add(
+                UndercoverGamePlayerRecord(
+                    game_id=game.id,
+                    user_id=member.user_id,
+                    seat_number=seat_number,
+                    role=role,
+                    state="alive",
+                    card_delivery_state="pending",
+                )
+            )
+            member.state = "joined"
+            member.is_original = True
+            member.queued_at = None
+            player_ids.append(user.platform_id)
+            assigned_roles.append(role)
+        session_record.state = "dealing"
+        session_record.signup_deadline = None
+        return UndercoverGameResult(
+            "dealing",
+            session_id=session_record.id,
+            game_id=game.id,
+            player_count=len(members),
+            player_ids=tuple(player_ids),
+            roles=tuple(assigned_roles),
+        )
+
+    def _undercover_latest_game(
+        self, session: Session, session_id: UUID
+    ) -> UndercoverGameRecord | None:
+        return session.scalar(
+            select(UndercoverGameRecord)
+            .where(UndercoverGameRecord.session_id == session_id)
+            .order_by(UndercoverGameRecord.round_number.desc())
+            .with_for_update()
+        )
+
+    def _undercover_active_player(
+        self, session: Session, platform_id: str
+    ) -> tuple[
+        UndercoverSessionRecord | None,
+        UndercoverGameRecord | None,
+        UndercoverGamePlayerRecord | None,
+    ]:
+        session_record = self._active_undercover_session(session)
+        if session_record is None:
+            return None, None, None
+        game = self._undercover_latest_game(session, session_record.id)
+        user = self._undercover_user(session, platform_id)
+        if game is None or user is None:
+            return session_record, game, None
+        player = session.scalar(
+            select(UndercoverGamePlayerRecord)
+            .where(
+                UndercoverGamePlayerRecord.game_id == game.id,
+                UndercoverGamePlayerRecord.user_id == user.id,
+            )
+            .with_for_update()
+        )
+        return session_record, game, player
+
+    def _undercover_living_count(self, session: Session, game_id: UUID) -> int:
+        return int(
+            session.scalar(
+                select(func.count())
+                .select_from(UndercoverGamePlayerRecord)
+                .where(
+                    UndercoverGamePlayerRecord.game_id == game_id,
+                    UndercoverGamePlayerRecord.state == "alive",
+                )
+            )
+            or 0
+        )
+
+    def _undercover_game_result(
+        self, session: Session, game: UndercoverGameRecord, status: str
+    ) -> UndercoverGameResult:
+        rows = list(
+            session.execute(
+                select(UserRecord.platform_id, UndercoverGamePlayerRecord.role)
+                .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
+                .where(UndercoverGamePlayerRecord.game_id == game.id)
+                .order_by(UndercoverGamePlayerRecord.seat_number)
+            )
+        )
+        return UndercoverGameResult(
+            status,
+            session_id=game.session_id,
+            game_id=game.id,
+            player_count=len(rows),
+            player_ids=tuple(row[0] for row in rows),
+            roles=tuple(row[1] for row in rows),
+        )
+
+    def _settle_undercover_vote(
+        self,
+        session: Session,
+        session_record: UndercoverSessionRecord,
+        game: UndercoverGameRecord,
+        now: datetime,
+    ) -> UndercoverGameResult:
+        votes = list(
+            session.scalars(
+                select(UndercoverVoteRecord).where(
+                    UndercoverVoteRecord.game_id == game.id,
+                    UndercoverVoteRecord.round_number == game.current_vote_round,
+                )
+            )
+        )
+        counts: dict[UUID, int] = {}
+        for vote in votes:
+            counts[vote.target_user_id] = counts.get(vote.target_user_id, 0) + 1
+        if not counts:
+            game.state = "speaking"
+            game.vote_deadline = None
+            session_record.state = "speaking"
+            return self._undercover_game_result(session, game, "vote_expired")
+        highest = max(counts.values())
+        tied_user_ids = [user_id for user_id, count in counts.items() if count == highest]
+        if len(tied_user_ids) > 1:
+            game.state = "tie_break"
+            game.vote_deadline = None
+            session_record.state = "tie_break"
+            tied_seats = tuple(
+                player.seat_number
+                for player in session.scalars(
+                    select(UndercoverGamePlayerRecord).where(
+                        UndercoverGamePlayerRecord.game_id == game.id,
+                        UndercoverGamePlayerRecord.user_id.in_(tied_user_ids),
+                    )
+                )
+            )
+            result = self._undercover_game_result(session, game, "tied")
+            return UndercoverGameResult(**{**result.__dict__, "tied_seats": tied_seats})
+        eliminated = session.scalar(
+            select(UndercoverGamePlayerRecord)
+            .where(
+                UndercoverGamePlayerRecord.game_id == game.id,
+                UndercoverGamePlayerRecord.user_id == tied_user_ids[0],
+            )
+            .with_for_update()
+        )
+        if eliminated is None:
+            raise RuntimeError("被投票玩家消失")
+        eliminated.state = "eliminated"
+        game.vote_deadline = None
+        winner = self._undercover_winner(session, game.id)
+        if winner is None:
+            game.state = "speaking"
+            session_record.state = "speaking"
+            result = self._undercover_game_result(session, game, "eliminated")
+            return UndercoverGameResult(
+                **{**result.__dict__, "eliminated_seat": eliminated.seat_number}
+            )
+        game.state = "settled"
+        game.finished_at = now
+        session_record.state = "awaiting_continue"
+        session_record.await_continue_deadline = now + _UNDERCOVER_CONTINUE_TIMEOUT
+        result = self._undercover_game_result(session, game, "settled")
+        return UndercoverGameResult(
+            **{
+                **result.__dict__,
+                "winner": winner,
+                "eliminated_seat": eliminated.seat_number,
+            }
+        )
+
+    def _undercover_winner(self, session: Session, game_id: UUID) -> str | None:
+        roles = [
+            role
+            for role in session.scalars(
+                select(UndercoverGamePlayerRecord.role).where(
+                    UndercoverGamePlayerRecord.game_id == game_id,
+                    UndercoverGamePlayerRecord.state == "alive",
+                )
+            )
+        ]
+        settings = self.get_undercover_settings()
+        whiteboard_count = roles.count("whiteboard")
+        if whiteboard_count and len(roles) == settings.whiteboard_win_remaining:
+            return "whiteboard"
+        if "undercover" not in roles and not whiteboard_count:
+            return "civilian"
+        if roles.count("undercover") >= roles.count("civilian"):
+            return "undercover"
+        return None
+
     def start_memory_assessment_single(
         self, platform_id: str, now: datetime
     ) -> MemoryAssessmentGameResult:
@@ -1028,6 +1877,10 @@ class CoreRepository:
                 if self._active_random_event(session) is not None:
                     return MemoryAssessmentGameResult(
                         "random_event_active", display_name=user.display_name
+                    )
+                if self._active_undercover_session(session) is not None:
+                    return MemoryAssessmentGameResult(
+                        "multiplayer_active", display_name=user.display_name
                     )
                 if session.scalar(
                     select(MemoryAssessmentGameRecord)
@@ -4750,6 +5603,23 @@ def _memory_assessment_level_rule(
         level=record.level,
         answer_length=record.answer_length,
         reward=record.reward,
+    )
+
+
+def _undercover_settings(record: UndercoverSettingsRecord) -> UndercoverSettings:
+    return UndercoverSettings(
+        enabled=record.enabled,
+        vote_seconds=record.vote_seconds,
+        whiteboard_win_remaining=record.whiteboard_win_remaining,
+    )
+
+
+def _undercover_role_rule(record: UndercoverRoleRuleRecord) -> UndercoverRoleRule:
+    return UndercoverRoleRule(
+        player_count=record.player_count,
+        civilian_count=record.civilian_count,
+        undercover_count=record.undercover_count,
+        whiteboard_count=record.whiteboard_count,
     )
 
 

@@ -92,6 +92,7 @@ def upgrade() -> None:
         sa.Column("session_id", uuid_type, nullable=False),
         sa.Column("round_number", sa.Integer(), nullable=False),
         sa.Column("state", sa.String(length=32), nullable=False),
+        sa.Column("current_vote_round", sa.Integer(), nullable=False),
         sa.Column("civilian_word", sa.String(length=64), nullable=False),
         sa.Column("undercover_word", sa.String(length=64), nullable=False),
         sa.Column("vote_deadline", sa.DateTime(timezone=True), nullable=True),

@@ -239,6 +239,12 @@ class FakeCore:
             records = [item for item in records if item["state"] == state]
         return _page(records, page, page_size)
 
+    def list_department_requests(self, state, page, page_size):
+        records = getattr(self, "department_requests", [])
+        if state is not None:
+            records = [item for item in records if item["state"] == state]
+        return _page(records, page, page_size)
+
     def set_board_membership(self, platform_id, member):
         return {"platform_id": platform_id, "member": member}
 
@@ -675,6 +681,7 @@ def test_admin_proxies_rank_department_and_promotion_pages_with_board_boundary(
         }
     ]
     core.promotions = [{"number": 1, "applicant_name": "小明", "state": "pending"}]
+    core.department_requests = [{"number": 1, "applicant_name": "小明", "state": "pending"}]
     admin_repository.create_account("alice", "strong-password")
     session_token = client.post(
         "/api/auth/login", json={"username": "alice", "password": "strong-password"}
@@ -686,6 +693,10 @@ def test_admin_proxies_rank_department_and_promotion_pages_with_board_boundary(
     )
     promotions = client.get(
         "/api/game/promotions?state=pending&page=1&page_size=20", headers=headers
+    )
+    department_requests = client.get(
+        "/api/game/department-requests?state=pending&page=1&page_size=20",
+        headers=headers,
     )
     forbidden = client.post(
         "/api/game/users/user-1/board-membership",
@@ -701,6 +712,7 @@ def test_admin_proxies_rank_department_and_promotion_pages_with_board_boundary(
     assert ranks.json()[0]["name"] == "实习生"
     assert departments.json()["items"][0]["name"] == "未分配部门"
     assert promotions.json()["items"][0]["number"] == 1
+    assert department_requests.json()["items"][0]["number"] == 1
     assert forbidden.status_code == 403
     assert granted.status_code == 200
     assert granted.json()["board_member"] is True
@@ -716,6 +728,7 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert 'id="nav-organization"' in page
     assert 'id="rank-modal"' in page
     assert 'id="department-modal"' in page
+    assert 'id="department-request-list"' in page
     assert "runMutation" in script
     assert "renderPagination" in script
     assert "/api/game/users?page=${page}&page_size=${pageSize}" in script
@@ -727,6 +740,7 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert "/api/game/ranks" in script
     assert "/api/game/departments" in script
     assert "/api/game/promotions" in script
+    assert "/api/game/department-requests" in script
 
 
 def test_admin_accepts_the_browser_item_form_json_body(client, headers):

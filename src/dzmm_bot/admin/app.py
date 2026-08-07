@@ -487,6 +487,20 @@ def create_app(
             "version": repository.config_version(),
         }
 
+    @app.get("/api/game/department-requests")
+    def game_department_requests(
+        _: Annotated[None, Depends(authorize)],
+        state: str | None = Query(None),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        return {
+            **_relay_core(
+                lambda: core.list_department_requests(state, page, page_size)
+            ),
+            "version": repository.config_version(),
+        }
+
     @app.post("/api/game/users/{platform_id}/board-membership")
     def set_board_membership(
         platform_id: str,

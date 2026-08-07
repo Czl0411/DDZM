@@ -138,3 +138,14 @@ def test_rank_department_command_migration_preserves_custom_me_template():
     assert '"/全部拒绝"' in migration
     assert '"enabled": True' in migration
     assert '"created_at": now' in migration
+
+
+def test_department_approval_migration_creates_request_and_audit_tables():
+    migration = (
+        ROOT / "migrations/versions/20260807_24_department_approvals.py"
+    ).read_text()
+
+    assert 'down_revision: str | None = "20260807_23"' in migration
+    assert "department_requests" in migration
+    assert "department_approvals" in migration
+    assert "ux_department_requests_pending_employee" in migration

@@ -3570,7 +3570,11 @@ class CoreRepository:
                         request.decided_at = decided_at
                         results.append(DepartmentDecisionResult(number, "expired"))
                         continue
-                    applicant = session.get(UserRecord, request.applicant_id)
+                    applicant = session.scalar(
+                        select(UserRecord)
+                        .where(UserRecord.id == request.applicant_id)
+                        .with_for_update()
+                    )
                     applicant_rank = None if applicant is None else session.get(RankRecord, applicant.rank_id)
                     target_department = session.get(DepartmentRecord, request.target_department_id)
                     if (

@@ -141,7 +141,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/加入部门", "/切换部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
+        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
     }
     assert disabled.json()["enabled"] is False
     assert employees.json() == {
@@ -181,8 +181,15 @@ def test_rank_department_and_promotion_management_endpoints(app_context, client,
     )
     app_context.repository.create_user("u1", "小明", NOW, 80)
     requested = app_context.repository.request_promotion("u1", NOW)
+    requested_department = app_context.repository.request_department_change(
+        "u1", "核心技术部", NOW
+    )
     promotions = client.get(
         "/internal/game/promotions?state=pending&page=1&page_size=20",
+        headers=headers,
+    )
+    department_requests = client.get(
+        "/internal/game/department-requests?state=pending&page=1&page_size=20",
         headers=headers,
     )
     board = client.post(
@@ -200,6 +207,9 @@ def test_rank_department_and_promotion_management_endpoints(app_context, client,
     assert requested.status == "requested"
     assert promotions.status_code == 200
     assert promotions.json()["items"][0]["number"] == requested.number
+    assert department_requests.status_code == 200
+    assert department_requests.json()["items"][0]["number"] == requested_department.number
+    assert department_requests.json()["items"][0]["target_department_name"] == "核心技术部"
     assert board.status_code == 200
     assert board.json()["rank"]["name"] == "核心董事会"
 

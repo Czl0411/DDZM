@@ -13,6 +13,7 @@ let employeePage = 1;
 let shopPage = 1;
 let departmentPage = 1;
 let promotionPage = 1;
+let departmentRequestPage = 1;
 let randomEventScenePage = 1;
 let randomEventSceneOpeningTarget = null;
 let randomEventAddScenes = [];
@@ -27,7 +28,9 @@ const randomEventCommandOptions = [
   ["/帮助", "/帮助"], ["/加入", "/加入"], ["/退出", "/退出"],
   ["/摸鱼躲猫猫", "/开始摸鱼躲藏、/躲"], ["/记忆考核", "/记忆考核"],
   ["/继续", "/继续"], ["/收手", "/收手"], ["/投降", "/投降"],
-  ["/加入部门", "/加入部门"], ["/切换部门", "/切换部门"], ["/职位", "/职位"],
+  ["/部门", "/部门"], ["/加入部门", "/加入部门"], ["/切换部门", "/切换部门"],
+  ["/部门申请列表", "/部门申请列表"], ["/同意部门", "/同意部门"], ["/全部同意部门", "/全部同意部门"],
+  ["/拒绝部门", "/拒绝部门"], ["/全部拒绝部门", "/全部拒绝部门"], ["/职位", "/职位"],
   ["/晋升", "/晋升"], ["/晋升申请列表", "/晋升申请列表"],
   ["/同意", "/同意"], ["/全部同意", "/全部同意"], ["/拒绝", "/拒绝"], ["/全部拒绝", "/全部拒绝"],
 ];
@@ -607,21 +610,30 @@ function renderPromotions(promotions, currencyName) {
     <article class="data-row"><div><b>#${promotion.number} ${escapeHtml(promotion.applicant_name)}：${escapeHtml(promotion.source_rank_name)} → ${escapeHtml(promotion.target_rank_name)}</b><small>${promotion.price} ${escapeHtml(currencyName)} · ${escapeHtml(promotion.state)} · 申请于 ${formatHeartbeat(promotion.requested_at)}</small></div></article>`).join("") || "<p class=\"muted\">暂无晋升申请记录。</p>";
 }
 
-async function loadOrganization(departmentTarget = departmentPage, promotionTarget = promotionPage) {
+function renderDepartmentRequests(requests) {
+  document.querySelector("#department-request-list").innerHTML = requests.map((request) => `
+    <article class="data-row"><div><b>#${request.number} ${escapeHtml(request.applicant_name)}：${escapeHtml(request.source_department_name)} → ${escapeHtml(request.target_department_name)}</b><small>${escapeHtml(request.state)} · 申请于 ${formatHeartbeat(request.requested_at)}${request.approver_name ? ` · ${escapeHtml(request.approver_name)} ${escapeHtml(request.decision)}` : ""}</small></div></article>`).join("") || "<p class=\"muted\">暂无部门申请记录。</p>";
+}
+
+async function loadOrganization(departmentTarget = departmentPage, promotionTarget = promotionPage, departmentRequestTarget = departmentRequestPage) {
   const settings = gameSettings || await loadSettings();
-  const [ranks, departments, promotions] = await Promise.all([
+  const [ranks, departments, promotions, departmentRequests] = await Promise.all([
     requestGame("/api/game/ranks"),
     requestGame(`/api/game/departments?page=${departmentTarget}&page_size=${pageSize}`),
     requestGame(`/api/game/promotions?page=${promotionTarget}&page_size=${pageSize}`),
+    requestGame(`/api/game/department-requests?page=${departmentRequestTarget}&page_size=${pageSize}`),
   ]);
   departmentPage = departments.page;
   promotionPage = promotions.page;
+  departmentRequestPage = departmentRequests.page;
   configurationVersion = departments.version;
   renderRanks(ranks);
   renderDepartments(departments.items);
   renderPromotions(promotions.items, settings.currency_name);
-  renderPagination(document.querySelector("#department-pagination"), departments, "个部门", (page) => loadOrganization(page, promotionPage));
-  renderPagination(document.querySelector("#promotion-pagination"), promotions, "条申请", (page) => loadOrganization(departmentPage, page));
+  renderDepartmentRequests(departmentRequests.items);
+  renderPagination(document.querySelector("#department-pagination"), departments, "个部门", (page) => loadOrganization(page, promotionPage, departmentRequestPage));
+  renderPagination(document.querySelector("#promotion-pagination"), promotions, "条申请", (page) => loadOrganization(departmentPage, page, departmentRequestPage));
+  renderPagination(document.querySelector("#department-request-pagination"), departmentRequests, "条申请", (page) => loadOrganization(departmentPage, promotionPage, page));
 }
 
 async function loadShop(page = shopPage) {

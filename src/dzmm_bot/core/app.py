@@ -62,9 +62,11 @@ from .api_models import (
     ItemResponse,
     PaginatedItemsResponse,
     PaginatedDepartmentsResponse,
+    PaginatedDepartmentRequestsResponse,
     PaginatedPromotionRequestsResponse,
     PaginatedUsersResponse,
     PromotionRequestResponse,
+    DepartmentRequestResponse,
     RankResponse,
     DepartmentResponse,
     SetBoardMembershipRequest,
@@ -409,6 +411,27 @@ def create_app(
         )
         return PaginatedPromotionRequestsResponse(
             items=[_promotion_request_response(record) for record in records],
+            page=page,
+            page_size=page_size,
+            total=total,
+            pages=(total + page_size - 1) // page_size,
+        )
+
+    @app.get(
+        "/internal/game/department-requests",
+        response_model=PaginatedDepartmentRequestsResponse,
+    )
+    def game_department_requests(
+        _: Annotated[None, Depends(authorize)],
+        state: str | None = Query(None, pattern="^(pending|approved|rejected|expired)$"),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> PaginatedDepartmentRequestsResponse:
+        records, total = repository.list_department_requests_page(
+            state, page, page_size, clock()
+        )
+        return PaginatedDepartmentRequestsResponse(
+            items=[_department_request_response(record) for record in records],
             page=page,
             page_size=page_size,
             total=total,
@@ -1072,6 +1095,22 @@ def _promotion_request_response(record) -> PromotionRequestResponse:
         requested_at=record.requested_at,
         expires_at=record.expires_at,
         decided_at=record.decided_at,
+    )
+
+
+def _department_request_response(record) -> DepartmentRequestResponse:
+    return DepartmentRequestResponse(
+        number=record.number,
+        applicant_platform_id=record.applicant_platform_id,
+        applicant_name=record.applicant_name,
+        source_department_name=record.source_department_name,
+        target_department_name=record.target_department_name,
+        state=record.state,
+        requested_at=record.requested_at,
+        expires_at=record.expires_at,
+        decided_at=record.decided_at,
+        approver_name=record.approver_name,
+        decision=record.decision,
     )
 
 

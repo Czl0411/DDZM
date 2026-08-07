@@ -233,13 +233,17 @@
                 <div class="panel-heading"><div><h2>职位配置</h2><p class="muted">职位决定群内展示、投票权益与多人小游戏发起次数；不会授予后台管理权限。</p></div></div>
                 <div id="rank-list" class="data-list"></div>
                 <hr>
-                <div class="panel-heading"><div><h2>部门配置</h2><p class="muted">员工可在群内自由加入或切换已开放部门。</p></div><button id="create-department" class="primary" type="button">新增部门</button></div>
+                <div class="panel-heading"><div><h2>部门配置</h2><p class="muted">员工申请加入或切换后，由目标部门中更高职位成员审批。</p></div><button id="create-department" class="primary" type="button">新增部门</button></div>
                 <div id="department-list" class="data-list"></div>
                 <nav id="department-pagination" class="pagination" aria-label="部门分页"></nav>
                 <hr>
                 <div class="panel-heading"><div><h2>晋升审批记录</h2><p class="muted">申请在 24 小时后失效；同意时才会扣除对应摸鱼币。</p></div></div>
                 <div id="promotion-list" class="data-list"></div>
                 <nav id="promotion-pagination" class="pagination" aria-label="晋升记录分页"></nav>
+                <hr>
+                <div class="panel-heading"><div><h2>部门申请记录</h2><p class="muted">申请在 24 小时后失效；同意后才会变更员工所属部门。</p></div></div>
+                <div id="department-request-list" class="data-list"></div>
+                <nav id="department-request-pagination" class="pagination" aria-label="部门申请记录分页"></nav>
               </section>
 
               <section id="shop-view" class="dashboard-view panel" hidden>

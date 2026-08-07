@@ -47,6 +47,10 @@ class AdminCorePort(Protocol):
 
     def list_promotions(self, state: str | None, page: int, page_size: int) -> dict: ...
 
+    def list_department_requests(
+        self, state: str | None, page: int, page_size: int
+    ) -> dict: ...
+
     def set_board_membership(self, platform_id: str, member: bool) -> dict: ...
 
     def get_game_settings(self) -> dict: ...
@@ -206,6 +210,14 @@ class CoreClient:
         if state is not None:
             params["state"] = state
         return self._get("/internal/game/promotions", params=params)
+
+    def list_department_requests(
+        self, state: str | None, page: int, page_size: int
+    ) -> dict:
+        params = {"page": page, "page_size": page_size}
+        if state is not None:
+            params["state"] = state
+        return self._get("/internal/game/department-requests", params=params)
 
     def set_board_membership(self, platform_id: str, member: bool) -> dict:
         response = self._client.post(

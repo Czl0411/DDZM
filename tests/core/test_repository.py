@@ -1390,6 +1390,8 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         "departments",
         "promotion_requests",
         "promotion_approvals",
+        "department_requests",
+        "department_approvals",
     } <= set(inspector.get_table_names())
     assert "ux_inbound_messages_platform_message_id" in {
         index["name"] for index in inspector.get_indexes("inbound_messages")

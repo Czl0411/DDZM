@@ -195,6 +195,28 @@ class PaginatedPromotionRequestsResponse(ApiModel):
     pages: int
 
 
+class DepartmentRequestResponse(ApiModel):
+    number: int
+    applicant_platform_id: str
+    applicant_name: str
+    source_department_name: str
+    target_department_name: str
+    state: str
+    requested_at: datetime
+    expires_at: datetime
+    decided_at: datetime | None
+    approver_name: str | None
+    decision: str | None
+
+
+class PaginatedDepartmentRequestsResponse(ApiModel):
+    items: list[DepartmentRequestResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
 class SetBoardMembershipRequest(ApiModel):
     member: bool
 

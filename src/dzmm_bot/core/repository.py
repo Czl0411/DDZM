@@ -82,8 +82,8 @@ from .schema import (
 
 
 _DEFAULT_CURRENCY_NAME = "摸鱼币"
-_OUTBOUND_CHUNK_MAX_CHARS = 140
-_OUTBOUND_CHUNK_MAX_LINES = 3
+_OUTBOUND_CHUNK_MAX_CHARS = 1000
+_OUTBOUND_CHUNK_MAX_NEWLINES = 10
 _DEFAULT_ONBOARDING_BONUS = 0
 _DEFAULT_CHECKIN_REWARD = 5
 _DEFAULT_WEEKLY_ATTENDANCE_REWARD = 5
@@ -204,36 +204,36 @@ _ROLE_VARIABLE = re.compile(r"\{([^{}]*\S[^{}]*)\}")
 
 def _outbound_text_chunks(text: str) -> list[str]:
     chunks: list[str] = []
-    current: list[str] = []
-    for line in text.split("\n"):
-        for part in _outbound_line_chunks(line):
-            candidate = "\n".join([*current, part])
-            if current and (
-                len(candidate) > _OUTBOUND_CHUNK_MAX_CHARS
-                or len(current) >= _OUTBOUND_CHUNK_MAX_LINES
+    current: str | None = None
+    for line_number, line in enumerate(text.split("\n")):
+        remaining = line
+        first_piece = True
+        while remaining or first_piece:
+            first_piece = False
+            capacity = _OUTBOUND_CHUNK_MAX_CHARS
+            if current is not None:
+                capacity -= len(current) + (1 if line_number else 0)
+            if capacity <= 0 or (
+                current is not None
+                and line_number
+                and current.count("\n") >= _OUTBOUND_CHUNK_MAX_NEWLINES
             ):
-                chunks.append("\n".join(current))
-                current = []
-            current.append(part)
-    if current:
-        chunks.append("\n".join(current))
-    return chunks
-
-
-def _outbound_line_chunks(line: str) -> list[str]:
-    if not line:
-        return [line]
-    chunks: list[str] = []
-    remaining = line
-    while len(remaining) > _OUTBOUND_CHUNK_MAX_CHARS:
-        boundary = max(
-            remaining.rfind(mark, 0, _OUTBOUND_CHUNK_MAX_CHARS + 1)
-            for mark in "。！？；，"
-        )
-        split_at = boundary + 1 if boundary >= 0 else _OUTBOUND_CHUNK_MAX_CHARS
-        chunks.append(remaining[:split_at])
-        remaining = remaining[split_at:]
-    chunks.append(remaining)
+                chunks.append(current)
+                current = None
+                continue
+            piece = remaining[:capacity]
+            remaining = remaining[capacity:]
+            if current is None:
+                current = piece
+            elif line_number:
+                current = f"{current}\n{piece}"
+            else:
+                current += piece
+            if remaining:
+                chunks.append(current)
+                current = None
+    if current is not None:
+        chunks.append(current)
     return chunks
 
 

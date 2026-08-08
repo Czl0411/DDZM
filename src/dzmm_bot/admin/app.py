@@ -49,6 +49,23 @@ _CONSOLE_PATH = "login-console/websockify"
 _CONSOLE_URL = "/login-console/?path=login-console%2Fwebsockify"
 
 
+def _with_default_ai_memory_settings(settings: dict) -> dict:
+    return {
+        **settings,
+        "memory_enabled": settings.get("memory_enabled", True),
+        "gameplay_guide": settings.get(
+            "gameplay_guide",
+            "玩法、经济和游戏裁定以机器人指令为准；需要操作时引导玩家使用 /帮助 分类。",
+        ),
+        "extraction_prompt": settings.get(
+            "extraction_prompt",
+            "仅整理玩家稳定的称呼偏好、回复风格、长期兴趣和互动禁忌。",
+        ),
+        "history_limit": settings.get("history_limit", 500),
+        "max_memory_chars": settings.get("max_memory_chars", 1200),
+    }
+
+
 def create_app_from_environment() -> FastAPI:
     settings = Settings.from_environment()
     if settings.admin_token is None:
@@ -583,7 +600,7 @@ def create_app(
     @app.get("/api/ai-assistant/settings")
     def ai_assistant_settings(_: Annotated[None, Depends(authorize)]) -> dict:
         return {
-            **_relay_core(core.get_ai_assistant_settings),
+            **_with_default_ai_memory_settings(_relay_core(core.get_ai_assistant_settings)),
             "version": repository.config_version(),
         }
 
@@ -603,6 +620,11 @@ def create_app(
             "max_response_chars",
             "timeout_seconds",
             "quotas",
+            "memory_enabled",
+            "gameplay_guide",
+            "extraction_prompt",
+            "history_limit",
+            "max_memory_chars",
         )
         if not all(key in request for key in required) or not isinstance(request["quotas"], list):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
@@ -616,6 +638,48 @@ def create_app(
                 )
             ),
             scope="ai-assistant-settings",
+        )
+
+    @app.get("/api/game/users/{platform_id}/ai-memory")
+    def ai_player_memory(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        return _relay_core(lambda: core.get_ai_player_memory(platform_id))
+
+    @app.put("/api/game/users/{platform_id}/ai-memory")
+    def set_ai_player_memory(
+        platform_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        memory_text = request.get("memory_text")
+        if not isinstance(memory_text, str):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid memory")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_ai_player_memory(platform_id, memory_text)
+            ),
+            scope=f"ai-player-memory:{platform_id}",
+        )
+
+    @app.delete("/api/game/users/{platform_id}/ai-memory")
+    def clear_ai_player_memory(
+        platform_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(lambda: core.clear_ai_player_memory(platform_id)),
+            scope=f"ai-player-memory:{platform_id}",
         )
 
     @app.get("/api/game/activity-settings")

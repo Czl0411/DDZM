@@ -242,6 +242,7 @@ const hideAndSeekSceneModal = document.querySelector("#hide-and-seek-scene-modal
 const memoryAssessmentSettingsModal = document.querySelector("#memory-assessment-settings-modal");
 const undercoverSettingsModal = document.querySelector("#undercover-settings-modal");
 const aiAssistantSettingsModal = document.querySelector("#ai-assistant-settings-modal");
+const employeeMemoryModal = document.querySelector("#employee-memory-modal");
 const rankModal = document.querySelector("#rank-modal");
 const departmentModal = document.querySelector("#department-modal");
 
@@ -459,12 +460,14 @@ async function openMemoryAssessmentSettingsModal() {
 function closeMemoryAssessmentSettingsModal() { memoryAssessmentSettingsModal.hidden = true; }
 function closeUndercoverSettingsModal() { undercoverSettingsModal.hidden = true; }
 function closeAiAssistantSettingsModal() { aiAssistantSettingsModal.hidden = true; }
+function closeEmployeeMemoryModal() { employeeMemoryModal.hidden = true; }
 
 function renderAiAssistantSettings(settings) {
   document.querySelector("#ai-assistant-settings-card").innerHTML = `
     <article><span>调用状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>仅响应 @总监事 内容</small></article>
     <article><span>每日调用上限</span><strong>${settings.quotas.length} 个职位</strong><small>北京时间 00:00 自动重置</small></article>
-    <article><span>回复限制</span><strong>${settings.max_response_chars} 字 / ${settings.timeout_seconds} 秒</strong><small>失败与超限回复均可配置</small></article>`;
+    <article><span>回复限制</span><strong>${settings.max_response_chars} 字 / ${settings.timeout_seconds} 秒</strong><small>失败与超限回复均可配置</small></article>
+    <article><span>玩家记忆</span><strong>${settings.memory_enabled ? "自动提炼" : "已停用"}</strong><small>首轮读取近 ${settings.history_limit} 条有效消息，单人最多 ${settings.max_memory_chars} 字</small></article>`;
 }
 
 async function loadAiAssistant() {
@@ -483,9 +486,25 @@ async function openAiAssistantSettingsModal() {
   document.querySelector("#ai-assistant-failure-reply").value = settings.failure_reply;
   document.querySelector("#ai-assistant-max-chars").value = settings.max_response_chars;
   document.querySelector("#ai-assistant-timeout").value = settings.timeout_seconds;
+  document.querySelector("#ai-memory-enabled").checked = settings.memory_enabled;
+  document.querySelector("#ai-memory-gameplay-guide").value = settings.gameplay_guide;
+  document.querySelector("#ai-memory-extraction-prompt").value = settings.extraction_prompt;
+  document.querySelector("#ai-memory-history-limit").value = settings.history_limit;
+  document.querySelector("#ai-memory-max-chars").value = settings.max_memory_chars;
   document.querySelector("#ai-assistant-quotas").innerHTML = settings.quotas.map((quota) => `
     <tr><td><b>${escapeHtml(quota.rank_name)}</b></td><td>${escapeHtml(quota.rank_level_label)}</td><td><input data-ai-quota="${escapeHtml(quota.rank_id)}" type="number" min="0" max="100" value="${quota.daily_limit}"></td></tr>`).join("");
   aiAssistantSettingsModal.hidden = false;
+}
+
+async function openEmployeeMemoryModal(platformId, displayName) {
+  const memory = await requestGame(`/api/game/users/${platformId}/ai-memory`);
+  employeeMemoryModal.dataset.platformId = platformId;
+  document.querySelector("#employee-memory-modal-title").textContent = `编辑 ${displayName} 的 AI 记忆`;
+  document.querySelector("#employee-memory-text").value = memory.memory_text;
+  document.querySelector("#employee-memory-updated-at").textContent = memory.updated_at
+    ? `最近更新：${formatHeartbeat(memory.updated_at)}`
+    : "尚未生成记忆。";
+  employeeMemoryModal.hidden = false;
 }
 
 function undercoverStateLabel(state) {
@@ -844,7 +863,7 @@ async function loadEmployees(page = employeePage) {
   employeePage = employees.page;
   const filtered = filterList("employees", employees.items, (employee) => `${employee.display_name} ${employee.rank_name || ""} ${employee.department_name || ""}`);
   document.querySelector("#employee-list").innerHTML = filtered.map((employee) => `
-    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
+    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong><button class="secondary" data-ai-memory="${escapeHtml(employee.platform_id)}" data-ai-memory-name="${escapeHtml(employee.display_name)}" type="button">AI 记忆</button>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
   renderPagination(document.querySelector("#employee-pagination"), employees, "位员工", loadEmployees);
 }
 
@@ -1245,6 +1264,18 @@ for (const button of document.querySelectorAll(".nav-item")) {
   button.addEventListener("click", () => void loadGameView(button.dataset.view));
 }
 document.querySelector("#employee-list").addEventListener("click", async (event) => {
+  const memoryButton = event.target.closest("button[data-ai-memory]");
+  if (memoryButton) {
+    try {
+      await openEmployeeMemoryModal(
+        memoryButton.dataset.aiMemory,
+        memoryButton.dataset.aiMemoryName,
+      );
+    } catch (error) {
+      setResult(`读取玩家记忆失败（${error.message}）`, "error");
+    }
+    return;
+  }
   const button = event.target.closest("button[data-board-member]");
   if (!button) return;
   const member = button.dataset.boardActive !== "true";
@@ -1858,6 +1889,11 @@ aiAssistantSettingsModal.addEventListener("click", async (event) => {
     failure_reply: document.querySelector("#ai-assistant-failure-reply").value,
     max_response_chars: Number(document.querySelector("#ai-assistant-max-chars").value),
     timeout_seconds: Number(document.querySelector("#ai-assistant-timeout").value),
+    memory_enabled: document.querySelector("#ai-memory-enabled").checked,
+    gameplay_guide: document.querySelector("#ai-memory-gameplay-guide").value,
+    extraction_prompt: document.querySelector("#ai-memory-extraction-prompt").value,
+    history_limit: Number(document.querySelector("#ai-memory-history-limit").value),
+    max_memory_chars: Number(document.querySelector("#ai-memory-max-chars").value),
     quotas: aiAssistantSettings.quotas.map((quota) => ({
       rank_id: quota.rank_id,
       daily_limit: Number(document.querySelector(`[data-ai-quota="${quota.rank_id}"]`).value),
@@ -1873,6 +1909,44 @@ aiAssistantSettingsModal.addEventListener("click", async (event) => {
       closeAiAssistantSettingsModal();
     });
     setResult("AI 总监事配置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+employeeMemoryModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-employee-memory-modal]")) {
+    closeEmployeeMemoryModal();
+    return;
+  }
+  const platformId = employeeMemoryModal.dataset.platformId;
+  if (event.target.id === "clear-employee-memory") {
+    if (!window.confirm("确认清空该玩家的 AI 记忆？下次艾特会重新提炼。")) return;
+    try {
+      await runMutation(event.target, "清空中…", async () => {
+        const updated = await requestGame(`/api/game/users/${platformId}/ai-memory`, {
+          method: "DELETE", headers: configurationHeaders(),
+        });
+        configurationVersion = updated.version;
+        document.querySelector("#employee-memory-text").value = "";
+        document.querySelector("#employee-memory-updated-at").textContent = "已清空；下次艾特会重新提炼。";
+      });
+      setResult("玩家 AI 记忆已清空", "success");
+    } catch (error) {
+      setResult(`清空失败（${error.message}）`, "error");
+    }
+    return;
+  }
+  if (event.target.id !== "save-employee-memory") return;
+  try {
+    await runMutation(event.target, "保存中…", async () => {
+      const updated = await requestGame(`/api/game/users/${platformId}/ai-memory`, {
+        method: "PUT", headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify({memory_text: document.querySelector("#employee-memory-text").value}),
+      });
+      configurationVersion = updated.version;
+      closeEmployeeMemoryModal();
+    });
+    setResult("玩家 AI 记忆已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
   }
@@ -1947,6 +2021,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !hideAndSeekSettingsModal.hidden) closeHideAndSeekSettingsModal();
   if (event.key === "Escape" && !hideAndSeekSceneModal.hidden) closeHideAndSeekSceneModal();
   if (event.key === "Escape" && !aiAssistantSettingsModal.hidden) closeAiAssistantSettingsModal();
+  if (event.key === "Escape" && !employeeMemoryModal.hidden) closeEmployeeMemoryModal();
 });
 document.querySelector("#item-form").addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -26,29 +26,68 @@ class AIWorker:
         claim = self._core.claim_ai_request(
             self._worker_id, self._clock(), self._lease_seconds
         )
-        if claim is None:
+        if claim is not None:
+            try:
+                text = self._client.complete(
+                    claim.system_prompt,
+                    claim.user_content,
+                    max_chars=claim.max_response_chars,
+                    timeout_seconds=claim.timeout_seconds,
+                )[: claim.max_response_chars]
+            except MinimaxCallError as error:
+                self._core.fail_ai_request(
+                    claim.id,
+                    self._worker_id,
+                    claim.lease_token,
+                    error.category,
+                    self._clock(),
+                )
+            else:
+                self._core.complete_ai_request(
+                    claim.id,
+                    self._worker_id,
+                    claim.lease_token,
+                    text,
+                    self._clock(),
+                )
+            return True
+        memory_claim = self._core.claim_ai_memory_job(
+            self._worker_id, self._clock(), self._lease_seconds
+        )
+        if memory_claim is None:
             return False
         try:
-            text = self._client.complete(
-                claim.system_prompt,
-                claim.user_content,
-                max_chars=claim.max_response_chars,
-                timeout_seconds=claim.timeout_seconds,
-            )[: claim.max_response_chars]
+            memory_text = self._client.complete(
+                _memory_system_prompt(memory_claim.extraction_prompt, memory_claim.current_memory),
+                "\n".join(memory_claim.source_messages),
+                max_chars=memory_claim.max_memory_chars,
+                timeout_seconds=20,
+            )[: memory_claim.max_memory_chars]
         except MinimaxCallError as error:
-            self._core.fail_ai_request(
-                claim.id,
+            self._core.fail_ai_memory_job(
+                memory_claim.user_id,
                 self._worker_id,
-                claim.lease_token,
+                memory_claim.lease_token,
                 error.category,
                 self._clock(),
             )
         else:
-            self._core.complete_ai_request(
-                claim.id,
+            self._core.complete_ai_memory_job(
+                memory_claim.user_id,
                 self._worker_id,
-                claim.lease_token,
-                text,
+                memory_claim.lease_token,
+                memory_claim.target_message_id,
+                memory_text,
                 self._clock(),
             )
         return True
+
+
+def _memory_system_prompt(extraction_prompt: str, current_memory: str) -> str:
+    return "\n\n".join(
+        (
+            extraction_prompt.strip(),
+            "仅输出完整的最新版玩家记忆正文；若没有稳定信息，输出空文本。",
+            f"已有记忆：{current_memory.strip() or '无'}",
+        )
+    )

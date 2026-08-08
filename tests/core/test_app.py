@@ -217,6 +217,30 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
     assert claim.json()["user_content"] == "今天适合摸鱼吗？"
     assert "key" not in claim.text.lower()
 
+    memory_claim = app_context.client.post(
+        "/internal/ai/memory/claim",
+        headers=headers,
+        json={"worker_id": "memory-1", "now": NOW.isoformat(), "lease_seconds": 90},
+    )
+    assert memory_claim.status_code == 200
+    assert memory_claim.json()["source_messages"] == ["@总监事 今天适合摸鱼吗？"]
+    memory_completed = app_context.client.post(
+        f"/internal/ai/memory/{memory_claim.json()['user_id']}/completed",
+        headers=headers,
+        json={
+            "worker_id": "memory-1",
+            "lease_token": memory_claim.json()["lease_token"],
+            "target_message_id": memory_claim.json()["target_message_id"],
+            "memory_text": "喜欢简短摸鱼建议。",
+            "now": NOW.isoformat(),
+        },
+    )
+    assert memory_completed.json() == {"accepted": True}
+    memory = app_context.client.get(
+        "/internal/game/users/ai-user/ai-memory", headers=headers
+    )
+    assert memory.json()["memory_text"] == "喜欢简短摸鱼建议。"
+
     completed = app_context.client.post(
         f"/internal/ai/{claim.json()['id']}/completed",
         headers=headers,

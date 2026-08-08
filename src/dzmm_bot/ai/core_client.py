@@ -16,6 +16,17 @@ class AIClaim:
     timeout_seconds: int
 
 
+@dataclass(frozen=True)
+class AIMemoryClaim:
+    user_id: UUID
+    target_message_id: UUID
+    lease_token: UUID
+    extraction_prompt: str
+    max_memory_chars: int
+    current_memory: str
+    source_messages: tuple[str, ...]
+
+
 class AICorePort(Protocol):
     def claim_ai_request(
         self, worker_id: str, now: datetime, lease_seconds: int
@@ -33,6 +44,29 @@ class AICorePort(Protocol):
     def fail_ai_request(
         self,
         request_id: UUID,
+        worker_id: str,
+        lease_token: UUID,
+        failure_summary: str,
+        now: datetime,
+    ) -> None: ...
+
+    def claim_ai_memory_job(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> AIMemoryClaim | None: ...
+
+    def complete_ai_memory_job(
+        self,
+        user_id: UUID,
+        worker_id: str,
+        lease_token: UUID,
+        target_message_id: UUID,
+        memory_text: str,
+        now: datetime,
+    ) -> None: ...
+
+    def fail_ai_memory_job(
+        self,
+        user_id: UUID,
         worker_id: str,
         lease_token: UUID,
         failure_summary: str,
@@ -100,6 +134,67 @@ class AICoreClient:
     ) -> None:
         self._post(
             f"/internal/ai/{request_id}/failed",
+            {
+                "worker_id": worker_id,
+                "lease_token": str(lease_token),
+                "failure_summary": failure_summary,
+                "now": now.isoformat(),
+            },
+        )
+
+    def claim_ai_memory_job(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> AIMemoryClaim | None:
+        data = self._post(
+            "/internal/ai/memory/claim",
+            {
+                "worker_id": worker_id,
+                "now": now.isoformat(),
+                "lease_seconds": lease_seconds,
+            },
+        )
+        if data is None:
+            return None
+        return AIMemoryClaim(
+            user_id=UUID(data["user_id"]),
+            target_message_id=UUID(data["target_message_id"]),
+            lease_token=UUID(data["lease_token"]),
+            extraction_prompt=data["extraction_prompt"],
+            max_memory_chars=data["max_memory_chars"],
+            current_memory=data["current_memory"],
+            source_messages=tuple(data["source_messages"]),
+        )
+
+    def complete_ai_memory_job(
+        self,
+        user_id: UUID,
+        worker_id: str,
+        lease_token: UUID,
+        target_message_id: UUID,
+        memory_text: str,
+        now: datetime,
+    ) -> None:
+        self._post(
+            f"/internal/ai/memory/{user_id}/completed",
+            {
+                "worker_id": worker_id,
+                "lease_token": str(lease_token),
+                "target_message_id": str(target_message_id),
+                "memory_text": memory_text,
+                "now": now.isoformat(),
+            },
+        )
+
+    def fail_ai_memory_job(
+        self,
+        user_id: UUID,
+        worker_id: str,
+        lease_token: UUID,
+        failure_summary: str,
+        now: datetime,
+    ) -> None:
+        self._post(
+            f"/internal/ai/memory/{user_id}/failed",
             {
                 "worker_id": worker_id,
                 "lease_token": str(lease_token),

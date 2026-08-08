@@ -314,6 +314,11 @@ class AIAssistantSettingsResponse(ApiModel):
     max_response_chars: int = Field(ge=1, le=800)
     timeout_seconds: int = Field(ge=1, le=60)
     quotas: list[AIRankQuotaResponse]
+    memory_enabled: bool
+    gameplay_guide: str
+    extraction_prompt: str
+    history_limit: int = Field(ge=1, le=500)
+    max_memory_chars: int = Field(ge=1, le=8000)
 
 
 class SetAIAssistantSettingsRequest(ApiModel):
@@ -325,6 +330,22 @@ class SetAIAssistantSettingsRequest(ApiModel):
     max_response_chars: int = Field(ge=1, le=800)
     timeout_seconds: int = Field(ge=1, le=60)
     quotas: list[SetAIRankQuotaRequest] = Field(min_length=1, max_length=100)
+    memory_enabled: bool
+    gameplay_guide: str = Field(min_length=1, max_length=4000)
+    extraction_prompt: str = Field(min_length=1, max_length=4000)
+    history_limit: int = Field(ge=1, le=500)
+    max_memory_chars: int = Field(ge=1, le=8000)
+
+
+class AIPlayerMemoryResponse(ApiModel):
+    platform_id: str
+    display_name: str
+    memory_text: str
+    updated_at: datetime | None
+
+
+class SetAIPlayerMemoryRequest(ApiModel):
+    memory_text: str = Field(max_length=8000)
 
 
 class AIClaimResponse(ApiModel):
@@ -344,6 +365,31 @@ class AICompleteRequest(ApiModel):
 
 
 class AIFailedRequest(ApiModel):
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token: UUID
+    failure_summary: Literal["timeout", "network", "http_error", "invalid_response"]
+    now: AwareDatetime
+
+
+class AIMemoryClaimResponse(ApiModel):
+    user_id: UUID
+    target_message_id: UUID
+    lease_token: UUID
+    extraction_prompt: str
+    max_memory_chars: int = Field(ge=1, le=8000)
+    current_memory: str
+    source_messages: list[str]
+
+
+class AIMemoryCompleteRequest(ApiModel):
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token: UUID
+    target_message_id: UUID
+    memory_text: str = Field(max_length=8000)
+    now: AwareDatetime
+
+
+class AIMemoryFailedRequest(ApiModel):
     worker_id: str = Field(min_length=1, max_length=255)
     lease_token: UUID
     failure_summary: Literal["timeout", "network", "http_error", "invalid_response"]

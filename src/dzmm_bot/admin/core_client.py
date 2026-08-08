@@ -61,6 +61,12 @@ class AdminCorePort(Protocol):
 
     def set_ai_assistant_settings(self, settings: dict) -> dict: ...
 
+    def get_ai_player_memory(self, platform_id: str) -> dict: ...
+
+    def set_ai_player_memory(self, platform_id: str, memory_text: str) -> dict: ...
+
+    def clear_ai_player_memory(self, platform_id: str) -> dict: ...
+
     def get_activity_settings(self) -> dict: ...
 
     def set_activity_settings(self, settings: dict) -> dict: ...
@@ -251,6 +257,22 @@ class CoreClient:
         response = self._client.patch(
             "/internal/game/ai-assistant/settings", json=settings
         )
+        response.raise_for_status()
+        return response.json()
+
+    def get_ai_player_memory(self, platform_id: str) -> dict:
+        return self._get(f"/internal/game/users/{platform_id}/ai-memory")
+
+    def set_ai_player_memory(self, platform_id: str, memory_text: str) -> dict:
+        response = self._client.put(
+            f"/internal/game/users/{platform_id}/ai-memory",
+            json={"memory_text": memory_text},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def clear_ai_player_memory(self, platform_id: str) -> dict:
+        response = self._client.delete(f"/internal/game/users/{platform_id}/ai-memory")
         response.raise_for_status()
         return response.json()
 

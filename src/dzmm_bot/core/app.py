@@ -14,9 +14,13 @@ from dzmm_bot.runtime.settings import Settings
 from .api_models import (
     AcceptedResponse,
     AIClaimResponse,
+    AIMemoryClaimResponse,
+    AIMemoryCompleteRequest,
+    AIMemoryFailedRequest,
     AICompleteRequest,
     AIFailedRequest,
     AIAssistantSettingsResponse,
+    AIPlayerMemoryResponse,
     AIRankQuotaResponse,
     ActivityLevelRuleModel,
     ActivitySettingsResponse,
@@ -47,6 +51,7 @@ from .api_models import (
     SetCommandTemplateRequest,
     SetActivitySettingsRequest,
     SetAIAssistantSettingsRequest,
+    SetAIPlayerMemoryRequest,
     SetGameSettingsRequest,
     RandomEventSettingsResponse,
     SetRandomEventSettingsRequest,
@@ -589,9 +594,70 @@ def create_app(
                 timeout_seconds=request.timeout_seconds,
                 quotas=[(quota.rank_id, quota.daily_limit) for quota in request.quotas],
             )
+            repository.set_ai_memory_settings(
+                enabled=request.memory_enabled,
+                gameplay_guide=request.gameplay_guide,
+                extraction_prompt=request.extraction_prompt,
+                history_limit=request.history_limit,
+                max_memory_chars=request.max_memory_chars,
+            )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _ai_assistant_settings_response(repository)
+
+    @app.get(
+        "/internal/game/users/{platform_id}/ai-memory",
+        response_model=AIPlayerMemoryResponse,
+    )
+    def ai_player_memory(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> AIPlayerMemoryResponse:
+        result = repository.get_ai_player_memory(platform_id)
+        if result is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        user, memory = result
+        return AIPlayerMemoryResponse(
+            platform_id=user.platform_id,
+            display_name=user.display_name,
+            memory_text=memory.memory_text if memory is not None else "",
+            updated_at=memory.updated_at if memory is not None else None,
+        )
+
+    @app.put(
+        "/internal/game/users/{platform_id}/ai-memory",
+        response_model=AIPlayerMemoryResponse,
+    )
+    def set_ai_player_memory(
+        platform_id: str,
+        request: SetAIPlayerMemoryRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AIPlayerMemoryResponse:
+        try:
+            result = repository.set_ai_player_memory(
+                platform_id, request.memory_text, beijing_now()
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        if result is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        user, memory = result
+        return AIPlayerMemoryResponse(
+            platform_id=user.platform_id,
+            display_name=user.display_name,
+            memory_text=memory.memory_text,
+            updated_at=memory.updated_at,
+        )
+
+    @app.delete(
+        "/internal/game/users/{platform_id}/ai-memory",
+        response_model=AcceptedResponse,
+    )
+    def clear_ai_player_memory(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> AcceptedResponse:
+        if not repository.clear_ai_player_memory(platform_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        return AcceptedResponse(accepted=True)
 
     @app.post("/internal/ai/claim", response_model=AIClaimResponse | None)
     def claim_ai_request(
@@ -638,6 +704,60 @@ def create_app(
         return AcceptedResponse(
             accepted=repository.fail_ai_request(
                 request_id,
+                request.worker_id,
+                request.lease_token,
+                request.failure_summary,
+                request.now,
+            )
+        )
+
+    @app.post("/internal/ai/memory/claim", response_model=AIMemoryClaimResponse | None)
+    def claim_ai_memory_job(
+        request: ClaimRequest, _: Annotated[None, Depends(authorize)]
+    ) -> AIMemoryClaimResponse | None:
+        record = repository.claim_ai_memory_job(
+            request.worker_id, request.now, request.lease_seconds
+        )
+        if record is None:
+            return None
+        return AIMemoryClaimResponse(
+            user_id=record.user_id,
+            target_message_id=record.target_message_id,
+            lease_token=record.lease_token,
+            extraction_prompt=record.extraction_prompt,
+            max_memory_chars=record.max_memory_chars,
+            current_memory=record.current_memory,
+            source_messages=list(record.source_messages),
+        )
+
+    @app.post(
+        "/internal/ai/memory/{user_id}/completed", response_model=AcceptedResponse
+    )
+    def complete_ai_memory_job(
+        user_id: UUID,
+        request: AIMemoryCompleteRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(
+            accepted=repository.complete_ai_memory_job(
+                user_id,
+                request.worker_id,
+                request.lease_token,
+                request.target_message_id,
+                request.memory_text,
+                request.now,
+            )
+        )
+
+    @app.post("/internal/ai/memory/{user_id}/failed", response_model=AcceptedResponse)
+    def fail_ai_memory_job(
+        user_id: UUID,
+        request: AIMemoryFailedRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(
+            accepted=repository.fail_ai_memory_job(
+                user_id,
                 request.worker_id,
                 request.lease_token,
                 request.failure_summary,
@@ -1305,6 +1425,7 @@ def _ai_assistant_settings_response(
     repository: CoreRepository,
 ) -> AIAssistantSettingsResponse:
     settings, quotas = repository.get_ai_assistant_configuration()
+    memory = repository.get_ai_memory_settings()
     return AIAssistantSettingsResponse(
         enabled=settings.enabled,
         persona=settings.persona,
@@ -1313,6 +1434,11 @@ def _ai_assistant_settings_response(
         failure_reply=settings.failure_reply,
         max_response_chars=settings.max_response_chars,
         timeout_seconds=settings.timeout_seconds,
+        memory_enabled=memory.enabled,
+        gameplay_guide=memory.gameplay_guide,
+        extraction_prompt=memory.extraction_prompt,
+        history_limit=memory.history_limit,
+        max_memory_chars=memory.max_memory_chars,
         quotas=[
             AIRankQuotaResponse(
                 rank_id=quota.rank_id,

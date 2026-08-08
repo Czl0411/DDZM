@@ -147,6 +147,85 @@ def test_ai_request_queues_one_memory_job_for_the_same_player(repository, now):
     assert claim.user_id == user.id
 
 
+def test_ai_memory_claim_reads_only_the_players_effective_messages(repository, now):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    user, _ = repository.create_user("memory-context-player", "阿彻", now, 0)
+    repository.get_ai_assistant_settings()
+    with repository._session() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+        session.commit()
+    repository.accept_inbound(
+        InboundMessage("memory-1", user.platform_id, "我喜欢简短一点的回复", now)
+    )
+    repository.accept_inbound(
+        InboundMessage("memory-2", user.platform_id, "/打卡", now + timedelta(seconds=1))
+    )
+    repository.accept_inbound(
+        InboundMessage("memory-3", user.platform_id, "（围观一下）", now + timedelta(seconds=2))
+    )
+    trigger, _ = repository.accept_inbound(
+        InboundMessage("memory-4", user.platform_id, "@总监事 我喜欢桌游", now + timedelta(seconds=3))
+    )
+
+    assert repository.try_enqueue_ai_request(
+        trigger.id, user.platform_id, trigger.content, now + timedelta(seconds=3)
+    ).state == "queued"
+    claim = repository.claim_ai_memory_job("memory-worker", now + timedelta(seconds=4), 30)
+
+    assert claim is not None
+    assert claim.current_memory == ""
+    assert claim.source_messages == ("我喜欢简短一点的回复", "@总监事 我喜欢桌游")
+
+
+def test_ai_memory_completion_keeps_a_newer_trigger_pending(repository, now):
+    from dzmm_bot.core.schema import (
+        AIAssistantSettingsRecord,
+        AIMemoryJobRecord,
+        AIRankQuotaRecord,
+    )
+
+    user, _ = repository.create_user("memory-follow-up", "阿彻", now, 0)
+    repository.get_ai_assistant_settings()
+    with repository._session() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+        session.get(AIRankQuotaRecord, user.rank_id).daily_limit = 2
+        session.commit()
+    first, _ = repository.accept_inbound(
+        InboundMessage("memory-follow-up-1", user.platform_id, "@总监事 我喜欢桌游", now)
+    )
+    assert repository.try_enqueue_ai_request(
+        first.id, user.platform_id, first.content, now
+    ).state == "queued"
+    claim = repository.claim_ai_memory_job("memory-worker", now, 30)
+    assert claim is not None
+    second, _ = repository.accept_inbound(
+        InboundMessage(
+            "memory-follow-up-2",
+            user.platform_id,
+            "@总监事 也喜欢短回复",
+            now + timedelta(seconds=1),
+        )
+    )
+    assert repository.try_enqueue_ai_request(
+        second.id, user.platform_id, second.content, now + timedelta(seconds=1)
+    ).state == "queued"
+
+    assert repository.complete_ai_memory_job(
+        user.id,
+        "memory-worker",
+        claim.lease_token,
+        claim.target_message_id,
+        "喜欢桌游",
+        now + timedelta(seconds=2),
+    ) is True
+    with repository._session() as session:
+        job = session.get(AIMemoryJobRecord, user.id)
+        assert job is not None
+        assert job.target_message_id == second.id
+        assert job.status == "pending"
+
+
 def test_undercover_word_migration_seeds_nine_unique_categories():
     rows = _undercover_word_migration_module()._seed_rows()
 
@@ -272,6 +351,40 @@ def test_completed_ai_request_enqueues_one_existing_outbound_message(
     ) is True
     with session_factory() as session:
         assert session.scalar(select(OutboundRecord.text)) == "收到"
+
+
+def test_ai_request_prompt_uses_live_profile_and_saved_memory(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord, AIPlayerMemoryRecord
+
+    user, _ = repository.create_user("ai-profile", "阿彻", now, 23)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+        session.add(
+            AIPlayerMemoryRecord(
+                user_id=user.id,
+                memory_text="偏好简短回复，喜欢桌游。",
+                last_scanned_message_id=None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    inbound, _ = repository.accept_inbound(
+        InboundMessage("ai-profile-inbound", user.platform_id, "@总监事 在吗", now)
+    )
+    assert repository.try_enqueue_ai_request(
+        inbound.id, user.platform_id, inbound.content, now
+    ).state == "queued"
+
+    claim = repository.claim_ai_request("ai-worker", now, 90)
+
+    assert claim is not None
+    assert "昵称：阿彻" in claim.system_prompt
+    assert "余额：23 摸鱼币" in claim.system_prompt
+    assert "偏好简短回复，喜欢桌游。" in claim.system_prompt
+    assert "核心玩法指引" in claim.system_prompt
 
 
 def _prepare_undercover_players(repository, session_factory, now, count=4):

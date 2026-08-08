@@ -293,6 +293,63 @@ class SetGameSettingsRequest(ApiModel):
     weekly_attendance_reward: int = Field(ge=0, le=999)
 
 
+class AIRankQuotaResponse(ApiModel):
+    rank_id: UUID
+    rank_name: str
+    rank_level_label: str
+    daily_limit: int = Field(ge=0, le=100)
+
+
+class SetAIRankQuotaRequest(ApiModel):
+    rank_id: UUID
+    daily_limit: int = Field(ge=0, le=100)
+
+
+class AIAssistantSettingsResponse(ApiModel):
+    enabled: bool
+    persona: str
+    system_prompt: str
+    over_limit_reply: str
+    failure_reply: str
+    max_response_chars: int = Field(ge=1, le=800)
+    timeout_seconds: int = Field(ge=1, le=60)
+    quotas: list[AIRankQuotaResponse]
+
+
+class SetAIAssistantSettingsRequest(ApiModel):
+    enabled: bool
+    persona: str = Field(min_length=1, max_length=4000)
+    system_prompt: str = Field(min_length=1, max_length=4000)
+    over_limit_reply: str = Field(min_length=1, max_length=1000)
+    failure_reply: str = Field(min_length=1, max_length=1000)
+    max_response_chars: int = Field(ge=1, le=800)
+    timeout_seconds: int = Field(ge=1, le=60)
+    quotas: list[SetAIRankQuotaRequest] = Field(min_length=1, max_length=100)
+
+
+class AIClaimResponse(ApiModel):
+    id: UUID
+    lease_token: UUID
+    system_prompt: str
+    user_content: str
+    max_response_chars: int = Field(ge=1, le=800)
+    timeout_seconds: int = Field(ge=1, le=60)
+
+
+class AICompleteRequest(ApiModel):
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token: UUID
+    text: str = Field(min_length=1, max_length=800)
+    now: AwareDatetime
+
+
+class AIFailedRequest(ApiModel):
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token: UUID
+    failure_summary: Literal["timeout", "network", "http_error", "invalid_response"]
+    now: AwareDatetime
+
+
 class ActivityLevelRuleModel(ApiModel):
     level: int = Field(ge=1, le=10)
     character_threshold: int = Field(ge=0)

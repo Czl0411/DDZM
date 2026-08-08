@@ -13,6 +13,11 @@ from dzmm_bot.runtime.settings import Settings
 
 from .api_models import (
     AcceptedResponse,
+    AIClaimResponse,
+    AICompleteRequest,
+    AIFailedRequest,
+    AIAssistantSettingsResponse,
+    AIRankQuotaResponse,
     ActivityLevelRuleModel,
     ActivitySettingsResponse,
     AdminStatusResponse,
@@ -41,6 +46,7 @@ from .api_models import (
     SetCommandEnabledRequest,
     SetCommandTemplateRequest,
     SetActivitySettingsRequest,
+    SetAIAssistantSettingsRequest,
     SetGameSettingsRequest,
     RandomEventSettingsResponse,
     SetRandomEventSettingsRequest,
@@ -554,6 +560,90 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _game_settings_response(record)
+
+    @app.get(
+        "/internal/game/ai-assistant/settings",
+        response_model=AIAssistantSettingsResponse,
+    )
+    def ai_assistant_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> AIAssistantSettingsResponse:
+        return _ai_assistant_settings_response(repository)
+
+    @app.patch(
+        "/internal/game/ai-assistant/settings",
+        response_model=AIAssistantSettingsResponse,
+    )
+    def set_ai_assistant_settings(
+        request: SetAIAssistantSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AIAssistantSettingsResponse:
+        try:
+            repository.set_ai_assistant_configuration(
+                enabled=request.enabled,
+                persona=request.persona,
+                system_prompt=request.system_prompt,
+                over_limit_reply=request.over_limit_reply,
+                failure_reply=request.failure_reply,
+                max_response_chars=request.max_response_chars,
+                timeout_seconds=request.timeout_seconds,
+                quotas=[(quota.rank_id, quota.daily_limit) for quota in request.quotas],
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _ai_assistant_settings_response(repository)
+
+    @app.post("/internal/ai/claim", response_model=AIClaimResponse | None)
+    def claim_ai_request(
+        request: ClaimRequest, _: Annotated[None, Depends(authorize)]
+    ) -> AIClaimResponse | None:
+        record = repository.claim_ai_request(
+            request.worker_id, request.now, request.lease_seconds
+        )
+        if record is None:
+            return None
+        return AIClaimResponse(
+            id=record.id,
+            lease_token=record.lease_token,
+            system_prompt=record.system_prompt,
+            user_content=record.user_content,
+            max_response_chars=record.max_response_chars,
+            timeout_seconds=record.timeout_seconds,
+        )
+
+    @app.post(
+        "/internal/ai/{request_id}/completed", response_model=AcceptedResponse
+    )
+    def complete_ai_request(
+        request_id: UUID,
+        request: AICompleteRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(
+            accepted=repository.complete_ai_request(
+                request_id,
+                request.worker_id,
+                request.lease_token,
+                request.text,
+                request.now,
+            )
+        )
+
+    @app.post("/internal/ai/{request_id}/failed", response_model=AcceptedResponse)
+    def fail_ai_request(
+        request_id: UUID,
+        request: AIFailedRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(
+            accepted=repository.fail_ai_request(
+                request_id,
+                request.worker_id,
+                request.lease_token,
+                request.failure_summary,
+                request.now,
+            )
+        )
 
     @app.get(
         "/internal/game/activity-settings", response_model=ActivitySettingsResponse
@@ -1208,6 +1298,30 @@ def _game_settings_response(record) -> GameSettingsResponse:
         onboarding_bonus=record.onboarding_bonus,
         checkin_reward=record.checkin_reward,
         weekly_attendance_reward=record.weekly_attendance_reward,
+    )
+
+
+def _ai_assistant_settings_response(
+    repository: CoreRepository,
+) -> AIAssistantSettingsResponse:
+    settings, quotas = repository.get_ai_assistant_configuration()
+    return AIAssistantSettingsResponse(
+        enabled=settings.enabled,
+        persona=settings.persona,
+        system_prompt=settings.system_prompt,
+        over_limit_reply=settings.over_limit_reply,
+        failure_reply=settings.failure_reply,
+        max_response_chars=settings.max_response_chars,
+        timeout_seconds=settings.timeout_seconds,
+        quotas=[
+            AIRankQuotaResponse(
+                rank_id=quota.rank_id,
+                rank_name=quota.rank_name,
+                rank_level_label=quota.rank_level_label,
+                daily_limit=quota.daily_limit,
+            )
+            for quota in quotas
+        ],
     )
 
 

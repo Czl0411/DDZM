@@ -368,6 +368,14 @@ class AIAssistantSettings:
 
 
 @dataclass(frozen=True)
+class AIRankQuota:
+    rank_id: UUID
+    rank_name: str
+    rank_level_label: str
+    daily_limit: int
+
+
+@dataclass(frozen=True)
 class ClaimedAIRequest:
     id: UUID
     lease_token: UUID
@@ -1019,6 +1027,68 @@ class CoreRepository:
                 raise RuntimeError("AI 总监事设置消失")
             return _ai_assistant_settings(record)
 
+    def get_ai_assistant_configuration(
+        self,
+    ) -> tuple[AIAssistantSettings, list[AIRankQuota]]:
+        with self._session() as session:
+            self._ensure_ai_assistant_defaults(session)
+            settings = session.get(AIAssistantSettingsRecord, 1)
+            if settings is None:
+                raise RuntimeError("AI 总监事设置消失")
+            rows = session.execute(
+                select(RankRecord, AIRankQuotaRecord)
+                .join(AIRankQuotaRecord, AIRankQuotaRecord.rank_id == RankRecord.id)
+                .order_by(RankRecord.sort_order)
+            )
+            return _ai_assistant_settings(settings), [
+                AIRankQuota(
+                    rank_id=rank.id,
+                    rank_name=rank.name,
+                    rank_level_label=rank.level_label,
+                    daily_limit=quota.daily_limit,
+                )
+                for rank, quota in rows
+            ]
+
+    def set_ai_assistant_configuration(
+        self,
+        *,
+        enabled: bool,
+        persona: str,
+        system_prompt: str,
+        over_limit_reply: str,
+        failure_reply: str,
+        max_response_chars: int,
+        timeout_seconds: int,
+        quotas: list[tuple[UUID, int]],
+    ) -> tuple[AIAssistantSettings, list[AIRankQuota]]:
+        quota_by_rank = dict(quotas)
+        if len(quota_by_rank) != len(quotas):
+            raise ValueError("职位调用次数不能重复")
+        with self.transaction():
+            with self._session() as session:
+                self._ensure_ai_assistant_defaults(session)
+                ranks = list(session.scalars(select(RankRecord).order_by(RankRecord.sort_order)))
+                if set(quota_by_rank) != {rank.id for rank in ranks}:
+                    raise ValueError("需要为每个职位配置调用次数")
+                settings = session.get(AIAssistantSettingsRecord, 1)
+                if settings is None:
+                    raise RuntimeError("AI 总监事设置消失")
+                settings.enabled = enabled
+                settings.persona = persona.strip()
+                settings.system_prompt = system_prompt.strip()
+                settings.over_limit_reply = over_limit_reply.strip()
+                settings.failure_reply = failure_reply.strip()
+                settings.max_response_chars = max_response_chars
+                settings.timeout_seconds = timeout_seconds
+                for rank in ranks:
+                    quota = session.get(AIRankQuotaRecord, rank.id)
+                    if quota is None:
+                        raise RuntimeError("AI 职位调用次数消失")
+                    quota.daily_limit = quota_by_rank[rank.id]
+                session.flush()
+        return self.get_ai_assistant_configuration()
+
     def try_enqueue_ai_request(
         self,
         inbound_message_id: UUID | str,
@@ -1105,7 +1175,7 @@ class CoreRepository:
                 id=record.id,
                 lease_token=token,
                 system_prompt=_build_ai_system_prompt(_ai_assistant_settings(settings)),
-                user_content=inbound.content,
+                user_content=inbound.content.removeprefix("@总监事").strip(),
                 max_response_chars=settings.max_response_chars,
                 timeout_seconds=settings.timeout_seconds,
             )

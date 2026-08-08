@@ -158,6 +158,90 @@ def test_undercover_settings_api_validates_roles_and_returns_public_session(clie
     }
 
 
+def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
+    app_context, headers
+):
+    initial = app_context.client.get(
+        "/internal/game/ai-assistant/settings", headers=headers
+    )
+
+    assert initial.status_code == 200
+    assert "key" not in initial.text.lower()
+    assert len(initial.json()["quotas"]) == 11
+
+    configured = app_context.client.patch(
+        "/internal/game/ai-assistant/settings",
+        headers=headers,
+        json={
+            **initial.json(),
+            "enabled": True,
+            "persona": "群内美女总监事",
+            "system_prompt": "保持简短。",
+            "quotas": [
+                {"rank_id": quota["rank_id"], "daily_limit": 1}
+                for quota in initial.json()["quotas"]
+            ],
+        },
+    )
+    joined = app_context.client.post(
+        "/internal/inbound",
+        headers=headers,
+        json={
+            "platform_message_id": "ai-join",
+            "sender_platform_id": "ai-user",
+            "content": "/入职 小明",
+            "received_at": NOW.isoformat(),
+        },
+    )
+    queued = app_context.client.post(
+        "/internal/inbound",
+        headers=headers,
+        json={
+            "platform_message_id": "ai-mention",
+            "sender_platform_id": "ai-user",
+            "content": "@总监事 今天适合摸鱼吗？",
+            "received_at": NOW.isoformat(),
+        },
+    )
+    claim = app_context.client.post(
+        "/internal/ai/claim",
+        headers=headers,
+        json={"worker_id": "ai-1", "now": NOW.isoformat(), "lease_seconds": 90},
+    )
+
+    assert configured.status_code == 200
+    assert configured.json()["enabled"] is True
+    assert joined.status_code == 200
+    assert queued.status_code == 200
+    assert claim.status_code == 200
+    assert claim.json()["user_content"] == "今天适合摸鱼吗？"
+    assert "key" not in claim.text.lower()
+
+    completed = app_context.client.post(
+        f"/internal/ai/{claim.json()['id']}/completed",
+        headers=headers,
+        json={
+            "worker_id": "ai-1",
+            "lease_token": claim.json()["lease_token"],
+            "text": "适合，先把工作藏好。",
+            "now": NOW.isoformat(),
+        },
+    )
+    stale = app_context.client.post(
+        f"/internal/ai/{claim.json()['id']}/completed",
+        headers=headers,
+        json={
+            "worker_id": "ai-1",
+            "lease_token": claim.json()["lease_token"],
+            "text": "不应重复发送。",
+            "now": NOW.isoformat(),
+        },
+    )
+
+    assert completed.json() == {"accepted": True}
+    assert stale.json() == {"accepted": False}
+
+
 def test_heartbeat_response_uses_beijing_time(client, headers):
     response = client.post(
         "/internal/heartbeat",

@@ -182,6 +182,59 @@ def test_ai_assistant_schema_declares_queue_and_daily_quota_contract():
     assert AIRequestRecord.__table__.c.inbound_message_id.unique is True
 
 
+def test_ai_request_quota_is_consumed_only_until_rank_limit(
+    repository, session_factory, now
+):
+    """Fails if a second same-day request bypasses the configured rank limit."""
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord, AIRankQuotaRecord
+
+    user, _ = repository.create_user("ai-user", "AI 员工", now, 0)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+        session.get(AIRankQuotaRecord, user.rank_id).daily_limit = 1
+    first_inbound, _ = repository.accept_inbound(
+        InboundMessage("ai-inbound-1", "ai-user", "@总监事 你好", now)
+    )
+    second_inbound, _ = repository.accept_inbound(
+        InboundMessage("ai-inbound-2", "ai-user", "@总监事 在吗", now)
+    )
+
+    assert repository.try_enqueue_ai_request(
+        first_inbound.id, "ai-user", "你好", now
+    ).state == "queued"
+    assert repository.try_enqueue_ai_request(
+        second_inbound.id, "ai-user", "在吗", now
+    ).state == "over_limit"
+
+
+def test_completed_ai_request_enqueues_one_existing_outbound_message(
+    repository, session_factory, now
+):
+    """Fails if a valid worker completion does not use the normal outbound queue."""
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord, OutboundRecord
+
+    repository.create_user("ai-user", "AI 员工", now, 0)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    inbound, _ = repository.accept_inbound(
+        InboundMessage("ai-inbound-3", "ai-user", "@总监事 你好", now)
+    )
+    assert repository.try_enqueue_ai_request(
+        inbound.id, "ai-user", "你好", now
+    ).state == "queued"
+
+    claimed = repository.claim_ai_request("ai-worker-1", now, 90)
+
+    assert claimed is not None
+    assert repository.complete_ai_request(
+        claimed.id, "ai-worker-1", claimed.lease_token, "收到", now
+    ) is True
+    with session_factory() as session:
+        assert session.scalar(select(OutboundRecord.text)) == "收到"
+
+
 def _prepare_undercover_players(repository, session_factory, now, count=4):
     from dzmm_bot.core.schema import UndercoverWordSetRecord
 

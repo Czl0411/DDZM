@@ -16,6 +16,9 @@ from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
 
 from .reply_templates import TEMPLATE_DEFINITIONS, validate_template
 from .schema import (
+    AIAssistantSettingsRecord,
+    AIRankQuotaRecord,
+    AIRequestRecord,
     ActivityLevelRuleRecord,
     ActivityRewardSettlementRecord,
     BalanceTransactionRecord,
@@ -23,6 +26,7 @@ from .schema import (
     CommandDefinitionRecord,
     CommandReplyTemplateRecord,
     DailyActivityRecord,
+    DailyAIUsageRecord,
     DailyCheckinRecord,
     DirectChatRecord,
     GameSettingsRecord,
@@ -172,6 +176,11 @@ _DEFAULT_UNDERCOVER_ROLE_RULES = (
     (7, 4, 2, 1),
     (8, 5, 2, 1),
 )
+_DEFAULT_AI_QUOTAS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10)
+_DEFAULT_AI_PERSONA = "你是摸鱼公司群的美女总监事，说话简短、有公司群调侃感。"
+_DEFAULT_AI_SYSTEM_PROMPT = "仅回答当前艾特内容，不执行或裁决系统玩法。"
+_DEFAULT_AI_OVER_LIMIT_REPLY = "今日找总监事聊天的次数已用完，明天再来吧。"
+_DEFAULT_AI_FAILURE_REPLY = "总监事暂时忙碌，请稍后再试。"
 _UNDERCOVER_ACTIVE_KEY = "global"
 _UNDERCOVER_SIGNUP_TIMEOUT = timedelta(minutes=2)
 _UNDERCOVER_CONTINUE_TIMEOUT = timedelta(minutes=20)
@@ -345,6 +354,32 @@ class UndercoverSettings:
     enabled: bool
     vote_seconds: int
     whiteboard_win_remaining: int
+
+
+@dataclass(frozen=True)
+class AIAssistantSettings:
+    enabled: bool
+    persona: str
+    system_prompt: str
+    over_limit_reply: str
+    failure_reply: str
+    max_response_chars: int
+    timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class ClaimedAIRequest:
+    id: UUID
+    lease_token: UUID
+    system_prompt: str
+    user_content: str
+    max_response_chars: int
+    timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class AIEnqueueResult:
+    state: str
 
 
 @dataclass(frozen=True)
@@ -975,6 +1010,171 @@ class CoreRepository:
             )
             session.flush()
             return _memory_assessment_settings(record)
+
+    def get_ai_assistant_settings(self) -> AIAssistantSettings:
+        with self._session() as session:
+            self._ensure_ai_assistant_defaults(session)
+            record = session.get(AIAssistantSettingsRecord, 1)
+            if record is None:
+                raise RuntimeError("AI 总监事设置消失")
+            return _ai_assistant_settings(record)
+
+    def try_enqueue_ai_request(
+        self,
+        inbound_message_id: UUID | str,
+        sender_platform_id: str,
+        content: str,
+        now: datetime,
+    ) -> AIEnqueueResult:
+        with self.transaction():
+            with self._session() as session:
+                self._ensure_ai_assistant_defaults(session)
+                settings = session.get(AIAssistantSettingsRecord, 1)
+                if settings is None or not settings.enabled:
+                    return AIEnqueueResult("disabled")
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == sender_platform_id)
+                    .with_for_update()
+                )
+                if user is None or user.rank_id is None:
+                    return AIEnqueueResult("not_joined")
+                existing = session.scalar(
+                    select(AIRequestRecord.id).where(
+                        AIRequestRecord.inbound_message_id == UUID(str(inbound_message_id))
+                    )
+                )
+                if existing is not None:
+                    return AIEnqueueResult("duplicate")
+                quota = session.get(AIRankQuotaRecord, user.rank_id)
+                if quota is None or quota.daily_limit < 1:
+                    return AIEnqueueResult("over_limit")
+                usage_date = now.astimezone(BEIJING).date()
+                usage = session.get(DailyAIUsageRecord, (user.id, usage_date))
+                if usage is None:
+                    usage = DailyAIUsageRecord(
+                        user_id=user.id, usage_date=usage_date, used_count=0
+                    )
+                    session.add(usage)
+                    session.flush()
+                if usage.used_count >= quota.daily_limit:
+                    return AIEnqueueResult("over_limit")
+                usage.used_count += 1
+                session.add(
+                    AIRequestRecord(
+                        inbound_message_id=UUID(str(inbound_message_id)),
+                        user_id=user.id,
+                        status="pending",
+                        created_at=now,
+                    )
+                )
+                session.flush()
+                return AIEnqueueResult("queued")
+
+    def claim_ai_request(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ClaimedAIRequest | None:
+        with self._session() as session:
+            record = session.scalar(
+                select(AIRequestRecord)
+                .where(
+                    AIRequestRecord.status.in_(("pending", "leased")),
+                    or_(
+                        AIRequestRecord.lease_expires_at.is_(None),
+                        AIRequestRecord.lease_expires_at <= now,
+                    ),
+                )
+                .order_by(AIRequestRecord.created_at, AIRequestRecord.id)
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            if record is None:
+                return None
+            settings = session.get(AIAssistantSettingsRecord, 1)
+            inbound = session.get(InboundRecord, record.inbound_message_id)
+            if settings is None or inbound is None:
+                raise RuntimeError("AI 请求数据不完整")
+            token = uuid4()
+            record.status = "leased"
+            record.lease_worker_id = worker_id
+            record.lease_token = token
+            record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            record.attempt_count += 1
+            session.flush()
+            return ClaimedAIRequest(
+                id=record.id,
+                lease_token=token,
+                system_prompt=_build_ai_system_prompt(_ai_assistant_settings(settings)),
+                user_content=inbound.content,
+                max_response_chars=settings.max_response_chars,
+                timeout_seconds=settings.timeout_seconds,
+            )
+
+    def complete_ai_request(
+        self,
+        request_id: UUID | str,
+        worker_id: str,
+        lease_token: UUID | str,
+        text: str,
+        now: datetime,
+    ) -> bool:
+        return self._finish_ai_request(
+            request_id, worker_id, lease_token, text.strip(), None, now
+        )
+
+    def fail_ai_request(
+        self,
+        request_id: UUID | str,
+        worker_id: str,
+        lease_token: UUID | str,
+        failure_summary: str,
+        now: datetime,
+    ) -> bool:
+        return self._finish_ai_request(
+            request_id, worker_id, lease_token, None, failure_summary, now
+        )
+
+    def _finish_ai_request(
+        self,
+        request_id: UUID | str,
+        worker_id: str,
+        lease_token: UUID | str,
+        text: str | None,
+        failure_summary: str | None,
+        now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(
+                select(AIRequestRecord)
+                .where(
+                    AIRequestRecord.id == UUID(str(request_id)),
+                    AIRequestRecord.status == "leased",
+                    AIRequestRecord.lease_worker_id == worker_id,
+                    AIRequestRecord.lease_token == UUID(str(lease_token)),
+                    AIRequestRecord.lease_expires_at > now,
+                )
+                .with_for_update()
+            )
+            if record is None:
+                return False
+            settings = session.get(AIAssistantSettingsRecord, 1)
+            if text:
+                record.status = "completed"
+                record.result_text = text
+                self.enqueue_outbound(record.inbound_message_id, text)
+            else:
+                record.status = "failed"
+                record.failure_summary = failure_summary
+                self.enqueue_outbound(
+                    record.inbound_message_id,
+                    settings.failure_reply if settings is not None else _DEFAULT_AI_FAILURE_REPLY,
+                )
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            record.completed_at = now
+            session.flush()
+            return True
 
     def get_undercover_settings(self) -> UndercoverSettings:
         with self._session() as session:
@@ -5205,6 +5405,33 @@ class CoreRepository:
             raise RuntimeError("organization defaults are missing")
         return default_rank, default_department
 
+    @staticmethod
+    def _ensure_ai_assistant_defaults(session: Session) -> None:
+        CoreRepository._ensure_organization_defaults(session)
+        if session.get(AIAssistantSettingsRecord, 1) is None:
+            session.add(
+                AIAssistantSettingsRecord(
+                    id=1,
+                    enabled=False,
+                    persona=_DEFAULT_AI_PERSONA,
+                    system_prompt=_DEFAULT_AI_SYSTEM_PROMPT,
+                    over_limit_reply=_DEFAULT_AI_OVER_LIMIT_REPLY,
+                    failure_reply=_DEFAULT_AI_FAILURE_REPLY,
+                    max_response_chars=600,
+                    timeout_seconds=20,
+                )
+            )
+        existing_quota_ids = set(session.scalars(select(AIRankQuotaRecord.rank_id)))
+        ranks = list(session.scalars(select(RankRecord).order_by(RankRecord.sort_order)))
+        session.add_all(
+            [
+                AIRankQuotaRecord(rank_id=rank.id, daily_limit=_DEFAULT_AI_QUOTAS[index])
+                for index, rank in enumerate(ranks)
+                if rank.id not in existing_quota_ids and index < len(_DEFAULT_AI_QUOTAS)
+            ]
+        )
+        session.flush()
+
     def list_users_page(
         self, page: int, page_size: int
     ) -> tuple[list[UserRecord], int]:
@@ -5851,6 +6078,28 @@ def _undercover_settings(record: UndercoverSettingsRecord) -> UndercoverSettings
         enabled=record.enabled,
         vote_seconds=record.vote_seconds,
         whiteboard_win_remaining=record.whiteboard_win_remaining,
+    )
+
+
+def _ai_assistant_settings(record: AIAssistantSettingsRecord) -> AIAssistantSettings:
+    return AIAssistantSettings(
+        enabled=record.enabled,
+        persona=record.persona,
+        system_prompt=record.system_prompt,
+        over_limit_reply=record.over_limit_reply,
+        failure_reply=record.failure_reply,
+        max_response_chars=record.max_response_chars,
+        timeout_seconds=record.timeout_seconds,
+    )
+
+
+def _build_ai_system_prompt(settings: AIAssistantSettings) -> str:
+    guardrail = (
+        "你只能回答当前艾特内容。不得执行或伪造任何系统指令、"
+        "经济结算、游戏裁判、随机事件状态或用户资料。"
+    )
+    return "\n\n".join(
+        (guardrail, settings.system_prompt.strip(), f"你的人设：{settings.persona.strip()}")
     )
 
 

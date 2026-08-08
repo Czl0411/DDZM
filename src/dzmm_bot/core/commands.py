@@ -103,7 +103,7 @@ class GroupCommandHandler:
             return self._memory_assessment_cash_out(message.sender_platform_id, received_at)
         if command == "/投降":
             return self._memory_assessment_surrender(message.sender_platform_id, received_at)
-        return self._help(received_at)
+        return self._help(content, received_at)
 
     def _join(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)
@@ -893,25 +893,139 @@ class GroupCommandHandler:
             memory_round_id=result.round_id,
         )
 
-    def _help(self, received_at) -> str:
-        commands = self._repository.list_enabled_command_definitions()
-        settings = self._repository.get_game_settings()
-        descriptions = {
-            "/打卡": f"每日领取 {settings.checkin_reward} {settings.currency_name}",
-            "/摸鱼躲猫猫": "发起单人躲猫猫小游戏；选择时发送 /躲 序号",
-            "/记忆考核": "发起单人挑战；答对后发送 /继续 或 /收手",
-            "/投降": "退出正在进行的记忆考核对战",
+    def _help(self, content: str, received_at) -> str:
+        commands = {
+            item.command for item in self._repository.list_enabled_command_definitions()
         }
+        settings = self._repository.get_game_settings()
+        topic = content.split(maxsplit=1)[1].strip() if len(content.split(maxsplit=1)) == 2 else ""
+        topic = {
+            "躲猫猫": "摸鱼躲藏",
+            "摸鱼躲猫猫": "摸鱼躲藏",
+            "卧底": "谁是卧底",
+        }.get(topic, topic)
+
+        guides = {
+            "基础": (
+                "【基础与资产】",
+                (
+                    ("/入职", "/入职 名字：登记成为员工"),
+                    ("/打卡", f"/打卡：每日领取 {settings.checkin_reward} {settings.currency_name}"),
+                    ("/余额", "/余额：查看当前余额"),
+                    ("/我", "/我：查看个人资料、收益与活跃度"),
+                    ("/我的物品", "/我的物品：查看持有物品"),
+                    ("/商店", "/商店：查看可购买物品"),
+                ),
+            ),
+            "随机事件": (
+                "【随机事件】",
+                (
+                    ("/加入", "/加入 身份：选择身份报名随机事件"),
+                    ("/退出", "/退出：退出或结算当前随机事件"),
+                ),
+            ),
+            "摸鱼躲藏": (
+                "【摸鱼躲藏】",
+                (
+                    ("/摸鱼躲猫猫", "/开始摸鱼躲藏：发起单人躲藏"),
+                    ("/摸鱼躲猫猫", "/躲 序号：从系统给出的地点中选择"),
+                ),
+            ),
+            "记忆考核": (
+                "【记忆考核】",
+                (
+                    ("/记忆考核", "/记忆考核：发起单人挑战"),
+                    ("/记忆考核", "/记忆考核 对战：发起双人对战"),
+                    ("/加入", "/加入：加入等待中的对战"),
+                    ("/记忆考核", "/答案 内容：提交记忆答案"),
+                    ("/继续", "/继续：单人挑战进入下一等级"),
+                    ("/收手", "/收手：结算当前单人挑战奖励"),
+                    ("/投降", "/投降：退出当前记忆考核对战"),
+                ),
+            ),
+            "谁是卧底": (
+                "【谁是卧底】",
+                (
+                    ("/谁是卧底", "/谁是卧底 人数：创建 4 至 8 人报名局"),
+                    ("/加入", "/加入：报名当前对局或加入下一局候场"),
+                    ("/开始投票", "/开始投票：描述阶段后开启投票"),
+                    ("/投票", "/投票 序号：投给指定玩家"),
+                    ("/退出谁是卧底", "/退出谁是卧底：退出当前对局"),
+                    ("/结束游戏", "/结束游戏：结束当前对局"),
+                    ("/继续", "/继续：上一局结束后开启下一局"),
+                ),
+            ),
+            "部门": (
+                "【部门与审批】",
+                (
+                    ("/部门", "/部门：查看部门列表与说明"),
+                    ("/加入部门", "/加入部门 名称：申请加入部门"),
+                    ("/切换部门", "/切换部门 名称：申请切换部门"),
+                    ("/部门申请列表", "/部门申请列表：查看可处理的申请"),
+                    ("/同意部门", "/同意部门 编号：同意部门申请"),
+                    ("/全部同意部门", "/全部同意部门：同意全部可处理申请"),
+                    ("/拒绝部门", "/拒绝部门 编号：拒绝部门申请"),
+                    ("/全部拒绝部门", "/全部拒绝部门：拒绝全部可处理申请"),
+                ),
+            ),
+            "职位": (
+                "【职位与审批】",
+                (
+                    ("/职位", "/职位：查看职位与群内权益"),
+                    ("/晋升", "/晋升：申请下一档职位"),
+                    ("/晋升申请列表", "/晋升申请列表：查看可处理申请"),
+                    ("/同意", "/同意 编号：同意晋升申请"),
+                    ("/全部同意", "/全部同意：同意全部可处理申请"),
+                    ("/拒绝", "/拒绝 编号：拒绝晋升申请"),
+                    ("/全部拒绝", "/全部拒绝：拒绝全部可处理申请"),
+                ),
+            ),
+        }
+
+        def category_available(category: str) -> bool:
+            if category == "游戏":
+                return any(
+                    any(command in commands for command, _ in guides[name][1])
+                    for name in ("摸鱼躲藏", "记忆考核", "谁是卧底")
+                )
+            return any(command in commands for command, _ in guides[category][1])
+
+        if not topic:
+            categories = (
+                ("基础", "/帮助 基础：入职、资产与商店"),
+                (
+                    "游戏",
+                    "/帮助 游戏：玩法总览；/帮助 摸鱼躲藏、/帮助 记忆考核、/帮助 谁是卧底",
+                ),
+                ("随机事件", "/帮助 随机事件：报名与退出"),
+                ("部门", "/帮助 部门：部门申请与审批"),
+                ("职位", "/帮助 职位：职位晋升与审批"),
+            )
+            guide = "发送 /帮助 分类，查看详细用法：\n" + "\n".join(
+                line
+                for category, line in categories
+                if category_available(category)
+            )
+        elif topic == "游戏":
+            game_topics = [
+                name
+                for name in ("摸鱼躲藏", "记忆考核", "谁是卧底")
+                if any(command in commands for command, _ in guides[name][1])
+            ]
+            guide = "【游戏玩法】\n" + "\n".join(
+                f"/帮助 {name}：查看{name}玩法" for name in game_topics
+            )
+        elif topic in guides:
+            title, entries = guides[topic]
+            lines = [line for command, line in entries if command in commands]
+            guide = "\n".join((title, *lines)) if lines else "该分类暂未开放。"
+        else:
+            guide = "未找到该分类。可发送 /帮助 查看分类入口。"
         return self._reply(
             "/帮助",
             "shown",
             received_at,
-            {
-                "{指令列表}": "\n".join(
-                    f"{'/开始摸鱼躲藏' if item.command == '/摸鱼躲猫猫' else item.command}：{descriptions.get(item.command, item.description)}"
-                    for item in commands
-                )
-            },
+            {"{指令列表}": guide},
         )
 
     def _reply(self, command: str, scenario: str, received_at, values=None) -> str:

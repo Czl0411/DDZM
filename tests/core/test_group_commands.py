@@ -143,7 +143,7 @@ def test_updated_economy_applies_to_future_join_and_checkin_only():
     _receive(service, "checkin", "platform-xiaoming", "/打卡", received_at)
     assert _latest_reply(factory) == "打卡成功，领取 7 工分。当前余额：10 工分。"
 
-    _receive(service, "help", "platform-xiaoming", "/帮助", received_at)
+    _receive(service, "help", "platform-xiaoming", "/帮助 基础", received_at)
     assert "/打卡：每日领取 7 工分" in _latest_reply(factory)
 
 
@@ -256,10 +256,10 @@ def test_help_lists_undercover_commands():
     service, _, factory = _service()
     now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
 
-    _receive(service, "help-undercover", "employee", "/帮助", now)
+    _receive(service, "help-undercover", "employee", "/帮助 谁是卧底", now)
 
     reply = _latest_reply(factory)
-    assert "/谁是卧底：" in reply
+    assert "/谁是卧底 人数：" in reply
     assert "/开始投票：" in reply
     assert "/退出谁是卧底：" in reply
 
@@ -739,18 +739,49 @@ def test_help_lists_only_enabled_commands_and_uses_its_template():
     repository.set_command_enabled("/打卡", False)
     repository.set_reply_template("/帮助", "shown", "可用：\n{指令列表}")
 
-    _receive(service, "help", "platform-xiaoming", "/帮助", received_at)
+    _receive(service, "help", "platform-xiaoming", "/帮助 基础", received_at)
 
-    assert "/帮助" in _latest_reply(factory)
+    assert "【基础与资产】" in _latest_reply(factory)
     assert "/打卡" not in _latest_reply(factory)
 
 
-def test_help_uses_short_hide_and_seek_start_command():
+def test_help_shows_category_entrypoints_instead_of_all_commands():
     service, _, factory = _service()
     received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
 
     _receive(service, "help", "platform-xiaoming", "/帮助", received_at)
 
     reply = _latest_reply(factory)
-    assert "/开始摸鱼躲藏：发起单人躲猫猫小游戏；选择时发送 /躲 序号" in reply
-    assert "/摸鱼躲猫猫：" not in reply
+    assert "发送 /帮助 分类，查看详细用法：" in reply
+    assert "/帮助 基础" in reply
+    assert "/帮助 游戏" in reply
+    assert "/帮助 随机事件" in reply
+    assert "/帮助 职位" in reply
+    assert "/帮助 部门" in reply
+    assert "/同意部门" not in reply
+
+
+def test_help_game_topic_links_to_each_game_guide():
+    service, _, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+
+    _receive(service, "help-games", "platform-xiaoming", "/帮助 游戏", received_at)
+
+    reply = _latest_reply(factory)
+    assert "【游戏玩法】" in reply
+    assert "/帮助 摸鱼躲藏" in reply
+    assert "/帮助 记忆考核" in reply
+    assert "/帮助 谁是卧底" in reply
+
+
+def test_help_hide_and_seek_topic_shows_start_and_followup_syntax():
+    service, _, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+
+    _receive(service, "help-hide-and-seek", "platform-xiaoming", "/帮助 摸鱼躲藏", received_at)
+
+    reply = _latest_reply(factory)
+    assert "【摸鱼躲藏】" in reply
+    assert "/开始摸鱼躲藏" in reply
+    assert "/躲 序号" in reply
+    assert "/摸鱼躲猫猫" not in reply

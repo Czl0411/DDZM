@@ -1505,13 +1505,13 @@ def test_outbound_replies_for_one_inbound_are_claimed_in_reply_order(
     assert claimed_second.id == second.id
 
 
-def test_outbound_reply_preserves_long_multiline_text_as_one_message(
+def test_outbound_reply_splits_long_multiline_text_into_ordered_short_messages(
     repository, session_factory, inbound
 ):
     from dzmm_bot.core.schema import OutboundRecord
 
     stored, _ = repository.accept_inbound(inbound)
-    text = "\n".join(["一行"] * 11) + "\n" + "字" * 1001
+    text = "\n".join([f"第{index}行" for index in range(1, 8)])
     repository.enqueue_outbound(stored.id, text)
 
     with session_factory() as session:
@@ -1521,16 +1521,20 @@ def test_outbound_reply_preserves_long_multiline_text_as_one_message(
                 .order_by(OutboundRecord.reply_index, OutboundRecord.created_at)
             )
         )
-    assert [record.text for record in records] == [text]
-    assert [record.reply_index for record in records] == [0]
+    assert [record.text for record in records] == [
+        "第1行\n第2行\n第3行",
+        "第4行\n第5行\n第6行",
+        "第7行",
+    ]
+    assert [record.reply_index for record in records] == [0, 1, 2]
 
 
-def test_system_outbound_preserves_long_text_as_one_message(
+def test_system_outbound_splits_a_long_line(
     repository, session_factory
 ):
     from dzmm_bot.core.schema import OutboundRecord
 
-    repository.enqueue_system_outbound("字" * 1001)
+    repository.enqueue_system_outbound("字" * 141)
 
     with session_factory() as session:
         records = list(
@@ -1539,7 +1543,7 @@ def test_system_outbound_preserves_long_text_as_one_message(
                 .order_by(OutboundRecord.reply_index, OutboundRecord.created_at)
             )
         )
-    assert [record.text for record in records] == ["字" * 1001]
+    assert [record.text for record in records] == ["字" * 140, "字"]
 
 
 def test_second_reply_waits_until_the_first_reply_is_sent(repository, inbound, now):

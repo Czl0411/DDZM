@@ -82,6 +82,8 @@ from .schema import (
 
 
 _DEFAULT_CURRENCY_NAME = "摸鱼币"
+_OUTBOUND_CHUNK_MAX_CHARS = 140
+_OUTBOUND_CHUNK_MAX_LINES = 3
 _DEFAULT_ONBOARDING_BONUS = 0
 _DEFAULT_CHECKIN_REWARD = 5
 _DEFAULT_WEEKLY_ATTENDANCE_REWARD = 5
@@ -198,6 +200,41 @@ _UNDERCOVER_ACTIVE_KEY = "global"
 _UNDERCOVER_SIGNUP_TIMEOUT = timedelta(minutes=2)
 _UNDERCOVER_CONTINUE_TIMEOUT = timedelta(minutes=20)
 _ROLE_VARIABLE = re.compile(r"\{([^{}]*\S[^{}]*)\}")
+
+
+def _outbound_text_chunks(text: str) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    for line in text.split("\n"):
+        for part in _outbound_line_chunks(line):
+            candidate = "\n".join([*current, part])
+            if current and (
+                len(candidate) > _OUTBOUND_CHUNK_MAX_CHARS
+                or len(current) >= _OUTBOUND_CHUNK_MAX_LINES
+            ):
+                chunks.append("\n".join(current))
+                current = []
+            current.append(part)
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
+def _outbound_line_chunks(line: str) -> list[str]:
+    if not line:
+        return [line]
+    chunks: list[str] = []
+    remaining = line
+    while len(remaining) > _OUTBOUND_CHUNK_MAX_CHARS:
+        boundary = max(
+            remaining.rfind(mark, 0, _OUTBOUND_CHUNK_MAX_CHARS + 1)
+            for mark in "。！？；，"
+        )
+        split_at = boundary + 1 if boundary >= 0 else _OUTBOUND_CHUNK_MAX_CHARS
+        chunks.append(remaining[:split_at])
+        remaining = remaining[split_at:]
+    chunks.append(remaining)
+    return chunks
 
 
 def _undercover_card_text(role: str, civilian_word: str, undercover_word: str) -> str:
@@ -5915,15 +5952,21 @@ class CoreRepository:
             first_reply_index = reply_index
             if latest_reply_index is not None and first_reply_index <= latest_reply_index:
                 first_reply_index = latest_reply_index + 1
+            replies = (
+                [reply]
+                if recall_after_seconds is not None
+                else _outbound_text_chunks(reply)
+            )
             records = [
                 OutboundRecord(
                     inbound_message_id=inbound_id,
-                    text=reply,
-                    reply_index=first_reply_index,
+                    text=text,
+                    reply_index=first_reply_index + index,
                     recall_after_seconds=recall_after_seconds,
                     destination_chatroom_id=destination_chatroom_id,
                     delivery_kind=delivery_kind,
                 )
+                for index, text in enumerate(replies)
             ]
             session.add_all(records)
             session.flush()
@@ -5948,15 +5991,21 @@ class CoreRepository:
         if recall_after_seconds is not None and recall_after_seconds < 1:
             raise ValueError("撤回秒数必须为正整数")
         with self._session() as session:
+            texts = (
+                [text]
+                if recall_after_seconds is not None
+                else _outbound_text_chunks(text)
+            )
             records = [
                 OutboundRecord(
                     inbound_message_id=None,
-                    text=text,
-                    reply_index=0,
+                    text=part,
+                    reply_index=index,
                     recall_after_seconds=recall_after_seconds,
                     destination_chatroom_id=destination_chatroom_id,
                     delivery_kind=delivery_kind,
                 )
+                for index, part in enumerate(texts)
             ]
             session.add_all(records)
             session.flush()

@@ -325,6 +325,23 @@ def test_send_raises_when_ack_rejects_message(gateway):
         adapter.send("余额：5 摸鱼币")
 
 
+def test_send_rejection_logs_shape_without_logging_message_text(gateway, caplog):
+    """Fails until a rejected outbound ACK carries safe diagnostic context."""
+    adapter, socket, _ = gateway
+    socket.call_result = {
+        "success": False,
+        "error": "请勿发送重复内容",
+        "code": "content_rejected",
+    }
+
+    with pytest.raises(RuntimeError, match="请勿发送重复内容"):
+        adapter.send("唯一测试甲\n唯一测试乙")
+
+    assert "destination=room-1 chars=11 lines=2" in caplog.text
+    assert "code=content_rejected" in caplog.text
+    assert "唯一测试甲" not in caplog.text
+
+
 def test_retracts_an_acknowledged_message_in_the_target_chatroom(gateway):
     """Fails until a sent message can be withdrawn through the live gateway."""
     adapter, socket, _ = gateway

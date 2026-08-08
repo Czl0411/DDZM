@@ -1,6 +1,7 @@
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+import logging
 from threading import Event, Lock
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -8,6 +9,9 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AikdaSocketGateway:
@@ -78,6 +82,15 @@ class AikdaSocketGateway:
         )
         if not acknowledgement or acknowledgement.get("success") is not True:
             error = acknowledgement.get("error", "message acknowledgement failed") if acknowledgement else "message acknowledgement failed"
+            code = acknowledgement.get("code") if acknowledgement else None
+            _LOGGER.warning(
+                "aikda message:send rejected destination=%s chars=%s lines=%s code=%s error=%s",
+                chatroom_id,
+                len(text),
+                text.count("\n") + 1,
+                code or "-",
+                error,
+            )
             raise RuntimeError(error)
         return message_id
 

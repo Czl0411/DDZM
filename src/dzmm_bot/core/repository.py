@@ -198,37 +198,6 @@ _UNDERCOVER_ACTIVE_KEY = "global"
 _UNDERCOVER_SIGNUP_TIMEOUT = timedelta(minutes=2)
 _UNDERCOVER_CONTINUE_TIMEOUT = timedelta(minutes=20)
 _ROLE_VARIABLE = re.compile(r"\{([^{}]*\S[^{}]*)\}")
-_PLATFORM_MESSAGE_MAX_CHARS = 1000
-_PLATFORM_MESSAGE_MAX_LINES = 10
-
-
-def _split_platform_message(text: str) -> list[str]:
-    """Split text without exceeding the target chat message limits."""
-    if not text:
-        return [text]
-
-    chunks: list[str] = []
-    chunk = ""
-    line_count = 1
-    for character in text:
-        if (
-            len(chunk) >= _PLATFORM_MESSAGE_MAX_CHARS
-            or (
-                character == "\n"
-                and line_count >= _PLATFORM_MESSAGE_MAX_LINES
-            )
-        ):
-            chunks.append(chunk)
-            chunk = ""
-            line_count = 1
-            if character == "\n":
-                continue
-        chunk += character
-        if character == "\n":
-            line_count += 1
-    if chunk:
-        chunks.append(chunk)
-    return chunks
 
 
 def _undercover_card_text(role: str, civilian_word: str, undercover_word: str) -> str:
@@ -5936,9 +5905,6 @@ class CoreRepository:
     ) -> OutboundRecord:
         if recall_after_seconds is not None and recall_after_seconds < 1:
             raise ValueError("撤回秒数必须为正整数")
-        chunks = _split_platform_message(reply)
-        if memory_round_id is not None and len(chunks) != 1:
-            raise ValueError("需撤回的消息超过平台发送限制")
         with self._session() as session:
             inbound_id = UUID(str(inbound_message_id))
             latest_reply_index = session.scalar(
@@ -5952,13 +5918,12 @@ class CoreRepository:
             records = [
                 OutboundRecord(
                     inbound_message_id=inbound_id,
-                    text=chunk,
-                    reply_index=first_reply_index + index,
+                    text=reply,
+                    reply_index=first_reply_index,
                     recall_after_seconds=recall_after_seconds,
                     destination_chatroom_id=destination_chatroom_id,
                     delivery_kind=delivery_kind,
                 )
-                for index, chunk in enumerate(chunks)
             ]
             session.add_all(records)
             session.flush()
@@ -5982,20 +5947,16 @@ class CoreRepository:
     ) -> OutboundRecord:
         if recall_after_seconds is not None and recall_after_seconds < 1:
             raise ValueError("撤回秒数必须为正整数")
-        chunks = _split_platform_message(text)
-        if memory_round_id is not None and len(chunks) != 1:
-            raise ValueError("需撤回的消息超过平台发送限制")
         with self._session() as session:
             records = [
                 OutboundRecord(
                     inbound_message_id=None,
-                    text=chunk,
-                    reply_index=index,
+                    text=text,
+                    reply_index=0,
                     recall_after_seconds=recall_after_seconds,
                     destination_chatroom_id=destination_chatroom_id,
                     delivery_kind=delivery_kind,
                 )
-                for index, chunk in enumerate(chunks)
             ]
             session.add_all(records)
             session.flush()

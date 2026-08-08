@@ -1505,14 +1505,14 @@ def test_outbound_replies_for_one_inbound_are_claimed_in_reply_order(
     assert claimed_second.id == second.id
 
 
-def test_outbound_reply_is_split_before_exceeding_platform_line_or_character_limits(
+def test_outbound_reply_preserves_long_multiline_text_as_one_message(
     repository, session_factory, inbound
 ):
     from dzmm_bot.core.schema import OutboundRecord
 
     stored, _ = repository.accept_inbound(inbound)
-    repository.enqueue_outbound(stored.id, "\n".join(["一行"] * 11))
-    repository.enqueue_outbound(stored.id, "字" * 1001, 1)
+    text = "\n".join(["一行"] * 11) + "\n" + "字" * 1001
+    repository.enqueue_outbound(stored.id, text)
 
     with session_factory() as session:
         records = list(
@@ -1521,16 +1521,11 @@ def test_outbound_reply_is_split_before_exceeding_platform_line_or_character_lim
                 .order_by(OutboundRecord.reply_index, OutboundRecord.created_at)
             )
         )
-    assert [record.text for record in records] == [
-        "\n".join(["一行"] * 10),
-        "一行",
-        "字" * 1000,
-        "字",
-    ]
-    assert [record.reply_index for record in records] == [0, 1, 2, 3]
+    assert [record.text for record in records] == [text]
+    assert [record.reply_index for record in records] == [0]
 
 
-def test_system_outbound_is_split_before_exceeding_platform_limits(
+def test_system_outbound_preserves_long_text_as_one_message(
     repository, session_factory
 ):
     from dzmm_bot.core.schema import OutboundRecord
@@ -1544,7 +1539,7 @@ def test_system_outbound_is_split_before_exceeding_platform_limits(
                 .order_by(OutboundRecord.reply_index, OutboundRecord.created_at)
             )
         )
-    assert [record.text for record in records] == ["字" * 1000, "字"]
+    assert [record.text for record in records] == ["字" * 1001]
 
 
 def test_second_reply_waits_until_the_first_reply_is_sent(repository, inbound, now):

@@ -628,15 +628,16 @@ def create_app(
         )
         if not all(key in request for key in required) or not isinstance(request["quotas"], list):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        settings = {key: request[key] for key in required}
+        settings["quotas"] = [
+            {"rank_id": quota["rank_id"], "daily_limit": quota["daily_limit"]}
+            for quota in request["quotas"]
+        ]
         return versioned_configuration_response(
             identity,
             idempotency_key,
             if_match,
-            lambda: _relay_core(
-                lambda: core.set_ai_assistant_settings(
-                    {key: request[key] for key in required}
-                )
-            ),
+            lambda: _relay_core(lambda: core.set_ai_assistant_settings(settings)),
             scope="ai-assistant-settings",
         )
 

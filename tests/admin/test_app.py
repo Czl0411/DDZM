@@ -163,6 +163,7 @@ class FakeCore:
         }
     )
     manual_login_lease: dict | None = None
+    ai_assistant_settings_request: dict | None = None
 
     def status(self):
         return {
@@ -303,6 +304,7 @@ class FakeCore:
         return self.ai_assistant_settings
 
     def set_ai_assistant_settings(self, settings):
+        self.ai_assistant_settings_request = settings
         current = {
             quota["rank_id"]: quota
             for quota in self.ai_assistant_settings["quotas"]
@@ -1526,6 +1528,10 @@ def test_admin_serves_and_saves_ai_assistant_settings(client, headers, core):
     assert saved.status_code == 200
     assert saved.json()["enabled"] is True
     assert core.ai_assistant_settings["enabled"] is True
+    assert all(
+        set(quota) == {"rank_id", "daily_limit"}
+        for quota in core.ai_assistant_settings_request["quotas"]
+    )
 
 
 def test_admin_exposes_ai_assistant_configuration_surface(client):

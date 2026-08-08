@@ -75,6 +75,12 @@ class AikdaSocketGateway:
             "sent_at": _utc_iso(self._clock()),
             "content": {"type": "text", "text": text},
         }
+        joined = self._socket.call(
+            "message:join-room", {"chatroomId": chatroom_id}, timeout=10
+        )
+        if not joined or joined.get("success") is not True:
+            error = joined.get("error", "message room join failed") if joined else "message room join failed"
+            raise RuntimeError(error)
         acknowledgement = self._socket.call(
             "message:send",
             {"chatroomId": chatroom_id, "message": message},

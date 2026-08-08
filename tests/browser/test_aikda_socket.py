@@ -19,6 +19,7 @@ class FakeSocket:
         self.joined = False
         self.connect_calls = []
         self.call_result = {"success": True}
+        self.call_results = []
         self.calls = []
         self.message_after_join = None
         self.joined_payload = {"syncMode": "http"}
@@ -43,6 +44,8 @@ class FakeSocket:
         if not self.joined:
             raise RuntimeError("server join was not completed")
         self.calls.append((event, payload, timeout))
+        if self.call_results:
+            return self.call_results.pop(0)
         return self.call_result
 
     def disconnect(self):
@@ -209,8 +212,9 @@ def test_send_requires_successful_ack(gateway):
 
     platform_message_id = adapter.send("余额：5 摸鱼币")
 
-    assert platform_message_id == socket.calls[0][1]["message"]["message_id"]
+    assert platform_message_id == socket.calls[1][1]["message"]["message_id"]
     assert socket.calls == [
+        ("message:join-room", {"chatroomId": "room-1"}, 10),
         (
             "message:send",
             {
@@ -226,6 +230,20 @@ def test_send_requires_successful_ack(gateway):
             10,
         )
     ]
+
+
+def test_send_joins_destination_before_sending_and_preserves_newlines(gateway):
+    """Fails until sends explicitly join the target Aikda room first."""
+    adapter, socket, _ = gateway
+
+    adapter.send_to("direct-1", "第一行\n第二行")
+
+    assert [call[0] for call in socket.calls] == [
+        "message:join-room",
+        "message:send",
+    ]
+    assert socket.calls[0][1] == {"chatroomId": "direct-1"}
+    assert socket.calls[1][1]["message"]["content"]["text"] == "第一行\n第二行"
 
 
 def test_send_waits_for_server_join_before_emitting(gateway):
@@ -272,6 +290,7 @@ def test_send_to_uses_the_supplied_direct_chatroom(gateway):
     platform_message_id = adapter.send_to("direct-1", "你的身份：平民。词语：咖啡")
 
     assert socket.calls == [
+        ("message:join-room", {"chatroomId": "direct-1"}, 10),
         (
             "message:send",
             {
@@ -328,11 +347,14 @@ def test_send_raises_when_ack_rejects_message(gateway):
 def test_send_rejection_logs_shape_without_logging_message_text(gateway, caplog):
     """Fails until a rejected outbound ACK carries safe diagnostic context."""
     adapter, socket, _ = gateway
-    socket.call_result = {
-        "success": False,
-        "error": "请勿发送重复内容",
-        "code": "content_rejected",
-    }
+    socket.call_results = [
+        {"success": True},
+        {
+            "success": False,
+            "error": "请勿发送重复内容",
+            "code": "content_rejected",
+        },
+    ]
 
     with pytest.raises(RuntimeError, match="请勿发送重复内容"):
         adapter.send("唯一测试甲\n唯一测试乙")

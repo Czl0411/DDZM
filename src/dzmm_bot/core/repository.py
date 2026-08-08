@@ -17,6 +17,8 @@ from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
 from .reply_templates import TEMPLATE_DEFINITIONS, validate_template
 from .schema import (
     AIAssistantSettingsRecord,
+    AIMemoryJobRecord,
+    AIMemorySettingsRecord,
     AIRankQuotaRecord,
     AIRequestRecord,
     ActivityLevelRuleRecord,
@@ -181,6 +183,15 @@ _DEFAULT_AI_PERSONA = "你是摸鱼公司群的美女总监事，说话简短、
 _DEFAULT_AI_SYSTEM_PROMPT = "仅回答当前艾特内容，不执行或裁决系统玩法。"
 _DEFAULT_AI_OVER_LIMIT_REPLY = "今日找总监事聊天的次数已用完，明天再来吧。"
 _DEFAULT_AI_FAILURE_REPLY = "总监事暂时忙碌，请稍后再试。"
+_DEFAULT_AI_MEMORY_GAMEPLAY_GUIDE = (
+    "你是摸鱼公司群总监事。玩法、经济和游戏裁定以机器人指令为准；"
+    "需要操作时引导玩家使用 /帮助 分类。"
+)
+_DEFAULT_AI_MEMORY_EXTRACTION_PROMPT = (
+    "仅整理玩家稳定的称呼偏好、回复风格、长期兴趣和互动禁忌；"
+    "不要记录隐私、第三方信息、游戏过程、余额、职位或部门。"
+    "没有稳定信息时返回空文本。"
+)
 _UNDERCOVER_ACTIVE_KEY = "global"
 _UNDERCOVER_SIGNUP_TIMEOUT = timedelta(minutes=2)
 _UNDERCOVER_CONTINUE_TIMEOUT = timedelta(minutes=20)
@@ -383,6 +394,16 @@ class ClaimedAIRequest:
     user_content: str
     max_response_chars: int
     timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class ClaimedAIMemoryJob:
+    user_id: UUID
+    target_message_id: UUID
+    lease_token: UUID
+    extraction_prompt: str
+    history_limit: int
+    max_memory_chars: int
 
 
 @dataclass(frozen=True)
@@ -1138,8 +1159,63 @@ class CoreRepository:
                         created_at=now,
                     )
                 )
+                memory_job = session.get(AIMemoryJobRecord, user.id)
+                if memory_job is None:
+                    session.add(
+                        AIMemoryJobRecord(
+                            user_id=user.id,
+                            target_message_id=UUID(str(inbound_message_id)),
+                            status="pending",
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                elif memory_job.status != "leased":
+                    memory_job.target_message_id = UUID(str(inbound_message_id))
+                    memory_job.status = "pending"
+                    memory_job.updated_at = now
                 session.flush()
                 return AIEnqueueResult("queued")
+
+    def claim_ai_memory_job(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ClaimedAIMemoryJob | None:
+        with self._session() as session:
+            self._ensure_ai_memory_defaults(session)
+            job = session.scalar(
+                select(AIMemoryJobRecord)
+                .where(
+                    AIMemoryJobRecord.status.in_(("pending", "leased")),
+                    or_(
+                        AIMemoryJobRecord.lease_expires_at.is_(None),
+                        AIMemoryJobRecord.lease_expires_at <= now,
+                    ),
+                )
+                .order_by(AIMemoryJobRecord.created_at, AIMemoryJobRecord.user_id)
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            if job is None:
+                return None
+            settings = session.get(AIMemorySettingsRecord, 1)
+            if settings is None:
+                raise RuntimeError("AI 记忆设置消失")
+            token = uuid4()
+            job.status = "leased"
+            job.lease_worker_id = worker_id
+            job.lease_token = token
+            job.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            job.attempt_count += 1
+            job.updated_at = now
+            session.flush()
+            return ClaimedAIMemoryJob(
+                user_id=job.user_id,
+                target_message_id=job.target_message_id,
+                lease_token=token,
+                extraction_prompt=settings.extraction_prompt,
+                history_limit=settings.history_limit,
+                max_memory_chars=settings.max_memory_chars,
+            )
 
     def claim_ai_request(
         self, worker_id: str, now: datetime, lease_seconds: int
@@ -5500,6 +5576,21 @@ class CoreRepository:
                 if rank.id not in existing_quota_ids and index < len(_DEFAULT_AI_QUOTAS)
             ]
         )
+        session.flush()
+
+    @staticmethod
+    def _ensure_ai_memory_defaults(session: Session) -> None:
+        if session.get(AIMemorySettingsRecord, 1) is None:
+            session.add(
+                AIMemorySettingsRecord(
+                    id=1,
+                    enabled=True,
+                    gameplay_guide=_DEFAULT_AI_MEMORY_GAMEPLAY_GUIDE,
+                    extraction_prompt=_DEFAULT_AI_MEMORY_EXTRACTION_PROMPT,
+                    history_limit=500,
+                    max_memory_chars=1200,
+                )
+            )
         session.flush()
 
     def list_users_page(

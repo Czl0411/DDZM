@@ -128,6 +128,25 @@ def test_ai_memory_schema_keeps_one_snapshot_per_player():
     assert AIMemorySettingsRecord.__tablename__ == "ai_memory_settings"
 
 
+def test_ai_request_queues_one_memory_job_for_the_same_player(repository, now):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    user, _ = repository.create_user("memory-player", "阿彻", now, 0)
+    repository.get_ai_assistant_settings()
+    with repository._session() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+        session.commit()
+
+    result = repository.try_enqueue_ai_request(
+        uuid4(), user.platform_id, "@总监事 我喜欢简短回复", now
+    )
+
+    assert result.state == "queued"
+    claim = repository.claim_ai_memory_job("memory-worker", now, 30)
+    assert claim is not None
+    assert claim.user_id == user.id
+
+
 def test_undercover_word_migration_seeds_nine_unique_categories():
     rows = _undercover_word_migration_module()._seed_rows()
 

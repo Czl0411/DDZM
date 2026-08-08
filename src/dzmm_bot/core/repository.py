@@ -1077,10 +1077,10 @@ class CoreRepository:
         history_limit: int,
         max_memory_chars: int,
     ) -> AIMemorySettings:
-        if not gameplay_guide.strip() or len(gameplay_guide) > 4000:
-            raise ValueError("核心玩法指引不能为空且不能超过 4000 个字符")
-        if not extraction_prompt.strip() or len(extraction_prompt) > 4000:
-            raise ValueError("记忆提炼提示词不能为空且不能超过 4000 个字符")
+        if not gameplay_guide.strip() or len(gameplay_guide) > 99999:
+            raise ValueError("核心玩法指引不能为空且不能超过 99999 个字符")
+        if not extraction_prompt.strip() or len(extraction_prompt) > 99999:
+            raise ValueError("记忆提炼提示词不能为空且不能超过 99999 个字符")
         if not 1 <= history_limit <= 500:
             raise ValueError("首次历史消息数必须在 1 到 500 之间")
         if not 1 <= max_memory_chars <= 8000:

@@ -266,6 +266,28 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
     assert stale.json() == {"accepted": False}
 
 
+def test_ai_assistant_settings_accept_long_prompt_configuration(client, headers):
+    initial = client.get("/internal/game/ai-assistant/settings", headers=headers)
+    payload = initial.json()
+    payload.update(
+        persona="人设" * 3000,
+        system_prompt="系统提示词" * 3000,
+        gameplay_guide="玩法指引" * 3000,
+        extraction_prompt="提炼规则" * 3000,
+        quotas=[
+            {"rank_id": quota["rank_id"], "daily_limit": quota["daily_limit"]}
+            for quota in payload["quotas"]
+        ],
+    )
+
+    response = client.patch(
+        "/internal/game/ai-assistant/settings", headers=headers, json=payload
+    )
+
+    assert response.status_code == 200
+    assert response.json()["system_prompt"] == payload["system_prompt"]
+
+
 def test_heartbeat_response_uses_beijing_time(client, headers):
     response = client.post(
         "/internal/heartbeat",

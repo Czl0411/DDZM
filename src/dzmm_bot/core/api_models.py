@@ -323,16 +323,16 @@ class AIAssistantSettingsResponse(ApiModel):
 
 class SetAIAssistantSettingsRequest(ApiModel):
     enabled: bool
-    persona: str = Field(min_length=1, max_length=4000)
-    system_prompt: str = Field(min_length=1, max_length=4000)
+    persona: str = Field(min_length=1, max_length=99999)
+    system_prompt: str = Field(min_length=1, max_length=99999)
     over_limit_reply: str = Field(min_length=1, max_length=1000)
     failure_reply: str = Field(min_length=1, max_length=1000)
     max_response_chars: int = Field(ge=1, le=800)
     timeout_seconds: int = Field(ge=1, le=60)
     quotas: list[SetAIRankQuotaRequest] = Field(min_length=1, max_length=100)
     memory_enabled: bool
-    gameplay_guide: str = Field(min_length=1, max_length=4000)
-    extraction_prompt: str = Field(min_length=1, max_length=4000)
+    gameplay_guide: str = Field(min_length=1, max_length=99999)
+    extraction_prompt: str = Field(min_length=1, max_length=99999)
     history_limit: int = Field(ge=1, le=500)
     max_memory_chars: int = Field(ge=1, le=8000)
 

@@ -51,3 +51,24 @@ def test_settings_reads_configured_group_chat_url(monkeypatch):
     monkeypatch.setenv("DZMM_CHAT_URL", "https://chat.example/chat?c=group-1")
 
     assert Settings.from_environment().chat_url == "https://chat.example/chat?c=group-1"
+
+
+def test_settings_reads_optional_minimax_runtime_configuration(monkeypatch):
+    monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
+    monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")
+    monkeypatch.setenv("DZMM_MINIMAX_API_KEY", "minimax-secret")
+
+    settings = Settings.from_environment()
+
+    assert settings.minimax_api_key == "minimax-secret"
+    assert settings.minimax_model == "MiniMax-M2.5"
+    assert settings.minimax_base_url == "https://api.minimax.io/v1"
+
+
+def test_settings_accepts_the_existing_minimax_api_key_name(monkeypatch):
+    monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
+    monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")
+    monkeypatch.delenv("DZMM_MINIMAX_API_KEY", raising=False)
+    monkeypatch.setenv("API_KEY", "minimax-secret")
+
+    assert Settings.from_environment().minimax_api_key == "minimax-secret"

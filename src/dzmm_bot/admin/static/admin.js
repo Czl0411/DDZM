@@ -21,6 +21,7 @@ let hideAndSeekSettings = null;
 let hideAndSeekScenePage = 1;
 let memoryAssessmentSettings = null;
 let undercoverSettings = null;
+let aiAssistantSettings = null;
 let commandDefinitions = [];
 let commandPage = 1;
 let administratorAccounts = [];
@@ -53,6 +54,7 @@ const pageContext = {
   "hide-and-seek": {crumb: "游戏运营 / 躲猫猫", title: "躲猫猫运营", description: "管理单人躲猫猫的经济规则与可用躲藏地点。"},
   "memory-assessment": {crumb: "游戏运营 / 记忆考核", title: "记忆考核运营", description: "配置单人挑战与双人对战的难度、奖池和限制。"},
   undercover: {crumb: "游戏运营 / 谁是卧底", title: "谁是卧底运营", description: "查看公开对局进度，并维护多人推理局的基础规则。"},
+  "ai-assistant": {crumb: "机器人运营 / AI 总监事", title: "AI 总监事", description: "配置群内 AI 人设、系统提示词与各职位每日调用上限。"},
   settings: {crumb: "玩法与资源 / 玩法配置", title: "玩法配置", description: "集中维护经济、打卡、全勤和日活跃度规则。"},
   commands: {crumb: "玩法与资源 / 指令库", title: "指令库", description: "配置群内指令的启用状态与标准回复模板。"},
   shop: {crumb: "玩法与资源 / 物品与商店", title: "物品与商店", description: "上架物品、维护库存，并查看当前兑换资源。"},
@@ -239,6 +241,7 @@ const hideAndSeekSettingsModal = document.querySelector("#hide-and-seek-settings
 const hideAndSeekSceneModal = document.querySelector("#hide-and-seek-scene-modal");
 const memoryAssessmentSettingsModal = document.querySelector("#memory-assessment-settings-modal");
 const undercoverSettingsModal = document.querySelector("#undercover-settings-modal");
+const aiAssistantSettingsModal = document.querySelector("#ai-assistant-settings-modal");
 const rankModal = document.querySelector("#rank-modal");
 const departmentModal = document.querySelector("#department-modal");
 
@@ -455,6 +458,35 @@ async function openMemoryAssessmentSettingsModal() {
 
 function closeMemoryAssessmentSettingsModal() { memoryAssessmentSettingsModal.hidden = true; }
 function closeUndercoverSettingsModal() { undercoverSettingsModal.hidden = true; }
+function closeAiAssistantSettingsModal() { aiAssistantSettingsModal.hidden = true; }
+
+function renderAiAssistantSettings(settings) {
+  document.querySelector("#ai-assistant-settings-card").innerHTML = `
+    <article><span>调用状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>仅响应 @总监事 内容</small></article>
+    <article><span>每日调用上限</span><strong>${settings.quotas.length} 个职位</strong><small>北京时间 00:00 自动重置</small></article>
+    <article><span>回复限制</span><strong>${settings.max_response_chars} 字 / ${settings.timeout_seconds} 秒</strong><small>失败与超限回复均可配置</small></article>`;
+}
+
+async function loadAiAssistant() {
+  aiAssistantSettings = await requestGame("/api/ai-assistant/settings");
+  configurationVersion = aiAssistantSettings.version;
+  renderAiAssistantSettings(aiAssistantSettings);
+}
+
+async function openAiAssistantSettingsModal() {
+  const settings = aiAssistantSettings || await requestGame("/api/ai-assistant/settings");
+  aiAssistantSettings = settings;
+  document.querySelector("#ai-assistant-enabled").checked = settings.enabled;
+  document.querySelector("#ai-assistant-persona").value = settings.persona;
+  document.querySelector("#ai-assistant-system-prompt").value = settings.system_prompt;
+  document.querySelector("#ai-assistant-over-limit-reply").value = settings.over_limit_reply;
+  document.querySelector("#ai-assistant-failure-reply").value = settings.failure_reply;
+  document.querySelector("#ai-assistant-max-chars").value = settings.max_response_chars;
+  document.querySelector("#ai-assistant-timeout").value = settings.timeout_seconds;
+  document.querySelector("#ai-assistant-quotas").innerHTML = settings.quotas.map((quota) => `
+    <tr><td><b>${escapeHtml(quota.rank_name)}</b></td><td>${escapeHtml(quota.rank_level_label)}</td><td><input data-ai-quota="${escapeHtml(quota.rank_id)}" type="number" min="0" max="100" value="${quota.daily_limit}"></td></tr>`).join("");
+  aiAssistantSettingsModal.hidden = false;
+}
 
 function undercoverStateLabel(state) {
   return ({signup: "报名中", dealing: "发牌中", speaking: "发言中", voting: "投票中", tie_break: "并列补充发言", awaiting_continue: "等待下一局", ended: "已结束"})[state] || "暂无对局";
@@ -978,6 +1010,7 @@ async function loadGameView(view) {
     if (view === "hide-and-seek") return loadHideAndSeek();
     if (view === "memory-assessment") return loadMemoryAssessment();
     if (view === "undercover") return loadUndercover();
+    if (view === "ai-assistant") return loadAiAssistant();
     if (view === "commands") {
       const commands = await requestGame("/api/game/commands");
       configurationVersion = commands[0]?.version ?? configurationVersion;
@@ -1189,6 +1222,7 @@ document.querySelector("#edit-hide-and-seek-settings").addEventListener("click",
 document.querySelector("#create-hide-and-seek-scene").addEventListener("click", () => openHideAndSeekSceneModal());
 document.querySelector("#edit-memory-assessment-settings").addEventListener("click", () => void openMemoryAssessmentSettingsModal());
 document.querySelector("#edit-undercover-settings").addEventListener("click", () => void openUndercoverSettingsModal());
+document.querySelector("#edit-ai-assistant-settings").addEventListener("click", () => void openAiAssistantSettingsModal());
 document.querySelector("#create-department").addEventListener("click", () => openDepartmentModal());
 document.querySelector("#add-today-random-event").addEventListener("click", async (event) => {
   try {
@@ -1810,6 +1844,39 @@ undercoverSettingsModal.addEventListener("click", async (event) => {
     setResult(`保存失败（${error.message}）`, "error");
   }
 });
+aiAssistantSettingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-ai-assistant-settings-modal]")) {
+    closeAiAssistantSettingsModal();
+    return;
+  }
+  if (event.target.id !== "save-ai-assistant-settings") return;
+  const settings = {
+    enabled: document.querySelector("#ai-assistant-enabled").checked,
+    persona: document.querySelector("#ai-assistant-persona").value,
+    system_prompt: document.querySelector("#ai-assistant-system-prompt").value,
+    over_limit_reply: document.querySelector("#ai-assistant-over-limit-reply").value,
+    failure_reply: document.querySelector("#ai-assistant-failure-reply").value,
+    max_response_chars: Number(document.querySelector("#ai-assistant-max-chars").value),
+    timeout_seconds: Number(document.querySelector("#ai-assistant-timeout").value),
+    quotas: aiAssistantSettings.quotas.map((quota) => ({
+      rank_id: quota.rank_id,
+      daily_limit: Number(document.querySelector(`[data-ai-quota="${quota.rank_id}"]`).value),
+    })),
+  };
+  try {
+    await runMutation(event.target, "保存中…", async () => {
+      aiAssistantSettings = await requestGame("/api/ai-assistant/settings", {
+        method: "PATCH", headers: {"Content-Type": "application/json", ...configurationHeaders()}, body: JSON.stringify(settings),
+      });
+      configurationVersion = aiAssistantSettings.version;
+      renderAiAssistantSettings(aiAssistantSettings);
+      closeAiAssistantSettingsModal();
+    });
+    setResult("AI 总监事配置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
 hideAndSeekSceneModal.addEventListener("click", async (event) => {
   if (event.target.closest("[data-close-hide-and-seek-scene-modal]")) {
     closeHideAndSeekSceneModal();
@@ -1879,6 +1946,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !randomEventAddModal.hidden) closeRandomEventAddModal();
   if (event.key === "Escape" && !hideAndSeekSettingsModal.hidden) closeHideAndSeekSettingsModal();
   if (event.key === "Escape" && !hideAndSeekSceneModal.hidden) closeHideAndSeekSceneModal();
+  if (event.key === "Escape" && !aiAssistantSettingsModal.hidden) closeAiAssistantSettingsModal();
 });
 document.querySelector("#item-form").addEventListener("submit", async (event) => {
   event.preventDefault();

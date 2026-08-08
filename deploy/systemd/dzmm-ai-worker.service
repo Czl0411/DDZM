@@ -1,0 +1,13 @@
+[Unit]
+Description=DZMM Minimax AI Worker
+After=network-online.target dzmm-core.service
+
+[Service]
+User=dzmm
+WorkingDirectory=/opt/dzmm/current
+EnvironmentFile=/etc/dzmm/dzmm.env
+ExecStart=/opt/dzmm/venv/bin/python -m dzmm_bot.ai.main
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

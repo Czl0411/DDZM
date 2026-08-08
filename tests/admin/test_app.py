@@ -77,6 +77,26 @@ class FakeCore:
             "report_times": ["12:00", "16:00", "20:00", "23:59"],
         }
     )
+    ai_assistant_settings: dict = field(
+        default_factory=lambda: {
+            "enabled": False,
+            "persona": "你是摸鱼公司群的美女总监事。",
+            "system_prompt": "保持简短。",
+            "over_limit_reply": "今日额度已用完。",
+            "failure_reply": "总监事暂时无法回复。",
+            "max_response_chars": 600,
+            "timeout_seconds": 20,
+            "quotas": [
+                {
+                    "rank_id": f"rank-{level}",
+                    "rank_name": f"职位 {level}",
+                    "rank_level_label": f"LV{level}",
+                    "daily_limit": level,
+                }
+                for level in range(1, 12)
+            ],
+        }
+    )
     random_event_settings: dict = field(
         default_factory=lambda: {
             "schedule_times": ["00:00", "02:00", "10:00", "14:00", "16:00", "20:00"],
@@ -278,6 +298,26 @@ class FakeCore:
     def set_game_settings(self, settings):
         self.game_settings = {**settings, "reset_time_label": "北京时间 00:00"}
         return self.game_settings
+
+    def get_ai_assistant_settings(self):
+        return self.ai_assistant_settings
+
+    def set_ai_assistant_settings(self, settings):
+        current = {
+            quota["rank_id"]: quota
+            for quota in self.ai_assistant_settings["quotas"]
+        }
+        self.ai_assistant_settings = {
+            **settings,
+            "quotas": [
+                {
+                    **current[quota["rank_id"]],
+                    "daily_limit": quota["daily_limit"],
+                }
+                for quota in settings["quotas"]
+            ],
+        }
+        return self.ai_assistant_settings
 
     def get_activity_settings(self):
         return self.activity_settings
@@ -1462,6 +1502,40 @@ def test_admin_exposes_undercover_configuration_surface(client):
     assert "loadUndercover" in script
     assert '"/api/game/undercover/settings"' in script
     assert '"/api/game/undercover/session"' in script
+
+
+def test_admin_serves_and_saves_ai_assistant_settings(client, headers, core):
+    response = client.get("/api/ai-assistant/settings", headers=headers)
+
+    assert response.status_code == 200
+    assert "key" not in response.text.lower()
+
+    saved = client.patch(
+        "/api/ai-assistant/settings",
+        headers={
+            **headers,
+            "Idempotency-Key": "ai-settings-save-1",
+            "If-Match": str(response.json()["version"]),
+        },
+        json={
+            **{key: value for key, value in response.json().items() if key != "version"},
+            "enabled": True,
+        },
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["enabled"] is True
+    assert core.ai_assistant_settings["enabled"] is True
+
+
+def test_admin_exposes_ai_assistant_configuration_surface(client):
+    page = client.get("/").text
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert 'data-view="ai-assistant"' in page
+    assert 'id="ai-assistant-settings-modal"' in page
+    assert "每日调用上限" in page
+    assert '"/api/ai-assistant/settings"' in script
 
 
 def test_admin_static_assets_disable_browser_cache(client):

@@ -66,6 +66,7 @@
                   <button id="nav-hide-and-seek" class="nav-item" data-view="hide-and-seek" type="button">躲猫猫</button>
                   <button id="nav-memory-assessment" class="nav-item" data-view="memory-assessment" type="button">记忆考核</button>
                   <button id="nav-undercover" class="nav-item" data-view="undercover" type="button">谁是卧底</button>
+                  <button id="nav-ai-assistant" class="nav-item" data-view="ai-assistant" type="button">AI 总监事</button>
                 </div>
                 <div class="nav-group">
                   <p class="nav-group-label">玩法与资源</p>
@@ -155,6 +156,12 @@
                 <nav class="management-tabs" data-management-tabs="settings" aria-label="玩法配置分类"><button class="management-tab active" data-management-tab="economy" type="button">经济</button><button class="management-tab" data-management-tab="activity" type="button">活跃度与收益</button></nav>
                 <section class="management-pane" data-management-pane="economy"><div class="panel-heading"><div><h2>经济规则</h2><p class="muted">修改后会立即影响后续入职与打卡，不会改动已有员工余额。</p></div><button id="edit-settings" class="primary" type="button">编辑经济规则</button></div><div id="settings-card" class="settings-card" aria-live="polite"></div></section>
                 <section class="management-pane" data-management-pane="activity" hidden><div class="panel-heading"><div><h2>日活跃度</h2><p class="muted">配置等级门槛、每日奖励与今日收益榜推送时段。</p></div><button id="edit-activity-settings" class="primary" type="button">编辑日活跃度</button></div><div id="activity-settings-card" class="settings-card" aria-live="polite"></div></section>
+              </section>
+
+              <section id="ai-assistant-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">机器人运营</p>
+                <div class="panel-heading"><div><h2>AI 总监事</h2><p class="muted">仅响应群内“@总监事 内容”；游戏、指令与随机事件规则始终优先。</p></div><button id="edit-ai-assistant-settings" class="primary" type="button">配置 AI 总监事</button></div>
+                <div id="ai-assistant-settings-card" class="settings-card" aria-live="polite"></div>
               </section>
 
               <section id="commands-view" class="dashboard-view panel" hidden>
@@ -376,6 +383,19 @@
         <div class="event-input-grid"><label>投票时长（秒）<input id="undercover-vote-seconds" type="number" min="1" max="3600" required></label><label>白板胜利人数阈值<input id="undercover-whiteboard-threshold" type="number" min="2" max="8" required></label></div>
         <div><label>4–8 人角色配比</label><div id="undercover-role-inputs" class="undercover-role-inputs"></div></div>
         <div class="template-modal-actions"><button class="secondary" data-close-undercover-settings-modal type="button">取消</button><button id="save-undercover-settings" class="primary" type="button">保存规则</button></div>
+      </section>
+    </div>
+    <div id="ai-assistant-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="ai-assistant-settings-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-ai-assistant-settings-modal></div>
+      <section class="template-modal-card ai-assistant-settings-modal-card">
+        <div class="template-modal-heading"><div><p class="eyebrow">机器人运营</p><h2 id="ai-assistant-settings-modal-title">配置 AI 总监事</h2><p class="muted">密钥只保存在服务器环境变量中，后台不会展示或保存密钥。</p></div><button class="text-button" data-close-ai-assistant-settings-modal type="button">关闭</button></div>
+        <label><input id="ai-assistant-enabled" type="checkbox"> 启用 AI 总监事</label>
+        <label>机器人人设<textarea id="ai-assistant-persona" rows="3" maxlength="4000"></textarea></label>
+        <label>系统提示词<textarea id="ai-assistant-system-prompt" rows="5" maxlength="4000"></textarea></label>
+        <div class="event-input-grid"><label>超出额度回复<textarea id="ai-assistant-over-limit-reply" rows="3" maxlength="1000"></textarea></label><label>调用失败回复<textarea id="ai-assistant-failure-reply" rows="3" maxlength="1000"></textarea></label></div>
+        <div class="event-input-grid"><label>单次回复字数<input id="ai-assistant-max-chars" type="number" min="1" max="800" required></label><label>调用超时（秒）<input id="ai-assistant-timeout" type="number" min="1" max="60" required></label></div>
+        <div><label>每日调用上限</label><div class="ai-quota-scroll"><table class="data-table"><thead><tr><th>职位</th><th>等级</th><th>每日次数</th></tr></thead><tbody id="ai-assistant-quotas"></tbody></table></div></div>
+        <div class="template-modal-actions"><button class="secondary" data-close-ai-assistant-settings-modal type="button">取消</button><button id="save-ai-assistant-settings" class="primary" type="button">保存配置</button></div>
       </section>
     </div>
     <div id="rank-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="rank-modal-title" hidden>

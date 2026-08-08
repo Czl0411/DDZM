@@ -124,6 +124,10 @@ select:hover { border-color: #bdb5ff; }
 .random-event-settings-modal-card { max-height: calc(100vh - 40px); overflow-y: auto; }
 .activity-settings-modal-card { width: min(100%, 760px); max-height: calc(100vh - 40px); overflow: auto; }
 .undercover-settings-modal-card { width: min(100%, 760px); max-height: calc(100vh - 40px); overflow-y: auto; }
+.ai-assistant-settings-modal-card { width: min(100%, 840px); max-height: calc(100vh - 40px); overflow-y: auto; }
+.ai-quota-scroll { max-height: 300px; margin-top: 8px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; }
+.ai-quota-scroll .data-table { margin: 0; }
+.ai-quota-scroll input { min-width: 92px; min-height: 36px; padding: 7px 9px; }
 .event-details-modal-card { width: min(100%, 960px); height: min(780px, calc(100vh - 40px)); grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .event-details-modal-card #random-event-details-list { min-height: 0; margin-top: 0; padding-right: 4px; overflow-y: auto; }
 .activity-rule-inputs, .income-report-time-inputs { display: grid; gap: 10px; }

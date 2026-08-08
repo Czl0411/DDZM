@@ -15,6 +15,9 @@ class Settings:
     admin_web_port: int
     novnc_port: int
     chat_url: str | None = None
+    minimax_api_key: str | None = None
+    minimax_model: str = "MiniMax-M2.5"
+    minimax_base_url: str = "https://api.minimax.io/v1"
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -36,6 +39,14 @@ class Settings:
             admin_web_port=_port("DZMM_ADMIN_WEB_PORT", 18090),
             novnc_port=_port("DZMM_NOVNC_PORT", 16080),
             chat_url=_optional("DZMM_CHAT_URL", empty_as_none=True),
+            minimax_api_key=(
+                _optional("DZMM_MINIMAX_API_KEY", empty_as_none=True)
+                or _optional("API_KEY", empty_as_none=True)
+            ),
+            minimax_model=os.environ.get("DZMM_MINIMAX_MODEL", "MiniMax-M2.5"),
+            minimax_base_url=os.environ.get(
+                "DZMM_MINIMAX_BASE_URL", "https://api.minimax.io/v1"
+            ),
         )
 
 

@@ -580,6 +580,44 @@ def create_app(
             scope="game-settings",
         )
 
+    @app.get("/api/ai-assistant/settings")
+    def ai_assistant_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_ai_assistant_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/ai-assistant/settings")
+    def set_ai_assistant_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "enabled",
+            "persona",
+            "system_prompt",
+            "over_limit_reply",
+            "failure_reply",
+            "max_response_chars",
+            "timeout_seconds",
+            "quotas",
+        )
+        if not all(key in request for key in required) or not isinstance(request["quotas"], list):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_ai_assistant_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="ai-assistant-settings",
+        )
+
     @app.get("/api/game/activity-settings")
     def activity_settings(_: Annotated[None, Depends(authorize)]) -> dict:
         return {**core.get_activity_settings(), "version": repository.config_version()}

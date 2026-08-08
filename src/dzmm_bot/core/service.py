@@ -4,6 +4,7 @@ from uuid import UUID
 
 from dzmm_bot.runtime.contracts import InboundMessage
 
+from .ai_mentions import BOT_MENTION_PREFIX, normalize_ai_mention
 from .repository import CoreRepository
 
 
@@ -124,8 +125,7 @@ def _allows_random_event_command(content: str, event_state: str, settings) -> bo
 
 
 def _ai_mention_content(content: str) -> str | None:
-    prefix = "@总监事"
-    if not content.startswith(prefix):
+    if not content.startswith(BOT_MENTION_PREFIX):
         return None
-    value = content[len(prefix):].strip()
+    value = normalize_ai_mention(content)
     return value or None

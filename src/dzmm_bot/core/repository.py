@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
 
+from .ai_mentions import normalize_ai_mention
 from .reply_templates import TEMPLATE_DEFINITIONS, validate_template
 from .schema import (
     AIAssistantSettingsRecord,
@@ -1512,7 +1513,7 @@ class CoreRepository:
                     ),
                     player_memory=memory.memory_text if memory is not None else "",
                 ),
-                user_content=inbound.content.removeprefix("@总监事").strip(),
+                user_content=normalize_ai_mention(inbound.content),
                 max_response_chars=settings.max_response_chars,
                 timeout_seconds=settings.timeout_seconds,
             )

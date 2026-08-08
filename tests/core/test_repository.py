@@ -108,6 +108,26 @@ def test_memory_assessment_defaults_seed_five_levels(repository):
     ] == [(1, 5, 1), (2, 7, 2), (3, 9, 3), (4, 11, 4), (5, 13, 5)]
 
 
+def test_ai_memory_schema_keeps_one_snapshot_per_player():
+    from dzmm_bot.core.schema import (
+        AIPlayerMemoryRecord,
+        AIMemoryJobRecord,
+        AIMemorySettingsRecord,
+        Base,
+    )
+
+    assert {
+        "ai_memory_settings",
+        "ai_player_memories",
+        "ai_memory_jobs",
+    } <= set(Base.metadata.tables)
+    assert {"user_id"} == {
+        column.name for column in AIPlayerMemoryRecord.__table__.primary_key.columns
+    }
+    assert AIMemoryJobRecord.__table__.c.target_message_id.nullable is False
+    assert AIMemorySettingsRecord.__tablename__ == "ai_memory_settings"
+
+
 def test_undercover_word_migration_seeds_nine_unique_categories():
     rows = _undercover_word_migration_module()._seed_rows()
 

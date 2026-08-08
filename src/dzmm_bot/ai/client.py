@@ -13,7 +13,7 @@ class MinimaxChatClient:
         api_key: str,
         model: str,
         *,
-        base_url: str = "https://api.minimax.io/v1",
+        base_url: str = "https://api.minimaxi.com/v1",
         client: httpx.Client | None = None,
     ) -> None:
         self._model = model

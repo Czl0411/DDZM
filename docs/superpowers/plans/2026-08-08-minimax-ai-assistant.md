@@ -281,7 +281,7 @@ Expected: FAIL because the package and settings are absent.
 
 - [ ] **Step 3: Implement the minimum safe worker**
 
-Core/admin/browser can start without Minimax settings; the AI worker requires DZMM_MINIMAX_API_KEY. Default DZMM_MINIMAX_MODEL=MiniMax-M2.5 and DZMM_MINIMAX_BASE_URL=https://api.minimax.io/v1.
+Core/admin/browser can start without Minimax settings; the AI worker requires DZMM_MINIMAX_API_KEY. Default DZMM_MINIMAX_MODEL=MiniMax-M2.5 and DZMM_MINIMAX_BASE_URL=https://api.minimaxi.com/v1.
 
 Use httpx.Client to POST {base_url}/chat/completions with model, system/user messages, and max_completion_tokens. Map timeout to timeout; other transport/HTTP failures to network/http_error; missing or blank choices[0].message.content to invalid_response. Never log headers, API keys, prompt texts, or raw provider bodies. Strip and cap output before completion.
 
@@ -390,7 +390,7 @@ Document placeholder-only settings:
 ~~~dotenv
 DZMM_MINIMAX_API_KEY=CHANGE_ME
 DZMM_MINIMAX_MODEL=MiniMax-M2.5
-DZMM_MINIMAX_BASE_URL=https://api.minimax.io/v1
+DZMM_MINIMAX_BASE_URL=https://api.minimaxi.com/v1
 DZMM_AI_WORKER_ID=ai-worker-1
 ~~~
 
@@ -441,4 +441,3 @@ curl -fsS http://127.0.0.1:18090/healthz
 ~~~
 
 Expected: all services are active, health endpoints respond, and logs contain no credential, Authorization header, or provider request body.
-

@@ -62,7 +62,7 @@ def test_settings_reads_optional_minimax_runtime_configuration(monkeypatch):
 
     assert settings.minimax_api_key == "minimax-secret"
     assert settings.minimax_model == "MiniMax-M2.5"
-    assert settings.minimax_base_url == "https://api.minimax.io/v1"
+    assert settings.minimax_base_url == "https://api.minimaxi.com/v1"
 
 
 def test_settings_accepts_the_existing_minimax_api_key_name(monkeypatch):

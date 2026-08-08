@@ -17,7 +17,7 @@ class Settings:
     chat_url: str | None = None
     minimax_api_key: str | None = None
     minimax_model: str = "MiniMax-M2.5"
-    minimax_base_url: str = "https://api.minimax.io/v1"
+    minimax_base_url: str = "https://api.minimaxi.com/v1"
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -45,7 +45,7 @@ class Settings:
             ),
             minimax_model=os.environ.get("DZMM_MINIMAX_MODEL", "MiniMax-M2.5"),
             minimax_base_url=os.environ.get(
-                "DZMM_MINIMAX_BASE_URL", "https://api.minimax.io/v1"
+                "DZMM_MINIMAX_BASE_URL", "https://api.minimaxi.com/v1"
             ),
         )
 

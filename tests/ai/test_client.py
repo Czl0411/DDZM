@@ -17,7 +17,7 @@ def test_minimax_client_sends_openai_compatible_request():
         "secret",
         "MiniMax-M2.5",
         client=httpx.Client(
-            base_url="https://api.minimax.io/v1",
+            base_url="https://api.minimaxi.com/v1",
             transport=httpx.MockTransport(handle),
         ),
     )
@@ -34,7 +34,7 @@ def test_minimax_client_rejects_an_empty_model_response():
         "secret",
         "MiniMax-M2.5",
         client=httpx.Client(
-            base_url="https://api.minimax.io/v1",
+            base_url="https://api.minimaxi.com/v1",
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(200, json={"choices": []})
             ),

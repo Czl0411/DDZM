@@ -588,6 +588,59 @@ class RankRecord(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
+class AIAssistantSettingsRecord(Base):
+    __tablename__ = "ai_assistant_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    persona: Mapped[str] = mapped_column(Text, nullable=False)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    over_limit_reply: Mapped[str] = mapped_column(Text, nullable=False)
+    failure_reply: Mapped[str] = mapped_column(Text, nullable=False)
+    max_response_chars: Mapped[int] = mapped_column(Integer, nullable=False)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class AIRankQuotaRecord(Base):
+    __tablename__ = "ai_rank_quotas"
+
+    rank_id: Mapped[UUID] = mapped_column(
+        ForeignKey("ranks.id"), primary_key=True
+    )
+    daily_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class DailyAIUsageRecord(Base):
+    __tablename__ = "daily_ai_usage"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), primary_key=True
+    )
+    usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    used_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class AIRequestRecord(Base):
+    __tablename__ = "ai_requests"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    inbound_message_id: Mapped[UUID] = mapped_column(
+        ForeignKey("inbound_messages.id"), unique=True, nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    lease_worker_id: Mapped[str | None] = mapped_column(String(255))
+    lease_token: Mapped[UUID | None] = mapped_column(Uuid)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    result_text: Mapped[str | None] = mapped_column(Text)
+    failure_summary: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
 class DepartmentRecord(Base):
     __tablename__ = "departments"
 

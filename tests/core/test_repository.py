@@ -156,6 +156,32 @@ def test_undercover_schema_declares_game_persistence_contract():
     )
 
 
+def test_ai_assistant_schema_declares_queue_and_daily_quota_contract():
+    """Fails if duplicate inbound requests or a second daily counter can exist."""
+    from dzmm_bot.core.schema import (
+        AIAssistantSettingsRecord,
+        AIRankQuotaRecord,
+        AIRequestRecord,
+        Base,
+        DailyAIUsageRecord,
+    )
+
+    tables = Base.metadata.tables
+
+    assert {
+        "ai_assistant_settings",
+        "ai_rank_quotas",
+        "daily_ai_usage",
+        "ai_requests",
+    } <= set(tables)
+    assert AIAssistantSettingsRecord.__tablename__ == "ai_assistant_settings"
+    assert AIRankQuotaRecord.__tablename__ == "ai_rank_quotas"
+    assert {"user_id", "usage_date"} == {
+        column.name for column in DailyAIUsageRecord.__table__.primary_key.columns
+    }
+    assert AIRequestRecord.__table__.c.inbound_message_id.unique is True
+
+
 def _prepare_undercover_players(repository, session_factory, now, count=4):
     from dzmm_bot.core.schema import UndercoverWordSetRecord
 

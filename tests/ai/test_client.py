@@ -1,3 +1,5 @@
+import json
+
 import httpx
 
 
@@ -25,6 +27,7 @@ def test_minimax_client_sends_openai_compatible_request():
     assert client.complete("system", "user", max_chars=20, timeout_seconds=10) == "收到"
     assert requests[0].url.path == "/v1/chat/completions"
     assert requests[0].headers["Authorization"] == "Bearer secret"
+    assert json.loads(requests[0].content)["reasoning_split"] is True
 
 
 def test_minimax_client_rejects_an_empty_model_response():

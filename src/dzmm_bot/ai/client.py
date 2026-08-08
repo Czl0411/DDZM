@@ -41,6 +41,7 @@ class MinimaxChatClient:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},
                     ],
+                    "reasoning_split": True,
                     "max_completion_tokens": max_chars,
                 },
                 timeout=timeout_seconds,

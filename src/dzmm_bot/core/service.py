@@ -70,6 +70,23 @@ class CoreService:
                 replies.append(
                     reply if isinstance(reply, CommandReply) else CommandReply(reply)
                 )
+            if not replies:
+                mention_content = _ai_mention_content(message.content)
+                if mention_content is not None:
+                    result = self._repository.try_enqueue_ai_request(
+                        stored.id,
+                        message.sender_platform_id,
+                        mention_content,
+                        message.received_at,
+                    )
+                    if result.state == "not_joined":
+                        replies.append(CommandReply("请先用 /入职 名字 加入摸鱼公司。"))
+                    elif result.state == "over_limit":
+                        replies.append(
+                            CommandReply(
+                                self._repository.get_ai_assistant_settings().over_limit_reply
+                            )
+                        )
             for reply_index, reply in enumerate(replies):
                 if (
                     reply.recall_after_seconds is None
@@ -104,3 +121,11 @@ def _allows_random_event_command(content: str, event_state: str, settings) -> bo
         else settings.in_progress_allowed_commands
     )
     return command in allowed
+
+
+def _ai_mention_content(content: str) -> str | None:
+    prefix = "@总监事"
+    if not content.startswith(prefix):
+        return None
+    value = content[len(prefix):].strip()
+    return value or None

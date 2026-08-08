@@ -108,6 +108,29 @@ def test_service_records_an_accepted_joined_message_once(session_factory):
     assert repository.personal_activity("sender-1", received_at).level == 1
 
 
+def test_service_queues_only_non_command_bot_mentions(session_factory):
+    """Fails if commands or ordinary text are routed to the model queue."""
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord, AIRequestRecord
+    from dzmm_bot.core.service import CoreService
+
+    now = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
+    repository = CoreRepository(session_factory)
+    repository.create_user("sender-1", "小明", now, 0)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    service = CoreService(repository)
+
+    service.receive_inbound(InboundMessage("ai-command", "sender-1", "/帮助 @总监事", now))
+    service.receive_inbound(InboundMessage("ai-plain", "sender-1", "@总监事 今天适合摸鱼吗？", now))
+    service.receive_inbound(InboundMessage("ai-empty", "sender-1", "@总监事   ", now))
+
+    with session_factory() as session:
+        requests = list(session.scalars(select(AIRequestRecord)))
+    assert len(requests) == 1
+
+
 def test_service_uses_random_event_block_message_for_unwrapped_observer(session_factory):
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import BEIJING, OutboundRecord

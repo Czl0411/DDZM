@@ -57,9 +57,13 @@ class FakeSocket:
 
 
 class FakeContext:
-    def __init__(self, url):
+    def __init__(self, url, cookies=None):
         self.pages = [FakePage(url)]
+        self._cookies = cookies or []
         self.closed = False
+
+    def cookies(self, _urls=None):
+        return self._cookies
 
     def close(self):
         self.closed = True
@@ -216,13 +220,13 @@ def test_configured_session_uses_socket_gateway_instead_of_dom_chat_controls(tmp
         if arg["procedure"] == "user.getMe"
         else {"messages": []}
     )
+    context = FakeContext(page.url)
+    context.pages = [page]
     session = BrowserSession(
         tmp_path / "profile",
         "https://chat.example/login",
         chat_url="https://chat.example/chat?c=group-1",
-        playwright_factory=lambda: FakePlaywright(
-            FakeChromium(type("Context", (), {"pages": [page], "close": lambda self: None})())
-        ),
+        playwright_factory=lambda: FakePlaywright(FakeChromium(context)),
         socket_factory=lambda: socket,
     )
     gateway = session.start_headless()
@@ -236,6 +240,40 @@ def test_configured_session_uses_socket_gateway_instead_of_dom_chat_controls(tmp
     assert socket.calls[1][0] == "message:send"
     assert platform_id == socket.calls[1][1]["message"]["message_id"]
     assert page.filled == []
+
+
+def test_configured_session_forwards_browser_cookies_to_socket_handshake(tmp_path):
+    """Fails if the server Socket.IO client omits the authenticated browser session."""
+    page = FakePage("https://chat.example/chat?c=group-1")
+    page.evaluate = lambda script, arg=None: (
+        "short-lived-token"
+        if "api/auth/token" in script
+        else {"id": "bot-1"}
+        if arg["procedure"] == "user.getMe"
+        else {"messages": []}
+    )
+    context = FakeContext(
+        page.url,
+        cookies=[
+            {"name": "sb-rls-auth-token", "value": "browser-session"},
+            {"name": "theme", "value": "dark"},
+        ],
+    )
+    context.pages = [page]
+    socket = FakeSocket()
+    session = BrowserSession(
+        tmp_path / "profile",
+        "https://chat.example/login",
+        chat_url="https://chat.example/chat?c=group-1",
+        playwright_factory=lambda: FakePlaywright(FakeChromium(context)),
+        socket_factory=lambda: socket,
+    )
+
+    assert session.start_headless().is_authenticated()
+
+    assert socket.connect_calls[0][1]["headers"] == {
+        "Cookie": "sb-rls-auth-token=browser-session; theme=dark"
+    }
 
 
 def test_stop_disconnects_the_configured_socket_gateway(tmp_path):

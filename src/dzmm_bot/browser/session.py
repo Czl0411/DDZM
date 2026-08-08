@@ -108,6 +108,7 @@ class BrowserSession:
             self.chat_url,
             token_provider=self._token,
             request=self._request,
+            cookie_provider=self._cookies,
             socket_factory=self._socket_factory,
         )
 
@@ -118,6 +119,15 @@ class BrowserSession:
         return self._active_page().evaluate(
             _TRPC_SCRIPT,
             {"procedure": procedure, "payload": payload},
+        )
+
+    def _cookies(self) -> str:
+        origin = _origin(self.chat_url)
+        cookies = self._context.cookies([origin])
+        return "; ".join(
+            f"{cookie['name']}={cookie['value']}"
+            for cookie in cookies
+            if cookie.get("name") and cookie.get("value")
         )
 
     def _active_page(self):
@@ -203,6 +213,13 @@ class _PlaywrightGateway:
 def _location(url: str) -> tuple[str, str]:
     parsed = urlsplit(url)
     return parsed.netloc, parsed.path.rstrip("/")
+
+
+def _origin(url: str | None) -> str:
+    if url is None:
+        raise ValueError("chat URL is required for socket authentication")
+    parsed = urlsplit(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def _start_playwright():

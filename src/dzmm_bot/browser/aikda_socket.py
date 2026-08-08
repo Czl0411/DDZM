@@ -23,6 +23,7 @@ class AikdaSocketGateway:
         *,
         token_provider: Callable[[], str],
         request: Callable[[str, dict[str, Any] | None], dict[str, Any]],
+        cookie_provider: Callable[[], str] | None = None,
         socket_factory: Callable[[], Any] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
     ) -> None:
@@ -34,6 +35,7 @@ class AikdaSocketGateway:
         self._origin = f"{parsed.scheme}://{parsed.netloc}"
         self._token_provider = token_provider
         self._request = request
+        self._cookie_provider = cookie_provider
         self._socket_factory = socket_factory or _socket_client
         self._clock = clock
         self._socket = None
@@ -175,11 +177,17 @@ class AikdaSocketGateway:
             self._socket.on("message:joined", self._on_joined)
             self._socket.on("disconnect", self._on_disconnect)
         self._joined.clear()
+        cookie = self._cookie_provider() if self._cookie_provider is not None else ""
+        connect_options: dict[str, Any] = {
+            "socketio_path": "ws/matching",
+            "auth": {"token": token},
+            "transports": ["websocket", "polling"],
+        }
+        if cookie:
+            connect_options["headers"] = {"Cookie": cookie}
         self._socket.connect(
             self._origin,
-            socketio_path="ws/matching",
-            auth={"token": token},
-            transports=["websocket", "polling"],
+            **connect_options,
         )
         if not self._joined.wait(timeout=10):
             self._socket.disconnect()

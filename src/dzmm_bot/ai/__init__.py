@@ -1,1 +1,1 @@
-"""独立运行的 Minimax AI 总监事 Worker。"""
+"""独立运行的 DeepSeek AI 总监事 Worker。"""

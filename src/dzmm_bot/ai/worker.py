@@ -2,7 +2,7 @@ from collections.abc import Callable
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .client import MinimaxCallError
+from .client import DeepSeekCallError
 from .core_client import AICorePort
 
 
@@ -34,7 +34,7 @@ class AIWorker:
                     max_chars=claim.max_response_chars,
                     timeout_seconds=claim.timeout_seconds,
                 )[: claim.max_response_chars]
-            except MinimaxCallError as error:
+            except DeepSeekCallError as error:
                 self._core.fail_ai_request(
                     claim.id,
                     self._worker_id,
@@ -63,7 +63,7 @@ class AIWorker:
                 max_chars=memory_claim.max_memory_chars,
                 timeout_seconds=20,
             )[: memory_claim.max_memory_chars]
-        except MinimaxCallError as error:
+        except DeepSeekCallError as error:
             self._core.fail_ai_memory_job(
                 memory_claim.user_id,
                 self._worker_id,

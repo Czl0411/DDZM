@@ -41,9 +41,9 @@ class FakeCore:
 
 class TimeoutClient:
     def complete(self, *args, **kwargs):
-        from dzmm_bot.ai.client import MinimaxCallError
+        from dzmm_bot.ai.client import DeepSeekCallError
 
-        raise MinimaxCallError("timeout")
+        raise DeepSeekCallError("timeout")
 
 
 def test_ai_worker_reports_timeout_without_provider_details():

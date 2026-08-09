@@ -53,22 +53,22 @@ def test_settings_reads_configured_group_chat_url(monkeypatch):
     assert Settings.from_environment().chat_url == "https://chat.example/chat?c=group-1"
 
 
-def test_settings_reads_optional_minimax_runtime_configuration(monkeypatch):
+def test_settings_reads_deepseek_runtime_configuration(monkeypatch):
     monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
     monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")
-    monkeypatch.setenv("DZMM_MINIMAX_API_KEY", "minimax-secret")
+    monkeypatch.setenv("DP_API_KEY", "deepseek-secret")
 
     settings = Settings.from_environment()
 
-    assert settings.minimax_api_key == "minimax-secret"
-    assert settings.minimax_model == "MiniMax-M2.5"
-    assert settings.minimax_base_url == "https://api.minimaxi.com/v1"
+    assert settings.deepseek_api_key == "deepseek-secret"
+    assert settings.deepseek_model == "deepseek-v4-flash"
+    assert settings.deepseek_base_url == "https://api.deepseek.com"
 
 
-def test_settings_accepts_the_existing_minimax_api_key_name(monkeypatch):
+def test_settings_does_not_reuse_the_legacy_generic_api_key(monkeypatch):
     monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
     monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")
-    monkeypatch.delenv("DZMM_MINIMAX_API_KEY", raising=False)
-    monkeypatch.setenv("API_KEY", "minimax-secret")
+    monkeypatch.delenv("DP_API_KEY", raising=False)
+    monkeypatch.setenv("API_KEY", "legacy-secret")
 
-    assert Settings.from_environment().minimax_api_key == "minimax-secret"
+    assert Settings.from_environment().deepseek_api_key is None

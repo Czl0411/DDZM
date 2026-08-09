@@ -2593,6 +2593,7 @@ class CoreRepository:
                     return MemoryAssessmentGameResult(
                         "random_event_active", display_name=user.display_name
                     )
+                self._expire_previous_day_memory_assessment_single(session, now)
                 active = session.scalar(
                     select(MemoryAssessmentGameRecord)
                     .where(MemoryAssessmentGameRecord.active_key == "global")
@@ -2717,6 +2718,7 @@ class CoreRepository:
                     return MemoryAssessmentGameResult(
                         "multiplayer_active", display_name=user.display_name
                     )
+                self._expire_previous_day_memory_assessment_single(session, now)
                 if session.scalar(
                     select(MemoryAssessmentGameRecord)
                     .where(MemoryAssessmentGameRecord.active_key == "global")
@@ -3105,6 +3107,30 @@ class CoreRepository:
             )
             .with_for_update()
         )
+
+    def _expire_previous_day_memory_assessment_single(
+        self, session: Session, now: datetime
+    ) -> None:
+        game = session.scalar(
+            select(MemoryAssessmentGameRecord)
+            .where(
+                MemoryAssessmentGameRecord.mode == "single",
+                MemoryAssessmentGameRecord.active_key == "global",
+                MemoryAssessmentGameRecord.play_date < now.date(),
+            )
+            .with_for_update()
+        )
+        if game is None:
+            return
+        game.state = "expired"
+        game.active_key = None
+        game.finished_at = now
+        for participant in session.scalars(
+            select(MemoryAssessmentParticipantRecord)
+            .where(MemoryAssessmentParticipantRecord.game_id == game.id)
+            .with_for_update()
+        ):
+            participant.state = "expired"
 
     def _active_memory_assessment(
         self, session: Session, user_id: UUID

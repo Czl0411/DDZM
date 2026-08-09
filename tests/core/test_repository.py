@@ -943,6 +943,38 @@ def test_memory_assessment_single_continues_and_loses_unclaimed_reward(
     assert repository.find_user("u1").balance == 0
 
 
+def test_memory_assessment_single_from_previous_day_does_not_block_new_game(
+    repository, monkeypatch
+):
+    from dzmm_bot.core.schema import (
+        MemoryAssessmentGameRecord,
+        MemoryAssessmentParticipantRecord,
+    )
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.create_user("u2", "小红", now, 0)
+    monkeypatch.setattr("dzmm_bot.core.repository.choice", lambda _: "A")
+
+    previous = repository.start_memory_assessment_single("u1", now)
+    repository.mark_memory_assessment_round_recalled(previous.round_id, now)
+    repository.answer_memory_assessment("u1", previous.answer, now)
+    started = repository.start_memory_assessment_single("u2", now + timedelta(days=1))
+
+    assert started.status == "started"
+    with repository._session() as session:
+        previous_game = session.get(MemoryAssessmentGameRecord, previous.game_id)
+        previous_participant = session.scalar(
+            select(MemoryAssessmentParticipantRecord).where(
+                MemoryAssessmentParticipantRecord.game_id == previous.game_id
+            )
+        )
+        assert previous_game.state == "expired"
+        assert previous_game.active_key is None
+        assert previous_game.finished_at == now + timedelta(days=1)
+        assert previous_participant.state == "expired"
+
+
 def test_memory_assessment_duel_freezes_pool_and_awards_first_exact_answer(
     repository, monkeypatch
 ):

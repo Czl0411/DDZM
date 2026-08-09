@@ -169,6 +169,8 @@ class FakeCore:
         return {
             "state": "healthy",
             "last_heartbeat": "2026-08-04T12:00:00Z",
+            "listening": True,
+            "listening_desired": True,
             "queue_counts": {"inbound": 2, "outbound": 1},
             "raw_cookies": "must-not-leak",
             "profile_path": "/secret/profile",
@@ -1107,6 +1109,8 @@ def test_status_returns_only_safe_operational_fields(client, headers):
     assert response.json() == {
         "state": "healthy",
         "last_heartbeat": "2026-08-04T12:00:00Z",
+        "listening": True,
+        "listening_desired": True,
         "queue_counts": {"inbound": 2, "outbound": 1},
     }
     assert "cookie" not in response.text.lower()
@@ -1378,6 +1382,35 @@ def test_index_contains_status_fields_and_only_declared_actions(client):
     assert response.status_code == 200
     assert "last-heartbeat" in response.text
     assert "queue-counts" in response.text
+    assert "listener-state" in response.text
+    assert "listener-help" in response.text
+    assert "群聊平台适配器尚未配置" not in response.text
+
+    class ListenerControlParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.controls = {}
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            control_id = attributes.get("id")
+            if control_id in {"start-listening", "pause-listening"}:
+                self.controls[control_id] = attributes
+
+    parser = ListenerControlParser()
+    parser.feed(response.text)
+    assert parser.controls == {
+        "start-listening": {
+            "id": "start-listening",
+            "data-action": "/api/worker/start",
+            "type": "button",
+        },
+        "pause-listening": {
+            "id": "pause-listening",
+            "data-action": "/api/worker/stop",
+            "type": "button",
+        },
+    }
     for path in (
         "/api/worker/start",
         "/api/worker/stop",

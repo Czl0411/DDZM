@@ -39,7 +39,13 @@ from .repository import (
 
 
 _ROOT = Path(__file__).parent
-_SAFE_STATUS_FIELDS = ("state", "last_heartbeat", "queue_counts")
+_SAFE_STATUS_FIELDS = (
+    "state",
+    "last_heartbeat",
+    "listening",
+    "listening_desired",
+    "queue_counts",
+)
 _WORKER_COMMANDS = {
     "start": "resume_listening",
     "stop": "pause_listening",

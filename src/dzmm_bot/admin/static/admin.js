@@ -4,6 +4,8 @@ let identity = JSON.parse(sessionStorage.getItem("dzmm-admin-identity") || "null
 let loginLease = null;
 let configurationVersion = null;
 let currentState = "unknown";
+let currentListening = null;
+let currentListeningDesired = null;
 let consoleLoading = false;
 let refreshLoading = false;
 let gameSettings = null;
@@ -1062,10 +1064,39 @@ function updateControls(state) {
   document.querySelector("#step-console").classList.toggle("active", isProgress);
   document.querySelector("#step-finish").classList.toggle("active", state === "ready");
   loginStep.textContent = isProgress ? "验证进行中" : isRequired ? "需要登录" : state === "ready" ? "已登录" : "等待开始";
+  const listenerUnknown = typeof currentListeningDesired !== "boolean";
+  document.querySelector("#start-listening").disabled = listenerUnknown || currentListeningDesired;
+  document.querySelector("#pause-listening").disabled = listenerUnknown || !currentListeningDesired;
   if (!isProgress || !ownsLoginLease()) {
     consolePanel.hidden = true;
     consoleFrame.removeAttribute("src");
   }
+}
+
+function renderListenerStatus(status) {
+  currentListening = typeof status.listening === "boolean" ? status.listening : null;
+  currentListeningDesired = typeof status.listening_desired === "boolean" ? status.listening_desired : null;
+  const badge = document.querySelector("#listener-state");
+  const help = document.querySelector("#listener-help");
+  let tone = "";
+  if (currentListeningDesired === null) {
+    badge.textContent = "状态未知";
+    help.textContent = "等待 Worker 心跳。";
+  } else if (!currentListeningDesired) {
+    badge.textContent = "已暂停";
+    help.textContent = "管理员已暂停读取群聊消息，重启后仍保持暂停。";
+    tone = "warning";
+  } else if (status.state === "ready" && currentListening) {
+    badge.textContent = "监听中";
+    help.textContent = "机器人正在读取并处理群聊消息。";
+    tone = "success";
+  } else {
+    badge.textContent = "等待恢复";
+    help.textContent = "监听已开启，将在浏览器恢复后自动继续。";
+    tone = "warning";
+  }
+  if (tone) badge.dataset.tone = tone;
+  else delete badge.dataset.tone;
 }
 
 function renderStatus(status) {
@@ -1077,6 +1108,7 @@ function renderStatus(status) {
   const queue = status.queue_counts || {};
   document.querySelector("#queue-total").textContent = String(queue.inbound_accepted || 0);
   document.querySelector("#queue-counts").textContent = Object.entries(queue).map(([key, value]) => `${key}: ${value}`).join(" · ") || "队列为空";
+  renderListenerStatus(status);
   updateControls(currentState);
 }
 
@@ -1121,7 +1153,7 @@ async function refresh() {
 }
 
 async function submitAction(button) {
-  const busyLabel = button.id === "start-login" ? "启动中…" : button.id === "restart-browser" ? "重启中…" : "提交中…";
+  const busyLabel = button.id === "start-login" ? "启动中…" : button.id === "restart-browser" ? "重启中…" : button.id === "start-listening" ? "开启中…" : button.id === "pause-listening" ? "暂停中…" : "提交中…";
   try {
     await runMutation(button, busyLabel, async () => {
       await requestGame(button.dataset.action, {method: "POST"});

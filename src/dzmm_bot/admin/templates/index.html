@@ -142,10 +142,13 @@
               <button id="restart-browser" class="danger-button" data-action="/api/worker/restart" type="button">重启浏览器</button>
               <hr>
               <h3>消息收发</h3>
-              <p class="muted">群聊平台适配器尚未配置，因此监听与发送功能暂不开放。</p>
-              <div class="disabled-actions" aria-label="尚不可用的消息控制">
-                <button data-action="/api/worker/start" type="button" disabled>开始监听</button>
-                <button data-action="/api/worker/stop" type="button" disabled>暂停监听</button>
+              <div class="listener-status" aria-live="polite">
+                <span id="listener-state" class="status-badge">状态未知</span>
+                <p id="listener-help" class="muted">等待 Worker 心跳。</p>
+              </div>
+              <div class="listener-actions" aria-label="消息监听控制">
+                <button id="start-listening" data-action="/api/worker/start" type="button">开始监听</button>
+                <button id="pause-listening" data-action="/api/worker/stop" type="button">暂停监听</button>
               </div>
             </aside>
           </section>

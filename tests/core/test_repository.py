@@ -1767,16 +1767,44 @@ def test_worker_command_completion_requires_owner_token_and_live_lease(
 
 
 def test_worker_heartbeat_is_persisted(repository, now):
-    heartbeat = WorkerHeartbeat("worker-a", LoginState.READY, now)
+    heartbeat = WorkerHeartbeat("worker-a", LoginState.READY, now, listening=True)
 
     first = repository.record_worker_heartbeat(heartbeat)
+    repository.enqueue_worker_command("pause_listening")
     second = repository.record_worker_heartbeat(
-        WorkerHeartbeat("worker-a", LoginState.AUTH_REQUIRED, now + timedelta(seconds=5))
+        WorkerHeartbeat(
+            "worker-a",
+            LoginState.AUTH_REQUIRED,
+            now + timedelta(seconds=5),
+            listening=False,
+        )
     )
 
     assert second.id == first.id
     assert second.login_state == LoginState.AUTH_REQUIRED.value
+    assert second.listening is False
+    assert second.listening_desired is False
     assert second.recorded_at == now + timedelta(seconds=5)
+
+
+def test_resume_listener_command_persists_enabled_choice(repository, now):
+    repository.record_worker_heartbeat(
+        WorkerHeartbeat("worker-a", LoginState.READY, now, listening=False)
+    )
+    repository.enqueue_worker_command("pause_listening")
+
+    repository.enqueue_worker_command("resume_listening")
+    updated = repository.record_worker_heartbeat(
+        WorkerHeartbeat(
+            "worker-a",
+            LoginState.READY,
+            now + timedelta(seconds=5),
+            listening=True,
+        )
+    )
+
+    assert updated.listening is True
+    assert updated.listening_desired is True
 
 
 def test_reply_template_defaults_seed_once_and_preserve_an_edit(repository):

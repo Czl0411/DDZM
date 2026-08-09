@@ -16,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     text,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -929,6 +930,12 @@ class WorkerInstanceRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     worker_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     login_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    listening: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    listening_desired: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
     recorded_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     version: Mapped[str | None] = mapped_column(String(64))
     browser_state: Mapped[str | None] = mapped_column(String(64))

@@ -6299,6 +6299,16 @@ class CoreRepository:
 
     def enqueue_worker_command(self, command: str) -> WorkerCommandRecord:
         with self._session() as session:
+            desired = {
+                "pause_listening": False,
+                "resume_listening": True,
+            }.get(command)
+            if desired is not None:
+                session.execute(
+                    update(WorkerInstanceRecord).values(
+                        listening_desired=desired
+                    )
+                )
             record = WorkerCommandRecord(command=command)
             session.add(record)
             session.flush()
@@ -6369,6 +6379,8 @@ class CoreRepository:
                     id=uuid4(),
                     worker_id=heartbeat.worker_id,
                     login_state=heartbeat.login_state.value,
+                    listening=heartbeat.listening,
+                    listening_desired=True,
                     recorded_at=heartbeat.recorded_at,
                 )
                 dialect_name = session.get_bind().dialect.name
@@ -6382,6 +6394,7 @@ class CoreRepository:
                     index_elements=[WorkerInstanceRecord.worker_id],
                     set_={
                         "login_state": statement.excluded.login_state,
+                        "listening": statement.excluded.listening,
                         "recorded_at": statement.excluded.recorded_at,
                     },
                 ).returning(WorkerInstanceRecord.id)

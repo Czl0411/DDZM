@@ -812,6 +812,7 @@ def test_heartbeat_updates_login_state_and_health_age(app_context, headers):
         json={
             "worker_id": "worker-a",
             "login_state": "ready",
+            "listening": False,
             "recorded_at": (NOW - timedelta(seconds=12)).isoformat(),
         },
     )
@@ -828,6 +829,8 @@ def test_heartbeat_updates_login_state_and_health_age(app_context, headers):
     assert heartbeat.json() == {
         "worker_id": "worker-a",
         "login_state": "ready",
+        "listening": False,
+        "listening_desired": True,
         "recorded_at": "2026-08-04T19:59:48+08:00",
     }
     assert login_state.json() == heartbeat.json()
@@ -857,22 +860,25 @@ def test_internal_status_returns_real_queue_counts_and_latest_heartbeat(
         "/internal/inbound", headers=headers, json=payload
     ).json()
     app_context.repository.enqueue_outbound(inbound["message_id"], "reply")
-    app_context.repository.enqueue_worker_command("pause_listening")
     app_context.client.post(
         "/internal/heartbeat",
         headers=headers,
         json={
             "worker_id": "worker-a",
             "login_state": "auth_required",
+            "listening": False,
             "recorded_at": NOW.isoformat(),
         },
     )
+    app_context.repository.enqueue_worker_command("pause_listening")
 
     response = app_context.client.get("/internal/status", headers=headers)
 
     assert response.status_code == 200
     assert response.json() == {
         "state": "auth_required",
+        "listening": False,
+        "listening_desired": False,
         "last_heartbeat": "2026-08-04T20:00:00+08:00",
         "queue_counts": {
             "inbound_accepted": 1,

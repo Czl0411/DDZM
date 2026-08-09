@@ -85,12 +85,15 @@ class HeartbeatRequest(ApiModel):
     worker_id: str = Field(min_length=1, max_length=255)
     login_state: LoginState
     recorded_at: AwareDatetime
+    listening: bool = True
 
 
 class HeartbeatResponse(ApiModel):
     worker_id: str
     login_state: LoginState
     recorded_at: datetime
+    listening: bool
+    listening_desired: bool
 
 
 class HealthResponse(ApiModel):
@@ -107,6 +110,8 @@ class QueueCountsResponse(ApiModel):
 class AdminStatusResponse(ApiModel):
     state: str
     last_heartbeat: datetime | None
+    listening: bool | None
+    listening_desired: bool | None
     queue_counts: QueueCountsResponse
 
 

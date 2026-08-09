@@ -38,5 +38,7 @@ def test_outbound_message_has_stable_uuid_and_delivery_defaults():
 def test_worker_heartbeat_is_immutable():
     heartbeat = WorkerHeartbeat("worker-1", LoginState.READY, datetime.now(UTC))
 
+    assert heartbeat.listening is True
+
     with pytest.raises(FrozenInstanceError):
         heartbeat.login_state = LoginState.AUTH_REQUIRED

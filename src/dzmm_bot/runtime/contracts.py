@@ -44,3 +44,4 @@ class WorkerHeartbeat:
     worker_id: str
     login_state: LoginState
     recorded_at: datetime
+    listening: bool = True

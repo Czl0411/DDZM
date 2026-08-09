@@ -263,7 +263,10 @@ def create_app(
     ) -> HeartbeatResponse:
         record = repository.record_worker_heartbeat(
             WorkerHeartbeat(
-                request.worker_id, request.login_state, request.recorded_at
+                request.worker_id,
+                request.login_state,
+                request.recorded_at,
+                listening=request.listening,
             )
         )
         return _heartbeat_response(record)
@@ -283,6 +286,8 @@ def create_app(
         return AdminStatusResponse(
             state="unknown" if record is None else record.login_state,
             last_heartbeat=None if record is None else record.recorded_at,
+            listening=None if record is None else record.listening,
+            listening_desired=None if record is None else record.listening_desired,
             queue_counts=QueueCountsResponse(**repository.queue_counts()),
         )
 
@@ -1301,6 +1306,8 @@ def _heartbeat_response(record: WorkerInstanceRecord) -> HeartbeatResponse:
         worker_id=record.worker_id,
         login_state=record.login_state,
         recorded_at=record.recorded_at,
+        listening=record.listening,
+        listening_desired=record.listening_desired,
     )
 
 

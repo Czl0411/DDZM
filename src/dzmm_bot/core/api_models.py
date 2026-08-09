@@ -317,7 +317,7 @@ class AIAssistantSettingsResponse(ApiModel):
     system_prompt: str
     over_limit_reply: str
     failure_reply: str
-    max_response_chars: int = Field(ge=1, le=800)
+    max_response_chars: int = Field(ge=1, le=10000)
     timeout_seconds: int = Field(ge=1, le=60)
     quotas: list[AIRankQuotaResponse]
     memory_enabled: bool
@@ -333,7 +333,7 @@ class SetAIAssistantSettingsRequest(ApiModel):
     system_prompt: str = Field(min_length=1, max_length=99999)
     over_limit_reply: str = Field(min_length=1, max_length=1000)
     failure_reply: str = Field(min_length=1, max_length=1000)
-    max_response_chars: int = Field(ge=1, le=800)
+    max_response_chars: int = Field(ge=1, le=10000)
     timeout_seconds: int = Field(ge=1, le=60)
     quotas: list[SetAIRankQuotaRequest] = Field(min_length=1, max_length=100)
     memory_enabled: bool
@@ -359,14 +359,14 @@ class AIClaimResponse(ApiModel):
     lease_token: UUID
     system_prompt: str
     user_content: str
-    max_response_chars: int = Field(ge=1, le=800)
+    max_response_chars: int = Field(ge=1, le=10000)
     timeout_seconds: int = Field(ge=1, le=60)
 
 
 class AICompleteRequest(ApiModel):
     worker_id: str = Field(min_length=1, max_length=255)
     lease_token: UUID
-    text: str = Field(min_length=1, max_length=800)
+    text: str = Field(min_length=1, max_length=10000)
     now: AwareDatetime
 
 

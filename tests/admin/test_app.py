@@ -1574,6 +1574,7 @@ def test_admin_exposes_ai_assistant_configuration_surface(client):
     assert 'data-view="ai-assistant"' in page
     assert 'id="ai-assistant-settings-modal"' in page
     assert "每日调用上限" in page
+    assert 'id="ai-assistant-max-chars" type="number" min="1" max="10000"' in page
     assert '"/api/ai-assistant/settings"' in script
 
 

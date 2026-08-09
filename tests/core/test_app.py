@@ -168,6 +168,7 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
     assert initial.status_code == 200
     assert "key" not in initial.text.lower()
     assert len(initial.json()["quotas"]) == 11
+    assert initial.json()["max_response_chars"] == 10000
 
     configured = app_context.client.patch(
         "/internal/game/ai-assistant/settings",
@@ -177,6 +178,7 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
             "enabled": True,
             "persona": "群内美女总监事",
             "system_prompt": "保持简短。",
+            "max_response_chars": 10000,
             "quotas": [
                 {"rank_id": quota["rank_id"], "daily_limit": 1}
                 for quota in initial.json()["quotas"]
@@ -215,6 +217,7 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
     assert queued.status_code == 200
     assert claim.status_code == 200
     assert claim.json()["user_content"] == "今天适合摸鱼吗？"
+    assert claim.json()["max_response_chars"] == 10000
     assert "key" not in claim.text.lower()
 
     memory_claim = app_context.client.post(
@@ -247,7 +250,7 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
         json={
             "worker_id": "ai-1",
             "lease_token": claim.json()["lease_token"],
-            "text": "适合，先把工作藏好。",
+            "text": "字" * 10000,
             "now": NOW.isoformat(),
         },
     )
@@ -264,6 +267,24 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
 
     assert completed.json() == {"accepted": True}
     assert stale.json() == {"accepted": False}
+
+
+def test_ai_assistant_settings_reject_response_limit_over_ten_thousand(client, headers):
+    initial = client.get("/internal/game/ai-assistant/settings", headers=headers).json()
+    payload = {
+        **initial,
+        "max_response_chars": 10001,
+        "quotas": [
+            {"rank_id": quota["rank_id"], "daily_limit": quota["daily_limit"]}
+            for quota in initial["quotas"]
+        ],
+    }
+
+    response = client.patch(
+        "/internal/game/ai-assistant/settings", headers=headers, json=payload
+    )
+
+    assert response.status_code == 422
 
 
 def test_ai_assistant_settings_accept_long_prompt_configuration(client, headers):

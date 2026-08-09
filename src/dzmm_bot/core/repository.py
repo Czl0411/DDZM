@@ -5860,7 +5860,7 @@ class CoreRepository:
                     system_prompt=_DEFAULT_AI_SYSTEM_PROMPT,
                     over_limit_reply=_DEFAULT_AI_OVER_LIMIT_REPLY,
                     failure_reply=_DEFAULT_AI_FAILURE_REPLY,
-                    max_response_chars=600,
+                    max_response_chars=10000,
                     timeout_seconds=20,
                 )
             )

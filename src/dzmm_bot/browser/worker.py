@@ -79,7 +79,7 @@ class BrowserWorker:
                 else:
                     self._recover_browser_session()
 
-        self._core.heartbeat(self._worker_id, self._login_state, self._clock())
+        self._sync_listener_state()
 
         if self._login_state is LoginState.AUTH_REQUIRED:
             self._core.run_daily_jobs(now)
@@ -102,9 +102,7 @@ class BrowserWorker:
             except Exception:
                 _LOGGER.exception("browser message read failed")
                 self._recover_browser_session()
-                self._core.heartbeat(
-                    self._worker_id, self._login_state, self._clock()
-                )
+                self._sync_listener_state()
                 return
             for message in messages:
                 if message.platform_message_id in self._seen_message_ids:
@@ -153,9 +151,7 @@ class BrowserWorker:
                 return
             _LOGGER.exception("outbound send failed: %s", outbound.id)
             self._recover_browser_session()
-            self._core.heartbeat(
-                self._worker_id, self._login_state, self._clock()
-            )
+            self._sync_listener_state()
             return
         self._core.confirm_sent(
             outbound.id,
@@ -184,6 +180,15 @@ class BrowserWorker:
         if self._gateway is None:
             self._gateway = self._session.start_headless()
         return self._gateway
+
+    def _sync_listener_state(self) -> None:
+        desired = self._core.heartbeat(
+            self._worker_id,
+            self._login_state,
+            self._listening,
+            self._clock(),
+        )
+        self._listening = desired and self._login_state is LoginState.READY
 
     def _transition_to_auth_required(self) -> None:
         self._login_state = LoginState.AUTH_REQUIRED

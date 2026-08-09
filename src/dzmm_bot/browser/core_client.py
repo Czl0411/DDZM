@@ -74,8 +74,12 @@ class CorePort(Protocol):
     ) -> None: ...
 
     def heartbeat(
-        self, worker_id: str, login_state: LoginState, recorded_at: datetime
-    ) -> None: ...
+        self,
+        worker_id: str,
+        login_state: LoginState,
+        listening: bool,
+        recorded_at: datetime,
+    ) -> bool: ...
 
     def claim_command(
         self, worker_id: str, now: datetime, lease_seconds: int
@@ -223,16 +227,22 @@ class CoreClient:
         )
 
     def heartbeat(
-        self, worker_id: str, login_state: LoginState, recorded_at: datetime
-    ) -> None:
-        self._post(
+        self,
+        worker_id: str,
+        login_state: LoginState,
+        listening: bool,
+        recorded_at: datetime,
+    ) -> bool:
+        response = self._post(
             "/internal/heartbeat",
             {
                 "worker_id": worker_id,
                 "login_state": login_state.value,
+                "listening": listening,
                 "recorded_at": recorded_at.isoformat(),
             },
         )
+        return bool(response["listening_desired"])
 
     def claim_command(
         self, worker_id: str, now: datetime, lease_seconds: int

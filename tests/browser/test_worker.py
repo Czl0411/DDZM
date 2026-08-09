@@ -103,6 +103,7 @@ class FakeCore:
     audits: list[tuple] = field(default_factory=list)
     daily_job_times: list[datetime] = field(default_factory=list)
     direct_chat_syncs: list[tuple[list[DirectChatRoom], datetime]] = field(default_factory=list)
+    listening_desired: bool = True
 
     def submit_inbound(self, message):
         self.submitted_ids.append(message.platform_message_id)
@@ -124,11 +125,17 @@ class FakeCore:
     def confirm_outbound_recalled(self, message_id, worker_id, lease_token, now):
         self.recalls_confirmed.append((message_id, worker_id, lease_token, now))
 
-    def heartbeat(self, worker_id, login_state, recorded_at):
-        self.heartbeats.append((worker_id, login_state, recorded_at))
+    def heartbeat(self, worker_id, login_state, listening, recorded_at):
+        self.heartbeats.append((worker_id, login_state, listening, recorded_at))
+        return self.listening_desired
 
     def claim_command(self, worker_id, now, lease_seconds):
-        return self.commands.pop(0) if self.commands else None
+        command = self.commands.pop(0) if self.commands else None
+        if command is not None and command.command == "pause_listening":
+            self.listening_desired = False
+        elif command is not None and command.command == "resume_listening":
+            self.listening_desired = True
+        return command
 
     def complete_command(self, command_id, worker_id, lease_token, status, now):
         self.completions.append(
@@ -204,7 +211,56 @@ def test_read_failure_resets_the_browser_session_and_marks_auth_required(context
     assert worker.login_state is LoginState.AUTH_REQUIRED
     assert session.stops == 1
     assert core.audits == [("authentication_lost", "worker-a", NOW)]
-    assert core.heartbeats[-1] == ("worker-a", LoginState.AUTH_REQUIRED, NOW)
+    assert core.heartbeats[-1] == (
+        "worker-a",
+        LoginState.AUTH_REQUIRED,
+        False,
+        NOW,
+    )
+
+
+def test_worker_resumes_reading_after_an_authenticated_session_recovers(context):
+    """Fails if recovery returns Ready but leaves inbound listening disabled."""
+    worker, gateway, _, _, core, _ = context
+    gateway.read_error = RuntimeError("temporary socket failure")
+
+    worker.run_once()
+
+    gateway.read_error = None
+    gateway.messages = [InboundMessage("p-recovered", "u-1", "/帮助", NOW)]
+    worker.run_once()
+
+    assert worker.login_state is LoginState.READY
+    assert core.submitted_ids == ["p-recovered"]
+
+
+def test_worker_applies_persisted_pause_before_reading(context):
+    worker, gateway, _, _, core, _ = context
+    core.listening_desired = False
+    gateway.messages = [InboundMessage("p-paused", "u-1", "/打卡", NOW)]
+
+    worker.run_once()
+    worker.run_once()
+
+    assert core.submitted_ids == []
+    assert core.heartbeats[-1] == (
+        "worker-a",
+        LoginState.READY,
+        False,
+        NOW,
+    )
+
+
+def test_worker_applies_persisted_enable_after_pause(context):
+    worker, gateway, _, _, core, _ = context
+    core.listening_desired = False
+    worker.run_once()
+    core.listening_desired = True
+    gateway.messages = [InboundMessage("p-enabled", "u-1", "/打卡", NOW)]
+
+    worker.run_once()
+
+    assert core.submitted_ids == ["p-enabled"]
 
 
 def test_duplicate_content_rejection_is_marked_failed_without_resetting_browser(context):
@@ -324,7 +380,10 @@ def test_authentication_loss_transitions_once_and_backs_off_bounded(context):
 
     assert core.audits == [("authentication_lost", "worker-a", NOW)]
     assert core.submitted_ids == []
-    assert all(state is LoginState.AUTH_REQUIRED for _, state, _ in core.heartbeats)
+    assert all(
+        state is LoginState.AUTH_REQUIRED
+        for _, state, _, _ in core.heartbeats
+    )
     assert sleeps == [1, 2, 2, 2, 2, 2, 2, 2]
 
 

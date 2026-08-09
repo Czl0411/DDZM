@@ -122,7 +122,10 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
 def create_app_from_environment() -> FastAPI:
     settings = Settings.from_environment()
     return create_app(
-        CoreRepository(create_session_factory(settings.database_url)),
+        CoreRepository(
+            create_session_factory(settings.database_url),
+            preserve_long_group_messages=settings.bot_api_token is not None,
+        ),
         settings.core_token,
     )
 
@@ -187,6 +190,7 @@ def create_app(
             attempt_count=record.attempt_count,
             destination_chatroom_id=record.destination_chatroom_id,
             delivery_kind=record.delivery_kind,
+            recall_after_seconds=record.recall_after_seconds,
         )
 
     @app.post(

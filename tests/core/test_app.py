@@ -745,6 +745,7 @@ def test_outbound_claim_and_fenced_sent_acknowledgement(
     )
 
     assert first["id"] == str(outbound.id)
+    assert first["recall_after_seconds"] is None
     assert second["id"] == str(outbound.id)
     assert stale.status_code == 200
     assert stale.json() == {"accepted": False}

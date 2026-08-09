@@ -6,6 +6,7 @@ from time import sleep as default_sleep
 from typing import Protocol
 
 from dzmm_bot.runtime.contracts import LoginState
+from dzmm_bot.runtime.outbound import requires_bot_group_sender
 
 from .core_client import CorePort, WorkerCommand
 from .session import BrowserSession, ChatGateway
@@ -20,6 +21,10 @@ class ManualDesktop(Protocol):
     def stop(self) -> None: ...
 
 
+class BotSender(Protocol):
+    def send_to(self, chatroom_id: str, text: str) -> str: ...
+
+
 class BrowserWorker:
     def __init__(
         self,
@@ -31,6 +36,8 @@ class BrowserWorker:
         clock: Callable[[], datetime] = lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
         sleep: Callable[[float], None] = default_sleep,
         lease_seconds: int = 30,
+        bot_sender: BotSender | None = None,
+        bot_chatroom_id: str | None = None,
     ) -> None:
         self._worker_id = worker_id
         self._core = core
@@ -39,6 +46,8 @@ class BrowserWorker:
         self._clock = clock
         self._sleep = sleep
         self._lease_seconds = lease_seconds
+        self._bot_sender = bot_sender
+        self._bot_chatroom_id = bot_chatroom_id
         self._gateway: ChatGateway | None = None
         self._listening = True
         self._login_state = LoginState.READY
@@ -134,11 +143,7 @@ class BrowserWorker:
         if outbound is None:
             return
         try:
-            platform_sent_id = (
-                gateway.send_to(outbound.destination_chatroom_id, outbound.text)
-                if outbound.destination_chatroom_id is not None
-                else gateway.send(outbound.text)
-            )
+            platform_sent_id = self._send_outbound(gateway, outbound)
         except Exception as error:
             if "请勿发送重复内容" in str(error):
                 _LOGGER.warning("outbound content rejected as duplicate: %s", outbound.id)
@@ -160,6 +165,20 @@ class BrowserWorker:
             platform_sent_id,
             self._clock(),
         )
+
+    def _send_outbound(self, gateway: ChatGateway, outbound) -> str:
+        if (
+            self._bot_sender is not None
+            and self._bot_chatroom_id is not None
+            and outbound.destination_chatroom_id is None
+            and outbound.delivery_kind == "group"
+            and outbound.recall_after_seconds is None
+            and requires_bot_group_sender(outbound.text)
+        ):
+            return self._bot_sender.send_to(self._bot_chatroom_id, outbound.text)
+        if outbound.destination_chatroom_id is not None:
+            return gateway.send_to(outbound.destination_chatroom_id, outbound.text)
+        return gateway.send(outbound.text)
 
     def _sync_direct_chats(self, gateway: ChatGateway, now: datetime) -> None:
         if (

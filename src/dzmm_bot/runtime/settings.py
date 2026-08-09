@@ -15,6 +15,7 @@ class Settings:
     admin_web_port: int
     novnc_port: int
     chat_url: str | None = None
+    bot_api_token: str | None = None
     deepseek_api_key: str | None = None
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_base_url: str = "https://api.deepseek.com"
@@ -39,6 +40,7 @@ class Settings:
             admin_web_port=_port("DZMM_ADMIN_WEB_PORT", 18090),
             novnc_port=_port("DZMM_NOVNC_PORT", 16080),
             chat_url=_optional("DZMM_CHAT_URL", empty_as_none=True),
+            bot_api_token=_optional("DZMM_BOT_API_TOKEN", empty_as_none=True),
             deepseek_api_key=_optional("DP_API_KEY", empty_as_none=True),
             deepseek_model=os.environ.get(
                 "DZMM_DEEPSEEK_MODEL", "deepseek-v4-flash"

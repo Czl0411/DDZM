@@ -471,6 +471,7 @@ def test_undercover_cards_are_direct_and_group_opening_waits_for_delivery(
     }
     assert len(cards) == len(players) == 4
     assert {player.card_outbound_message_id for player in players} == {card.id for card in cards}
+    assert {card.text for card in cards} <= {"咖啡", "奶茶"}
 
     for index in range(4):
         claimed = repository.claim_outbound(f"worker-{index}", now, 30)
@@ -484,7 +485,27 @@ def test_undercover_cards_are_direct_and_group_opening_waits_for_delivery(
     assert opening is not None
     assert opening.delivery_kind == "group"
     assert opening.destination_chatroom_id is None
-    assert opening.text == "【谁是卧底】所有身份已私聊发放，请开始描述。"
+    assert opening.text.startswith("【谁是卧底】所有词语已私聊发放，请按座位号依次描述。\n")
+    assert opening.text.endswith(
+        "描述结束后，任意存活玩家发送 /开始投票 或 /投票 序号 开启投票。"
+    )
+    for player in repository.undercover_session_summary().players:
+        assert f"{player.seat_number}号 {player.display_name}" in opening.text
+
+
+def test_undercover_first_vote_starts_voting_after_description(repository, session_factory, now):
+    from dzmm_bot.core.schema import UndercoverGameRecord
+
+    _, platform_ids = _start_undercover_game(repository, session_factory, now)
+
+    result = repository.cast_undercover_vote(platform_ids[0], 2, now)
+
+    assert result.status == "vote_recorded"
+    with session_factory() as session:
+        game = session.scalar(select(UndercoverGameRecord))
+        assert game is not None
+        assert game.state == "voting"
+        assert game.current_vote_round == 1
 
 
 def test_undercover_card_delivery_failure_restores_signup_without_public_cards(
@@ -1540,6 +1561,21 @@ def test_system_outbound_splits_a_line_over_one_thousand_characters(
             )
         )
     assert [record.text for record in records] == ["字" * 1000, "字"]
+
+
+def test_system_outbound_keeps_a_long_group_reply_intact_when_bot_api_is_enabled(
+    session_factory
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import OutboundRecord
+
+    repository = CoreRepository(session_factory, preserve_long_group_messages=True)
+    text = "字" * 1001
+    repository.enqueue_system_outbound(text)
+
+    with session_factory() as session:
+        records = list(session.scalars(select(OutboundRecord)))
+    assert [record.text for record in records] == [text]
 
 
 def test_system_outbound_splits_after_ten_newlines(repository, session_factory):

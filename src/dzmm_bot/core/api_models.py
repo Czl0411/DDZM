@@ -48,6 +48,7 @@ class OutboundClaimResponse(ApiModel):
     attempt_count: int
     destination_chatroom_id: str | None
     delivery_kind: str
+    recall_after_seconds: int | None
 
 
 class SentRequest(ApiModel):

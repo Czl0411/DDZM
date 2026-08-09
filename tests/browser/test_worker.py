@@ -90,6 +90,15 @@ class FakeDesktop:
 
 
 @dataclass
+class FakeBotSender:
+    sent_to: list[tuple[str, str]] = field(default_factory=list)
+
+    def send_to(self, chatroom_id, text):
+        self.sent_to.append((chatroom_id, text))
+        return f"bot-{len(self.sent_to)}"
+
+
+@dataclass
 class FakeCore:
     pending: list[OutboundClaim] = field(default_factory=list)
     pending_recalls: list[OutboundRecallClaim] = field(default_factory=list)
@@ -285,6 +294,128 @@ def test_sent_confirmation_includes_current_fencing_values(context):
     assert core.confirmed == [
         (OUTBOUND_ID, "worker-a", LEASE, "sent-1", NOW)
     ]
+
+
+def test_worker_uses_bot_api_for_group_replies_over_the_newline_limit(context):
+    _, gateway, session, desktop, core, _ = context
+    bot_sender = FakeBotSender()
+    worker = BrowserWorker(
+        worker_id="worker-a",
+        core=core,
+        session=session,
+        desktop=desktop,
+        clock=lambda: NOW,
+        bot_sender=bot_sender,
+        bot_chatroom_id="group-1",
+    )
+    text = "\n".join(f"第{index}行" for index in range(12))
+    core.pending = [OutboundClaim(OUTBOUND_ID, "in-1", text, LEASE)]
+
+    worker.run_once()
+
+    assert bot_sender.sent_to == [("group-1", text)]
+    assert gateway.sent == []
+    assert core.confirmed == [(OUTBOUND_ID, "worker-a", LEASE, "bot-1", NOW)]
+
+
+def test_worker_keeps_group_replies_within_platform_limits_on_the_browser_gateway(context):
+    _, gateway, session, desktop, core, _ = context
+    bot_sender = FakeBotSender()
+    worker = BrowserWorker(
+        worker_id="worker-a",
+        core=core,
+        session=session,
+        desktop=desktop,
+        clock=lambda: NOW,
+        bot_sender=bot_sender,
+        bot_chatroom_id="group-1",
+    )
+    text = "\n".join(f"第{index}行" for index in range(11))
+    core.pending = [OutboundClaim(OUTBOUND_ID, "in-1", text, LEASE)]
+
+    worker.run_once()
+
+    assert bot_sender.sent_to == []
+    assert gateway.sent == [text]
+
+
+def test_worker_uses_bot_api_for_group_replies_over_the_character_limit(context):
+    _, gateway, session, desktop, core, _ = context
+    bot_sender = FakeBotSender()
+    worker = BrowserWorker(
+        worker_id="worker-a",
+        core=core,
+        session=session,
+        desktop=desktop,
+        clock=lambda: NOW,
+        bot_sender=bot_sender,
+        bot_chatroom_id="group-1",
+    )
+    text = "字" * 1001
+    core.pending = [OutboundClaim(OUTBOUND_ID, "in-1", text, LEASE)]
+
+    worker.run_once()
+
+    assert bot_sender.sent_to == [("group-1", text)]
+    assert gateway.sent == []
+
+
+def test_worker_keeps_recalled_group_replies_on_the_browser_gateway(context):
+    _, gateway, session, desktop, core, _ = context
+    bot_sender = FakeBotSender()
+    worker = BrowserWorker(
+        worker_id="worker-a",
+        core=core,
+        session=session,
+        desktop=desktop,
+        clock=lambda: NOW,
+        bot_sender=bot_sender,
+        bot_chatroom_id="group-1",
+    )
+    text = "\n".join(f"第{index}行" for index in range(12))
+    core.pending = [
+        OutboundClaim(
+            OUTBOUND_ID,
+            "in-1",
+            text,
+            LEASE,
+            recall_after_seconds=3,
+        )
+    ]
+
+    worker.run_once()
+
+    assert bot_sender.sent_to == []
+    assert gateway.sent == [text]
+
+
+def test_worker_keeps_direct_messages_on_the_browser_gateway(context):
+    _, gateway, session, desktop, core, _ = context
+    bot_sender = FakeBotSender()
+    worker = BrowserWorker(
+        worker_id="worker-a",
+        core=core,
+        session=session,
+        desktop=desktop,
+        clock=lambda: NOW,
+        bot_sender=bot_sender,
+        bot_chatroom_id="group-1",
+    )
+    core.pending = [
+        OutboundClaim(
+            OUTBOUND_ID,
+            None,
+            "咖啡",
+            LEASE,
+            destination_chatroom_id="direct-1",
+            delivery_kind="undercover_card",
+        )
+    ]
+
+    worker.run_once()
+
+    assert bot_sender.sent_to == []
+    assert gateway.sent_to == [("direct-1", "咖啡")]
 
 
 def test_worker_syncs_direct_rooms_and_sends_targeted_claims(context):

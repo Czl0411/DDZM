@@ -41,7 +41,7 @@ class DeepSeekChatClient:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},
                     ],
-                    "thinking": {"type": "disabled"},
+                    "thinking": {"type": "enabled"},
                     "max_tokens": max_chars,
                 },
                 timeout=timeout_seconds,

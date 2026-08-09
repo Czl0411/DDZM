@@ -17,6 +17,7 @@ class OutboundClaim:
     lease_token: UUID
     destination_chatroom_id: str | None = None
     delivery_kind: str = "group"
+    recall_after_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -159,6 +160,7 @@ class CoreClient:
             lease_token=UUID(data["lease_token"]),
             destination_chatroom_id=data["destination_chatroom_id"],
             delivery_kind=data["delivery_kind"],
+            recall_after_seconds=data["recall_after_seconds"],
         )
 
     def confirm_sent(

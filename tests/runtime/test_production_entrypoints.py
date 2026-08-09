@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -61,3 +62,33 @@ def test_admin_production_factory_reads_environment_and_uses_local_core(monkeypa
         "base_url": "http://127.0.0.1:18120",
         "token": "core-secret",
     }
+
+
+def test_browser_worker_factory_wires_the_bot_sender_to_the_configured_group(monkeypatch):
+    from dzmm_bot.browser import main as browser_main
+
+    class FakeComponent:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class FakeBotSender:
+        def __init__(self, token):
+            self.token = token
+
+    settings = replace(
+        _settings(),
+        chat_url="https://www.dzmm.ai/chat?c=group-1",
+        bot_api_token="bot-secret",
+    )
+    monkeypatch.setattr(browser_main, "BrowserSession", FakeComponent)
+    monkeypatch.setattr(browser_main, "AuthDesktopController", FakeComponent)
+    monkeypatch.setattr(browser_main, "CoreClient", FakeComponent)
+    monkeypatch.setattr(browser_main, "DzmmBotSender", FakeBotSender, raising=False)
+    monkeypatch.setattr(
+        browser_main, "_playwright_chromium_executable", lambda: "/tmp/chrome"
+    )
+
+    worker = browser_main.create_worker(settings)
+
+    assert worker._bot_sender.token == "bot-secret"
+    assert worker._bot_chatroom_id == "group-1"

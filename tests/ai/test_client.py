@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 
-def test_deepseek_client_sends_official_non_thinking_request():
+def test_deepseek_client_sends_official_thinking_request():
     from dzmm_bot.ai.client import DeepSeekChatClient
 
     requests: list[httpx.Request] = []
@@ -47,7 +47,7 @@ def test_deepseek_client_sends_official_non_thinking_request():
             {"role": "system", "content": "system"},
             {"role": "user", "content": "user"},
         ],
-        "thinking": {"type": "disabled"},
+        "thinking": {"type": "enabled"},
         "max_tokens": 20,
     }
 

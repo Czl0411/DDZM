@@ -53,6 +53,14 @@ def test_settings_reads_configured_group_chat_url(monkeypatch):
     assert Settings.from_environment().chat_url == "https://chat.example/chat?c=group-1"
 
 
+def test_settings_reads_optional_bot_api_token(monkeypatch):
+    monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
+    monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")
+    monkeypatch.setenv("DZMM_BOT_API_TOKEN", "bot-secret")
+
+    assert Settings.from_environment().bot_api_token == "bot-secret"
+
+
 def test_settings_reads_deepseek_runtime_configuration(monkeypatch):
     monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
     monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")

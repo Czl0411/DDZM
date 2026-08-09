@@ -13,6 +13,11 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
+from dzmm_bot.runtime.outbound import (
+    BOT_GROUP_MAX_CHARS,
+    BOT_GROUP_MAX_NEWLINES,
+    requires_bot_group_sender,
+)
 
 from .ai_mentions import normalize_ai_mention
 from .reply_templates import TEMPLATE_DEFINITIONS, validate_template
@@ -82,8 +87,6 @@ from .schema import (
 
 
 _DEFAULT_CURRENCY_NAME = "摸鱼币"
-_OUTBOUND_CHUNK_MAX_CHARS = 1000
-_OUTBOUND_CHUNK_MAX_NEWLINES = 10
 _DEFAULT_ONBOARDING_BONUS = 0
 _DEFAULT_CHECKIN_REWARD = 5
 _DEFAULT_WEEKLY_ATTENDANCE_REWARD = 5
@@ -210,13 +213,13 @@ def _outbound_text_chunks(text: str) -> list[str]:
         first_piece = True
         while remaining or first_piece:
             first_piece = False
-            capacity = _OUTBOUND_CHUNK_MAX_CHARS
+            capacity = BOT_GROUP_MAX_CHARS
             if current is not None:
                 capacity -= len(current) + (1 if line_number else 0)
             if capacity <= 0 or (
                 current is not None
                 and line_number
-                and current.count("\n") >= _OUTBOUND_CHUNK_MAX_NEWLINES
+                and current.count("\n") >= BOT_GROUP_MAX_NEWLINES
             ):
                 chunks.append(current)
                 current = None
@@ -239,9 +242,9 @@ def _outbound_text_chunks(text: str) -> list[str]:
 
 def _undercover_card_text(role: str, civilian_word: str, undercover_word: str) -> str:
     if role == "civilian":
-        return f"【谁是卧底】你的身份：平民。词语：{civilian_word}"
+        return civilian_word
     if role == "undercover":
-        return f"【谁是卧底】你的身份：卧底。词语：{undercover_word}"
+        return undercover_word
     if role == "whiteboard":
         return "【谁是卧底】你的身份：白板。没有词语，请靠大家的描述判断。"
     raise ValueError("谁是卧底身份无效")
@@ -666,8 +669,14 @@ _COMMAND_DEFINITIONS = (
 
 
 class CoreRepository:
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        *,
+        preserve_long_group_messages: bool = False,
+    ) -> None:
         self._session_factory = session_factory
+        self._preserve_long_group_messages = preserve_long_group_messages
         self._active_session: ContextVar[Session | None] = ContextVar(
             f"core_repository_session_{id(self)}", default=None
         )
@@ -1870,6 +1879,13 @@ class CoreRepository:
                 session_record, game, voter = self._undercover_active_player(session, platform_id)
                 if session_record is None or game is None or voter is None:
                     return UndercoverGameResult("cannot_vote")
+                if game.state in ("speaking", "tie_break") and voter.state == "alive":
+                    game.current_vote_round += 1
+                    game.state = "voting"
+                    game.vote_deadline = now + timedelta(
+                        seconds=self.get_undercover_settings().vote_seconds
+                    )
+                    session_record.state = "voting"
                 if game.state != "voting" or voter.state != "alive":
                     return UndercoverGameResult("cannot_vote", game_id=game.id)
                 target = session.scalar(
@@ -2389,7 +2405,20 @@ class CoreRepository:
             )
         game.state = "speaking"
         session_record.state = "speaking"
-        self.enqueue_system_outbound("【谁是卧底】所有身份已私聊发放，请开始描述。")
+        seats = "\n".join(
+            f"{seat_number}号 {display_name}"
+            for seat_number, display_name in session.execute(
+                select(UndercoverGamePlayerRecord.seat_number, UserRecord.display_name)
+                .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
+                .where(UndercoverGamePlayerRecord.game_id == game.id)
+                .order_by(UndercoverGamePlayerRecord.seat_number)
+            )
+        )
+        self.enqueue_system_outbound(
+            "【谁是卧底】所有词语已私聊发放，请按座位号依次描述。\n"
+            f"{seats}\n"
+            "描述结束后，任意存活玩家发送 /开始投票 或 /投票 序号 开启投票。"
+        )
         return self._undercover_game_result(session, game, "speaking")
 
     def _undercover_active_player(
@@ -5952,11 +5981,12 @@ class CoreRepository:
             first_reply_index = reply_index
             if latest_reply_index is not None and first_reply_index <= latest_reply_index:
                 first_reply_index = latest_reply_index + 1
-            replies = (
-                [reply]
-                if recall_after_seconds is not None
-                else _outbound_text_chunks(reply)
-            )
+            replies = [reply] if self._keeps_group_reply_intact(
+                reply,
+                recall_after_seconds=recall_after_seconds,
+                destination_chatroom_id=destination_chatroom_id,
+                delivery_kind=delivery_kind,
+            ) else _outbound_text_chunks(reply)
             records = [
                 OutboundRecord(
                     inbound_message_id=inbound_id,
@@ -5991,11 +6021,12 @@ class CoreRepository:
         if recall_after_seconds is not None and recall_after_seconds < 1:
             raise ValueError("撤回秒数必须为正整数")
         with self._session() as session:
-            texts = (
-                [text]
-                if recall_after_seconds is not None
-                else _outbound_text_chunks(text)
-            )
+            texts = [text] if self._keeps_group_reply_intact(
+                text,
+                recall_after_seconds=recall_after_seconds,
+                destination_chatroom_id=destination_chatroom_id,
+                delivery_kind=delivery_kind,
+            ) else _outbound_text_chunks(text)
             records = [
                 OutboundRecord(
                     inbound_message_id=None,
@@ -6017,6 +6048,24 @@ class CoreRepository:
                     raise ValueError("记忆考核轮次无法关联撤回消息")
                 round_record.outbound_message_id = records[0].id
             return records[0]
+
+    def _keeps_group_reply_intact(
+        self,
+        text: str,
+        *,
+        recall_after_seconds: int | None,
+        destination_chatroom_id: str | None,
+        delivery_kind: str,
+    ) -> bool:
+        return (
+            recall_after_seconds is not None
+            or (
+                self._preserve_long_group_messages
+                and destination_chatroom_id is None
+                and delivery_kind == "group"
+                and requires_bot_group_sender(text)
+            )
+        )
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int

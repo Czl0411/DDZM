@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Route long non-recalled group replies through DZMM's token-authenticated Bot API without changing ordinary, direct, or recalled delivery.
+**Goal:** Route long non-recalled group replies through DZMM's token-authenticated Bot API, ship the prepared 谁是卧底 flow improvements, and enable DeepSeek thinking mode.
 
 **Architecture:** Core preserves qualifying group text as one outbound record when `DZMM_BOT_API_TOKEN` is configured. Browser Worker selects `DzmmBotSender` only for those records and retains the current WebSocket gateway for every other outbound message.
 
@@ -14,6 +14,7 @@
 - Direct messages and recalled messages must remain on the browser WebSocket path.
 - Do not log or commit `DZMM_BOT_API_TOKEN`.
 - Preserve unrelated local changes outside this isolated worktree.
+- Exclude and remove the uncommitted CAPTCHA detection and manual-auth changes.
 
 ---
 
@@ -81,7 +82,35 @@ Preserve only group records with no explicit destination and no recall timer. Co
 
 Run the Step 2 command and require zero failures.
 
-### Task 3: Commit, deploy, and verify production
+### Task 3: 谁是卧底 flow and DeepSeek thinking mode
+
+**Files:**
+- Modify: `src/dzmm_bot/core/repository.py`
+- Modify: `tests/core/test_repository.py`
+- Modify: `src/dzmm_bot/ai/client.py`
+- Modify: `tests/ai/test_client.py`
+
+**Interfaces:**
+- Extends: 谁是卧底 card, opening, and voting behavior in `CoreRepository`
+- Extends: `DeepSeekChatClient.complete(...)` request body with explicit thinking mode
+
+- [ ] **Step 1: Add failing gameplay and AI request tests**
+
+Assert role cards contain only their word, the opening lists seats and voting guidance, the first vote starts voting, and the DeepSeek request uses `{"thinking": {"type": "enabled"}}` while returning only final content.
+
+- [ ] **Step 2: Run tests and verify the old behavior fails**
+
+Run: `PYTHONPATH=src /Users/zhijian/Desktop/DDZM/.venv/bin/pytest -q tests/core/test_repository.py tests/ai/test_client.py`
+
+- [ ] **Step 3: Implement the minimal gameplay and thinking changes**
+
+Change only the existing card formatter, opening transition, vote transition, and DeepSeek request toggle.
+
+- [ ] **Step 4: Re-run focused tests**
+
+Run the Step 2 command and require zero failures.
+
+### Task 4: Commit, deploy, and verify production
 
 **Files:**
 - Verify: all files above

@@ -904,24 +904,19 @@ def test_completed_ai_request_enqueues_one_existing_outbound_message(
         assert session.scalar(select(OutboundRecord.text)) == "收到"
 
 
-def test_ai_request_prompt_uses_live_profile_and_saved_memory(
+def test_ai_prompt_uses_stable_and_pinned_impressions_but_not_legacy_memory(
     repository, session_factory, now
 ):
-    from dzmm_bot.core.schema import AIAssistantSettingsRecord, AIPlayerMemoryRecord
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
 
     user, _ = repository.create_user("ai-profile", "阿彻", now, 23)
     repository.get_ai_assistant_settings()
+    repository.set_ai_player_memory(user.platform_id, "旧的混乱记忆", now)
+    repository.create_ai_player_impression(
+        user.platform_id, "expression_style", "偏好先给结论", now
+    )
     with session_factory.begin() as session:
         session.get(AIAssistantSettingsRecord, 1).enabled = True
-        session.add(
-            AIPlayerMemoryRecord(
-                user_id=user.id,
-                memory_text="偏好简短回复，喜欢桌游。",
-                last_scanned_message_id=None,
-                created_at=now,
-                updated_at=now,
-            )
-        )
     inbound, _ = repository.accept_inbound(
         InboundMessage("ai-profile-inbound", user.platform_id, "@总监事 在吗", now)
     )
@@ -934,7 +929,12 @@ def test_ai_request_prompt_uses_live_profile_and_saved_memory(
     assert claim is not None
     assert "昵称：阿彻" in claim.system_prompt
     assert "余额：23 摸鱼币" in claim.system_prompt
-    assert "偏好简短回复，喜欢桌游。" in claim.system_prompt
+    assert "【稳定玩家印象】" in claim.system_prompt
+    assert "表达方式：偏好先给结论" in claim.system_prompt
+    assert "旧的混乱记忆" not in claim.system_prompt
+    assert claim.system_prompt.index("【实时玩家资料】") < claim.system_prompt.index(
+        "【稳定玩家印象】"
+    )
     assert "核心玩法指引" in claim.system_prompt
 
 

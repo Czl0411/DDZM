@@ -2089,7 +2089,7 @@ document.querySelector("#end-blame-bomb-session").addEventListener("click", asyn
       if (!result.accepted) throw new Error("当前没有可结束的甩锅游戏");
       await loadBlameBomb();
     });
-    setResult("甩锅游戏已结束，保证金已退款", "success");
+    setResult("当前甩锅游戏已处理", "success");
   } catch (error) {
     setResult(`结束失败（${error.message}）`, "error");
   }

@@ -1149,7 +1149,9 @@ def create_app(
         _: Annotated[None, Depends(authorize)],
     ) -> AcceptedResponse:
         result = repository.admin_end_blame_game(clock())
-        return AcceptedResponse(accepted=result.status == "cancelled")
+        return AcceptedResponse(
+            accepted=result.status in {"cancelled", "settled", "signup_expired"}
+        )
 
     @app.get(
         "/internal/game/random-events/scenes",

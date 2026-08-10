@@ -835,6 +835,10 @@ class CoreRepository:
                 raise RuntimeError("inserted inbound message disappeared")
             return record, True
 
+    def lock_gameplay_order(self) -> None:
+        with self._session() as session:
+            self._lock_gameplay_gate(session)
+
     def ensure_command_definitions(self) -> None:
         with self._session() as session:
             dialect_name = session.get_bind().dialect.name
@@ -3966,6 +3970,7 @@ class CoreRepository:
         results: list[str] = []
         with self.transaction():
             with self._session() as session:
+                self._lock_gameplay_gate(session)
                 game = self._active_blame_game(session)
                 if game is None:
                     return results

@@ -3,7 +3,7 @@ import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from uuid import uuid4
 
 import pytest
@@ -3357,24 +3357,29 @@ def test_postgres_blame_transfer_and_jobs_preserve_single_active_transition(
         game = session.scalar(select(BlameGameRecord))
         game.explosion_deadline = jobs_at
         game.turn_deadline = jobs_at
-    barrier = Barrier(2)
+    transfer_has_order = Event()
+    allow_transfer = Event()
 
     def transfer():
-        barrier.wait()
-        return transfer_repository.transfer_blame(
-            holder.platform_id,
-            targets[0].seat_number,
-            "咖啡弄脏了报表",
-            received_at,
-        ).status
+        with transfer_repository.transaction():
+            transfer_repository.lock_gameplay_order()
+            transfer_has_order.set()
+            assert allow_transfer.wait(timeout=10)
+            return transfer_repository.transfer_blame(
+                holder.platform_id,
+                targets[0].seat_number,
+                "咖啡弄脏了报表",
+                received_at,
+            ).status
 
     def run_jobs():
-        barrier.wait()
         return jobs_repository.run_blame_game_jobs(jobs_at)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         transfer_future = executor.submit(transfer)
+        assert transfer_has_order.wait(timeout=10)
         jobs_future = executor.submit(run_jobs)
+        allow_transfer.set()
         transfer_status = transfer_future.result()
         jobs_future.result()
 
@@ -3401,8 +3406,8 @@ def test_postgres_blame_transfer_and_jobs_preserve_single_active_transition(
             )
             or 0
         )
-    assert transfer_status in {"no_game", "transferred"}
-    assert transfer_count == (1 if transfer_status == "transferred" else 0)
+    assert transfer_status == "transferred"
+    assert transfer_count == 1
     assert guarantee_count == 3
     assert win_count == 2
     assert setup_repository.blame_game_summary(jobs_at).state is None

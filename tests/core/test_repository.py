@@ -530,6 +530,23 @@ def _prepare_undercover_players(repository, session_factory, now, count=4):
     return platform_ids
 
 
+def _prepare_blame_players(
+    repository, session_factory, now, count, *, balance=100, daily_limit=99
+):
+    from dzmm_bot.core.schema import RankRecord
+
+    repository.create_blame_incident_card(
+        "咖啡事故", "咖啡泼到了季度报表", ["咖啡", "报表"]
+    )
+    platform_ids = [f"blame-{number}" for number in range(1, count + 1)]
+    for platform_id in platform_ids:
+        repository.create_user(platform_id, platform_id, now, balance)
+    with session_factory.begin() as session:
+        rank = session.scalar(select(RankRecord).where(RankRecord.sort_order == 1))
+        rank.multiplayer_game_limit = daily_limit
+    return platform_ids
+
+
 def _start_undercover_game(repository, session_factory, now, count=4):
     platform_ids = _prepare_undercover_players(repository, session_factory, now, count)
     first = repository.start_undercover_signup(platform_ids[0], count, now)
@@ -557,6 +574,121 @@ def _prepare_pending_random_event(repository, now):
         [now.astimezone(BEIJING).strftime("%H:%M")], "{可选身份}", 15, 5
     )
     return repository.schedule_random_events(now)[0]
+
+
+@pytest.mark.parametrize("player_count", range(2, 11))
+def test_blame_signup_starts_with_frozen_seats_and_guarantees(
+    repository, session_factory, now, player_count
+):
+    platform_ids = _prepare_blame_players(
+        repository, session_factory, now, player_count
+    )
+
+    result = repository.start_blame_game(platform_ids[0], player_count, now)
+    for platform_id in platform_ids[1:]:
+        result = repository.join_blame_game(platform_id, now)
+    summary = repository.blame_game_summary(now)
+
+    assert result.status == "started"
+    assert summary.state == "active"
+    assert [player.seat_number for player in summary.players] == list(
+        range(1, player_count + 1)
+    )
+    assert summary.incident_name == "咖啡事故"
+    assert summary.incident_keywords == ("咖啡", "报表")
+    assert summary.current_holder_number in range(1, player_count + 1)
+    assert all(
+        repository.find_user(platform_id).balance == 100 - (player_count - 1)
+        for platform_id in platform_ids
+    )
+
+
+@pytest.mark.parametrize("player_count", [1, 11])
+def test_blame_start_rejects_invalid_player_count(repository, now, player_count):
+    repository.create_user("blame-creator", "发起者", now, 100)
+
+    assert repository.start_blame_game("blame-creator", player_count, now).status == (
+        "invalid_player_count"
+    )
+
+
+def test_blame_start_checks_incident_balance_and_daily_rank_limit(
+    repository, session_factory, now
+):
+    repository.create_user("blame-creator", "发起者", now, 100)
+    with session_factory.begin() as session:
+        from dzmm_bot.core.schema import RankRecord
+
+        session.scalar(select(RankRecord).where(RankRecord.sort_order == 1)).multiplayer_game_limit = 5
+
+    assert repository.start_blame_game("blame-creator", 3, now).status == "incident_unavailable"
+    repository.create_blame_incident_card("咖啡事故", "描述", ["咖啡"])
+    with session_factory.begin() as session:
+        from dzmm_bot.core.schema import RankRecord, UserRecord
+
+        session.scalar(select(UserRecord).where(UserRecord.platform_id == "blame-creator")).balance = 1
+        session.scalar(select(RankRecord).where(RankRecord.sort_order == 1)).multiplayer_game_limit = 5
+    assert repository.start_blame_game("blame-creator", 3, now).status == "insufficient_balance"
+    with session_factory.begin() as session:
+        from dzmm_bot.core.schema import RankRecord, UserRecord
+
+        session.scalar(select(UserRecord).where(UserRecord.platform_id == "blame-creator")).balance = 100
+        session.scalar(select(RankRecord).where(RankRecord.sort_order == 1)).multiplayer_game_limit = 0
+    assert repository.start_blame_game("blame-creator", 3, now).status == "daily_limit"
+
+
+def test_blame_successful_signup_consumes_one_daily_start(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameDailyStartRecord
+
+    platform_ids = _prepare_blame_players(
+        repository, session_factory, now, 2, daily_limit=1
+    )
+
+    assert repository.start_blame_game(platform_ids[0], 2, now).status == "signup_started"
+    with session_factory() as session:
+        daily = session.scalar(select(BlameGameDailyStartRecord))
+    assert (daily.play_date, daily.count) == (now.astimezone(BEIJING).date(), 1)
+
+
+def test_blame_full_signup_removes_players_whose_balance_became_insufficient(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import UserRecord
+
+    platform_ids = _prepare_blame_players(repository, session_factory, now, 3)
+    repository.start_blame_game(platform_ids[0], 3, now)
+    assert repository.join_blame_game(platform_ids[1], now).status == "joined"
+    with session_factory.begin() as session:
+        session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == platform_ids[1])
+        ).balance = 0
+
+    result = repository.join_blame_game(platform_ids[2], now)
+    summary = repository.blame_game_summary(now)
+
+    assert result.status == "waiting_for_players"
+    assert result.removed_display_names == (platform_ids[1],)
+    assert summary.state == "signup"
+    assert [player.platform_id for player in summary.players] == [
+        platform_ids[0],
+        platform_ids[2],
+    ]
+    assert repository.find_user(platform_ids[0]).balance == 100
+    assert repository.find_user(platform_ids[2]).balance == 100
+
+
+def test_blame_signup_leave_and_active_join_behavior(repository, session_factory, now):
+    platform_ids = _prepare_blame_players(repository, session_factory, now, 3)
+    repository.start_blame_game(platform_ids[0], 3, now)
+    repository.join_blame_game(platform_ids[1], now)
+
+    assert repository.leave_blame_game(platform_ids[1], now).status == "left_signup"
+    assert repository.join_blame_game(platform_ids[1], now).status == "joined"
+    assert repository.join_blame_game(platform_ids[2], now).status == "started"
+    repository.create_user("late-player", "迟到玩家", now, 100)
+    assert repository.join_blame_game("late-player", now).status == "game_started"
 
 
 def test_undercover_requires_direct_chat_then_deals_configured_roles(

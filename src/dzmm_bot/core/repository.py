@@ -354,6 +354,35 @@ class BlameIncidentCard:
 
 
 @dataclass(frozen=True)
+class BlameGamePlayerSummary:
+    platform_id: str
+    display_name: str
+    seat_number: int | None
+    state: str
+
+
+@dataclass(frozen=True)
+class BlameGameSummary:
+    state: str | None
+    target_player_count: int = 0
+    players: tuple[BlameGamePlayerSummary, ...] = ()
+    incident_name: str | None = None
+    incident_description: str | None = None
+    incident_keywords: tuple[str, ...] = ()
+    current_holder_number: int | None = None
+    temperature: str | None = None
+
+
+@dataclass(frozen=True)
+class BlameGameResult:
+    status: str
+    game_id: UUID | None = None
+    player_count: int = 0
+    target_player_count: int = 0
+    removed_display_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class MemoryAssessmentSettings:
     enabled: bool
     single_daily_limit: int
@@ -3558,6 +3587,340 @@ class CoreRepository:
                 return False
             session.delete(record)
             return True
+
+    def start_blame_game(
+        self, platform_id: str, player_count: int, now: datetime
+    ) -> BlameGameResult:
+        now = now.astimezone(BEIJING)
+        if player_count not in range(2, 11):
+            return BlameGameResult("invalid_player_count")
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                settings = self.get_blame_game_settings()
+                self._ensure_organization_defaults(session)
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return BlameGameResult("not_joined")
+                if not settings.enabled:
+                    return BlameGameResult("disabled")
+                if self._active_blame_game(session) is not None:
+                    return BlameGameResult("already_active")
+                if (
+                    self._active_random_event(session) is not None
+                    or self._active_memory_duel(session)
+                    or self._active_undercover_session(session) is not None
+                ):
+                    return BlameGameResult("multiplayer_active")
+                if session.scalar(
+                    select(exists().where(BlameIncidentCardRecord.enabled.is_(True)))
+                ) is not True:
+                    return BlameGameResult("incident_unavailable")
+                if user.balance < player_count - 1:
+                    return BlameGameResult("insufficient_balance")
+                rank = session.get(RankRecord, user.rank_id)
+                if rank is None:
+                    raise RuntimeError("发起者职位消失")
+                daily = session.scalar(
+                    select(BlameGameDailyStartRecord)
+                    .where(
+                        BlameGameDailyStartRecord.user_id == user.id,
+                        BlameGameDailyStartRecord.play_date == now.date(),
+                    )
+                    .with_for_update()
+                )
+                used_count = 0 if daily is None else daily.count
+                if rank.multiplayer_game_limit >= 0 and used_count >= rank.multiplayer_game_limit:
+                    return BlameGameResult("daily_limit")
+                if daily is None:
+                    daily = BlameGameDailyStartRecord(
+                        user_id=user.id,
+                        play_date=now.date(),
+                        count=0,
+                    )
+                    session.add(daily)
+                game = BlameGameRecord(
+                    state="signup",
+                    active_key="global",
+                    creator_user_id=user.id,
+                    target_player_count=player_count,
+                    signup_deadline=now
+                    + timedelta(seconds=settings.signup_timeout_seconds),
+                    settlement_complete=False,
+                    created_at=now,
+                )
+                session.add(game)
+                session.flush()
+                session.add(
+                    BlameGamePlayerRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        signup_order=1,
+                        state="joined",
+                        guarantee_amount=0,
+                        guarantee_state="none",
+                        joined_at=now,
+                    )
+                )
+                daily.count += 1
+                return BlameGameResult(
+                    "signup_started",
+                    game_id=game.id,
+                    player_count=1,
+                    target_player_count=player_count,
+                )
+
+    def join_blame_game(self, platform_id: str, now: datetime) -> BlameGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return BlameGameResult("not_joined")
+                game = self._active_blame_game(session)
+                if game is None:
+                    return BlameGameResult("no_game")
+                if game.state != "signup":
+                    return BlameGameResult("game_started", game_id=game.id)
+                if user.balance < game.target_player_count - 1:
+                    return BlameGameResult("insufficient_balance", game_id=game.id)
+                existing = session.scalar(
+                    select(BlameGamePlayerRecord)
+                    .where(
+                        BlameGamePlayerRecord.game_id == game.id,
+                        BlameGamePlayerRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if existing is not None and existing.state == "joined":
+                    return BlameGameResult("already_joined", game_id=game.id)
+                maximum_order = int(
+                    session.scalar(
+                        select(func.coalesce(func.max(BlameGamePlayerRecord.signup_order), 0))
+                        .where(BlameGamePlayerRecord.game_id == game.id)
+                    )
+                    or 0
+                )
+                if existing is None:
+                    session.add(
+                        BlameGamePlayerRecord(
+                            game_id=game.id,
+                            user_id=user.id,
+                            signup_order=maximum_order + 1,
+                            state="joined",
+                            guarantee_amount=0,
+                            guarantee_state="none",
+                            joined_at=now,
+                        )
+                    )
+                else:
+                    existing.signup_order = maximum_order + 1
+                    existing.state = "joined"
+                    existing.joined_at = now
+                    existing.left_at = None
+                session.flush()
+                players = self._joined_blame_players(session, game.id)
+                if len(players) < game.target_player_count:
+                    return BlameGameResult(
+                        "joined",
+                        game_id=game.id,
+                        player_count=len(players),
+                        target_player_count=game.target_player_count,
+                    )
+                return self._start_blame_game_round(session, game, players, now)
+
+    def leave_blame_game(self, platform_id: str, now: datetime) -> BlameGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if user is None:
+                    return BlameGameResult("not_joined")
+                game = self._active_blame_game(session)
+                if game is None:
+                    return BlameGameResult("no_game")
+                if game.state != "signup":
+                    return BlameGameResult("cannot_leave", game_id=game.id)
+                player = session.scalar(
+                    select(BlameGamePlayerRecord)
+                    .where(
+                        BlameGamePlayerRecord.game_id == game.id,
+                        BlameGamePlayerRecord.user_id == user.id,
+                        BlameGamePlayerRecord.state == "joined",
+                    )
+                    .with_for_update()
+                )
+                if player is None:
+                    return BlameGameResult("not_in_game", game_id=game.id)
+                player.state = "left"
+                player.left_at = now
+                return BlameGameResult(
+                    "left_signup",
+                    game_id=game.id,
+                    player_count=len(self._joined_blame_players(session, game.id)),
+                    target_player_count=game.target_player_count,
+                )
+
+    def blame_game_summary(self, now: datetime | None = None) -> BlameGameSummary:
+        with self._session() as session:
+            game = session.scalar(
+                select(BlameGameRecord).where(BlameGameRecord.active_key == "global")
+            )
+            if game is None:
+                return BlameGameSummary(None)
+            rows = list(
+                session.execute(
+                    select(BlameGamePlayerRecord, UserRecord)
+                    .join(UserRecord, UserRecord.id == BlameGamePlayerRecord.user_id)
+                    .where(
+                        BlameGamePlayerRecord.game_id == game.id,
+                        BlameGamePlayerRecord.state.in_(("joined", "active")),
+                    )
+                    .order_by(BlameGamePlayerRecord.signup_order)
+                )
+            )
+            players = tuple(
+                BlameGamePlayerSummary(
+                    platform_id=user.platform_id,
+                    display_name=user.display_name,
+                    seat_number=player.seat_number,
+                    state=player.state,
+                )
+                for player, user in rows
+            )
+            current_holder_number = next(
+                (
+                    player.seat_number
+                    for player, user in rows
+                    if user.id == game.current_holder_user_id
+                ),
+                None,
+            )
+            return BlameGameSummary(
+                state=game.state,
+                target_player_count=game.target_player_count,
+                players=players,
+                incident_name=game.incident_name,
+                incident_description=game.incident_description,
+                incident_keywords=tuple(game.keywords_snapshot or ()),
+                current_holder_number=current_holder_number,
+                temperature=game.last_announced_temperature,
+            )
+
+    def _active_blame_game(self, session: Session) -> BlameGameRecord | None:
+        return session.scalar(
+            select(BlameGameRecord)
+            .where(BlameGameRecord.active_key == "global")
+            .with_for_update()
+        )
+
+    def _joined_blame_players(
+        self, session: Session, game_id: UUID
+    ) -> list[BlameGamePlayerRecord]:
+        return list(
+            session.scalars(
+                select(BlameGamePlayerRecord)
+                .where(
+                    BlameGamePlayerRecord.game_id == game_id,
+                    BlameGamePlayerRecord.state == "joined",
+                )
+                .order_by(BlameGamePlayerRecord.signup_order)
+                .with_for_update()
+            )
+        )
+
+    def _start_blame_game_round(
+        self,
+        session: Session,
+        game: BlameGameRecord,
+        players: list[BlameGamePlayerRecord],
+        now: datetime,
+    ) -> BlameGameResult:
+        guarantee = game.target_player_count - 1
+        users_by_id = {
+            user.id: user
+            for user in session.scalars(
+                select(UserRecord)
+                .where(UserRecord.id.in_([player.user_id for player in players]))
+                .with_for_update()
+            )
+        }
+        removed_names = []
+        for player in players:
+            user = users_by_id[player.user_id]
+            if user.balance < guarantee:
+                player.state = "removed"
+                player.left_at = now
+                removed_names.append(user.display_name)
+        if removed_names:
+            return BlameGameResult(
+                "waiting_for_players",
+                game_id=game.id,
+                player_count=len(players) - len(removed_names),
+                target_player_count=game.target_player_count,
+                removed_display_names=tuple(removed_names),
+            )
+        cards = list(
+            session.scalars(
+                select(BlameIncidentCardRecord)
+                .where(BlameIncidentCardRecord.enabled.is_(True))
+                .with_for_update()
+            )
+        )
+        if not cards:
+            game.state = "dissolved"
+            game.active_key = None
+            game.finished_at = now
+            return BlameGameResult("incident_unavailable", game_id=game.id)
+        settings = self.get_blame_game_settings()
+        duration_rule = next(
+            rule
+            for rule in settings.durations
+            if rule.player_count == game.target_player_count
+        )
+        total_duration_seconds = (
+            randbelow(duration_rule.maximum_seconds - duration_rule.minimum_seconds + 1)
+            + duration_rule.minimum_seconds
+        )
+        card = choice(cards)
+        for seat_number, player in enumerate(players, 1):
+            user = users_by_id[player.user_id]
+            self._apply_balance_change(user, -guarantee, "blame_guarantee", now)
+            player.seat_number = seat_number
+            player.state = "active"
+            player.guarantee_amount = guarantee
+            player.guarantee_state = "held"
+        holder = choice(players)
+        game.state = "active"
+        game.incident_card_id = card.id
+        game.incident_name = card.name
+        game.incident_description = card.description
+        game.keywords_snapshot = list(card.keywords)
+        game.total_duration_seconds = total_duration_seconds
+        game.explosion_deadline = now + timedelta(seconds=total_duration_seconds)
+        game.turn_deadline = min(
+            now + timedelta(seconds=settings.turn_timeout_seconds),
+            game.explosion_deadline,
+        )
+        game.current_holder_user_id = holder.user_id
+        game.last_announced_temperature = "温热"
+        game.started_at = now
+        return BlameGameResult(
+            "started",
+            game_id=game.id,
+            player_count=len(players),
+            target_player_count=game.target_player_count,
+        )
 
     def set_hide_and_seek_settings(
         self,

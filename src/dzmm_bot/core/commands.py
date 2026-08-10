@@ -13,7 +13,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数",
+    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数",
 }
 
 
@@ -53,6 +53,15 @@ class GroupCommandHandler:
             return self._number_bomb_start(
                 message.sender_platform_id, content, received_at
             )
+        if command == "/开始":
+            summary = self._repository.active_gameplay_summary(
+                message.sender_platform_id, received_at
+            )
+            if summary.game_type == "number_bomb":
+                return self._number_bomb_manual_start(
+                    message.sender_platform_id, received_at
+                )
+            return self._reply("/开始", "no_current_game", received_at)
         if command == "/报数":
             if message.source_type != "direct":
                 return self._reply("/报数", "group_only", received_at)
@@ -612,13 +621,9 @@ class GroupCommandHandler:
     def _number_bomb_start(
         self, platform_id: str, content: str, received_at
     ) -> str:
-        parts = content.split()
-        if len(parts) != 2 or not parts[1].isdigit():
+        if content != "/蹦蹦数字炸弹":
             return self._reply("/蹦蹦数字炸弹", "usage", received_at)
-        player_count = int(parts[1])
-        result = self._repository.start_number_bomb_game(
-            platform_id, player_count, received_at
-        )
+        result = self._repository.start_number_bomb_game(platform_id, received_at)
         if result.status == "signup_started":
             user = self._repository.find_user(platform_id)
             return self._reply(
@@ -627,16 +632,37 @@ class GroupCommandHandler:
                 received_at,
                 {
                     "{昵称}": user.display_name,
-                    "{人数}": player_count,
                     "{当前人数}": result.player_count,
                 },
             )
-        if result.status == "invalid_player_count":
-            return self._reply("/蹦蹦数字炸弹", "usage", received_at)
         scenario = result.status if result.status in {
-            "not_joined", "multiplayer_active", "already_active"
+            "not_joined", "direct_chat_required", "disabled",
+            "multiplayer_active", "already_active"
         } else "multiplayer_active"
         return self._reply("/蹦蹦数字炸弹", scenario, received_at)
+
+    def _number_bomb_manual_start(
+        self, platform_id: str, received_at
+    ) -> list[CommandReply] | str:
+        result = self._repository.start_number_bomb_round(platform_id, received_at)
+        if result.status == "started":
+            return self._number_bomb_round_started_replies(
+                "/开始", result, received_at
+            )
+        scenario = {
+            "insufficient_players": "number_bomb_insufficient",
+            "missing_direct_chats": "number_bomb_missing_direct_chats",
+        }.get(result.status, "number_bomb_cannot_start")
+        values = {}
+        if result.status == "missing_direct_chats":
+            values["{玩家列表}"] = "、".join(
+                f"{player.roster_order}号 {player.display_name}"
+                for player in result.players
+                if player.direct_chatroom_id is None
+            )
+        elif result.status == "insufficient_players":
+            values["{当前人数}"] = result.player_count
+        return self._reply("/开始", scenario, received_at, values)
 
     def _number_bomb_join(self, platform_id: str, received_at) -> str:
         result = self._repository.join_number_bomb_game(platform_id, received_at)
@@ -649,18 +675,13 @@ class GroupCommandHandler:
                 {
                     "{昵称}": user.display_name,
                     "{当前人数}": result.player_count,
-                    "{人数}": result.target_player_count,
                 },
-            )
-        if result.status == "started":
-            return self._number_bomb_round_started_reply(
-                "/加入", result, received_at
             )
         scenarios = {
             "queued": "number_bomb_queued",
-            "next_round_full": "number_bomb_next_round_full",
             "already_joined": "number_bomb_already_joined",
             "not_joined": "number_bomb_not_joined",
+            "direct_chat_required": "number_bomb_direct_chat_required",
         }
         return self._reply(
             "/加入",
@@ -681,10 +702,12 @@ class GroupCommandHandler:
             received_at,
         )
 
-    def _number_bomb_continue(self, platform_id: str, received_at) -> str:
+    def _number_bomb_continue(
+        self, platform_id: str, received_at
+    ) -> str | list[CommandReply]:
         result = self._repository.continue_number_bomb_game(platform_id, received_at)
         if result.status == "started":
-            return self._number_bomb_round_started_reply(
+            return self._number_bomb_round_started_replies(
                 "/继续", result, received_at
             )
         return self._reply(
@@ -743,27 +766,51 @@ class GroupCommandHandler:
                     )
                 )
             )
+        if result.status == "invalid_round":
+            replies.extend(self._number_bomb_private_prompt_replies(result, received_at))
         return replies
 
-    def _number_bomb_round_started_reply(
+    def _number_bomb_round_started_replies(
         self, command: str, result, received_at
-    ) -> str:
-        return self._reply(
-            command,
-            "number_bomb_started",
-            received_at,
-            {
-                "{轮次}": result.round_number,
-                "{惩罚类型}": (
-                    "大冒险" if result.punishment_type == "dare" else "真心话"
-                ),
-                "{玩家列表}": "、".join(
-                    player.display_name
-                    for player in result.players
-                    if player.state == "current"
-                ),
-            },
-        )
+    ) -> list[CommandReply]:
+        replies = [
+            CommandReply(
+                self._reply(
+                    command,
+                    "number_bomb_started",
+                    received_at,
+                    {
+                        "{轮次}": result.round_number,
+                        "{惩罚类型}": (
+                            "大冒险"
+                            if result.punishment_type == "dare"
+                            else "真心话"
+                        ),
+                        "{玩家列表}": "、".join(
+                            player.display_name
+                            for player in result.players
+                            if player.state == "current"
+                        ),
+                    },
+                )
+            )
+        ]
+        replies.extend(self._number_bomb_private_prompt_replies(result, received_at))
+        return replies
+
+    def _number_bomb_private_prompt_replies(
+        self, result, received_at
+    ) -> list[CommandReply]:
+        prompt = self._reply("/开始", "number_bomb_private_prompt", received_at)
+        return [
+            CommandReply(
+                prompt,
+                destination_chatroom_id=player.direct_chatroom_id,
+                delivery_kind="number_bomb_private",
+            )
+            for player in result.players
+            if player.state == "current" and player.direct_chatroom_id is not None
+        ]
 
     def _blame_join(self, platform_id: str, received_at) -> str:
         result = self._repository.join_blame_game(platform_id, received_at)

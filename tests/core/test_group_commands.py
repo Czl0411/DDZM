@@ -81,22 +81,28 @@ def test_join_registers_employee_with_zero_balance_and_beijing_timestamp():
 
 
 def test_number_bomb_group_commands_start_join_and_reject_group_reports():
-    service, _, factory = _service()
+    service, repository, factory = _service()
     now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
     for index in range(1, 4):
         _receive(service, f"join-{index}", f"bomb-p{index}", f"/入职 炸弹{index}", now)
+    repository.upsert_direct_chats(
+        [(f"bomb-p{index}", f"direct-bomb-p{index}") for index in range(1, 4)],
+        now,
+    )
 
-    _receive(service, "bad-start", "bomb-p1", "/蹦蹦数字炸弹 2", now)
-    assert _latest_reply(factory) == "请用 /蹦蹦数字炸弹 3-10 创建报名局。"
-    _receive(service, "start", "bomb-p1", "/蹦蹦数字炸弹 3", now)
-    assert "炸弹1 发起了 3 人局，当前 1/3 人" in _latest_reply(factory)
+    _receive(service, "bad-start", "bomb-p1", "/蹦蹦数字炸弹 6", now)
+    assert _latest_reply(factory) == "请直接发送 /蹦蹦数字炸弹 创建报名局。"
+    _receive(service, "start", "bomb-p1", "/蹦蹦数字炸弹", now)
+    assert "炸弹1 发起了报名，当前 1 人" in _latest_reply(factory)
     _receive(service, "add-2", "bomb-p2", "/加入", now)
-    assert "当前 2/3 人" in _latest_reply(factory)
+    assert "当前 2 人" in _latest_reply(factory)
     _receive(service, "add-3", "bomb-p3", "/加入", now)
+    assert "当前 3 人" in _latest_reply(factory)
+    _receive(service, "manual-start", "bomb-p2", "/开始", now)
     started = _latest_reply(factory)
     assert "第 1 轮 - 真心话" in started
     assert "参与者：炸弹1、炸弹2、炸弹3" in started
-    assert "私聊总监事发送 /报数 1-100" in started
+    assert started.count("请按这个格式报数给我 /报数 数字") == 3
 
     _receive(service, "group-report", "bomb-p1", "/报数 29", now)
     assert _latest_reply(factory) == "请私聊总监事发送 /报数 1-100，群内报数不会生效。"
@@ -106,7 +112,8 @@ def test_current_game_reports_number_bomb_and_next_commands():
     service, repository, factory = _service()
     now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
     repository.create_user("current-p1", "甲", now, 20)
-    repository.start_number_bomb_game("current-p1", 3, now)
+    repository.upsert_direct_chats([("current-p1", "direct-current-p1")], now)
+    repository.start_number_bomb_game("current-p1", now)
 
     _receive(service, "current-game", "current-p1", "/当前游戏", now)
 

@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from dzmm_bot.core.schema import (
     AIActivityEventRecord,
     BEIJING,
+    DirectChatRecord,
     NumberBombGameRecord,
     NumberBombRoundPlayerRecord,
     NumberBombRoundRecord,
@@ -139,12 +140,13 @@ def test_number_bomb_authoritative_context_has_public_rules_without_private_valu
     )
 
     assert context.topics == ("number_bomb",)
-    assert "3–10 人" in context.live_facts_text
+    assert "至少 3 人，无人数上限" in context.live_facts_text
     assert "1–100" in context.live_facts_text
-    assert "10 分钟" in context.live_facts_text
+    assert "15 秒" in context.live_facts_text
     assert "真心话、真心话、大冒险" in context.live_facts_text
     assert "当前状态：无对局" in context.live_facts_text
-    assert "/蹦蹦数字炸弹 人数" in context.commands_text
+    assert "/蹦蹦数字炸弹：" in context.commands_text
+    assert "/开始" in context.commands_text
     assert "/报数 1-100（仅私聊）" in context.commands_text
     assert "私聊" in context.live_facts_text
     assert "chatroom" not in context.live_facts_text
@@ -304,6 +306,16 @@ def test_number_bomb_schema_contains_provenance_state_and_idempotency_constraint
     assert "skipped_at" in round_players.c
 
 
+def _prepare_number_bomb_players(repository, now, prefix, count, balance=0):
+    platform_ids = [f"{prefix}-p{index}" for index in range(1, count + 1)]
+    for index, platform_id in enumerate(platform_ids, 1):
+        repository.create_user(platform_id, f"玩家{index}", now, balance)
+    repository.upsert_direct_chats(
+        [(platform_id, f"direct-{platform_id}") for platform_id in platform_ids], now
+    )
+    return platform_ids
+
+
 def test_number_bomb_settings_validate_timeout_range(repository):
     assert repository.get_number_bomb_settings().inactivity_timeout_minutes == 10
     assert repository.set_number_bomb_settings(1).inactivity_timeout_minutes == 1
@@ -316,7 +328,8 @@ def test_number_bomb_settings_validate_timeout_range(repository):
 
 def test_active_gameplay_summary_identifies_number_bomb_participant(repository, now):
     repository.create_user("summary-p1", "甲", now, 20)
-    repository.start_number_bomb_game("summary-p1", 3, now)
+    repository.upsert_direct_chats([("summary-p1", "direct-summary-p1")], now)
+    repository.start_number_bomb_game("summary-p1", now)
 
     summary = repository.active_gameplay_summary("summary-p1", now)
 
@@ -327,21 +340,23 @@ def test_active_gameplay_summary_identifies_number_bomb_participant(repository, 
     assert summary.available_commands == ("/退出", "/开始", "/结束游戏")
 
 
-def test_number_bomb_signup_autostarts_first_truth_round_without_balance_changes(
+def test_number_bomb_signup_requires_manual_start_and_has_no_player_cap(
     repository, now
 ):
-    for index in range(1, 4):
-        repository.create_user(f"number-p{index}", f"玩家{index}", now, 20)
+    platform_ids = _prepare_number_bomb_players(
+        repository, now, "number", 12, balance=20
+    )
 
-    assert repository.start_number_bomb_game("missing", 3, now).status == "not_joined"
-    assert repository.start_number_bomb_game("number-p1", 2, now).status == "invalid_player_count"
-    created = repository.start_number_bomb_game("number-p1", 3, now)
+    assert repository.start_number_bomb_game("missing", now).status == "not_joined"
+    created = repository.start_number_bomb_game(platform_ids[0], now)
     assert created.status == "signup_started"
-    assert repository.start_number_bomb_game("number-p1", 3, now).status == "already_active"
-    assert repository.join_number_bomb_game("number-p1", now).status == "already_joined"
-    assert repository.join_number_bomb_game("number-p2", now).status == "joined"
+    assert repository.start_number_bomb_game(platform_ids[0], now).status == "already_active"
+    assert repository.join_number_bomb_game(platform_ids[0], now).status == "already_joined"
+    for platform_id in platform_ids[1:]:
+        assert repository.join_number_bomb_game(platform_id, now).status == "joined"
+    assert repository.number_bomb_game_summary().state == "signup"
 
-    started = repository.join_number_bomb_game("number-p3", now)
+    started = repository.start_number_bomb_round(platform_ids[1], now)
 
     assert (started.status, started.round_number, started.punishment_type) == (
         "started", 1, "truth",
@@ -351,7 +366,7 @@ def test_number_bomb_signup_autostarts_first_truth_round_without_balance_changes
         "collecting", 1, 1,
     )
     assert [player.platform_id for player in summary.players] == [
-        "number-p1", "number-p2", "number-p3",
+        *platform_ids,
     ]
     with repository._session() as session:
         balances = list(session.scalars(
@@ -360,13 +375,45 @@ def test_number_bomb_signup_autostarts_first_truth_round_without_balance_changes
             .order_by(UserRecord.platform_id)
         ))
         snapshots = list(session.scalars(select(NumberBombRoundPlayerRecord)))
-    assert balances == [20, 20, 20]
-    assert [snapshot.display_order for snapshot in snapshots] == [1, 2, 3]
+    assert balances == [20] * 12
+    assert [snapshot.display_order for snapshot in snapshots] == list(range(1, 13))
+
+
+def test_number_bomb_requires_direct_chat_for_creation_join_and_start(repository, now):
+    repository.create_user("missing-direct", "无私聊", now, 20)
+    assert repository.start_number_bomb_game("missing-direct", now).status == (
+        "direct_chat_required"
+    )
+
+    platform_ids = _prepare_number_bomb_players(repository, now, "mapped", 3)
+    repository.start_number_bomb_game(platform_ids[0], now)
+    repository.join_number_bomb_game(platform_ids[1], now)
+    repository.join_number_bomb_game(platform_ids[2], now)
+    repository.create_user("late-missing", "后加入", now, 0)
+    assert repository.join_number_bomb_game("late-missing", now).status == (
+        "direct_chat_required"
+    )
+    with repository.transaction():
+        with repository._session() as session:
+            direct = session.scalar(
+                select(DirectChatRecord).where(
+                    DirectChatRecord.platform_user_id == platform_ids[2]
+                )
+            )
+            session.delete(direct)
+
+    result = repository.start_number_bomb_round(platform_ids[0], now)
+
+    assert result.status == "missing_direct_chats"
+    assert [player.platform_id for player in result.players if player.direct_chatroom_id is None] == [
+        platform_ids[2]
+    ]
 
 
 def test_number_bomb_signup_leave_and_last_member_release(repository, now):
     repository.create_user("number-alone", "独行玩家", now, 7)
-    repository.start_number_bomb_game("number-alone", 3, now)
+    repository.upsert_direct_chats([("number-alone", "direct-number-alone")], now)
+    repository.start_number_bomb_game("number-alone", now)
 
     left = repository.leave_number_bomb_game("number-alone", now + timedelta(seconds=1))
 
@@ -382,11 +429,11 @@ def test_number_bomb_signup_leave_and_last_member_release(repository, now):
 
 
 def test_number_bomb_next_round_roster_applies_exit_then_fifo_join(repository, now):
-    for index in range(1, 6):
-        repository.create_user(f"roster-p{index}", f"候选{index}", now, 5)
-    repository.start_number_bomb_game("roster-p1", 3, now)
+    _prepare_number_bomb_players(repository, now, "roster", 5, balance=5)
+    repository.start_number_bomb_game("roster-p1", now)
     repository.join_number_bomb_game("roster-p2", now)
     repository.join_number_bomb_game("roster-p3", now)
+    repository.start_number_bomb_round("roster-p1", now)
 
     queued_at = now + timedelta(seconds=1)
     assert repository.join_number_bomb_game("roster-p4", queued_at).status == "queued"
@@ -417,11 +464,11 @@ def test_number_bomb_next_round_roster_applies_exit_then_fifo_join(repository, n
 
 def test_number_bomb_submit_is_private_participant_only_and_immutable(repository, now):
     assert repository.submit_number_bomb("nobody", 20, now).status == "no_game"
-    for index in range(1, 5):
-        repository.create_user(f"submit-p{index}", f"报数{index}", now, 0)
-    repository.start_number_bomb_game("submit-p1", 3, now)
+    _prepare_number_bomb_players(repository, now, "submit", 4)
+    repository.start_number_bomb_game("submit-p1", now)
     repository.join_number_bomb_game("submit-p2", now)
     repository.join_number_bomb_game("submit-p3", now)
+    repository.start_number_bomb_round("submit-p1", now)
     repository.join_number_bomb_game("submit-p4", now)
 
     assert repository.submit_number_bomb("submit-p1", 0, now).status == "invalid_number"
@@ -437,11 +484,11 @@ def test_number_bomb_submit_is_private_participant_only_and_immutable(repository
 def test_number_bomb_valid_settlement_persists_exact_results_and_activity_facts(
     repository, now
 ):
-    for index in range(1, 4):
-        repository.create_user(f"settle-p{index}", f"结算{index}", now, 0)
-    repository.start_number_bomb_game("settle-p1", 3, now)
+    _prepare_number_bomb_players(repository, now, "settle", 3)
+    repository.start_number_bomb_game("settle-p1", now)
     repository.join_number_bomb_game("settle-p2", now)
     repository.join_number_bomb_game("settle-p3", now)
+    repository.start_number_bomb_round("settle-p1", now)
     repository.submit_number_bomb("settle-p1", 10, now)
     repository.submit_number_bomb("settle-p2", 50, now)
 
@@ -452,9 +499,9 @@ def test_number_bomb_valid_settlement_persists_exact_results_and_activity_facts(
         1,
         "truth",
         calculate_number_bomb((
-            NumberBombEntry("settle-p1", "结算1", 10, 1),
-            NumberBombEntry("settle-p2", "结算2", 50, 2),
-            NumberBombEntry("settle-p3", "结算3", 90, 3),
+            NumberBombEntry("settle-p1", "玩家1", 10, 1),
+            NumberBombEntry("settle-p2", "玩家2", 50, 2),
+            NumberBombEntry("settle-p3", "玩家3", 90, 3),
         )),
     )
     assert repository.number_bomb_game_summary().state == "waiting_continue"
@@ -479,11 +526,11 @@ def test_number_bomb_valid_settlement_persists_exact_results_and_activity_facts(
 def test_number_bomb_invalid_round_restarts_same_round_and_keeps_roster_queue(
     repository, now
 ):
-    for index in range(1, 5):
-        repository.create_user(f"invalid-p{index}", f"无效{index}", now, 0)
-    repository.start_number_bomb_game("invalid-p1", 3, now)
+    _prepare_number_bomb_players(repository, now, "invalid", 4)
+    repository.start_number_bomb_game("invalid-p1", now)
     repository.join_number_bomb_game("invalid-p2", now)
     repository.join_number_bomb_game("invalid-p3", now)
+    repository.start_number_bomb_round("invalid-p1", now)
     repository.join_number_bomb_game("invalid-p4", now + timedelta(seconds=1))
     repository.submit_number_bomb("invalid-p1", 10, now)
     repository.submit_number_bomb("invalid-p2", 10, now)
@@ -520,16 +567,16 @@ def test_number_bomb_timeout_releases_every_active_state_once(
 ):
     from dzmm_bot.core.repository import CoreRepository
 
-    for index in range(1, 4):
-        repository.create_user(f"timeout-{state}-{index}", f"超时{index}", now, 0)
-    repository.start_number_bomb_game(f"timeout-{state}-1", 3, now)
+    platform_ids = _prepare_number_bomb_players(repository, now, f"timeout-{state}", 3)
+    repository.start_number_bomb_game(platform_ids[0], now)
     if state != "signup":
-        repository.join_number_bomb_game(f"timeout-{state}-2", now)
-        repository.join_number_bomb_game(f"timeout-{state}-3", now)
+        repository.join_number_bomb_game(platform_ids[1], now)
+        repository.join_number_bomb_game(platform_ids[2], now)
+        repository.start_number_bomb_round(platform_ids[0], now)
     if state == "waiting_continue":
-        repository.submit_number_bomb(f"timeout-{state}-1", 10, now)
-        repository.submit_number_bomb(f"timeout-{state}-2", 50, now)
-        repository.submit_number_bomb(f"timeout-{state}-3", 90, now)
+        repository.submit_number_bomb(platform_ids[0], 10, now)
+        repository.submit_number_bomb(platform_ids[1], 50, now)
+        repository.submit_number_bomb(platform_ids[2], 90, now)
 
     due = now + timedelta(minutes=10)
     first = repository.run_number_bomb_jobs(due)
@@ -550,7 +597,8 @@ def test_number_bomb_timeout_releases_every_active_state_once(
 
 def test_number_bomb_latest_timeout_setting_is_immediately_effective(repository, now):
     repository.create_user("timeout-setting", "设置超时", now, 0)
-    repository.start_number_bomb_game("timeout-setting", 3, now)
+    repository.upsert_direct_chats([("timeout-setting", "direct-timeout-setting")], now)
+    repository.start_number_bomb_game("timeout-setting", now)
     repository.set_number_bomb_settings(1)
 
     assert repository.run_number_bomb_jobs(now + timedelta(minutes=1))
@@ -560,7 +608,8 @@ def test_number_bomb_timeout_job_uses_the_editable_reply_template(repository, no
     from dzmm_bot.core.schema import OutboundRecord
 
     repository.create_user("timeout-template", "超时模板", now, 0)
-    repository.start_number_bomb_game("timeout-template", 3, now)
+    repository.upsert_direct_chats([("timeout-template", "direct-timeout-template")], now)
+    repository.start_number_bomb_game("timeout-template", now)
     repository.set_number_bomb_settings(1)
     repository.set_reply_template(
         "/蹦蹦数字炸弹",

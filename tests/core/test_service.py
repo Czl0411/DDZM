@@ -120,9 +120,14 @@ def test_direct_number_bomb_reports_are_isolated_and_destination_aware(session_f
     now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
     for index in range(1, 4):
         repository.create_user(f"direct-p{index}", f"私聊{index}", now, 0)
-    repository.start_number_bomb_game("direct-p1", 3, now)
+    repository.upsert_direct_chats(
+        [(f"direct-p{index}", f"direct-room-{index}") for index in range(1, 4)],
+        now,
+    )
+    repository.start_number_bomb_game("direct-p1", now)
     repository.join_number_bomb_game("direct-p2", now)
     repository.join_number_bomb_game("direct-p3", now)
+    repository.start_number_bomb_round("direct-p1", now)
     service = CoreService(repository, GroupCommandHandler(repository))
 
     for index, number in ((1, 10), (2, 50), (3, 90)):

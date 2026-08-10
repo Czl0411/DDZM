@@ -158,7 +158,7 @@ _DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE = "当前有随机事件发生，监事不
 _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
     {
         "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏",
-        "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降",
+        "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降",
         "/部门", "/加入部门", "/切换部门", "/部门申请列表",
         "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门",
         "/职位", "/晋升", "/晋升申请列表",
@@ -430,6 +430,9 @@ class BlameGameResult:
 @dataclass(frozen=True)
 class NumberBombSettings:
     inactivity_timeout_minutes: int
+    enabled: bool
+    signup_timeout_minutes: int
+    reminder_interval_seconds: int
 
 
 @dataclass(frozen=True)
@@ -438,6 +441,7 @@ class NumberBombPlayer:
     display_name: str
     roster_order: int
     state: str
+    direct_chatroom_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -852,6 +856,7 @@ _COMMAND_DEFINITIONS = (
     ("/当前游戏", "/当前游戏", "查看自己当前参与的游戏和下一步指令"),
     ("/加入", "/加入；/加入 身份", "加入当前可报名玩法"),
     ("/退出", "/退出", "退出当前随机事件并结算奖励"),
+    ("/开始", "/开始", "开始当前已报名的游戏"),
     ("/摸鱼躲猫猫", "/开始摸鱼躲藏；/躲 编号", "发起单人躲猫猫小游戏"),
     ("/记忆考核", "/记忆考核；/记忆考核 对战；/答案 内容", "发起或参与记忆考核"),
     ("/继续", "/继续", "继续当前单人记忆考核"),
@@ -880,7 +885,7 @@ _COMMAND_DEFINITIONS = (
     ("/甩锅游戏", "/甩锅游戏 人数", "创建 2 至 10 人甩锅炸弹报名局"),
     ("/甩锅", "/甩锅 玩家编号 甩锅理由", "按玩家编号和理由转移甩锅炸弹"),
     ("/退出甩锅", "/退出甩锅", "退出当前甩锅游戏"),
-    ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹 人数", "创建3至10人蹦蹦数字炸弹报名局"),
+    ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹", "创建蹦蹦数字炸弹报名局，至少3人后发送 /开始"),
     ("/报数", "/报数 1-100（仅私聊）", "提交蹦蹦数字炸弹本轮整数"),
 )
 
@@ -1697,8 +1702,9 @@ class CoreRepository:
             settings = self.get_number_bomb_settings()
             summary = self.number_bomb_game_summary()
             lines.append(
-                "蹦蹦数字炸弹：3–10 人；每轮每人私聊发送 /报数 1–100；"
-                f"无有效操作 {settings.inactivity_timeout_minutes} 分钟后释放；"
+                "蹦蹦数字炸弹：至少 3 人，无人数上限；报名后由任一参与者发送 /开始；"
+                "每轮每人私聊发送 /报数 1–100；"
+                f"每 {settings.reminder_interval_seconds} 秒通报尚未报数玩家；"
                 "惩罚循环为真心话、真心话、大冒险；"
                 f"当前状态：{summary.state or '无对局'}"
             )
@@ -2837,10 +2843,18 @@ class CoreRepository:
                     inactivity_timeout_minutes=(
                         _DEFAULT_NUMBER_BOMB_INACTIVITY_TIMEOUT_MINUTES
                     ),
+                    enabled=True,
+                    signup_timeout_minutes=2,
+                    reminder_interval_seconds=15,
                 )
                 session.add(record)
                 session.flush()
-            return NumberBombSettings(record.inactivity_timeout_minutes)
+            return NumberBombSettings(
+                record.inactivity_timeout_minutes,
+                record.enabled,
+                record.signup_timeout_minutes,
+                record.reminder_interval_seconds,
+            )
 
     def set_number_bomb_settings(
         self, inactivity_timeout_minutes: int
@@ -2857,7 +2871,12 @@ class CoreRepository:
                 raise RuntimeError("蹦蹦数字炸弹设置消失")
             record.inactivity_timeout_minutes = inactivity_timeout_minutes
             session.flush()
-            return NumberBombSettings(record.inactivity_timeout_minutes)
+            return NumberBombSettings(
+                record.inactivity_timeout_minutes,
+                record.enabled,
+                record.signup_timeout_minutes,
+                record.reminder_interval_seconds,
+            )
 
     def number_bomb_game_summary(self) -> NumberBombGameSummary:
         with self._session() as session:
@@ -3105,11 +3124,10 @@ class CoreRepository:
             return active[0]
 
     def start_number_bomb_game(
-        self, platform_id: str, target_player_count: int, now: datetime
+        self, platform_id: str, now: datetime
     ) -> NumberBombGameResult:
         now = now.astimezone(BEIJING)
-        if target_player_count not in range(3, 11):
-            return NumberBombGameResult("invalid_player_count")
+        settings = self.get_number_bomb_settings()
         with self.transaction():
             with self._session() as session:
                 self._lock_gameplay_gate(session)
@@ -3122,15 +3140,22 @@ class CoreRepository:
                 )
                 if user is None:
                     return NumberBombGameResult("not_joined")
+                if not settings.enabled:
+                    return NumberBombGameResult("disabled")
+                if not self._has_direct_chat(session, platform_id):
+                    return NumberBombGameResult("direct_chat_required")
                 if self._active_random_event(session) is not None or self._has_active_game(session):
                     return NumberBombGameResult("multiplayer_active")
                 game = NumberBombGameRecord(
                     active_key="global",
                     state="signup",
-                    target_player_count=target_player_count,
+                    target_player_count=0,
                     round_number=0,
                     attempt_number=0,
                     last_activity_at=now,
+                    signup_deadline=now
+                    + timedelta(minutes=settings.signup_timeout_minutes),
+                    skip_enabled=False,
                     created_at=now,
                 )
                 session.add(game)
@@ -3149,7 +3174,7 @@ class CoreRepository:
                     "signup_started",
                     game_id=game.id,
                     player_count=1,
-                    target_player_count=target_player_count,
+                    target_player_count=0,
                     players=self._number_bomb_players(session, game.id),
                 )
 
@@ -3169,6 +3194,10 @@ class CoreRepository:
                 )
                 if user is None:
                     return NumberBombGameResult("not_joined", game_id=game.id)
+                if not self._has_direct_chat(session, platform_id):
+                    return NumberBombGameResult(
+                        "direct_chat_required", game_id=game.id
+                    )
                 member = session.scalar(
                     select(NumberBombMemberRecord)
                     .where(
@@ -3205,27 +3234,14 @@ class CoreRepository:
                     current_count = self._number_bomb_member_count(
                         session, game.id, ("current",)
                     )
-                    if current_count < game.target_player_count:
-                        return NumberBombGameResult(
-                            "joined",
-                            game_id=game.id,
-                            player_count=current_count,
-                            target_player_count=game.target_player_count,
-                        )
-                    return self._start_number_bomb_round(session, game, 1, 1, now)
+                    return NumberBombGameResult(
+                        "joined",
+                        game_id=game.id,
+                        player_count=current_count,
+                        target_player_count=0,
+                    )
                 if game.state not in {"collecting", "waiting_continue"}:
                     return NumberBombGameResult("no_game")
-                current_count = self._number_bomb_member_count(
-                    session, game.id, ("current", "pending_exit")
-                )
-                pending_exit_count = self._number_bomb_member_count(
-                    session, game.id, ("pending_exit",)
-                )
-                pending_join_count = self._number_bomb_member_count(
-                    session, game.id, ("pending_join",)
-                )
-                if current_count - pending_exit_count + pending_join_count >= 10:
-                    return NumberBombGameResult("next_round_full", game_id=game.id)
                 if member is None:
                     session.add(
                         NumberBombMemberRecord(
@@ -3242,6 +3258,64 @@ class CoreRepository:
                     member.queued_at = now
                 game.last_activity_at = now
                 return NumberBombGameResult("queued", game_id=game.id)
+
+    def start_number_bomb_round(
+        self, platform_id: str, now: datetime
+    ) -> NumberBombGameResult:
+        now = now.astimezone(BEIJING)
+        settings = self.get_number_bomb_settings()
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_number_bomb_game(session)
+                if game is None or game.state != "signup":
+                    return NumberBombGameResult("cannot_start")
+                actor = session.scalar(
+                    select(NumberBombMemberRecord)
+                    .join(UserRecord, UserRecord.id == NumberBombMemberRecord.user_id)
+                    .where(
+                        NumberBombMemberRecord.game_id == game.id,
+                        NumberBombMemberRecord.state == "current",
+                        UserRecord.platform_id == platform_id,
+                    )
+                    .with_for_update()
+                )
+                if actor is None:
+                    return NumberBombGameResult("cannot_start", game_id=game.id)
+                members = list(
+                    session.execute(
+                        select(NumberBombMemberRecord, UserRecord, DirectChatRecord)
+                        .join(UserRecord, UserRecord.id == NumberBombMemberRecord.user_id)
+                        .outerjoin(
+                            DirectChatRecord,
+                            DirectChatRecord.platform_user_id == UserRecord.platform_id,
+                        )
+                        .where(
+                            NumberBombMemberRecord.game_id == game.id,
+                            NumberBombMemberRecord.state == "current",
+                        )
+                        .order_by(NumberBombMemberRecord.roster_order)
+                        .with_for_update()
+                    )
+                )
+                if len(members) < 3:
+                    return NumberBombGameResult(
+                        "insufficient_players",
+                        game_id=game.id,
+                        player_count=len(members),
+                    )
+                if any(direct is None for _, _, direct in members):
+                    return NumberBombGameResult(
+                        "missing_direct_chats",
+                        game_id=game.id,
+                        player_count=len(members),
+                        players=self._number_bomb_players(session, game.id),
+                    )
+                game.signup_deadline = None
+                game.next_reminder_at = now + timedelta(
+                    seconds=settings.reminder_interval_seconds
+                )
+                game.skip_enabled = False
+                return self._start_number_bomb_round(session, game, 1, 1, now)
 
     def leave_number_bomb_game(
         self, platform_id: str, now: datetime
@@ -3414,6 +3488,7 @@ class CoreRepository:
                         punishment_type=round_record.punishment_type,
                         submitted_count=submitted_count,
                         public_message=public_message,
+                        players=self._number_bomb_players(session, game.id),
                     )
 
                 round_record.state = "settled"
@@ -3550,10 +3625,17 @@ class CoreRepository:
                 display_name=user.display_name,
                 roster_order=member.roster_order,
                 state=member.state,
+                direct_chatroom_id=(
+                    None if direct is None else direct.chatroom_id
+                ),
             )
-            for member, user in session.execute(
-                select(NumberBombMemberRecord, UserRecord)
+            for member, user, direct in session.execute(
+                select(NumberBombMemberRecord, UserRecord, DirectChatRecord)
                 .join(UserRecord, UserRecord.id == NumberBombMemberRecord.user_id)
+                .outerjoin(
+                    DirectChatRecord,
+                    DirectChatRecord.platform_user_id == UserRecord.platform_id,
+                )
                 .where(
                     NumberBombMemberRecord.game_id == game_id,
                     NumberBombMemberRecord.state != "left",
@@ -3607,6 +3689,11 @@ class CoreRepository:
         game.round_number = round_number
         game.attempt_number = attempt_number
         game.last_activity_at = now
+        game.signup_deadline = None
+        game.next_reminder_at = now + timedelta(
+            seconds=self.get_number_bomb_settings().reminder_interval_seconds
+        )
+        game.skip_enabled = False
         if game.started_at is None:
             game.started_at = now
         session.flush()

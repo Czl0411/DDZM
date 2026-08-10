@@ -463,6 +463,48 @@ def test_number_bomb_invalid_round_restarts_same_round_and_keeps_roster_queue(
     assert event_count == 0
 
 
+@pytest.mark.parametrize("state", ["signup", "collecting", "waiting_continue"])
+def test_number_bomb_timeout_releases_every_active_state_once(
+    repository, session_factory, now, state
+):
+    from dzmm_bot.core.repository import CoreRepository
+
+    for index in range(1, 4):
+        repository.create_user(f"timeout-{state}-{index}", f"超时{index}", now, 0)
+    repository.start_number_bomb_game(f"timeout-{state}-1", 3, now)
+    if state != "signup":
+        repository.join_number_bomb_game(f"timeout-{state}-2", now)
+        repository.join_number_bomb_game(f"timeout-{state}-3", now)
+    if state == "waiting_continue":
+        repository.submit_number_bomb(f"timeout-{state}-1", 10, now)
+        repository.submit_number_bomb(f"timeout-{state}-2", 50, now)
+        repository.submit_number_bomb(f"timeout-{state}-3", 90, now)
+
+    due = now + timedelta(minutes=10)
+    first = repository.run_number_bomb_jobs(due)
+    second = CoreRepository(session_factory).run_number_bomb_jobs(due)
+
+    assert first == ["蹦蹦数字炸弹长时间无人操作，本场已自动结束。"]
+    assert second == []
+    assert repository.number_bomb_game_summary().state is None
+    with repository._session() as session:
+        game = session.scalar(select(NumberBombGameRecord))
+        open_round = session.scalar(select(NumberBombRoundRecord).where(
+            NumberBombRoundRecord.game_id == game.id,
+            NumberBombRoundRecord.state == "collecting",
+        ))
+    assert game.finish_reason == "idle_timeout"
+    assert open_round is None
+
+
+def test_number_bomb_latest_timeout_setting_is_immediately_effective(repository, now):
+    repository.create_user("timeout-setting", "设置超时", now, 0)
+    repository.start_number_bomb_game("timeout-setting", 3, now)
+    repository.set_number_bomb_settings(1)
+
+    assert repository.run_number_bomb_jobs(now + timedelta(minutes=1))
+
+
 def test_stable_impression_schema_separates_legacy_candidates_and_facts():
     from dzmm_bot.core.schema import (
         AIActivityEventRecord,

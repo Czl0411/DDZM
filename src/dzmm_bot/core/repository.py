@@ -3391,6 +3391,24 @@ class CoreRepository:
             round_number=game.round_number or None,
         )
 
+    def run_number_bomb_jobs(self, now: datetime) -> list[str]:
+        now = now.astimezone(BEIJING)
+        settings = self.get_number_bomb_settings()
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_number_bomb_game(session)
+                if game is None:
+                    return []
+                deadline = game.last_activity_at + timedelta(
+                    minutes=settings.inactivity_timeout_minutes
+                )
+                if now < deadline:
+                    return []
+                self._finish_number_bomb_game(
+                    session, game, "idle_timeout", now
+                )
+                return ["蹦蹦数字炸弹长时间无人操作，本场已自动结束。"]
+
     def start_undercover_signup(
         self, platform_id: str, player_count: int, now: datetime
     ) -> UndercoverGameResult:
@@ -3411,6 +3429,8 @@ class CoreRepository:
                 if self._active_random_event(session) is not None or self._active_memory_duel(session):
                     return UndercoverGameResult("multiplayer_active")
                 if self._active_blame_game(session) is not None:
+                    return UndercoverGameResult("multiplayer_active")
+                if self._active_number_bomb_game(session) is not None:
                     return UndercoverGameResult("multiplayer_active")
                 if self._active_undercover_session(session) is not None:
                     return UndercoverGameResult("already_active")
@@ -3926,6 +3946,11 @@ class CoreRepository:
             or session.scalar(
                 select(exists().where(BlameGameRecord.active_key == "global"))
             )
+            or session.scalar(
+                select(
+                    exists().where(NumberBombGameRecord.active_key == "global")
+                )
+            )
         )
 
     def _lock_gameplay_gate(self, session: Session) -> None:
@@ -4324,6 +4349,10 @@ class CoreRepository:
                     return MemoryAssessmentGameResult(
                         "random_event_active", display_name=user.display_name
                     )
+                if self._active_number_bomb_game(session) is not None:
+                    return MemoryAssessmentGameResult(
+                        "already_active", display_name=user.display_name
+                    )
                 self._expire_previous_day_memory_assessment_single(session, now)
                 active = session.scalar(
                     select(MemoryAssessmentGameRecord)
@@ -4451,6 +4480,10 @@ class CoreRepository:
                         "multiplayer_active", display_name=user.display_name
                     )
                 if self._active_blame_game(session) is not None:
+                    return MemoryAssessmentGameResult(
+                        "multiplayer_active", display_name=user.display_name
+                    )
+                if self._active_number_bomb_game(session) is not None:
                     return MemoryAssessmentGameResult(
                         "multiplayer_active", display_name=user.display_name
                     )
@@ -5297,6 +5330,7 @@ class CoreRepository:
                     self._active_random_event(session) is not None
                     or self._active_memory_duel(session)
                     or self._active_undercover_session(session) is not None
+                    or self._active_number_bomb_game(session) is not None
                 ):
                     return BlameGameResult("multiplayer_active")
                 if session.scalar(
@@ -6104,6 +6138,10 @@ class CoreRepository:
                 if self._active_random_event(session) is not None:
                     return HideAndSeekGameResult(
                         "random_event_active", display_name=user.display_name
+                    )
+                if self._active_number_bomb_game(session) is not None:
+                    return HideAndSeekGameResult(
+                        "already_active", display_name=user.display_name
                     )
                 active = session.scalar(
                     select(HideAndSeekGameRecord)
@@ -7385,6 +7423,8 @@ class CoreRepository:
             self._enqueue_due_income_reports(now)
             self.run_undercover_jobs(now)
             self.run_blame_game_jobs(now)
+            for message in self.run_number_bomb_jobs(now):
+                self.enqueue_system_outbound(message)
             self.run_random_event_jobs(now)
         if should_backfill:
             self._current_day_history_backfilled = now.date()

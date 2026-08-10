@@ -14,11 +14,17 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
 from dzmm_bot.core.schema import (
+    AIActivityEventRecord,
     BEIJING,
     NumberBombGameRecord,
     NumberBombRoundPlayerRecord,
     NumberBombRoundRecord,
     UserRecord,
+)
+from dzmm_bot.core.number_bomb import (
+    NumberBombEntry,
+    calculate_number_bomb,
+    render_number_bomb_result,
 )
 from dzmm_bot.runtime.contracts import InboundMessage, LoginState, WorkerHeartbeat
 
@@ -356,6 +362,105 @@ def test_number_bomb_next_round_roster_applies_exit_then_fifo_join(repository, n
         "roster-p4", queued_at + timedelta(seconds=4)
     ).status == "ended"
     assert repository.number_bomb_game_summary().state is None
+
+
+def test_number_bomb_submit_is_private_participant_only_and_immutable(repository, now):
+    assert repository.submit_number_bomb("nobody", 20, now).status == "no_game"
+    for index in range(1, 5):
+        repository.create_user(f"submit-p{index}", f"报数{index}", now, 0)
+    repository.start_number_bomb_game("submit-p1", 3, now)
+    repository.join_number_bomb_game("submit-p2", now)
+    repository.join_number_bomb_game("submit-p3", now)
+    repository.join_number_bomb_game("submit-p4", now)
+
+    assert repository.submit_number_bomb("submit-p1", 0, now).status == "invalid_number"
+    assert repository.submit_number_bomb("submit-p1", 101, now).status == "invalid_number"
+    assert repository.submit_number_bomb("submit-p4", 20, now).status == "not_participant"
+    first = repository.submit_number_bomb("submit-p1", 1, now + timedelta(seconds=1))
+    assert (first.status, first.submitted_count, first.player_count) == ("submitted", 1, 3)
+    unchanged_at = repository.number_bomb_game_summary().last_activity_at
+    assert repository.submit_number_bomb("submit-p1", 100, now + timedelta(seconds=2)).status == "already_submitted"
+    assert repository.number_bomb_game_summary().last_activity_at == unchanged_at
+
+
+def test_number_bomb_valid_settlement_persists_exact_results_and_activity_facts(
+    repository, now
+):
+    for index in range(1, 4):
+        repository.create_user(f"settle-p{index}", f"结算{index}", now, 0)
+    repository.start_number_bomb_game("settle-p1", 3, now)
+    repository.join_number_bomb_game("settle-p2", now)
+    repository.join_number_bomb_game("settle-p3", now)
+    repository.submit_number_bomb("settle-p1", 10, now)
+    repository.submit_number_bomb("settle-p2", 50, now)
+
+    result = repository.submit_number_bomb("settle-p3", 90, now)
+
+    assert result.status == "settled"
+    assert result.public_message == render_number_bomb_result(
+        1,
+        "truth",
+        calculate_number_bomb((
+            NumberBombEntry("settle-p1", "结算1", 10, 1),
+            NumberBombEntry("settle-p2", "结算2", 50, 2),
+            NumberBombEntry("settle-p3", "结算3", 90, 3),
+        )),
+    )
+    assert repository.number_bomb_game_summary().state == "waiting_continue"
+    with repository._session() as session:
+        round_record = session.scalar(select(NumberBombRoundRecord))
+        rows = list(session.execute(
+            select(NumberBombRoundPlayerRecord, UserRecord)
+            .join(UserRecord, UserRecord.id == NumberBombRoundPlayerRecord.user_id)
+            .order_by(NumberBombRoundPlayerRecord.display_order)
+        ))
+        events = list(session.scalars(
+            select(AIActivityEventRecord).where(
+                AIActivityEventRecord.activity_type == "number_bomb"
+            ).order_by(AIActivityEventRecord.event_key)
+        ))
+    assert (round_record.total, round_record.target_numerator, round_record.target_denominator) == (150, 600, 15)
+    assert [row.result for row, _ in rows] == ["punished", "winner", "neutral"]
+    assert sorted(event.result for event in events) == ["ended", "loss", "win"]
+    assert {event.detail for event in events} == {"truth"}
+
+
+def test_number_bomb_invalid_round_restarts_same_round_and_keeps_roster_queue(
+    repository, now
+):
+    for index in range(1, 5):
+        repository.create_user(f"invalid-p{index}", f"无效{index}", now, 0)
+    repository.start_number_bomb_game("invalid-p1", 3, now)
+    repository.join_number_bomb_game("invalid-p2", now)
+    repository.join_number_bomb_game("invalid-p3", now)
+    repository.join_number_bomb_game("invalid-p4", now + timedelta(seconds=1))
+    repository.submit_number_bomb("invalid-p1", 10, now)
+    repository.submit_number_bomb("invalid-p2", 10, now)
+
+    result = repository.submit_number_bomb("invalid-p3", 50, now)
+
+    assert result.status == "invalid_round"
+    summary = repository.number_bomb_game_summary()
+    assert (summary.state, summary.round_number, summary.attempt_number) == (
+        "collecting", 1, 2,
+    )
+    assert [player.state for player in summary.players] == [
+        "current", "current", "current", "pending_join",
+    ]
+    with repository._session() as session:
+        new_round = session.scalar(
+            select(NumberBombRoundRecord).where(
+                NumberBombRoundRecord.attempt_number == 2
+            )
+        )
+        submissions = list(session.scalars(
+            select(NumberBombRoundPlayerRecord.submitted_number).where(
+                NumberBombRoundPlayerRecord.round_id == new_round.id
+            )
+        ))
+        event_count = session.scalar(select(func.count(AIActivityEventRecord.event_key)))
+    assert submissions == [None, None, None]
+    assert event_count == 0
 
 
 def test_stable_impression_schema_separates_legacy_candidates_and_facts():

@@ -140,6 +140,40 @@ def test_blame_game_schema_contains_state_and_idempotency_constraints():
     } >= {("user_id", "play_date")}
 
 
+def test_stable_impression_schema_separates_legacy_candidates_and_facts():
+    from dzmm_bot.core.schema import (
+        AIActivityEventRecord,
+        AIActivityFactRecord,
+        AIImpressionCandidateRecord,
+        AIPlayerImpressionRecord,
+        AIPlayerMemoryRecord,
+        AIMemoryJobRecord,
+        AIMemorySettingsRecord,
+        Base,
+        InboundRecord,
+    )
+
+    assert {
+        "ai_player_impressions",
+        "ai_impression_candidates",
+        "ai_activity_facts",
+        "ai_activity_events",
+    } <= set(Base.metadata.tables)
+    assert InboundRecord.__table__.c.ai_memory_eligible.default.arg is False
+    assert AIPlayerMemoryRecord.__table__.c.memory_text.name == "memory_text"
+    assert AIPlayerMemoryRecord.__table__.c.pending_message_count.default.arg == 0
+    assert AIMemoryJobRecord.__table__.c.target_message_count.nullable is False
+    assert AIMemoryJobRecord.__table__.c.available_at.nullable is False
+    assert AIMemorySettingsRecord.__table__.c.batch_message_threshold.default.arg == 20
+    assert AIPlayerImpressionRecord.__table__.c.pinned.nullable is False
+    assert AIImpressionCandidateRecord.__table__.c.support_batches.default.arg == 1
+    assert {
+        column.name
+        for column in AIActivityFactRecord.__table__.primary_key.columns
+    } == {"user_id", "activity_type"}
+    assert AIActivityEventRecord.__table__.c.event_key.primary_key is True
+
+
 def test_blame_settings_default_to_approved_duration_ranges(repository):
     settings = repository.get_blame_game_settings()
 

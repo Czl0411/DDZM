@@ -71,6 +71,9 @@ class InboundRecord(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     received_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="accepted", nullable=False)
+    ai_memory_eligible: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
@@ -765,6 +768,15 @@ class AIMemorySettingsRecord(Base):
     extraction_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     history_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
     max_memory_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=1200)
+    batch_message_threshold: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=20
+    )
+    max_entries_per_category: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=3
+    )
+    candidate_expiry_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=30
+    )
 
 
 class AIPlayerMemoryRecord(Base):
@@ -776,6 +788,9 @@ class AIPlayerMemoryRecord(Base):
     memory_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     last_scanned_message_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("inbound_messages.id")
+    )
+    pending_message_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
@@ -794,18 +809,94 @@ class AIMemoryJobRecord(Base):
     target_message_id: Mapped[UUID] = mapped_column(
         ForeignKey("inbound_messages.id"), nullable=False
     )
+    target_message_count: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     lease_worker_id: Mapped[str | None] = mapped_column(String(255))
     lease_token: Mapped[UUID | None] = mapped_column(Uuid)
     lease_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failure_summary: Mapped[str | None] = mapped_column(String(128))
+    available_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
+
+
+class AIPlayerImpressionRecord(Base):
+    __tablename__ = "ai_player_impressions"
+    __table_args__ = (Index("ix_ai_player_impressions_user_category", "user_id", "category"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(String(240), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    contradiction_batches: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    last_supported_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class AIImpressionCandidateRecord(Base):
+    __tablename__ = "ai_impression_candidates"
+    __table_args__ = (
+        UniqueConstraint("user_id", "category", "content", "conflict_entry_id"),
+        Index("ix_ai_impression_candidates_user_category", "user_id", "category"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(String(240), nullable=False)
+    support_batches: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    conflict_entry_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("ai_player_impressions.id")
+    )
+    last_supported_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class AIActivityFactRecord(Base):
+    __tablename__ = "ai_activity_facts"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), primary_key=True
+    )
+    activity_type: Mapped[str] = mapped_column(String(48), primary_key=True)
+    participation_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    win_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    loss_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_result: Mapped[str] = mapped_column(String(32), nullable=False)
+    last_result_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class AIActivityEventRecord(Base):
+    __tablename__ = "ai_activity_events"
+
+    event_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    activity_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    result: Mapped[str] = mapped_column(String(32), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
 class DepartmentRecord(Base):

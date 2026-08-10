@@ -986,7 +986,34 @@ def test_ai_prompt_uses_stable_and_pinned_impressions_but_not_legacy_memory(
     assert claim.system_prompt.index("【实时玩家资料】") < claim.system_prompt.index(
         "【稳定玩家印象】"
     )
-    assert "核心玩法指引" in claim.system_prompt
+    assert "【固定安全边界】" in claim.system_prompt
+
+
+def test_ai_prompt_orders_authority_before_impressions(repository, session_factory, now):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    user, _ = repository.create_user("authority-player", "规则玩家", now, 0)
+    repository.create_ai_knowledge_card(
+        "economy", "金币说明", ["金币", "赚钱"], "金额以实时配置为准。",
+        True, 10, now,
+    )
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    inbound, _ = repository.accept_inbound(
+        InboundMessage("authority-inbound", user.platform_id, "@总监事 我怎么赚金币", now)
+    )
+    assert repository.try_enqueue_ai_request(
+        inbound.id, user.platform_id, inbound.content, now
+    ).state == "queued"
+
+    prompt = repository.claim_ai_request("ai-worker", now, 90).system_prompt
+
+    assert prompt.index("【固定安全边界】") < prompt.index("【实时系统事实】")
+    assert prompt.index("【实时系统事实】") < prompt.index("【规则知识卡】")
+    assert prompt.index("【规则知识卡】") < prompt.index("【稳定玩家印象】")
+    assert "只能解释并引导玩家自行发送准确指令" in prompt
+    assert "不得调用命令处理器、伪造执行成功或承诺已经修改状态" in prompt
 
 
 def _prepare_undercover_players(repository, session_factory, now, count=4):

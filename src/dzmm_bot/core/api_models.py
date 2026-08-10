@@ -321,7 +321,6 @@ class AIAssistantSettingsResponse(ApiModel):
     timeout_seconds: int = Field(ge=1, le=60)
     quotas: list[AIRankQuotaResponse]
     memory_enabled: bool
-    gameplay_guide: str
     extraction_prompt: str
     history_limit: int = Field(ge=1, le=500)
     max_memory_chars: int = Field(ge=1, le=8000)
@@ -340,7 +339,6 @@ class SetAIAssistantSettingsRequest(ApiModel):
     timeout_seconds: int = Field(ge=1, le=60)
     quotas: list[SetAIRankQuotaRequest] = Field(min_length=1, max_length=100)
     memory_enabled: bool
-    gameplay_guide: str = Field(min_length=1, max_length=99999)
     extraction_prompt: str = Field(min_length=1, max_length=99999)
     history_limit: int = Field(ge=1, le=500)
     max_memory_chars: int = Field(ge=1, le=8000)

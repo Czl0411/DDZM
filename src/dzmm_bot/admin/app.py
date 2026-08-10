@@ -59,10 +59,6 @@ def _with_default_ai_memory_settings(settings: dict) -> dict:
     return {
         **settings,
         "memory_enabled": settings.get("memory_enabled", True),
-        "gameplay_guide": settings.get(
-            "gameplay_guide",
-            "玩法、经济和游戏裁定以机器人指令为准；需要操作时引导玩家使用 /帮助 分类。",
-        ),
         "extraction_prompt": settings.get(
             "extraction_prompt",
             "仅整理玩家稳定的称呼偏好、回复风格、长期兴趣和互动禁忌。",
@@ -630,7 +626,6 @@ def create_app(
             "timeout_seconds",
             "quotas",
             "memory_enabled",
-            "gameplay_guide",
             "extraction_prompt",
             "history_limit",
             "max_memory_chars",

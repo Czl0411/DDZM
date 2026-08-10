@@ -429,7 +429,6 @@
         <div class="event-input-grid"><label>单次回复字数<input id="ai-assistant-max-chars" type="number" min="1" max="10000" required></label><label>调用超时（秒）<input id="ai-assistant-timeout" type="number" min="1" max="60" required></label></div>
         <hr>
         <label><input id="ai-memory-enabled" type="checkbox"> 自动更新玩家记忆</label>
-        <label>核心玩法指引<textarea id="ai-memory-gameplay-guide" rows="3" maxlength="99999"></textarea></label>
         <div class="event-input-grid"><label>有效普通消息批量阈值<input id="ai-memory-batch-threshold" type="number" min="5" max="200" required></label><label>每类稳定印象上限<input id="ai-memory-max-entries" type="number" min="1" max="10" required></label><label>候选有效期（天）<input id="ai-memory-candidate-expiry-days" type="number" min="1" max="365" required></label></div>
         <details><summary>高级：记忆提炼提示词</summary><label>记忆提炼提示词<textarea id="ai-memory-extraction-prompt" rows="4" maxlength="99999"></textarea></label></details>
         <div><label>每日调用上限</label><div class="ai-quota-scroll"><table class="data-table"><thead><tr><th>职位</th><th>等级</th><th>每日次数</th></tr></thead><tbody id="ai-assistant-quotas"></tbody></table></div></div>

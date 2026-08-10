@@ -519,7 +519,6 @@ def test_ai_assistant_settings_accept_long_prompt_configuration(client, headers)
     payload.update(
         persona="人设" * 3000,
         system_prompt="系统提示词" * 3000,
-        gameplay_guide="玩法指引" * 3000,
         extraction_prompt="提炼规则" * 3000,
         quotas=[
             {"rank_id": quota["rank_id"], "daily_limit": quota["daily_limit"]}

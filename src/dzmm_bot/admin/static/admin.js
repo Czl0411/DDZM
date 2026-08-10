@@ -503,7 +503,6 @@ async function openAiAssistantSettingsModal() {
   document.querySelector("#ai-assistant-max-chars").value = settings.max_response_chars;
   document.querySelector("#ai-assistant-timeout").value = settings.timeout_seconds;
   document.querySelector("#ai-memory-enabled").checked = settings.memory_enabled;
-  document.querySelector("#ai-memory-gameplay-guide").value = settings.gameplay_guide;
   document.querySelector("#ai-memory-extraction-prompt").value = settings.extraction_prompt;
   document.querySelector("#ai-memory-batch-threshold").value = settings.batch_message_threshold;
   document.querySelector("#ai-memory-max-entries").value = settings.max_entries_per_category;
@@ -2157,7 +2156,6 @@ aiAssistantSettingsModal.addEventListener("click", async (event) => {
     max_response_chars: Number(document.querySelector("#ai-assistant-max-chars").value),
     timeout_seconds: Number(document.querySelector("#ai-assistant-timeout").value),
     memory_enabled: document.querySelector("#ai-memory-enabled").checked,
-    gameplay_guide: document.querySelector("#ai-memory-gameplay-guide").value,
     extraction_prompt: document.querySelector("#ai-memory-extraction-prompt").value,
     history_limit: aiAssistantSettings.history_limit,
     max_memory_chars: aiAssistantSettings.max_memory_chars,

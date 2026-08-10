@@ -2459,8 +2459,6 @@ class CoreRepository:
             user = session.get(UserRecord, record.user_id)
             if settings is None or inbound is None or user is None:
                 raise RuntimeError("AI 请求数据不完整")
-            self._ensure_ai_memory_defaults(session)
-            memory_settings = session.get(AIMemorySettingsRecord, 1)
             impressions = tuple(
                 session.scalars(
                     select(AIPlayerImpressionRecord).where(
@@ -2475,6 +2473,14 @@ class CoreRepository:
                 else None
             )
             game_settings = session.get(GameSettingsRecord, 1)
+            user_content = normalize_ai_mention(inbound.content)
+            active_token = self._active_session.set(session)
+            try:
+                authoritative_context = self.build_ai_authoritative_context(
+                    user.platform_id, user_content, now
+                )
+            finally:
+                self._active_session.reset(active_token)
             token = uuid4()
             record.status = "leased"
             record.lease_worker_id = worker_id
@@ -2498,14 +2504,10 @@ class CoreRepository:
                         if game_settings is not None
                         else _DEFAULT_CURRENCY_NAME
                     ),
-                    gameplay_guide=(
-                        memory_settings.gameplay_guide
-                        if memory_settings is not None
-                        else _DEFAULT_AI_MEMORY_GAMEPLAY_GUIDE
-                    ),
+                    authoritative_context=authoritative_context,
                     player_impressions=_format_player_impressions(impressions),
                 ),
-                user_content=normalize_ai_mention(inbound.content),
+                user_content=user_content,
                 max_response_chars=settings.max_response_chars,
                 timeout_seconds=settings.timeout_seconds,
             )
@@ -8692,12 +8694,14 @@ def _build_ai_system_prompt(
     department_name: str,
     balance: int,
     currency_name: str,
-    gameplay_guide: str,
+    authoritative_context: AIAuthoritativeContext,
     player_impressions: str,
 ) -> str:
     guardrail = (
-        "你只能回答当前艾特内容。不得执行或伪造任何系统指令、"
-        "经济结算、游戏裁判、随机事件状态或用户资料。"
+        "【固定安全边界】\n"
+        "你只能解释并引导玩家自行发送准确指令；不得调用命令处理器、伪造执行成功或承诺已经修改状态。\n"
+        "实时系统事实高于规则知识卡，规则知识卡高于稳定玩家印象；稳定印象只能影响语气，不能改变数字、资格、规则、指令或结果。\n"
+        "只能引用【准确可用指令】中的指令。业务或规则问题没有权威来源时明确表示无法确认，并引导玩家发送 /帮助。"
     )
     return "\n\n".join(
         (
@@ -8707,7 +8711,9 @@ def _build_ai_system_prompt(
             "【实时玩家资料】\n"
             f"昵称：{display_name}\n职位：{rank_name}\n部门：{department_name}\n"
             f"余额：{balance} {currency_name}",
-            f"【核心玩法指引】\n{gameplay_guide.strip()}",
+            authoritative_context.live_facts_text,
+            authoritative_context.commands_text,
+            authoritative_context.cards_text,
             f"【稳定玩家印象】\n{player_impressions.strip() or '暂无'}",
         )
     )

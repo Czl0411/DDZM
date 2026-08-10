@@ -624,7 +624,7 @@ def create_app(
             )
             repository.set_ai_memory_settings(
                 enabled=request.memory_enabled,
-                gameplay_guide=request.gameplay_guide,
+                gameplay_guide=repository.get_ai_memory_settings().gameplay_guide,
                 extraction_prompt=request.extraction_prompt,
                 history_limit=request.history_limit,
                 max_memory_chars=request.max_memory_chars,
@@ -1703,7 +1703,6 @@ def _ai_assistant_settings_response(
         max_response_chars=settings.max_response_chars,
         timeout_seconds=settings.timeout_seconds,
         memory_enabled=memory.enabled,
-        gameplay_guide=memory.gameplay_guide,
         extraction_prompt=memory.extraction_prompt,
         history_limit=memory.history_limit,
         max_memory_chars=memory.max_memory_chars,

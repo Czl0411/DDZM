@@ -314,6 +314,19 @@ def test_number_bomb_settings_validate_timeout_range(repository):
         repository.set_number_bomb_settings(61)
 
 
+def test_active_gameplay_summary_identifies_number_bomb_participant(repository, now):
+    repository.create_user("summary-p1", "甲", now, 20)
+    repository.start_number_bomb_game("summary-p1", 3, now)
+
+    summary = repository.active_gameplay_summary("summary-p1", now)
+
+    assert summary.game_type == "number_bomb"
+    assert summary.state == "signup"
+    assert summary.actor_role == "participant"
+    assert summary.participant_names == ("甲",)
+    assert summary.available_commands == ("/退出", "/开始", "/结束游戏")
+
+
 def test_number_bomb_signup_autostarts_first_truth_round_without_balance_changes(
     repository, now
 ):

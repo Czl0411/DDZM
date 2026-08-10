@@ -157,7 +157,7 @@ _DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS = ("/退出",)
 _DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE = "当前有随机事件发生，监事不会处理。"
 _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
     {
-        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助",
+        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏",
         "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降",
         "/部门", "/加入部门", "/切换部门", "/部门申请列表",
         "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门",
@@ -462,6 +462,18 @@ class NumberBombGameResult:
     players: tuple[NumberBombPlayer, ...] = ()
     submitted_count: int = 0
     public_message: str | None = None
+
+
+@dataclass(frozen=True)
+class ActiveGameplaySummary:
+    game_type: str | None
+    game_id: UUID | None = None
+    state: str | None = None
+    actor_role: str = "nonparticipant"
+    participant_names: tuple[str, ...] = ()
+    available_commands: tuple[str, ...] = ()
+    signup_deadline: datetime | None = None
+    next_reminder_at: datetime | None = None
 
 
 def blame_settlement_template_values(
@@ -836,6 +848,7 @@ _COMMAND_DEFINITIONS = (
     ("/我", "/我；/me", "查看余额、今日活跃度和今日收益"),
     ("/商店", "/商店", "查看当前上架物品"),
     ("/帮助", "/帮助", "查看当前可用指令"),
+    ("/当前游戏", "/当前游戏", "查看自己当前参与的游戏和下一步指令"),
     ("/加入", "/加入；/加入 身份", "加入当前可报名玩法"),
     ("/退出", "/退出", "退出当前随机事件并结算奖励"),
     ("/摸鱼躲猫猫", "/开始摸鱼躲藏；/躲 编号", "发起单人躲猫猫小游戏"),
@@ -2853,6 +2866,232 @@ class CoreRepository:
                 players=players,
                 last_activity_at=game.last_activity_at,
             )
+
+    def active_gameplay_summary(
+        self, platform_id: str, now: datetime
+    ) -> ActiveGameplaySummary:
+        del now
+        with self._session() as session:
+            active: list[ActiveGameplaySummary] = []
+
+            number_game = session.scalar(
+                select(NumberBombGameRecord).where(
+                    NumberBombGameRecord.active_key == "global"
+                )
+            )
+            if number_game is not None:
+                rows = list(
+                    session.execute(
+                        select(NumberBombMemberRecord, UserRecord)
+                        .join(UserRecord, UserRecord.id == NumberBombMemberRecord.user_id)
+                        .where(
+                            NumberBombMemberRecord.game_id == number_game.id,
+                            NumberBombMemberRecord.state != "left",
+                        )
+                        .order_by(NumberBombMemberRecord.roster_order)
+                    )
+                )
+                actor = next(
+                    (member for member, user in rows if user.platform_id == platform_id),
+                    None,
+                )
+                role = (
+                    "candidate"
+                    if actor is not None and actor.state == "pending_join"
+                    else "participant"
+                    if actor is not None
+                    else "nonparticipant"
+                )
+                if role == "candidate":
+                    commands = ("/退出",)
+                elif role == "nonparticipant":
+                    commands = ("/加入",)
+                elif number_game.state == "signup":
+                    commands = ("/退出", "/开始", "/结束游戏")
+                elif number_game.state == "waiting_continue":
+                    commands = ("/退出", "/继续", "/结束游戏")
+                else:
+                    commands = ("/退出", "/结束游戏")
+                active.append(
+                    ActiveGameplaySummary(
+                        "number_bomb",
+                        number_game.id,
+                        number_game.state,
+                        role,
+                        tuple(
+                            user.display_name
+                            for member, user in rows
+                            if member.state in {"current", "pending_exit"}
+                        ),
+                        commands,
+                        number_game.signup_deadline,
+                        number_game.next_reminder_at,
+                    )
+                )
+
+            blame_game = session.scalar(
+                select(BlameGameRecord).where(BlameGameRecord.active_key == "global")
+            )
+            if blame_game is not None:
+                rows = list(
+                    session.execute(
+                        select(BlameGamePlayerRecord, UserRecord)
+                        .join(UserRecord, UserRecord.id == BlameGamePlayerRecord.user_id)
+                        .where(
+                            BlameGamePlayerRecord.game_id == blame_game.id,
+                            BlameGamePlayerRecord.state.in_(("joined", "active")),
+                        )
+                        .order_by(BlameGamePlayerRecord.signup_order)
+                    )
+                )
+                participant = any(user.platform_id == platform_id for _, user in rows)
+                active.append(
+                    ActiveGameplaySummary(
+                        "blame_bomb",
+                        blame_game.id,
+                        blame_game.state,
+                        "participant" if participant else "nonparticipant",
+                        tuple(user.display_name for _, user in rows),
+                        ("/退出", "/结束游戏")
+                        if participant
+                        else (("/加入",) if blame_game.state == "signup" else ()),
+                        blame_game.signup_deadline,
+                    )
+                )
+
+            undercover = session.scalar(
+                select(UndercoverSessionRecord).where(
+                    UndercoverSessionRecord.active_key == _UNDERCOVER_ACTIVE_KEY
+                )
+            )
+            if undercover is not None:
+                rows = list(
+                    session.execute(
+                        select(UndercoverSessionMemberRecord, UserRecord)
+                        .join(UserRecord, UserRecord.id == UndercoverSessionMemberRecord.user_id)
+                        .where(
+                            UndercoverSessionMemberRecord.session_id == undercover.id,
+                            UndercoverSessionMemberRecord.state != "left",
+                        )
+                        .order_by(UndercoverSessionMemberRecord.joined_at)
+                    )
+                )
+                actor = next(
+                    (member for member, user in rows if user.platform_id == platform_id),
+                    None,
+                )
+                role = (
+                    "candidate"
+                    if actor is not None and actor.state == "queued"
+                    else "participant"
+                    if actor is not None
+                    else "nonparticipant"
+                )
+                if role == "candidate":
+                    commands = ("/退出",)
+                elif role == "nonparticipant":
+                    commands = ("/加入",) if undercover.state == "signup" else ()
+                elif undercover.state == "awaiting_continue":
+                    commands = ("/退出", "/继续", "/结束游戏")
+                else:
+                    commands = ("/退出", "/结束游戏")
+                active.append(
+                    ActiveGameplaySummary(
+                        "undercover",
+                        undercover.id,
+                        undercover.state,
+                        role,
+                        tuple(
+                            user.display_name
+                            for member, user in rows
+                            if member.state == "joined"
+                        ),
+                        commands,
+                        undercover.signup_deadline,
+                    )
+                )
+
+            memory = session.scalar(
+                select(MemoryAssessmentGameRecord).where(
+                    MemoryAssessmentGameRecord.active_key == "global"
+                )
+            )
+            if memory is not None:
+                rows = list(
+                    session.execute(
+                        select(MemoryAssessmentParticipantRecord, UserRecord)
+                        .join(
+                            UserRecord,
+                            UserRecord.id == MemoryAssessmentParticipantRecord.user_id,
+                        )
+                        .where(MemoryAssessmentParticipantRecord.game_id == memory.id)
+                        .order_by(MemoryAssessmentParticipantRecord.id)
+                    )
+                )
+                participant = any(user.platform_id == platform_id for _, user in rows)
+                game_type = "memory_duel" if memory.mode == "duel" else "memory_single"
+                if not participant:
+                    commands = (
+                        ("/加入",)
+                        if memory.mode == "duel" and memory.state == "waiting_opponent"
+                        else ()
+                    )
+                elif memory.mode == "duel":
+                    commands = ("/退出", "/结束游戏")
+                elif memory.state == "waiting_continue":
+                    commands = ("/继续", "/收手")
+                else:
+                    commands = ("/答案",)
+                active.append(
+                    ActiveGameplaySummary(
+                        game_type,
+                        memory.id,
+                        memory.state,
+                        "participant" if participant else "nonparticipant",
+                        tuple(user.display_name for _, user in rows),
+                        commands,
+                        memory.signup_deadline,
+                    )
+                )
+
+            event = session.scalar(
+                select(RandomEventRecord)
+                .where(RandomEventRecord.state.in_(("signup", "in_progress")))
+                .order_by(RandomEventRecord.started_at)
+            )
+            if event is not None:
+                rows = list(
+                    session.execute(
+                        select(RandomEventParticipantRecord, UserRecord)
+                        .join(UserRecord, UserRecord.id == RandomEventParticipantRecord.user_id)
+                        .where(
+                            RandomEventParticipantRecord.event_id == event.id,
+                            RandomEventParticipantRecord.left_at.is_(None),
+                        )
+                        .order_by(RandomEventParticipantRecord.joined_at)
+                    )
+                )
+                participant = any(user.platform_id == platform_id for _, user in rows)
+                active.append(
+                    ActiveGameplaySummary(
+                        "random_event",
+                        event.id,
+                        event.state,
+                        "participant" if participant else "nonparticipant",
+                        tuple(user.display_name for _, user in rows),
+                        ("/退出",)
+                        if participant
+                        else (("/加入 角色",) if event.state == "signup" else ()),
+                        event.signup_deadline,
+                        event.next_reminder_at,
+                    )
+                )
+
+            if not active:
+                return ActiveGameplaySummary(None)
+            if len(active) > 1:
+                return ActiveGameplaySummary("conflict", state="conflict")
+            return active[0]
 
     def start_number_bomb_game(
         self, platform_id: str, target_player_count: int, now: datetime

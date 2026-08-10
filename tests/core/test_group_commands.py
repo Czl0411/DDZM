@@ -102,6 +102,33 @@ def test_number_bomb_group_commands_start_join_and_reject_group_reports():
     assert _latest_reply(factory) == "请私聊总监事发送 /报数 1-100，群内报数不会生效。"
 
 
+def test_current_game_reports_number_bomb_and_next_commands():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    repository.create_user("current-p1", "甲", now, 20)
+    repository.start_number_bomb_game("current-p1", 3, now)
+
+    _receive(service, "current-game", "current-p1", "/当前游戏", now)
+
+    reply = _latest_reply(factory)
+    assert "蹦蹦数字炸弹" in reply
+    assert "报名中" in reply
+    assert "/开始" in reply
+
+
+def test_end_game_hits_waiting_memory_duel_instead_of_undercover_fallback():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    repository.create_user("memory-host", "甲", now, 20)
+    repository.start_memory_assessment_duel("memory-host", now)
+
+    _receive(service, "end-memory", "memory-host", "/结束游戏", now)
+
+    reply = _latest_reply(factory)
+    assert "记忆考核" in reply
+    assert "谁是卧底" not in reply
+
+
 def test_checkin_awards_five_once_per_beijing_date_and_uses_beijing_dates():
     from dzmm_bot.core.schema import DailyCheckinRecord, UserRecord
 
@@ -340,6 +367,16 @@ def _start_three_player_blame_group(service, repository, factory, now):
     _receive(service, "blame-start-complete", "blame-a", "/甩锅游戏 3", now)
     _receive(service, "blame-join-b-complete", "blame-b", "/加入", now)
     _receive(service, "blame-join-c-complete", "blame-c", "/加入", now)
+
+
+def test_generic_exit_hits_active_blame_game():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _start_three_player_blame_group(service, repository, factory, now)
+
+    _receive(service, "blame-generic-exit", "blame-a", "/退出", now)
+
+    assert "甲 主动退出并背锅" in _latest_reply(factory)
 
 
 def test_blame_active_leave_complete_settlement_notice_includes_net_results():

@@ -32,6 +32,9 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/商店", "items_available", "商店有货", "总监事小卖部：\n{商店列表}", ("{商店列表}", "{日期}")),
     TemplateDefinition("/商店", "empty", "商店为空", "总监事小卖部还没有上架商品。", ("{日期}",)),
     TemplateDefinition("/帮助", "shown", "帮助回复", "总监事指令簿：\n{指令列表}", ("{指令列表}", "{日期}")),
+    TemplateDefinition("/当前游戏", "shown", "当前游戏", "当前游戏：{游戏}\n状态：{状态}\n你的身份：{身份}\n参与者：{参与者}\n可用指令：{可用指令}", ("{游戏}", "{状态}", "{身份}", "{参与者}", "{可用指令}", "{日期}")),
+    TemplateDefinition("/当前游戏", "none", "暂无游戏", "当前没有进行中的游戏。", ("{日期}",)),
+    TemplateDefinition("/当前游戏", "conflict", "状态冲突", "检测到多个活动游戏，请联系管理员处理。", ("{日期}",)),
     TemplateDefinition("/加入", "joined", "报名成功", "{昵称} 已加入随机事件，担任 {角色}。\n剩余可选身份：{剩余席位}", ("{昵称}", "{角色}", "{剩余席位}", "{日期}")),
     TemplateDefinition("/加入", "started", "事件开始", "{昵称}已加入，人员已齐，随机事件开始。", ("{昵称}", "{日期}")),
     TemplateDefinition("/加入", "no_event", "暂无事件", "当前没有可报名的随机事件。", ("{日期}",)),
@@ -232,6 +235,8 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/继续", "number_bomb_cannot_continue", "无法继续", "当前没有等待继续的蹦蹦数字炸弹对局。", ("{日期}",)),
     TemplateDefinition("/结束游戏", "number_bomb_ended", "数字炸弹结束", "【蹦蹦数字炸弹】本场已由参与者结束。", ("{日期}",)),
     TemplateDefinition("/结束游戏", "number_bomb_cannot_end", "无法结束", "当前没有你可以结束的蹦蹦数字炸弹对局。", ("{日期}",)),
+    TemplateDefinition("/结束游戏", "memory_use_exit", "记忆考核结束方式", "已命中当前记忆考核；对战开始后请发送 /退出 执行投降，等待对手阶段可直接取消。", ("{日期}",)),
+    TemplateDefinition("/结束游戏", "no_current_game", "暂无游戏", "当前没有你可以结束的游戏。", ("{日期}",)),
 )
 
 

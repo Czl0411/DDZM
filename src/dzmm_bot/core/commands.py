@@ -13,7 +13,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数",
+    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数",
 }
 
 
@@ -45,6 +45,8 @@ class GroupCommandHandler:
         if not self._repository.is_command_enabled(command):
             return None
         received_at = message.received_at.astimezone(_BEIJING)
+        if command == "/当前游戏":
+            return self._current_game(message.sender_platform_id, received_at)
         if command == "/入职":
             return self._join(message.sender_platform_id, content, received_at)
         if command == "/蹦蹦数字炸弹":
@@ -70,11 +72,20 @@ class GroupCommandHandler:
         if command == "/退出谁是卧底":
             return self._undercover_leave(message.sender_platform_id, received_at)
         if command == "/结束游戏":
-            if self._repository.number_bomb_game_summary().state is not None:
+            summary = self._repository.active_gameplay_summary(
+                message.sender_platform_id, received_at
+            )
+            if summary.game_type == "number_bomb":
                 return self._number_bomb_end(message.sender_platform_id, received_at)
-            if self._repository.blame_game_summary(received_at).state is not None:
+            if summary.game_type == "blame_bomb":
                 return self._blame_end(message.sender_platform_id, received_at)
-            return self._undercover_end(message.sender_platform_id, received_at)
+            if summary.game_type == "undercover":
+                return self._undercover_end(message.sender_platform_id, received_at)
+            if summary.game_type in {"memory_duel", "memory_single"}:
+                return self._reply("/结束游戏", "memory_use_exit", received_at)
+            if summary.game_type == "conflict":
+                return self._reply("/当前游戏", "conflict", received_at)
+            return self._reply("/结束游戏", "no_current_game", received_at)
         if command == "/打卡":
             return self._check_in(message.sender_platform_id, received_at)
         if command == "/余额":
@@ -108,12 +119,34 @@ class GroupCommandHandler:
                 message.sender_platform_id, command, content, received_at
             )
         if command == "/加入":
-            if self._repository.number_bomb_game_summary().state is not None:
+            summary = self._repository.active_gameplay_summary(
+                message.sender_platform_id, received_at
+            )
+            if summary.game_type == "number_bomb":
                 return self._number_bomb_join(message.sender_platform_id, received_at)
+            if summary.game_type == "blame_bomb":
+                return self._blame_join(message.sender_platform_id, received_at)
+            if summary.game_type == "undercover":
+                return self._undercover_join(message.sender_platform_id, received_at)
+            if summary.game_type == "conflict":
+                return self._reply("/当前游戏", "conflict", received_at)
             return self._event_join(message.sender_platform_id, content, received_at)
         if command == "/退出":
-            if self._repository.number_bomb_game_summary().state is not None:
+            summary = self._repository.active_gameplay_summary(
+                message.sender_platform_id, received_at
+            )
+            if summary.game_type == "number_bomb":
                 return self._number_bomb_leave(message.sender_platform_id, received_at)
+            if summary.game_type == "blame_bomb":
+                return self._blame_leave(message.sender_platform_id, received_at)
+            if summary.game_type == "undercover":
+                return self._undercover_leave(message.sender_platform_id, received_at)
+            if summary.game_type == "memory_duel":
+                return self._memory_assessment_surrender(
+                    message.sender_platform_id, received_at
+                )
+            if summary.game_type == "conflict":
+                return self._reply("/当前游戏", "conflict", received_at)
             return self._event_leave(message.sender_platform_id, received_at)
         if command == "/摸鱼躲猫猫":
             return self._hide_and_seek(message.sender_platform_id, content, received_at)
@@ -122,18 +155,63 @@ class GroupCommandHandler:
                 message.sender_platform_id, content, received_at
             )
         if command == "/继续":
-            if self._repository.number_bomb_game_summary().state is not None:
+            summary = self._repository.active_gameplay_summary(
+                message.sender_platform_id, received_at
+            )
+            if summary.game_type == "number_bomb":
                 return self._number_bomb_continue(
                     message.sender_platform_id, received_at
                 )
-            if self._repository.undercover_session_summary().state == "awaiting_continue":
+            if summary.game_type == "undercover":
                 return self._undercover_continue(message.sender_platform_id, received_at)
+            if summary.game_type == "conflict":
+                return self._reply("/当前游戏", "conflict", received_at)
             return self._memory_assessment_continue(message.sender_platform_id, received_at)
         if command == "/收手":
             return self._memory_assessment_cash_out(message.sender_platform_id, received_at)
         if command == "/投降":
             return self._memory_assessment_surrender(message.sender_platform_id, received_at)
         return self._help(content, received_at)
+
+    def _current_game(self, platform_id: str, received_at) -> str:
+        summary = self._repository.active_gameplay_summary(platform_id, received_at)
+        if summary.game_type is None:
+            return self._reply("/当前游戏", "none", received_at)
+        if summary.game_type == "conflict":
+            return self._reply("/当前游戏", "conflict", received_at)
+        game_name = {
+            "number_bomb": "蹦蹦数字炸弹",
+            "blame_bomb": "甩锅游戏",
+            "undercover": "谁是卧底",
+            "memory_duel": "记忆考核对战",
+            "memory_single": "记忆考核",
+            "random_event": "随机事件",
+        }[summary.game_type]
+        state_name = {
+            "signup": "报名中",
+            "waiting_opponent": "等待对手",
+            "collecting": "报数中",
+            "waiting_continue": "等待继续",
+            "awaiting_continue": "等待继续",
+            "in_progress": "进行中",
+        }.get(summary.state, "进行中")
+        role_name = {
+            "participant": "参与者",
+            "candidate": "下一轮候选",
+            "nonparticipant": "未参与",
+        }.get(summary.actor_role, summary.actor_role)
+        return self._reply(
+            "/当前游戏",
+            "shown",
+            received_at,
+            {
+                "{游戏}": game_name,
+                "{状态}": state_name,
+                "{身份}": role_name,
+                "{参与者}": "、".join(summary.participant_names) or "暂无",
+                "{可用指令}": "、".join(summary.available_commands) or "暂无",
+            },
+        )
 
     def _join(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)

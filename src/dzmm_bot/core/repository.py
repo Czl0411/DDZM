@@ -2792,6 +2792,7 @@ class CoreRepository:
                 session_record.state = "closed"
                 session_record.active_key = None
                 session_record.finished_at = now
+                self._record_undercover_facts(session, game, None, "ended", now)
                 return UndercoverGameResult("ended", session_id=session_record.id, game_id=game.id)
 
     def leave_undercover(self, platform_id: str, now: datetime) -> UndercoverGameResult:
@@ -2835,6 +2836,7 @@ class CoreRepository:
                 game.finished_at = now
                 session_record.state = "awaiting_continue"
                 session_record.await_continue_deadline = now + _UNDERCOVER_CONTINUE_TIMEOUT
+                self._record_undercover_facts(session, game, winner, None, now)
                 result = self._undercover_game_result(session, game, "settled")
                 return UndercoverGameResult(**{**result.__dict__, "winner": winner})
 
@@ -3206,6 +3208,7 @@ class CoreRepository:
         game.finished_at = now
         session_record.state = "awaiting_continue"
         session_record.await_continue_deadline = now + _UNDERCOVER_CONTINUE_TIMEOUT
+        self._record_undercover_facts(session, game, winner, None, now)
         result = self._undercover_game_result(session, game, "settled")
         return UndercoverGameResult(
             **{
@@ -3214,6 +3217,30 @@ class CoreRepository:
                 "eliminated_seat": eliminated.seat_number,
             }
         )
+
+    def _record_undercover_facts(
+        self,
+        session: Session,
+        game: UndercoverGameRecord,
+        winning_role: str | None,
+        terminal_result: str | None,
+        now: datetime,
+    ) -> None:
+        for user_id, role in session.execute(
+            select(
+                UndercoverGamePlayerRecord.user_id,
+                UndercoverGamePlayerRecord.role,
+            ).where(UndercoverGamePlayerRecord.game_id == game.id)
+        ):
+            result = terminal_result or ("win" if role == winning_role else "loss")
+            self._record_ai_activity_fact(
+                session,
+                event_key=f"undercover:{game.id}:{user_id}",
+                user_id=user_id,
+                activity_type="undercover",
+                result=result,
+                occurred_at=now,
+            )
 
     def _undercover_winner(self, session: Session, game_id: UUID) -> str | None:
         roles = [
@@ -3632,6 +3659,14 @@ class CoreRepository:
                     game.active_key = None
                     game.finished_at = now
                     self._memory_assessment_participant(session, game.id, user.id).state = "failed"
+                    self._record_ai_activity_fact(
+                        session,
+                        event_key=f"memory_assessment_single:{game.id}:{user.id}",
+                        user_id=user.id,
+                        activity_type="memory_assessment_single",
+                        result="loss",
+                        occurred_at=now,
+                    )
                     return MemoryAssessmentGameResult(
                         "failed",
                         display_name=user.display_name,
@@ -3665,6 +3700,14 @@ class CoreRepository:
                 game.active_key = None
                 game.finished_at = now
                 self._memory_assessment_participant(session, game.id, user.id).state = "settled"
+                self._record_ai_activity_fact(
+                    session,
+                    event_key=f"memory_assessment_single:{game.id}:{user.id}",
+                    user_id=user.id,
+                    activity_type="memory_assessment_single",
+                    result="win",
+                    occurred_at=now,
+                )
                 return MemoryAssessmentGameResult(
                     "completed",
                     display_name=user.display_name,
@@ -3751,6 +3794,14 @@ class CoreRepository:
                 game.active_key = None
                 game.finished_at = now
                 self._memory_assessment_participant(session, game.id, user.id).state = "settled"
+                self._record_ai_activity_fact(
+                    session,
+                    event_key=f"memory_assessment_single:{game.id}:{user.id}",
+                    user_id=user.id,
+                    activity_type="memory_assessment_single",
+                    result="win",
+                    occurred_at=now,
+                )
                 return MemoryAssessmentGameResult(
                     "cashed_out",
                     display_name=user.display_name,
@@ -3935,6 +3986,9 @@ class CoreRepository:
         game.active_key = None
         game.winner_user_id = user.id
         game.finished_at = now
+        self._record_memory_assessment_duel_facts(
+            session, game, winner.user_id, now
+        )
         return MemoryAssessmentGameResult(
             "duel_won",
             display_name=user.display_name,
@@ -3950,9 +4004,31 @@ class CoreRepository:
         game.state = "collected"
         game.active_key = None
         game.finished_at = now
+        self._record_memory_assessment_duel_facts(session, game, None, now)
         return MemoryAssessmentGameResult(
             "duel_collected", game_id=game.id, reward=game.base_pool
         )
+
+    def _record_memory_assessment_duel_facts(
+        self,
+        session: Session,
+        game: MemoryAssessmentGameRecord,
+        winner_user_id: UUID | None,
+        now: datetime,
+    ) -> None:
+        for user_id in session.scalars(
+            select(MemoryAssessmentParticipantRecord.user_id).where(
+                MemoryAssessmentParticipantRecord.game_id == game.id
+            )
+        ):
+            self._record_ai_activity_fact(
+                session,
+                event_key=f"memory_assessment_duel:{game.id}:{user_id}",
+                user_id=user_id,
+                activity_type="memory_assessment_duel",
+                result="win" if user_id == winner_user_id else "loss",
+                occurred_at=now,
+            )
 
     def _memory_assessment_participant(
         self, session: Session, game_id: UUID, user_id: UUID
@@ -4629,11 +4705,21 @@ class CoreRepository:
             if user.id == loser_user_id:
                 player.state = "loser"
                 loser_name = user.display_name
+                activity_result = "loss"
             else:
                 self._apply_balance_change(user, player_count, "blame_win", now)
                 player.state = "winner"
                 winner_names.append(user.display_name)
+                activity_result = "win"
             player.guarantee_state = "settled"
+            self._record_ai_activity_fact(
+                session,
+                event_key=f"blame_bomb:{game.id}:{user.id}",
+                user_id=user.id,
+                activity_type="blame_bomb",
+                result=activity_result,
+                occurred_at=now,
+            )
         if loser_name is None:
             raise RuntimeError("甩锅失败者不在对局中")
         game.state = "settled"
@@ -4661,6 +4747,7 @@ class CoreRepository:
     ) -> BlameGameResult:
         if game.state not in {"signup", "active"}:
             return BlameGameResult("already_finished", game_id=game.id)
+        was_active = game.state == "active"
         players = list(
             session.scalars(
                 select(BlameGamePlayerRecord)
@@ -4679,6 +4766,15 @@ class CoreRepository:
                 player.guarantee_state = "refunded"
             if player.state in {"joined", "active"}:
                 player.state = "cancelled"
+            if was_active:
+                self._record_ai_activity_fact(
+                    session,
+                    event_key=f"blame_bomb:{game.id}:{player.user_id}",
+                    user_id=player.user_id,
+                    activity_type="blame_bomb",
+                    result="cancelled" if reason == "admin_ended" else "ended",
+                    occurred_at=now,
+                )
         game.state = "cancelled"
         game.active_key = None
         game.settlement_reason = reason
@@ -5077,6 +5173,14 @@ class CoreRepository:
                     )
                 else:
                     self._apply_balance_change(user, game.win_reward, "hide_and_seek_win", now)
+                self._record_ai_activity_fact(
+                    session,
+                    event_key=f"hide_and_seek:{game.id}:{user.id}",
+                    user_id=user.id,
+                    activity_type="hide_and_seek",
+                    result="loss" if game.state == "found" else "win",
+                    occurred_at=now,
+                )
                 patrol_scenes = tuple(game.candidates[number - 1] for number in patrol_numbers)
                 return HideAndSeekGameResult(
                     game.state,
@@ -5131,6 +5235,14 @@ class CoreRepository:
             return
         game.state = "cancelled"
         game.finished_at = now
+        self._record_ai_activity_fact(
+            session,
+            event_key=f"hide_and_seek:{game.id}:{user.id}",
+            user_id=user.id,
+            activity_type="hide_and_seek",
+            result="cancelled",
+            occurred_at=now,
+        )
         daily = session.scalar(
             select(HideAndSeekDailyPlayRecord)
             .where(
@@ -5751,6 +5863,14 @@ class CoreRepository:
                         result = "rewarded"
                     else:
                         result = "left_without_reward"
+                    self._record_ai_activity_fact(
+                        session,
+                        event_key=f"random_event:{event.id}:{user.id}",
+                        user_id=user.id,
+                        activity_type="random_event",
+                        result="win" if result == "rewarded" else "loss",
+                        occurred_at=now,
+                    )
                     remaining = int(
                         session.scalar(
                             select(func.count())

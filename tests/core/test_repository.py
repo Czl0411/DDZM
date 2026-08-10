@@ -1240,6 +1240,13 @@ def test_blame_explosion_settlement_is_conservative_and_idempotent(
     assert {
         platform_id: repository.find_user(platform_id).balance for platform_id in platform_ids
     } == balances
+    for platform_id in platform_ids:
+        fact = repository.list_ai_activity_facts(platform_id)[0]
+        assert fact.activity_type == "blame_bomb"
+        assert fact.last_result == (
+            "loss" if platform_id == loser.platform_id else "win"
+        )
+        assert fact.participation_count == 1
 
 
 def test_blame_transfer_received_after_deadline_settles_current_holder(
@@ -1273,6 +1280,10 @@ def test_blame_active_leave_settles_leaver_as_loser(repository, session_factory,
     assert result.loser_display_name == platform_ids[-1]
     assert repository.find_user(platform_ids[-1]).balance == 98
     assert repository.find_user(holder.platform_id).balance in {98, 101}
+    for platform_id in platform_ids:
+        assert repository.list_ai_activity_facts(platform_id)[0].last_result == (
+            "loss" if platform_id == platform_ids[-1] else "win"
+        )
 
 
 def test_blame_participant_end_and_admin_end_refund_all_guarantees(
@@ -1284,6 +1295,10 @@ def test_blame_participant_end_and_admin_end_refund_all_guarantees(
     assert repository.end_blame_game("outsider", now).status == "not_participant"
     assert repository.end_blame_game(platform_ids[0], now).status == "cancelled"
     assert [repository.find_user(pid).balance for pid in platform_ids] == [100, 100, 100]
+    assert all(
+        repository.list_ai_activity_facts(pid)[0].last_result == "ended"
+        for pid in platform_ids
+    )
 
     second_repository = type(repository)(session_factory)
     second_ids = _prepare_blame_players(
@@ -1297,6 +1312,10 @@ def test_blame_participant_end_and_admin_end_refund_all_guarantees(
     second_repository.join_blame_game(second_ids[1], now + timedelta(days=1))
     assert second_repository.admin_end_blame_game(now + timedelta(days=1)).status == "cancelled"
     assert [second_repository.find_user(pid).balance for pid in second_ids] == [100, 100]
+    assert all(
+        second_repository.list_ai_activity_facts(pid)[0].last_result == "cancelled"
+        for pid in second_ids
+    )
 
 
 def test_blame_signup_timeout_dissolves_and_temperature_notice_is_sent_once(
@@ -1632,6 +1651,23 @@ def test_undercover_unique_vote_eliminates_then_awaits_continuation_on_win(
     assert result.status == "settled"
     assert result.winner == "civilian"
     assert repository.undercover_session_summary().state == "awaiting_continue"
+    for platform_id, role in role_by_platform_id.items():
+        fact = repository.list_ai_activity_facts(platform_id)[0]
+        assert fact.activity_type == "undercover"
+        assert fact.last_result == ("win" if role == "civilian" else "loss")
+
+
+def test_undercover_manual_end_records_ended_for_every_started_player(
+    repository, session_factory, now
+):
+    _, platform_ids = _start_undercover_game(repository, session_factory, now)
+
+    assert repository.end_undercover(platform_ids[0], now).status == "ended"
+
+    assert all(
+        repository.list_ai_activity_facts(platform_id)[0].last_result == "ended"
+        for platform_id in platform_ids
+    )
 
 
 def test_undercover_continuation_keeps_original_players_then_uses_queue(
@@ -1981,6 +2017,7 @@ def test_memory_assessment_single_requires_recall_then_cash_out(repository, monk
     assert cashed_out.reward == 1
     assert repository.find_user("u1").balance == 1
     assert repository.today_income(user.id, now) == 1
+    assert repository.list_ai_activity_facts("u1")[0].last_result == "win"
     assert repository.start_memory_assessment_single("u1", now).status == "daily_limit"
 
 
@@ -2003,6 +2040,7 @@ def test_memory_assessment_single_continues_and_loses_unclaimed_reward(
     assert second_round.answer == "AAAAAAA"
     assert failed.status == "failed"
     assert repository.find_user("u1").balance == 0
+    assert repository.list_ai_activity_facts("u1")[0].last_result == "loss"
 
 
 def test_memory_assessment_single_from_previous_day_does_not_block_new_game(
@@ -2057,6 +2095,8 @@ def test_memory_assessment_duel_freezes_pool_and_awards_first_exact_answer(
     assert won.status == "duel_won"
     assert won.reward == 10
     assert repository.find_user("u2").balance == 5
+    assert repository.list_ai_activity_facts("u1")[0].last_result == "loss"
+    assert repository.list_ai_activity_facts("u2")[0].last_result == "win"
 
 
 def test_memory_assessment_duel_with_missing_round_ignores_answers(repository, monkeypatch):
@@ -2090,6 +2130,8 @@ def test_memory_assessment_duel_surrender_awards_remaining_player(repository, mo
     assert surrendered.reward == 10
     assert repository.find_user("u1").balance == -5
     assert repository.find_user("u2").balance == 5
+    assert repository.list_ai_activity_facts("u1")[0].last_result == "loss"
+    assert repository.list_ai_activity_facts("u2")[0].last_result == "win"
 
 
 def test_memory_assessment_duel_disqualification_keeps_other_player_answering(
@@ -2139,6 +2181,8 @@ def test_memory_assessment_duel_timeout_collects_the_pool(repository, monkeypatc
     assert [result.status for result in expired] == ["duel_collected"]
     assert repository.find_user("u1").balance == -5
     assert repository.find_user("u2").balance == -5
+    assert repository.list_ai_activity_facts("u1")[0].last_result == "loss"
+    assert repository.list_ai_activity_facts("u2")[0].last_result == "loss"
 
 
 @pytest.mark.parametrize("state", ["signup", "in_progress"])
@@ -2250,6 +2294,7 @@ def test_hide_and_seek_rewards_unpatrolled_scene_without_opening_charge(reposito
     assert finished.patrol_numbers == (1, 2, 3, 4, 5)
     assert repository.find_user("u1").balance == 3
     assert repository.today_income(user.id, now) == 3
+    assert repository.list_ai_activity_facts("u1")[0].last_result == "win"
 
 
 def test_hide_and_seek_found_charges_frozen_penalty(repository, monkeypatch):
@@ -2265,6 +2310,7 @@ def test_hide_and_seek_found_charges_frozen_penalty(repository, monkeypatch):
     assert finished.entry_fee == started.entry_fee == 1
     assert finished.patrol_numbers == (1, 2, 3)
     assert repository.find_user("u1").balance == -1
+    assert repository.list_ai_activity_facts("u1")[0].last_result == "loss"
 
 
 def test_hide_and_seek_runs_second_patrol_when_first_round_misses(repository, monkeypatch):
@@ -2290,6 +2336,8 @@ def test_hide_and_seek_timeout_returns_daily_play_without_balance_change(reposit
 
     assert [game.status for game in cancelled] == ["cancelled"]
     assert repository.find_user("u1").balance == 0
+    assert repository.list_ai_activity_facts("u1")[0].last_result == "cancelled"
+    assert repository.list_ai_activity_facts("u1")[0].participation_count == 1
     assert restarted.status == "started"
     assert repository.expire_hide_and_seek_games(now + timedelta(minutes=3)) == []
 
@@ -2451,6 +2499,23 @@ def test_random_event_lifecycle_rewards_only_completed_participant(
         assert session.get(UserRecord, first.id).balance == 3
         assert session.get(UserRecord, second.id).balance == 0
         assert session.scalars(select(OutboundRecord)).first() is not None
+    assert repository.list_ai_activity_facts("u1")[0].last_result == "win"
+    assert repository.list_ai_activity_facts("u2")[0].last_result == "loss"
+
+
+def test_random_event_signup_exit_does_not_create_an_activity_fact(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "报名室", "报名开始。", ["正式开始。"], 1, 1, [("员工", 2)]
+    )
+    repository.set_random_event_settings(["10:00"], "{可选身份}", 15, 5)
+    repository.create_user("signup-only", "报名玩家", now, 0)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+
+    assert repository.join_random_event("signup-only", "员工", now) == "joined"
+    assert repository.leave_random_event("signup-only", now) == "left_signup"
+    assert repository.list_ai_activity_facts("signup-only") == ()
 
 
 def test_full_random_event_sends_a_frozen_formal_opening(

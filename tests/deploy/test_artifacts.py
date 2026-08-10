@@ -51,6 +51,7 @@ def test_deployment_starts_a_separate_ai_memory_worker():
     assert "-m dzmm_bot.ai.memory_main" in memory_worker
     assert "After=network-online.target dzmm-core.service" in memory_worker
     assert "dzmm-ai-memory-worker.service" in deploy
+    assert "systemctl enable dzmm-ai-memory-worker.service" in deploy
 
 
 def test_weekly_attendance_migration_preserves_custom_me_templates():

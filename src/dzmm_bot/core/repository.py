@@ -31,6 +31,8 @@ from .reply_templates import (
 )
 from .schema import (
     AIAssistantSettingsRecord,
+    AIActivityEventRecord,
+    AIActivityFactRecord,
     AIImpressionCandidateRecord,
     AIMemoryJobRecord,
     AIPlayerImpressionRecord,
@@ -550,6 +552,16 @@ class ClaimedAIImpressionCandidate:
 @dataclass(frozen=True)
 class AIEnqueueResult:
     state: str
+
+
+@dataclass(frozen=True)
+class AIActivityFact:
+    activity_type: str
+    participation_count: int
+    win_count: int
+    loss_count: int
+    last_result: str
+    last_result_at: datetime
 
 
 @dataclass(frozen=True)
@@ -1381,6 +1393,88 @@ class CoreRepository:
             if user is None:
                 return None
             return user, session.get(AIPlayerMemoryRecord, user.id)
+
+    def list_ai_activity_facts(self, platform_id: str) -> tuple[AIActivityFact, ...]:
+        with self._session() as session:
+            user_id = session.scalar(
+                select(UserRecord.id).where(UserRecord.platform_id == platform_id)
+            )
+            if user_id is None:
+                return ()
+            return tuple(
+                AIActivityFact(
+                    activity_type=record.activity_type,
+                    participation_count=record.participation_count,
+                    win_count=record.win_count,
+                    loss_count=record.loss_count,
+                    last_result=record.last_result,
+                    last_result_at=record.last_result_at,
+                )
+                for record in session.scalars(
+                    select(AIActivityFactRecord)
+                    .where(AIActivityFactRecord.user_id == user_id)
+                    .order_by(AIActivityFactRecord.activity_type)
+                )
+            )
+
+    @staticmethod
+    def _record_ai_activity_fact(
+        session: Session,
+        *,
+        event_key: str,
+        user_id: UUID,
+        activity_type: str,
+        result: str,
+        occurred_at: datetime,
+    ) -> bool:
+        if result not in {"win", "loss", "ended", "cancelled"}:
+            raise ValueError("AI 活动结果无效")
+        if not event_key or len(event_key) > 255:
+            raise ValueError("AI 活动事件键无效")
+        if not activity_type or len(activity_type) > 48:
+            raise ValueError("AI 活动类型无效")
+        values = {
+            "event_key": event_key,
+            "user_id": user_id,
+            "activity_type": activity_type,
+            "result": result,
+            "occurred_at": occurred_at,
+        }
+        dialect_name = session.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            statement = postgresql_insert(AIActivityEventRecord).values(**values)
+        elif dialect_name == "sqlite":
+            statement = sqlite_insert(AIActivityEventRecord).values(**values)
+        else:
+            raise ValueError(f"unsupported database dialect: {dialect_name}")
+        inserted = session.scalar(
+            statement.on_conflict_do_nothing(
+                index_elements=[AIActivityEventRecord.event_key]
+            ).returning(AIActivityEventRecord.event_key)
+        )
+        if inserted is None:
+            return False
+        fact = session.get(AIActivityFactRecord, (user_id, activity_type))
+        if fact is None:
+            session.add(
+                AIActivityFactRecord(
+                    user_id=user_id,
+                    activity_type=activity_type,
+                    participation_count=1,
+                    win_count=int(result == "win"),
+                    loss_count=int(result == "loss"),
+                    last_result=result,
+                    last_result_at=occurred_at,
+                )
+            )
+            return True
+        fact.participation_count += 1
+        fact.win_count += int(result == "win")
+        fact.loss_count += int(result == "loss")
+        if occurred_at >= fact.last_result_at:
+            fact.last_result = result
+            fact.last_result_at = occurred_at
+        return True
 
     def set_ai_player_memory(
         self, platform_id: str, memory_text: str, now: datetime

@@ -480,6 +480,35 @@ def test_failed_impression_job_retries_after_bounded_backoff(repository, now):
     assert retried.source_message_count == claim.source_message_count
 
 
+def test_activity_fact_counts_each_settlement_event_once(repository, now):
+    user, _ = repository.create_user("facts", "事实玩家", now, 0)
+    with repository._session() as session:
+        assert repository._record_ai_activity_fact(
+            session,
+            event_key="hide_and_seek:game-1:facts",
+            user_id=user.id,
+            activity_type="hide_and_seek",
+            result="win",
+            occurred_at=now,
+        ) is True
+        assert repository._record_ai_activity_fact(
+            session,
+            event_key="hide_and_seek:game-1:facts",
+            user_id=user.id,
+            activity_type="hide_and_seek",
+            result="win",
+            occurred_at=now,
+        ) is False
+
+    facts = repository.list_ai_activity_facts("facts")
+    assert len(facts) == 1
+    assert facts[0].activity_type == "hide_and_seek"
+    assert facts[0].participation_count == 1
+    assert facts[0].win_count == 1
+    assert facts[0].loss_count == 0
+    assert facts[0].last_result == "win"
+
+
 def test_impression_candidate_requires_two_batches_and_deduplicates_one_batch(
     repository, now
 ):

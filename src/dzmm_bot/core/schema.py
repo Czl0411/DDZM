@@ -303,6 +303,120 @@ class UndercoverVoteRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class BlameGameSettingsRecord(Base):
+    __tablename__ = "blame_game_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    signup_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    turn_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class BlameGameDurationRuleRecord(Base):
+    __tablename__ = "blame_game_duration_rules"
+
+    player_count: Mapped[int] = mapped_column(Integer, primary_key=True)
+    minimum_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    maximum_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class BlameIncidentCardRecord(Base):
+    __tablename__ = "blame_incident_cards"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    keywords: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class BlameGameRecord(Base):
+    __tablename__ = "blame_games"
+    __table_args__ = (
+        Index(
+            "ux_blame_game_one_active",
+            "active_key",
+            unique=True,
+            sqlite_where=text("active_key IS NOT NULL"),
+            postgresql_where=text("active_key IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    active_key: Mapped[str | None] = mapped_column(String(32))
+    creator_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    target_player_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    signup_deadline: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    incident_card_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("blame_incident_cards.id", ondelete="SET NULL")
+    )
+    incident_name: Mapped[str | None] = mapped_column(String(128))
+    incident_description: Mapped[str | None] = mapped_column(Text)
+    keywords_snapshot: Mapped[list[str] | None] = mapped_column(JSON)
+    total_duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    explosion_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    turn_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    current_holder_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    previous_holder_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    last_announced_temperature: Mapped[str | None] = mapped_column(String(32))
+    loser_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    settlement_reason: Mapped[str | None] = mapped_column(String(32))
+    settlement_complete: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class BlameGamePlayerRecord(Base):
+    __tablename__ = "blame_game_players"
+    __table_args__ = (
+        UniqueConstraint("game_id", "user_id"),
+        UniqueConstraint("game_id", "seat_number"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(ForeignKey("blame_games.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    signup_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    seat_number: Mapped[int | None] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    guarantee_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    guarantee_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    left_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class BlameGameTransferRecord(Base):
+    __tablename__ = "blame_game_transfers"
+    __table_args__ = (UniqueConstraint("game_id", "normalized_reason"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(ForeignKey("blame_games.id"), nullable=False)
+    from_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    to_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class BlameGameDailyStartRecord(Base):
+    __tablename__ = "blame_game_daily_starts"
+    __table_args__ = (UniqueConstraint("user_id", "play_date"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    play_date: Mapped[date] = mapped_column(Date, nullable=False)
+    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
 class HideAndSeekDailyPlayRecord(Base):
     __tablename__ = "hide_and_seek_daily_plays"
     __table_args__ = (UniqueConstraint("user_id", "play_date"),)

@@ -108,6 +108,38 @@ def test_memory_assessment_defaults_seed_five_levels(repository):
     ] == [(1, 5, 1), (2, 7, 2), (3, 9, 3), (4, 11, 4), (5, 13, 5)]
 
 
+def test_blame_game_schema_contains_state_and_idempotency_constraints():
+    from dzmm_bot.core.schema import Base
+
+    expected_tables = {
+        "blame_game_settings",
+        "blame_game_duration_rules",
+        "blame_incident_cards",
+        "blame_games",
+        "blame_game_players",
+        "blame_game_transfers",
+        "blame_game_daily_starts",
+    }
+
+    assert expected_tables <= set(Base.metadata.tables)
+    games = Base.metadata.tables["blame_games"]
+    players = Base.metadata.tables["blame_game_players"]
+    transfers = Base.metadata.tables["blame_game_transfers"]
+    daily_starts = Base.metadata.tables["blame_game_daily_starts"]
+    assert {index.name for index in games.indexes} >= {"ux_blame_game_one_active"}
+    assert {tuple(column.name for column in constraint.columns) for constraint in players.constraints} >= {
+        ("game_id", "user_id"),
+        ("game_id", "seat_number"),
+    }
+    assert {tuple(column.name for column in constraint.columns) for constraint in transfers.constraints} >= {
+        ("game_id", "normalized_reason"),
+    }
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in daily_starts.constraints
+    } >= {("user_id", "play_date")}
+
+
 def test_ai_memory_schema_keeps_one_snapshot_per_player():
     from dzmm_bot.core.schema import (
         AIPlayerMemoryRecord,
@@ -2331,6 +2363,13 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         "department_requests",
         "department_approvals",
         "undercover_word_sets",
+        "blame_game_settings",
+        "blame_game_duration_rules",
+        "blame_incident_cards",
+        "blame_games",
+        "blame_game_players",
+        "blame_game_transfers",
+        "blame_game_daily_starts",
     } <= set(inspector.get_table_names())
     assert "ux_inbound_messages_platform_message_id" in {
         index["name"] for index in inspector.get_indexes("inbound_messages")
@@ -2363,6 +2402,29 @@ def test_migration_seeds_undercover_word_library(migrated_postgres_url):
             for row in rows
         }
     ) == 900
+
+
+def test_blame_game_migration_seeds_duration_defaults(migrated_postgres_url):
+    engine = create_engine(migrated_postgres_url)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT player_count, minimum_seconds, maximum_seconds "
+                "FROM blame_game_duration_rules ORDER BY player_count"
+            )
+        ).all()
+
+    assert rows == [
+        (2, 45, 75),
+        (3, 60, 90),
+        (4, 75, 120),
+        (5, 90, 135),
+        (6, 90, 150),
+        (7, 105, 165),
+        (8, 120, 180),
+        (9, 135, 210),
+        (10, 150, 240),
+    ]
 
 
 def test_undercover_migration_creates_game_tables_and_defaults(migrated_postgres_url):

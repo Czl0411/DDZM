@@ -94,6 +94,28 @@ def test_disabled_command_is_never_in_ai_guidance(repository, now):
     assert "/晋升：" not in context.commands_text
 
 
+def test_authoritative_context_covers_live_game_topics_without_hidden_deadlines(
+    repository, now
+):
+    repository.create_user("grounded-player", "落地玩家", now, 0)
+    questions = (
+        "商店有什么物品", "今天打卡和活跃怎么算", "随机事件怎么玩",
+        "摸鱼躲猫猫怎么玩", "记忆考核怎么玩", "谁是卧底怎么玩",
+        "甩锅游戏怎么玩", "我玩过哪些游戏",
+    )
+
+    contexts = [
+        repository.build_ai_authoritative_context("grounded-player", question, now)
+        for question in questions
+    ]
+
+    assert all(context.has_authoritative_source for context in contexts)
+    blame_context = contexts[-2]
+    assert "人数时长范围" in blame_context.live_facts_text
+    assert "爆炸截止" not in blame_context.live_facts_text
+    assert "具体引爆" not in blame_context.live_facts_text
+
+
 @pytest.fixture
 def session_factory():
     from dzmm_bot.core.schema import Base

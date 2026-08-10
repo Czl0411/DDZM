@@ -83,6 +83,7 @@ class CommandDefinitionRecord(Base):
     __tablename__ = "command_definitions"
 
     command: Mapped[str] = mapped_column(String(32), primary_key=True)
+    syntax: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -841,6 +842,27 @@ class AIPlayerImpressionRecord(Base):
         Integer, default=0, nullable=False
     )
     last_supported_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class AIKnowledgeCardRecord(Base):
+    __tablename__ = "ai_knowledge_cards"
+    __table_args__ = (Index("ix_ai_knowledge_cards_topic_enabled_priority", "topic", "enabled", "priority"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    topic: Mapped[str] = mapped_column(String(48), nullable=False)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    keywords: Mapped[list[str]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )

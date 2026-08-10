@@ -43,6 +43,28 @@ def inbound(now):
     return InboundMessage("platform-1", "sender-1", "hello", now)
 
 
+def test_ai_knowledge_schema_and_command_syntax_contract():
+    from dzmm_bot.core.schema import AIKnowledgeCardRecord, Base, CommandDefinitionRecord
+
+    assert "ai_knowledge_cards" in Base.metadata.tables
+    assert AIKnowledgeCardRecord.__table__.c.keywords.nullable is False
+    assert AIKnowledgeCardRecord.__table__.c.enabled.default.arg is True
+    assert CommandDefinitionRecord.__table__.c.syntax.nullable is False
+
+
+def test_command_registry_exposes_exact_enabled_syntax(repository):
+    commands = {
+        row.command: row.syntax
+        for row in repository.list_enabled_command_definitions()
+    }
+
+    assert commands["/入职"] == "/入职 名字"
+    assert commands["/摸鱼躲猫猫"] == "/开始摸鱼躲藏；/躲 编号"
+    assert commands["/记忆考核"] == "/记忆考核；/记忆考核 对战；/答案 内容"
+    assert commands["/谁是卧底"] == "/谁是卧底 人数"
+    assert commands["/甩锅"] == "/甩锅 玩家编号 甩锅理由"
+
+
 @pytest.fixture
 def session_factory():
     from dzmm_bot.core.schema import Base

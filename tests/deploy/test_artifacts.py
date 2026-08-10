@@ -170,3 +170,16 @@ def test_department_approval_migration_creates_request_and_audit_tables():
     assert "department_requests" in migration
     assert "department_approvals" in migration
     assert "ux_department_requests_pending_employee" in migration
+
+
+def test_ai_knowledge_migration_seeds_cards_and_syntax():
+    migration = (
+        ROOT / "migrations/versions/20260810_32_ai_knowledge_cards.py"
+    ).read_text()
+
+    assert 'revision: str = "20260810_32"' in migration
+    assert 'down_revision: str | None = "20260810_31"' in migration
+    assert '"ai_knowledge_cards"' in migration
+    assert '"syntax"' in migration
+    assert '"金币与余额原则"' in migration
+    assert '"/甩锅 玩家编号 甩锅理由"' in migration

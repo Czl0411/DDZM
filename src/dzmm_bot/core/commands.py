@@ -9,7 +9,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏"
+    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅",
 }
 
 
@@ -43,6 +43,12 @@ class GroupCommandHandler:
         received_at = message.received_at.astimezone(_BEIJING)
         if command == "/入职":
             return self._join(message.sender_platform_id, content, received_at)
+        if command == "/甩锅游戏":
+            return self._blame_start(message.sender_platform_id, content, received_at)
+        if command == "/甩锅":
+            return self._blame_transfer(message.sender_platform_id, content, received_at)
+        if command == "/退出甩锅":
+            return self._blame_leave(message.sender_platform_id, received_at)
         if command == "/谁是卧底":
             return self._undercover_start(message.sender_platform_id, content, received_at)
         if command == "/开始投票":
@@ -52,6 +58,8 @@ class GroupCommandHandler:
         if command == "/退出谁是卧底":
             return self._undercover_leave(message.sender_platform_id, received_at)
         if command == "/结束游戏":
+            if self._repository.blame_game_summary(received_at).state is not None:
+                return self._blame_end(message.sender_platform_id, received_at)
             return self._undercover_end(message.sender_platform_id, received_at)
         if command == "/打卡":
             return self._check_in(message.sender_platform_id, received_at)
@@ -470,6 +478,132 @@ class GroupCommandHandler:
         }
         return self._reply("/谁是卧底", scenarios[result.status], received_at)
 
+    def _blame_start(self, platform_id: str, content: str, received_at) -> str:
+        parts = content.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            return self._reply("/甩锅游戏", "usage", received_at)
+        player_count = int(parts[1])
+        result = self._repository.start_blame_game(platform_id, player_count, received_at)
+        if result.status == "signup_started":
+            user = self._repository.find_user(platform_id)
+            return self._reply(
+                "/甩锅游戏",
+                "signup_started",
+                received_at,
+                {"{昵称}": user.display_name, "{人数}": player_count, "{当前人数}": 1},
+            )
+        if result.status == "invalid_player_count":
+            return self._reply("/甩锅游戏", "usage", received_at)
+        return self._reply(
+            "/甩锅游戏",
+            result.status,
+            received_at,
+            {"{保证金}": max(player_count - 1, 0)},
+        )
+
+    def _blame_join(self, platform_id: str, received_at) -> str:
+        result = self._repository.join_blame_game(platform_id, received_at)
+        if result.status == "joined":
+            user = self._repository.find_user(platform_id)
+            return self._reply(
+                "/加入",
+                "blame_joined",
+                received_at,
+                {
+                    "{昵称}": user.display_name,
+                    "{当前人数}": result.player_count,
+                    "{人数}": result.target_player_count,
+                },
+            )
+        if result.status == "started":
+            summary = self._repository.blame_game_summary(received_at)
+            holder = next(
+                player for player in summary.players
+                if player.seat_number == summary.current_holder_number
+            )
+            return self._reply(
+                "/加入",
+                "blame_started",
+                received_at,
+                {
+                    "{玩家列表}": "、".join(
+                        f"{player.seat_number}号 {player.display_name}"
+                        for player in summary.players
+                    ),
+                    "{事故名称}": summary.incident_name,
+                    "{事故描述}": summary.incident_description,
+                    "{关键词}": "、".join(summary.incident_keywords),
+                    "{持锅者}": f"{holder.seat_number}号 {holder.display_name}",
+                    "{温度}": summary.temperature,
+                },
+            )
+        if result.status == "game_started":
+            return self._reply("/加入", "blame_game_started", received_at)
+        reasons = {
+            "not_joined": "请先入职。",
+            "insufficient_balance": "余额不足，无法加入本局。",
+            "already_joined": "你已经报名了本局。",
+            "waiting_for_players": "余额不足的玩家已被移出，继续等待报名。",
+        }
+        return self._reply(
+            "/加入",
+            "blame_failed",
+            received_at,
+            {"{原因}": reasons.get(result.status, "当前无法加入甩锅游戏。")},
+        )
+
+    def _blame_transfer(self, platform_id: str, content: str, received_at) -> str:
+        parts = content.split(maxsplit=2)
+        if len(parts) != 3 or not parts[1].isdigit() or not parts[2].strip():
+            return self._reply("/甩锅", "usage", received_at)
+        result = self._repository.transfer_blame(
+            platform_id, int(parts[1]), parts[2].strip(), received_at
+        )
+        if result.status == "transferred":
+            return self._reply(
+                "/甩锅",
+                "transferred",
+                received_at,
+                {
+                    "{原持锅者}": result.from_display_name,
+                    "{新持锅者}": result.to_display_name,
+                    "{温度}": result.temperature,
+                },
+            )
+        if result.status == "missing_keywords":
+            return self._reply(
+                "/甩锅", "missing_keywords", received_at,
+                {"{缺少关键词}": "、".join(result.missing_keywords)},
+            )
+        if result.status == "settled":
+            return self._reply(
+                "/甩锅", "settled", received_at, {"{失败者}": result.loser_display_name}
+            )
+        scenario = result.status if result.status in {
+            "duplicate_reason", "invalid_target", "self_target",
+            "immediate_return_blocked", "not_holder",
+        } else "usage"
+        return self._reply("/甩锅", scenario, received_at)
+
+    def _blame_leave(self, platform_id: str, received_at) -> str:
+        result = self._repository.leave_blame_game(platform_id, received_at)
+        if result.status == "left_signup":
+            return self._reply("/退出甩锅", "left_signup", received_at)
+        if result.status == "settled":
+            return self._reply(
+                "/退出甩锅", "settled", received_at,
+                {"{失败者}": result.loser_display_name},
+            )
+        return self._reply("/退出甩锅", "cannot_leave", received_at)
+
+    def _blame_end(self, platform_id: str, received_at) -> str:
+        result = self._repository.end_blame_game(platform_id, received_at)
+        return self._reply(
+            "/结束游戏",
+            "blame_cancelled" if result.status == "cancelled" else "cannot_end",
+            received_at,
+        )
+
     def _undercover_join(self, platform_id: str, received_at) -> str:
         result = self._repository.join_undercover(platform_id, received_at)
         if result.status == "joined_signup":
@@ -604,6 +738,8 @@ class GroupCommandHandler:
     def _event_join(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)
         if len(parts) != 2 or not parts[1].strip():
+            if self._repository.blame_game_summary(received_at).state is not None:
+                return self._blame_join(platform_id, received_at)
             if self._repository.undercover_session_summary().state is not None:
                 return self._undercover_join(platform_id, received_at)
             duel = self._repository.join_memory_assessment_duel(platform_id, received_at)

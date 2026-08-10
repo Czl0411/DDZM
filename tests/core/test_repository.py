@@ -959,6 +959,40 @@ def test_blame_signup_timeout_dissolves_and_temperature_notice_is_sent_once(
     assert len(notices) == 1
 
 
+def test_active_blame_game_blocks_other_multiplayer_games_and_skips_random_event(
+    repository, session_factory, now
+):
+    platform_ids = _prepare_blame_players(repository, session_factory, now, 3)
+    repository.start_blame_game(platform_ids[0], 3, now)
+    repository.create_user("memory-player", "记忆玩家", now, 100)
+    undercover_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.create_random_event_scene("茶水间", "报名", ["开场"], 1, 1, [("员工", 1)])
+    repository.set_random_event_settings(["20:00"], "{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+
+    assert repository.start_memory_assessment_duel("memory-player", now).status == (
+        "multiplayer_active"
+    )
+    assert repository.start_undercover_signup(undercover_ids[0], 4, now).status == (
+        "multiplayer_active"
+    )
+    repository.run_random_event_jobs(now)
+    assert repository.list_today_random_event_schedules(now)[0].status == "skipped"
+    assert repository.blame_game_summary(now).state == "signup"
+
+
+def test_existing_multiplayer_game_blocks_blame_signup(repository, session_factory, now):
+    platform_ids = _prepare_blame_players(repository, session_factory, now, 2)
+    repository.create_user("duel-player", "对战玩家", now, 100)
+    assert repository.start_memory_assessment_duel("duel-player", now).status == (
+        "waiting_opponent"
+    )
+
+    assert repository.start_blame_game(platform_ids[0], 2, now).status == (
+        "multiplayer_active"
+    )
+
+
 def test_undercover_requires_direct_chat_then_deals_configured_roles(
     repository, session_factory, now
 ):

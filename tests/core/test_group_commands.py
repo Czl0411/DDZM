@@ -264,6 +264,46 @@ def test_help_lists_undercover_commands():
     assert "/退出谁是卧底：" in reply
 
 
+def test_blame_group_commands_create_join_transfer_and_end():
+    from dzmm_bot.core.schema import RankRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    repository.create_user("blame-1", "甲", now, 100)
+    repository.create_user("blame-2", "乙", now, 100)
+    repository.create_blame_incident_card(
+        "咖啡事故", "咖啡泼到了报表", ["咖啡", "报表"]
+    )
+    with factory.begin() as session:
+        rank = session.scalar(select(RankRecord).where(RankRecord.sort_order == 1))
+        rank.multiplayer_game_limit = 3
+
+    _receive(service, "blame-start", "blame-1", "/甩锅游戏 2", now)
+    assert "报名" in _latest_reply(factory)
+    _receive(service, "blame-join", "blame-2", "/加入", now)
+    start_reply = _latest_reply(factory)
+    assert "咖啡事故" in start_reply
+    assert "咖啡、报表" in start_reply
+
+    summary = repository.blame_game_summary(now)
+    holder = next(
+        player for player in summary.players if player.seat_number == summary.current_holder_number
+    )
+    target = next(player for player in summary.players if player.platform_id != holder.platform_id)
+    _receive(
+        service,
+        "blame-transfer",
+        holder.platform_id,
+        f"/甩锅 {target.seat_number} 咖啡弄脏了报表",
+        now,
+    )
+    assert f"{target.display_name}" in _latest_reply(factory)
+    assert "温热" in _latest_reply(factory)
+
+    _receive(service, "blame-end", target.platform_id, "/结束游戏", now)
+    assert "已结束" in _latest_reply(factory)
+
+
 def test_department_join_application_keeps_employee_in_default_department_until_approved():
     service, _, factory = _service()
     now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)

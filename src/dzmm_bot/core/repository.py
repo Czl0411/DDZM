@@ -134,6 +134,7 @@ _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
         "/职位", "/晋升", "/晋升申请列表",
         "/同意", "/全部同意", "/拒绝", "/全部拒绝",
         "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏",
+        "/甩锅游戏", "/甩锅", "/退出甩锅",
     }
 )
 _DEFAULT_HIDE_AND_SEEK_ENTRY_FEE = 1
@@ -745,6 +746,9 @@ _COMMAND_DEFINITIONS = (
     ("/投票", "在谁是卧底投票阶段投票给指定序号"),
     ("/退出谁是卧底", "退出当前谁是卧底对局"),
     ("/结束游戏", "结束当前谁是卧底对局"),
+    ("/甩锅游戏", "创建 2 至 10 人甩锅炸弹报名局"),
+    ("/甩锅", "按玩家编号和理由转移甩锅炸弹"),
+    ("/退出甩锅", "退出当前甩锅游戏"),
 )
 
 
@@ -1820,6 +1824,8 @@ class CoreRepository:
                     return UndercoverGameResult("direct_chat_required")
                 if self._active_random_event(session) is not None or self._active_memory_duel(session):
                     return UndercoverGameResult("multiplayer_active")
+                if self._active_blame_game(session) is not None:
+                    return UndercoverGameResult("multiplayer_active")
                 if self._active_undercover_session(session) is not None:
                     return UndercoverGameResult("already_active")
                 session_record = UndercoverSessionRecord(
@@ -2329,6 +2335,9 @@ class CoreRepository:
                     )
                 )
             )
+            or session.scalar(
+                select(exists().where(BlameGameRecord.active_key == "global"))
+            )
         )
 
     def _lock_gameplay_gate(self, session: Session) -> None:
@@ -2825,6 +2834,10 @@ class CoreRepository:
                         "random_event_active", display_name=user.display_name
                     )
                 if self._active_undercover_session(session) is not None:
+                    return MemoryAssessmentGameResult(
+                        "multiplayer_active", display_name=user.display_name
+                    )
+                if self._active_blame_game(session) is not None:
                     return MemoryAssessmentGameResult(
                         "multiplayer_active", display_name=user.display_name
                     )

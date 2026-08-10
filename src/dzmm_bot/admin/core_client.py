@@ -89,6 +89,10 @@ class AdminCorePort(Protocol):
 
     def set_number_bomb_settings(self, settings: dict) -> dict: ...
 
+    def get_current_gameplay(self) -> dict: ...
+
+    def force_end_gameplay(self, game_type: str, game_id: str) -> dict: ...
+
     def get_random_event_settings(self) -> dict: ...
 
     def set_random_event_settings(self, settings: dict) -> dict: ...
@@ -290,6 +294,16 @@ class CoreClient:
     def set_number_bomb_settings(self, settings: dict) -> dict:
         response = self._client.patch(
             "/internal/game/number-bomb/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_current_gameplay(self) -> dict:
+        return self._get("/internal/gameplay/current")
+
+    def force_end_gameplay(self, game_type: str, game_id: str) -> dict:
+        response = self._client.post(
+            f"/internal/gameplay/{game_type}/{game_id}/force-end"
         )
         response.raise_for_status()
         return response.json()

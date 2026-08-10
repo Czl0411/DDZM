@@ -620,7 +620,12 @@ def create_app(
         ] = None,
         if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     ) -> JSONResponse:
-        if set(request) != {"inactivity_timeout_minutes"}:
+        required = {
+            "enabled",
+            "signup_timeout_minutes",
+            "reminder_interval_seconds",
+        }
+        if set(request) != required:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings"
             )
@@ -630,14 +635,39 @@ def create_app(
             if_match,
             lambda: _relay_core(
                 lambda: core.set_number_bomb_settings(
-                    {
-                        "inactivity_timeout_minutes": request[
-                            "inactivity_timeout_minutes"
-                        ]
-                    }
+                    {key: request[key] for key in required}
                 )
             ),
             scope="number-bomb-settings",
+        )
+
+    @app.get("/api/gameplay/current")
+    def current_gameplay(
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return {
+            **_relay_core(core.get_current_gameplay),
+            "version": repository.config_version(),
+        }
+
+    @app.post("/api/gameplay/{game_type}/{game_id}/force-end")
+    def force_end_gameplay(
+        game_type: str,
+        game_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[
+            str | None, Header(alias="Idempotency-Key")
+        ] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.force_end_gameplay(game_type, game_id)
+            ),
+            scope="force-end-gameplay",
         )
 
     @app.get("/api/ai-assistant/settings")
@@ -946,6 +976,7 @@ def create_app(
             "duel_base_pool",
             "duel_wrong_freeze",
             "duel_wrong_limit",
+            "duel_signup_timeout_minutes",
             "duel_answer_timeout_minutes",
             "character_set",
             "levels",
@@ -982,6 +1013,7 @@ def create_app(
             "enabled",
             "vote_seconds",
             "whiteboard_win_remaining",
+            "signup_timeout_minutes",
             "roles",
         )
         if not all(key in request for key in required):

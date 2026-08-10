@@ -78,8 +78,27 @@ class FakeCore:
         }
     )
     number_bomb_settings: dict = field(
-        default_factory=lambda: {"inactivity_timeout_minutes": 10}
+        default_factory=lambda: {
+            "enabled": True,
+            "signup_timeout_minutes": 2,
+            "reminder_interval_seconds": 15,
+        }
     )
+    gameplay_current: dict = field(
+        default_factory=lambda: {
+            "game_type": "number_bomb",
+            "game_id": "00000000-0000-0000-0000-000000000099",
+            "state": "collecting",
+            "participants": [
+                {"number": 1, "display_name": "甲", "reported": True},
+                {"number": 2, "display_name": "乙", "reported": False},
+            ],
+            "signup_deadline": None,
+            "next_reminder_at": "2026-08-11T12:00:15+08:00",
+            "skip_enabled": True,
+        }
+    )
+    forced_gameplays: list[tuple[str, str]] = field(default_factory=list)
     ai_assistant_settings: dict = field(
         default_factory=lambda: {
             "enabled": False,
@@ -135,6 +154,7 @@ class FakeCore:
             "duel_base_pool": 5,
             "duel_wrong_freeze": 1,
             "duel_wrong_limit": 10,
+            "duel_signup_timeout_minutes": 2,
             "duel_answer_timeout_minutes": 10,
             "character_set": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
             "levels": [
@@ -148,6 +168,7 @@ class FakeCore:
             "enabled": True,
             "vote_seconds": 120,
             "whiteboard_win_remaining": 3,
+            "signup_timeout_minutes": 2,
             "roles": [
                 {"player_count": 4, "civilian_count": 3, "undercover_count": 1, "whiteboard_count": 0},
                 {"player_count": 5, "civilian_count": 3, "undercover_count": 1, "whiteboard_count": 1},
@@ -438,6 +459,13 @@ class FakeCore:
     def set_number_bomb_settings(self, settings):
         self.number_bomb_settings = settings
         return self.number_bomb_settings
+
+    def get_current_gameplay(self):
+        return self.gameplay_current
+
+    def force_end_gameplay(self, game_type, game_id):
+        self.forced_gameplays.append((game_type, game_id))
+        return {"accepted": True}
 
     def get_random_event_settings(self):
         return self.random_event_settings
@@ -2081,22 +2109,58 @@ def test_admin_proxies_versioned_number_bomb_settings(client, headers, core):
             "If-Match": str(initial.json()["version"]),
             "Idempotency-Key": "number-bomb-timeout-1",
         },
-        json={"inactivity_timeout_minutes": 15},
+        json={
+            "enabled": False,
+            "signup_timeout_minutes": 3,
+            "reminder_interval_seconds": 20,
+        },
     )
 
-    assert initial.json()["inactivity_timeout_minutes"] == 10
-    assert updated.json()["inactivity_timeout_minutes"] == 15
+    assert initial.json()["signup_timeout_minutes"] == 2
+    assert updated.json()["enabled"] is False
+    assert updated.json()["reminder_interval_seconds"] == 20
     assert updated.json()["version"] == initial.json()["version"] + 1
-    assert core.number_bomb_settings == {"inactivity_timeout_minutes": 15}
+    assert core.number_bomb_settings == {
+        "enabled": False,
+        "signup_timeout_minutes": 3,
+        "reminder_interval_seconds": 20,
+    }
 
 
-def test_number_bomb_settings_surface_has_one_bounded_timeout_input():
+def test_number_bomb_settings_surface_has_new_controls_and_gameplay_card():
     root = Path(__file__).resolve().parents[2]
     page = (root / "src/dzmm_bot/admin/templates/index.html").read_text()
     script = (root / "src/dzmm_bot/admin/static/admin.js").read_text()
 
     assert 'id="number-bomb-settings-card"' in page
     assert 'id="edit-number-bomb-settings"' in page
-    assert 'id="number-bomb-timeout-minutes"' in page
-    assert 'min="1" max="60"' in page
+    assert 'id="gameplay-current-card"' in page
+    assert 'id="force-end-current-game"' in page
+    assert 'id="number-bomb-enabled"' in page
+    assert 'id="number-bomb-signup-minutes"' in page
+    assert 'id="number-bomb-reminder-seconds"' in page
+    assert 'id="number-bomb-timeout-minutes"' not in page
+    assert 'id="memory-assessment-signup-timeout"' in page
+    assert 'id="undercover-signup-timeout"' in page
     assert "/api/game/number-bomb/settings" in script
+    assert "/api/gameplay/current" in script
+
+
+def test_admin_relays_current_gameplay_and_versioned_force_end(client, headers, core):
+    current = client.get("/api/gameplay/current", headers=headers)
+    ended = client.post(
+        "/api/gameplay/number_bomb/00000000-0000-0000-0000-000000000099/force-end",
+        headers={
+            **headers,
+            "If-Match": str(current.json()["version"]),
+            "Idempotency-Key": "force-game-1",
+        },
+    )
+
+    assert current.status_code == 200
+    assert current.json()["participants"][1]["reported"] is False
+    assert ended.json()["accepted"] is True
+    assert ended.json()["version"] == current.json()["version"] + 1
+    assert core.forced_gameplays == [
+        ("number_bomb", "00000000-0000-0000-0000-000000000099")
+    ]

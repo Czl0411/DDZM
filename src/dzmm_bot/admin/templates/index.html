@@ -104,6 +104,11 @@
             </article>
           </section>
 
+          <section class="panel gameplay-current-panel" aria-labelledby="gameplay-current-title">
+            <div class="panel-heading"><div><p class="eyebrow">游戏运行</p><h2 id="gameplay-current-title">当前多人游戏</h2><p class="muted">查看当前占用多人玩法的对局；报数只显示完成状态，不显示玩家数字。</p></div><button id="force-end-current-game" class="danger-button" type="button" hidden>强制结束</button></div>
+            <div id="gameplay-current-card" class="settings-card" aria-live="polite"><p class="muted">正在读取当前游戏。</p></div>
+          </section>
+
           <section class="workspace">
             <article class="panel login-panel">
               <div class="panel-heading">
@@ -160,7 +165,7 @@
                 <nav class="management-tabs" data-management-tabs="settings" aria-label="玩法配置分类"><button class="management-tab active" data-management-tab="economy" type="button">经济</button><button class="management-tab" data-management-tab="activity" type="button">活跃度与收益</button><button class="management-tab" data-management-tab="minigames" type="button">小游戏</button></nav>
                 <section class="management-pane" data-management-pane="economy"><div class="panel-heading"><div><h2>经济规则</h2><p class="muted">修改后会立即影响后续入职与打卡，不会改动已有员工余额。</p></div><button id="edit-settings" class="primary" type="button">编辑经济规则</button></div><div id="settings-card" class="settings-card" aria-live="polite"></div></section>
                 <section class="management-pane" data-management-pane="activity" hidden><div class="panel-heading"><div><h2>日活跃度</h2><p class="muted">配置等级门槛、每日奖励与今日收益榜推送时段。</p></div><button id="edit-activity-settings" class="primary" type="button">编辑日活跃度</button></div><div id="activity-settings-card" class="settings-card" aria-live="polite"></div></section>
-                <section class="management-pane" data-management-pane="minigames" hidden><div class="panel-heading"><div><h2>蹦蹦数字炸弹</h2><p class="muted">3–10 人每轮私聊报数，按平均数 × 0.8 结算；连续 10 分钟无有效操作时默认释放对局。</p></div><button id="edit-number-bomb-settings" class="primary" type="button">编辑小游戏规则</button></div><div id="number-bomb-settings-card" class="settings-card" aria-live="polite"></div></section>
+                <section class="management-pane" data-management-pane="minigames" hidden><div class="panel-heading"><div><h2>蹦蹦数字炸弹</h2><p class="muted">不限人数，参与者手动 /开始；每轮私聊报数，开局后不因无操作解散。</p></div><button id="edit-number-bomb-settings" class="primary" type="button">编辑小游戏规则</button></div><div id="number-bomb-settings-card" class="settings-card" aria-live="polite"></div></section>
               </section>
 
               <section id="ai-assistant-view" class="dashboard-view panel" hidden>
@@ -329,9 +334,9 @@
     <div id="number-bomb-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="number-bomb-settings-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-number-bomb-settings-modal></div>
       <section class="template-modal-card">
-        <div class="template-modal-heading"><div><p class="eyebrow">小游戏</p><h2 id="number-bomb-settings-modal-title">编辑蹦蹦数字炸弹</h2><p class="muted">无有效操作释放时间可设置为 1–60 分钟，修改后立即对当前对局生效。</p></div><button class="text-button" data-close-number-bomb-settings-modal type="button">关闭</button></div>
-        <label for="number-bomb-timeout-minutes">无操作释放时间（分钟）</label>
-        <input id="number-bomb-timeout-minutes" type="number" min="1" max="60" required>
+        <div class="template-modal-heading"><div><p class="eyebrow">小游戏</p><h2 id="number-bomb-settings-modal-title">编辑蹦蹦数字炸弹</h2><p class="muted">停用只阻止新对局；报名超时用于释放未开局报名，提醒间隔对当前报数轮后续提醒生效。</p></div><button class="text-button" data-close-number-bomb-settings-modal type="button">关闭</button></div>
+        <label><input id="number-bomb-enabled" type="checkbox"> 启用蹦蹦数字炸弹</label>
+        <div class="event-input-grid"><label>报名超时（分钟）<input id="number-bomb-signup-minutes" type="number" min="1" max="60" required></label><label>未报数提醒（秒）<input id="number-bomb-reminder-seconds" type="number" min="5" max="300" required></label></div>
         <div class="template-modal-actions"><button class="secondary" data-close-number-bomb-settings-modal type="button">取消</button><button id="save-number-bomb-settings" class="primary" type="button">保存设置</button></div>
       </section>
     </div>
@@ -416,7 +421,7 @@
       <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">记忆考核</p><h2 id="memory-assessment-settings-modal-title">编辑游戏规则</h2><p class="muted">字符集不能有空格或换行；等级使用“长度,奖励”逐行填写，例如 5,1。</p></div><button class="text-button" data-close-memory-assessment-settings-modal type="button">关闭</button></div>
         <label><input id="memory-assessment-enabled" type="checkbox"> 启用记忆考核</label>
         <div class="event-input-grid"><label>单人每日次数<input id="memory-assessment-daily-limit" type="number" min="1" max="99"></label><label>单人展示秒数<input id="memory-assessment-single-seconds" type="number" min="1" max="60"></label><label>对战展示秒数<input id="memory-assessment-duel-seconds" type="number" min="1" max="60"></label></div>
-        <div class="event-input-grid"><label>对战难度等级<input id="memory-assessment-duel-level" type="number" min="1" max="20"></label><label>每人基础奖池<input id="memory-assessment-base-pool" type="number" min="1" max="999"></label><label>答错冻结金额<input id="memory-assessment-wrong-freeze" type="number" min="1" max="999"></label><label>答错上限<input id="memory-assessment-wrong-limit" type="number" min="1" max="99"></label><label>作答超时（分钟）<input id="memory-assessment-timeout" type="number" min="1" max="60"></label></div>
+        <div class="event-input-grid"><label>对战难度等级<input id="memory-assessment-duel-level" type="number" min="1" max="20"></label><label>每人基础奖池<input id="memory-assessment-base-pool" type="number" min="1" max="999"></label><label>答错冻结金额<input id="memory-assessment-wrong-freeze" type="number" min="1" max="999"></label><label>答错上限<input id="memory-assessment-wrong-limit" type="number" min="1" max="99"></label><label>等待加入超时（分钟）<input id="memory-assessment-signup-timeout" type="number" min="1" max="60"></label><label>作答超时（分钟）<input id="memory-assessment-timeout" type="number" min="1" max="60"></label></div>
         <label>随机字符集<input id="memory-assessment-character-set" maxlength="200"></label><label>等级规则<textarea id="memory-assessment-levels" rows="5"></textarea></label>
         <div class="template-modal-actions"><button class="secondary" data-close-memory-assessment-settings-modal type="button">取消</button><button id="save-memory-assessment-settings" class="primary" type="button">保存规则</button></div>
       </section>
@@ -425,7 +430,7 @@
       <div class="template-modal-backdrop" data-close-undercover-settings-modal></div>
       <section class="template-modal-card undercover-settings-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">谁是卧底</p><h2 id="undercover-settings-modal-title">编辑游戏规则</h2><p class="muted">角色配比仅用于 4–8 人新对局；每行总人数必须等于该场人数，且至少配置 1 名卧底。</p></div><button class="text-button" data-close-undercover-settings-modal type="button">关闭</button></div>
         <label><input id="undercover-enabled" type="checkbox"> 启用谁是卧底</label>
-        <div class="event-input-grid"><label>投票时长（秒）<input id="undercover-vote-seconds" type="number" min="1" max="3600" required></label><label>白板胜利人数阈值<input id="undercover-whiteboard-threshold" type="number" min="2" max="8" required></label></div>
+        <div class="event-input-grid"><label>投票时长（秒）<input id="undercover-vote-seconds" type="number" min="1" max="3600" required></label><label>报名超时（分钟）<input id="undercover-signup-timeout" type="number" min="1" max="60" required></label><label>白板胜利人数阈值<input id="undercover-whiteboard-threshold" type="number" min="2" max="8" required></label></div>
         <div><label>4–8 人角色配比</label><div id="undercover-role-inputs" class="undercover-role-inputs"></div></div>
         <div class="template-modal-actions"><button class="secondary" data-close-undercover-settings-modal type="button">取消</button><button id="save-undercover-settings" class="primary" type="button">保存规则</button></div>
       </section>

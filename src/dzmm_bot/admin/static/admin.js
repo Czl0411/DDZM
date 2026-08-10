@@ -11,6 +11,8 @@ let refreshLoading = false;
 let gameSettings = null;
 let activitySettings = null;
 let numberBombSettings = null;
+let currentGameplay = null;
+let gameplayVersion = null;
 let randomEventSettings = null;
 let employeePage = 1;
 let shopPage = 1;
@@ -246,7 +248,10 @@ const activitySettingsModal = document.querySelector("#activity-settings-modal")
 const activityRuleInputs = document.querySelector("#activity-rule-inputs");
 const incomeReportTimeInputs = document.querySelector("#income-report-time-inputs");
 const numberBombSettingsModal = document.querySelector("#number-bomb-settings-modal");
-const numberBombTimeoutMinutes = document.querySelector("#number-bomb-timeout-minutes");
+const numberBombEnabled = document.querySelector("#number-bomb-enabled");
+const numberBombSignupMinutes = document.querySelector("#number-bomb-signup-minutes");
+const numberBombReminderSeconds = document.querySelector("#number-bomb-reminder-seconds");
+const forceEndCurrentGame = document.querySelector("#force-end-current-game");
 const randomEventSettingsModal = document.querySelector("#random-event-settings-modal");
 const randomEventSceneModal = document.querySelector("#random-event-scene-modal");
 const randomEventTimeModal = document.querySelector("#random-event-time-modal");
@@ -409,7 +414,49 @@ function renderActivitySettings(settings) {
 
 function renderNumberBombSettings(settings) {
   document.querySelector("#number-bomb-settings-card").innerHTML = `
-    <article><span>无操作释放时间</span><strong>${settings.inactivity_timeout_minutes} 分钟</strong><small>允许范围 1–60 分钟，修改后立即生效</small></article>`;
+    <article><span>游戏状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>停用只阻止创建新对局</small></article>
+    <article><span>报名超时</span><strong>${settings.signup_timeout_minutes} 分钟</strong><small>未开局报名到期自动释放</small></article>
+    <article><span>未报数提醒</span><strong>${settings.reminder_interval_seconds} 秒</strong><small>首次提醒后参与者可使用 /跳过</small></article>`;
+}
+
+function renderCurrentGameplay(gameplay) {
+  currentGameplay = gameplay;
+  gameplayVersion = gameplay.version;
+  const card = document.querySelector("#gameplay-current-card");
+  if (!gameplay.game_type) {
+    card.innerHTML = '<p class="muted">当前没有多人游戏或随机事件占用。</p>';
+    forceEndCurrentGame.hidden = true;
+    forceEndCurrentGame.dataset.gameType = "";
+    forceEndCurrentGame.dataset.gameId = "";
+    return;
+  }
+  const names = {
+    number_bomb: "蹦蹦数字炸弹", blame_bomb: "甩锅游戏", undercover: "谁是卧底",
+    memory_duel: "记忆考核对战", random_event: "随机事件", conflict: "玩法状态冲突",
+  };
+  const states = {
+    signup: "报名中", collecting: "报数中", waiting_continue: "等待继续",
+    awaiting_continue: "等待继续", active: "进行中", in_progress: "进行中",
+    waiting_opponent: "等待对手", conflict: "状态冲突",
+  };
+  const participants = gameplay.participants.map((participant) => {
+    const number = participant.number == null ? "" : `${participant.number}号 `;
+    const progress = participant.reported == null ? "" : participant.reported ? "（已报数）" : "（未报数）";
+    return `${number}${participant.display_name}${progress}`;
+  }).join("、") || "暂无";
+  card.innerHTML = `
+    <article><span>当前游戏</span><strong>${escapeHtml(names[gameplay.game_type] || gameplay.game_type)}</strong><small>${escapeHtml(states[gameplay.state] || gameplay.state || "未知状态")} · ${escapeHtml(gameplay.game_id)}</small></article>
+    <article><span>参与者</span><strong>${gameplay.participants.length} 人</strong><small>${escapeHtml(participants)}</small></article>
+    <article><span>时限与进度</span><strong>${gameplay.skip_enabled ? "可跳过" : "进行中"}</strong><small>${gameplay.signup_deadline ? `报名截止 ${formatHeartbeat(gameplay.signup_deadline)}` : gameplay.next_reminder_at ? `下次提醒 ${formatHeartbeat(gameplay.next_reminder_at)}` : "当前无倒计时"}</small></article>`;
+  forceEndCurrentGame.hidden = false;
+  forceEndCurrentGame.dataset.gameType = gameplay.game_type;
+  forceEndCurrentGame.dataset.gameId = gameplay.game_id;
+}
+
+async function loadCurrentGameplay() {
+  const gameplay = await requestGame("/api/gameplay/current");
+  renderCurrentGameplay(gameplay);
+  return gameplay;
 }
 
 function eventStatusLabel(status) {
@@ -481,6 +528,7 @@ async function openMemoryAssessmentSettingsModal() {
   document.querySelector("#memory-assessment-base-pool").value = settings.duel_base_pool;
   document.querySelector("#memory-assessment-wrong-freeze").value = settings.duel_wrong_freeze;
   document.querySelector("#memory-assessment-wrong-limit").value = settings.duel_wrong_limit;
+  document.querySelector("#memory-assessment-signup-timeout").value = settings.duel_signup_timeout_minutes;
   document.querySelector("#memory-assessment-timeout").value = settings.duel_answer_timeout_minutes;
   document.querySelector("#memory-assessment-character-set").value = settings.character_set;
   document.querySelector("#memory-assessment-levels").value = settings.levels.map((rule) => `${rule.answer_length},${rule.reward}`).join("\n");
@@ -664,6 +712,7 @@ async function openUndercoverSettingsModal() {
   undercoverSettings = settings;
   document.querySelector("#undercover-enabled").checked = settings.enabled;
   document.querySelector("#undercover-vote-seconds").value = settings.vote_seconds;
+  document.querySelector("#undercover-signup-timeout").value = settings.signup_timeout_minutes;
   document.querySelector("#undercover-whiteboard-threshold").value = settings.whiteboard_win_remaining;
   renderUndercoverRoleInputs(settings.roles);
   undercoverSettingsModal.hidden = false;
@@ -945,9 +994,11 @@ async function loadNumberBombSettings() {
 
 async function openNumberBombSettingsModal() {
   const settings = numberBombSettings || await loadNumberBombSettings();
-  numberBombTimeoutMinutes.value = settings.inactivity_timeout_minutes;
+  numberBombEnabled.checked = settings.enabled;
+  numberBombSignupMinutes.value = settings.signup_timeout_minutes;
+  numberBombReminderSeconds.value = settings.reminder_interval_seconds;
   numberBombSettingsModal.hidden = false;
-  numberBombTimeoutMinutes.focus();
+  numberBombSignupMinutes.focus();
 }
 
 async function openSettingsModal() {
@@ -1344,7 +1395,7 @@ async function refresh() {
       return;
     }
     renderStatus(await response.json());
-    await refreshLoginLease();
+    await Promise.all([refreshLoginLease(), loadCurrentGameplay()]);
   } catch (error) {
     setResult(`状态读取失败（${error.message}）`, "error");
   } finally {
@@ -1752,9 +1803,14 @@ numberBombSettingsModal.addEventListener("click", async (event) => {
     return;
   }
   if (event.target.id !== "save-number-bomb-settings") return;
-  const inactivity_timeout_minutes = Number(numberBombTimeoutMinutes.value);
-  if (!Number.isInteger(inactivity_timeout_minutes) || inactivity_timeout_minutes < 1 || inactivity_timeout_minutes > 60) {
-    setResult("无操作释放时间必须为 1–60 分钟", "error");
+  const signup_timeout_minutes = Number(numberBombSignupMinutes.value);
+  const reminder_interval_seconds = Number(numberBombReminderSeconds.value);
+  if (!Number.isInteger(signup_timeout_minutes) || signup_timeout_minutes < 1 || signup_timeout_minutes > 60) {
+    setResult("报名超时必须为 1–60 分钟", "error");
+    return;
+  }
+  if (!Number.isInteger(reminder_interval_seconds) || reminder_interval_seconds < 5 || reminder_interval_seconds > 300) {
+    setResult("提醒间隔必须为 5–300 秒", "error");
     return;
   }
   const button = event.target;
@@ -1763,7 +1819,11 @@ numberBombSettingsModal.addEventListener("click", async (event) => {
       numberBombSettings = await requestGame("/api/game/number-bomb/settings", {
         method: "PATCH",
         headers: {"Content-Type": "application/json", ...configurationHeaders()},
-        body: JSON.stringify({inactivity_timeout_minutes}),
+        body: JSON.stringify({
+          enabled: numberBombEnabled.checked,
+          signup_timeout_minutes,
+          reminder_interval_seconds,
+        }),
       });
       configurationVersion = numberBombSettings.version;
       renderNumberBombSettings(numberBombSettings);
@@ -1772,6 +1832,29 @@ numberBombSettingsModal.addEventListener("click", async (event) => {
     setResult("蹦蹦数字炸弹设置已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+forceEndCurrentGame.addEventListener("click", async () => {
+  if (!currentGameplay?.game_type || !currentGameplay?.game_id) return;
+  if (!window.confirm(`确认强制结束当前${currentGameplay.game_type === "number_bomb" ? "蹦蹦数字炸弹" : "游戏"}？`)) return;
+  try {
+    await runMutation(forceEndCurrentGame, "结束中…", async () => {
+      const ended = await requestGame(
+        `/api/gameplay/${encodeURIComponent(currentGameplay.game_type)}/${encodeURIComponent(currentGameplay.game_id)}/force-end`,
+        {
+          method: "POST",
+          headers: {
+            "If-Match": String(gameplayVersion),
+            "Idempotency-Key": idempotencyKey(),
+          },
+        },
+      );
+      gameplayVersion = ended.version;
+      await loadCurrentGameplay();
+    });
+    setResult("当前游戏已强制结束", "success");
+  } catch (error) {
+    setResult(`强制结束失败（${error.message}）`, "error");
   }
 });
 randomEventSettingsModal.addEventListener("click", async (event) => {
@@ -2089,6 +2172,7 @@ memoryAssessmentSettingsModal.addEventListener("click", async (event) => {
     duel_base_pool: Number(document.querySelector("#memory-assessment-base-pool").value),
     duel_wrong_freeze: Number(document.querySelector("#memory-assessment-wrong-freeze").value),
     duel_wrong_limit: Number(document.querySelector("#memory-assessment-wrong-limit").value),
+    duel_signup_timeout_minutes: Number(document.querySelector("#memory-assessment-signup-timeout").value),
     duel_answer_timeout_minutes: Number(document.querySelector("#memory-assessment-timeout").value),
     character_set: document.querySelector("#memory-assessment-character-set").value,
     levels,
@@ -2122,6 +2206,7 @@ undercoverSettingsModal.addEventListener("click", async (event) => {
   const settings = {
     enabled: document.querySelector("#undercover-enabled").checked,
     vote_seconds: Number(document.querySelector("#undercover-vote-seconds").value),
+    signup_timeout_minutes: Number(document.querySelector("#undercover-signup-timeout").value),
     whiteboard_win_remaining: Number(document.querySelector("#undercover-whiteboard-threshold").value),
     roles,
   };

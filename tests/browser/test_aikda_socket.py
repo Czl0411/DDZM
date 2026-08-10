@@ -302,6 +302,26 @@ def test_send_joins_destination_before_sending_and_preserves_newlines(gateway):
     assert socket.calls[1][1]["message"]["content"]["text"] == "第一行\n第二行"
 
 
+def test_send_reuses_joined_room_until_socket_reconnects(gateway):
+    adapter, socket, _ = gateway
+
+    adapter.send_to("direct-1", "第一条")
+    adapter.send_to("direct-1", "第二条")
+
+    assert [call[0] for call in socket.calls] == [
+        "message:join-room", "message:send", "message:send"
+    ]
+
+    socket.connected = False
+    adapter._on_disconnect()
+    adapter.send_to("direct-1", "第三条")
+
+    assert [call[0] for call in socket.calls] == [
+        "message:join-room", "message:send", "message:send",
+        "message:join-room", "message:send",
+    ]
+
+
 def test_send_waits_for_server_join_before_emitting(gateway):
     """Fails if the gateway sends before Aikda marks the socket joined."""
     adapter, socket, _ = gateway

@@ -2,7 +2,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import logging
-from time import sleep as default_sleep
+from time import monotonic as default_monotonic, sleep as default_sleep
 from typing import Protocol
 
 from dzmm_bot.runtime.contracts import LoginState
@@ -13,6 +13,8 @@ from .session import BrowserSession, ChatGateway
 
 
 _LOGGER = logging.getLogger(__name__)
+_OUTBOUND_BATCH_SIZE = 20
+_OUTBOUND_BATCH_BUDGET_SECONDS = 2.0
 
 
 class ManualDesktop(Protocol):
@@ -34,6 +36,7 @@ class BrowserWorker:
         session: BrowserSession,
         desktop: ManualDesktop,
         clock: Callable[[], datetime] = lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
+        monotonic: Callable[[], float] = default_monotonic,
         sleep: Callable[[float], None] = default_sleep,
         lease_seconds: int = 30,
         bot_sender: BotSender | None = None,
@@ -44,6 +47,7 @@ class BrowserWorker:
         self._session = session
         self._desktop = desktop
         self._clock = clock
+        self._monotonic = monotonic
         self._sleep = sleep
         self._lease_seconds = lease_seconds
         self._bot_sender = bot_sender
@@ -138,11 +142,23 @@ class BrowserWorker:
                     self._clock(),
                 )
 
-        outbound = self._core.claim_outbound(
-            self._worker_id, self._clock(), self._lease_seconds
-        )
-        if outbound is None:
-            return
+        self._drain_outbound(gateway, self._monotonic())
+
+    def _drain_outbound(self, gateway: ChatGateway, started_at: float) -> None:
+        sent_count = 0
+        while sent_count < _OUTBOUND_BATCH_SIZE:
+            if self._monotonic() - started_at >= _OUTBOUND_BATCH_BUDGET_SECONDS:
+                return
+            outbound = self._core.claim_outbound(
+                self._worker_id, self._clock(), self._lease_seconds
+            )
+            if outbound is None:
+                return
+            if not self._send_one_outbound(gateway, outbound):
+                return
+            sent_count += 1
+
+    def _send_one_outbound(self, gateway: ChatGateway, outbound) -> bool:
         try:
             platform_sent_id = self._send_outbound(gateway, outbound)
         except Exception as error:
@@ -154,11 +170,11 @@ class BrowserWorker:
                     outbound.lease_token,
                     self._clock(),
                 )
-                return
+                return False
             _LOGGER.exception("outbound send failed: %s", outbound.id)
             self._recover_browser_session()
             self._sync_listener_state()
-            return
+            return False
         self._core.confirm_sent(
             outbound.id,
             self._worker_id,
@@ -166,6 +182,7 @@ class BrowserWorker:
             platform_sent_id,
             self._clock(),
         )
+        return True
 
     def _send_outbound(self, gateway: ChatGateway, outbound) -> str:
         if (

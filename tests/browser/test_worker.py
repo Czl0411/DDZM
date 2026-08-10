@@ -318,6 +318,49 @@ def test_sent_confirmation_includes_current_fencing_values(context):
     ]
 
 
+def test_worker_drains_at_most_twenty_outbounds_in_order(context):
+    worker, gateway, _, _, core, _ = context
+    core.pending = [
+        OutboundClaim(UUID(int=index), f"in-{index}", f"reply-{index}", LEASE)
+        for index in range(1, 26)
+    ]
+
+    worker.run_once()
+
+    assert gateway.sent == [f"reply-{index}" for index in range(1, 21)]
+    assert [confirmed[0] for confirmed in core.confirmed] == [
+        UUID(int=index) for index in range(1, 21)
+    ]
+    assert [outbound.id for outbound in core.pending] == [
+        UUID(int=index) for index in range(21, 26)
+    ]
+
+
+def test_worker_stops_outbound_batch_when_time_budget_is_reached():
+    gateway = FakeGateway()
+    session = FakeSession(gateway)
+    core = FakeCore(
+        pending=[
+            OutboundClaim(UUID(int=index), f"in-{index}", f"reply-{index}", LEASE)
+            for index in range(1, 21)
+        ]
+    )
+    ticks = iter((0.0, 0.0, 0.7, 1.4, 2.0))
+    worker = BrowserWorker(
+        worker_id="worker-a",
+        core=core,
+        session=session,
+        desktop=FakeDesktop(),
+        clock=lambda: NOW,
+        monotonic=lambda: next(ticks),
+    )
+
+    worker.run_once()
+
+    assert gateway.sent == ["reply-1", "reply-2", "reply-3"]
+    assert len(core.pending) == 17
+
+
 def test_worker_uses_bot_api_for_group_replies_over_the_newline_limit(context):
     _, gateway, session, desktop, core, _ = context
     bot_sender = FakeBotSender()

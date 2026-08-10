@@ -2233,6 +2233,23 @@ class CoreRepository:
             )
         )
 
+    def _has_active_game(self, session: Session) -> bool:
+        return bool(
+            session.scalar(
+                select(exists().where(MemoryAssessmentGameRecord.active_key == "global"))
+            )
+            or session.scalar(
+                select(exists().where(HideAndSeekGameRecord.state == "selecting"))
+            )
+            or session.scalar(
+                select(
+                    exists().where(
+                        UndercoverSessionRecord.active_key == _UNDERCOVER_ACTIVE_KEY
+                    )
+                )
+            )
+        )
+
     def _undercover_joined_members(
         self, session: Session, session_id: UUID
     ) -> list[UndercoverSessionMemberRecord]:
@@ -4035,10 +4052,8 @@ class CoreRepository:
                     if active is not None:
                         schedule.status = "skipped"
                         continue
-                    if (
-                        self._active_undercover_session(session) is not None
-                        or self._active_memory_duel(session)
-                    ):
+                    if self._has_active_game(session):
+                        schedule.status = "skipped"
                         continue
                     if not self._fill_random_event_schedule_snapshot(session, schedule):
                         schedule.status = "skipped"

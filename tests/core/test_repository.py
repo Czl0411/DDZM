@@ -657,7 +657,7 @@ def test_undercover_active_session_blocks_memory_assessment_duel(
     assert repository.start_memory_assessment_duel("undercover-1", now).status == "multiplayer_active"
 
 
-def test_due_random_event_waits_while_undercover_signup_is_active(
+def test_due_random_event_is_skipped_while_undercover_signup_is_active(
     repository, session_factory, now
 ):
     platform_ids = _prepare_undercover_players(repository, session_factory, now)
@@ -669,8 +669,9 @@ def test_due_random_event_waits_while_undercover_signup_is_active(
     repository.run_random_event_jobs(now)
 
     schedules = repository.list_today_random_event_schedules(now)
-    assert schedules[0].status == "pending"
+    assert schedules[0].status == "skipped"
     assert repository.active_random_event_state() is None
+    assert repository.undercover_session_summary().state == "signup"
 
 
 def test_undercover_exit_rechecks_winner_and_manual_end_releases_session(
@@ -1095,7 +1096,24 @@ def test_memory_assessment_cannot_start_during_active_random_event(repository, s
     assert repository.start_memory_assessment_duel("u1", now).status == "random_event_active"
 
 
-def test_random_event_waits_while_memory_assessment_duel_is_active(repository):
+def test_due_random_event_is_skipped_while_memory_assessment_single_is_active(
+    repository,
+):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    started = repository.start_memory_assessment_single("u1", now)
+    repository.create_random_event_scene("茶水间", "报名", ["开场"], 1, 1, [("员工", 1)])
+    repository.set_random_event_settings(["10:00"], "可选身份：{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+
+    repository.run_random_event_jobs(now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "skipped"
+    assert repository.active_random_event_state() is None
+    assert repository.answer_memory_assessment("u1", started.answer, now).status == "answer_not_ready"
+
+
+def test_due_random_event_is_skipped_while_memory_assessment_duel_is_active(repository):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_user("u1", "小明", now, 0)
     repository.create_user("u2", "小红", now, 0)
@@ -1107,8 +1125,23 @@ def test_random_event_waits_while_memory_assessment_duel_is_active(repository):
     repository.run_random_event_jobs(now)
     assert waiting.status == "waiting_opponent"
     assert repository.active_random_event_state() is None
-    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.list_today_random_event_schedules(now)[0].status == "skipped"
     assert repository.join_memory_assessment_duel("u2", now).status == "duel_started"
+
+
+def test_due_random_event_is_skipped_while_hide_and_seek_is_active(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    assert repository.start_hide_and_seek("u1", now).status == "started"
+    repository.create_random_event_scene("茶水间", "报名", ["开场"], 1, 1, [("员工", 1)])
+    repository.set_random_event_settings(["10:00"], "可选身份：{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+
+    repository.run_random_event_jobs(now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "skipped"
+    assert repository.active_random_event_state() is None
+    assert repository.choose_hide_and_seek("u1", 1, now).status in {"won", "found"}
 
 
 def test_due_outbound_recall_marks_memory_assessment_round_ready(repository, now):

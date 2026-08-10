@@ -46,6 +46,7 @@ const randomEventCommandOptions = [
   ["/继续", "/继续"], ["/收手", "/收手"], ["/投降", "/投降"],
   ["/谁是卧底", "/谁是卧底"], ["/开始投票", "/开始投票"], ["/投票", "/投票"],
   ["/退出谁是卧底", "/退出谁是卧底"], ["/结束游戏", "/结束游戏"],
+  ["/甩锅游戏", "/甩锅游戏"], ["/甩锅", "/甩锅"], ["/退出甩锅", "/退出甩锅"],
   ["/部门", "/部门"], ["/加入部门", "/加入部门"], ["/切换部门", "/切换部门"],
   ["/部门申请列表", "/部门申请列表"], ["/同意部门", "/同意部门"], ["/全部同意部门", "/全部同意部门"],
   ["/拒绝部门", "/拒绝部门"], ["/全部拒绝部门", "/全部拒绝部门"], ["/职位", "/职位"],
@@ -2084,7 +2085,8 @@ document.querySelector("#end-blame-bomb-session").addEventListener("click", asyn
   if (!window.confirm("确定强制结束当前甩锅游戏并退回全部保证金？")) return;
   try {
     await runMutation(event.currentTarget, "结束中…", async () => {
-      await requestGame("/api/game/blame-bomb/end", {method: "POST"});
+      const result = await requestGame("/api/game/blame-bomb/end", {method: "POST"});
+      if (!result.accepted) throw new Error("当前没有可结束的甩锅游戏");
       await loadBlameBomb();
     });
     setResult("甩锅游戏已结束，保证金已退款", "success");

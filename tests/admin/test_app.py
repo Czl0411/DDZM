@@ -1147,6 +1147,7 @@ def test_admin_exposes_blame_bomb_management_surface(client):
     assert 'id="create-blame-incident"' in page
     assert '"/api/game/blame-bomb/settings"' in script
     assert '"/api/game/blame-bomb/session"' in script
+    assert '["/甩锅游戏", "/甩锅游戏"]' in script
     assert "explosion_deadline" not in script
     assert "turn_deadline" not in script
 

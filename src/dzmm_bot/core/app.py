@@ -1139,7 +1139,7 @@ def create_app(
     def blame_game_session(
         _: Annotated[None, Depends(authorize)],
     ) -> BlameGameSessionResponse:
-        return _blame_game_session_response(repository)
+        return _blame_game_session_response(repository, clock())
 
     @app.post(
         "/internal/game/blame-bomb/end",
@@ -1710,8 +1710,9 @@ def _blame_incident_card_response(card) -> BlameIncidentCardResponse:
 
 def _blame_game_session_response(
     repository: CoreRepository,
+    now: datetime,
 ) -> BlameGameSessionResponse:
-    summary = repository.blame_game_summary()
+    summary = repository.blame_game_summary(now)
     holder = next(
         (
             player

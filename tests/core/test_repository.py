@@ -959,6 +959,120 @@ def test_blame_signup_timeout_dissolves_and_temperature_notice_is_sent_once(
     assert len(notices) == 1
 
 
+def test_blame_player_mutations_resolve_due_game_before_processing(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    players = _prepare_blame_players(repository, session_factory, now, 3)
+    repository.start_blame_game(players[0], 3, now)
+    with session_factory.begin() as session:
+        session.scalar(select(BlameGameRecord)).signup_deadline = now
+    assert repository.join_blame_game(players[1], now).status == "signup_expired"
+    assert repository.blame_game_summary(now).state is None
+
+    later = now + timedelta(days=1)
+    repository.start_blame_game(players[0], 3, later)
+    repository.join_blame_game(players[1], later)
+    repository.join_blame_game(players[2], later)
+    summary = repository.blame_game_summary(later)
+    holder = next(
+        player for player in summary.players
+        if player.seat_number == summary.current_holder_number
+    )
+    nonholder = next(
+        player for player in summary.players
+        if player.platform_id != holder.platform_id
+    )
+    with session_factory.begin() as session:
+        game = session.scalar(
+            select(BlameGameRecord).where(BlameGameRecord.active_key == "global")
+        )
+        game.turn_deadline = later + timedelta(seconds=2)
+    left = repository.leave_blame_game(
+        nonholder.platform_id, later + timedelta(seconds=2)
+    )
+    assert left.status == "settled"
+    assert left.loser_display_name == holder.display_name
+
+
+def test_blame_end_after_deadline_settles_instead_of_refunding(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    _, _, holder, targets = _start_blame_round(repository, session_factory, now)
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.explosion_deadline = now + timedelta(seconds=1)
+        game.turn_deadline = now + timedelta(seconds=1)
+
+    ended = repository.end_blame_game(
+        targets[0].platform_id, now + timedelta(seconds=1)
+    )
+
+    assert ended.status == "settled"
+    assert ended.loser_display_name == holder.display_name
+    assert repository.find_user(holder.platform_id).balance == 98
+
+
+def test_blame_summary_calculates_current_temperature_without_scheduler(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    _start_blame_round(repository, session_factory, now)
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.total_duration_seconds = 100
+        game.explosion_deadline = now + timedelta(seconds=10)
+
+    assert repository.blame_game_summary(now).temperature == "即将爆炸"
+
+
+def test_blame_reason_normalization_preserves_spaces_left_by_punctuation(
+    repository, session_factory, now
+):
+    _, _, holder, targets = _start_blame_round(
+        repository, session_factory, now, count=2
+    )
+    first = repository.transfer_blame(
+        holder.platform_id,
+        targets[0].seat_number,
+        "咖啡 , 报表",
+        now + timedelta(seconds=1),
+    )
+    second = repository.transfer_blame(
+        targets[0].platform_id,
+        holder.seat_number,
+        "咖啡 报表",
+        now + timedelta(seconds=2),
+    )
+
+    assert first.status == "transferred"
+    assert second.status == "transferred"
+
+
+def test_blame_automatic_messages_use_editable_templates(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    players = _prepare_blame_players(repository, session_factory, now, 2)
+    repository.start_blame_game(players[0], 2, now)
+    repository.set_reply_template(
+        "/甩锅游戏", "signup_expired", "自定义报名超时：{日期}"
+    )
+    with session_factory.begin() as session:
+        session.scalar(select(BlameGameRecord)).signup_deadline = now
+
+    repository.run_blame_game_jobs(now)
+
+    assert repository.claim_outbound("worker-template", now, 30).text == (
+        f"自定义报名超时：{now.astimezone(BEIJING).date().isoformat()}"
+    )
+
+
 def test_active_blame_game_blocks_other_multiplayer_games_and_skips_random_event(
     repository, session_factory, now
 ):
@@ -3223,6 +3337,7 @@ def test_postgres_blame_transfer_and_jobs_preserve_single_active_transition(
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import (
         BalanceTransactionRecord,
+        BlameGameRecord,
         BlameGameTransferRecord,
     )
 
@@ -3237,6 +3352,11 @@ def test_postgres_blame_transfer_and_jobs_preserve_single_active_transition(
         setup_repository, factory, now, count=3
     )
     received_at = now + timedelta(seconds=1)
+    jobs_at = now + timedelta(seconds=2)
+    with factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.explosion_deadline = jobs_at
+        game.turn_deadline = jobs_at
     barrier = Barrier(2)
 
     def transfer():
@@ -3250,7 +3370,7 @@ def test_postgres_blame_transfer_and_jobs_preserve_single_active_transition(
 
     def run_jobs():
         barrier.wait()
-        return jobs_repository.run_blame_game_jobs(received_at)
+        return jobs_repository.run_blame_game_jobs(jobs_at)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         transfer_future = executor.submit(transfer)
@@ -3273,7 +3393,56 @@ def test_postgres_blame_transfer_and_jobs_preserve_single_active_transition(
             )
             or 0
         )
-    assert transfer_status == "transferred"
-    assert transfer_count == 1
+        win_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(BalanceTransactionRecord)
+                .where(BalanceTransactionRecord.source == "blame_win")
+            )
+            or 0
+        )
+    assert transfer_status in {"no_game", "transferred"}
+    assert transfer_count == (1 if transfer_status == "transferred" else 0)
     assert guarantee_count == 3
-    assert setup_repository.blame_game_summary(received_at).state == "active"
+    assert win_count == 2
+    assert setup_repository.blame_game_summary(jobs_at).state is None
+
+
+def test_postgres_blame_join_and_cancellation_use_consistent_lock_order(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    factory = sessionmaker(
+        create_engine(migrated_postgres_url), expire_on_commit=False
+    )
+    setup_repository = CoreRepository(factory)
+    join_repository = CoreRepository(factory)
+    cancel_repository = CoreRepository(factory)
+    players, _, _, _ = _start_blame_round(
+        setup_repository, factory, now, count=3
+    )
+    barrier = Barrier(2)
+
+    def retry_join():
+        barrier.wait()
+        return join_repository.join_blame_game(players[1], now).status
+
+    def cancel():
+        barrier.wait()
+        return cancel_repository.admin_end_blame_game(now).status
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        join_future = executor.submit(retry_join)
+        cancel_future = executor.submit(cancel)
+        join_status = join_future.result(timeout=10)
+        cancel_status = cancel_future.result(timeout=10)
+
+    assert join_status in {"game_started", "no_game"}
+    assert cancel_status == "cancelled"
+    assert [setup_repository.find_user(player).balance for player in players] == [
+        100,
+        100,
+        100,
+    ]

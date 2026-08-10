@@ -539,6 +539,8 @@ class GroupCommandHandler:
             )
         if result.status == "game_started":
             return self._reply("/加入", "blame_game_started", received_at)
+        if result.status == "signup_expired":
+            return self._reply("/甩锅游戏", "signup_expired", received_at)
         reasons = {
             "not_joined": "请先入职。",
             "insufficient_balance": "余额不足，无法加入本局。",
@@ -590,14 +592,28 @@ class GroupCommandHandler:
         if result.status == "left_signup":
             return self._reply("/退出甩锅", "left_signup", received_at)
         if result.status == "settled":
+            if result.settlement_reason in {"exploded", "turn_timeout"}:
+                return self._reply(
+                    "/甩锅", "settled", received_at,
+                    {"{失败者}": result.loser_display_name},
+                )
             return self._reply(
                 "/退出甩锅", "settled", received_at,
                 {"{失败者}": result.loser_display_name},
             )
+        if result.status == "signup_expired":
+            return self._reply("/甩锅游戏", "signup_expired", received_at)
         return self._reply("/退出甩锅", "cannot_leave", received_at)
 
     def _blame_end(self, platform_id: str, received_at) -> str:
         result = self._repository.end_blame_game(platform_id, received_at)
+        if result.status == "settled":
+            return self._reply(
+                "/甩锅", "settled", received_at,
+                {"{失败者}": result.loser_display_name},
+            )
+        if result.status == "signup_expired":
+            return self._reply("/甩锅游戏", "signup_expired", received_at)
         return self._reply(
             "/结束游戏",
             "blame_cancelled" if result.status == "cancelled" else "cannot_end",
@@ -1091,6 +1107,16 @@ class GroupCommandHandler:
                     ("/继续", "/继续：上一局结束后开启下一局"),
                 ),
             ),
+            "甩锅游戏": (
+                "【甩锅游戏】",
+                (
+                    ("/甩锅游戏", "/甩锅游戏 人数：创建 2 至 10 人报名局"),
+                    ("/加入", "/加入：报名当前甩锅游戏"),
+                    ("/甩锅", "/甩锅 玩家编号 理由：把锅甩给指定玩家"),
+                    ("/退出甩锅", "/退出甩锅：退出报名；开局后退出会直接背锅"),
+                    ("/结束游戏", "/结束游戏：参与者结束并退款（到期局优先结算）"),
+                ),
+            ),
             "部门": (
                 "【部门与审批】",
                 (
@@ -1122,7 +1148,7 @@ class GroupCommandHandler:
             if category == "游戏":
                 return any(
                     any(command in commands for command, _ in guides[name][1])
-                    for name in ("摸鱼躲藏", "记忆考核", "谁是卧底")
+                    for name in ("摸鱼躲藏", "记忆考核", "谁是卧底", "甩锅游戏")
                 )
             return any(command in commands for command, _ in guides[category][1])
 
@@ -1131,7 +1157,7 @@ class GroupCommandHandler:
                 ("基础", "/帮助 基础：入职、资产与商店"),
                 (
                     "游戏",
-                    "/帮助 游戏：玩法总览；/帮助 摸鱼躲藏、/帮助 记忆考核、/帮助 谁是卧底",
+                    "/帮助 游戏：玩法总览；/帮助 摸鱼躲藏、/帮助 记忆考核、/帮助 谁是卧底、/帮助 甩锅游戏",
                 ),
                 ("随机事件", "/帮助 随机事件：报名与退出"),
                 ("部门", "/帮助 部门：部门申请与审批"),
@@ -1145,7 +1171,7 @@ class GroupCommandHandler:
         elif topic == "游戏":
             game_topics = [
                 name
-                for name in ("摸鱼躲藏", "记忆考核", "谁是卧底")
+                for name in ("摸鱼躲藏", "记忆考核", "谁是卧底", "甩锅游戏")
                 if any(command in commands for command, _ in guides[name][1])
             ]
             guide = "【游戏玩法】\n" + "\n".join(

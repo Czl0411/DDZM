@@ -4166,8 +4166,14 @@ class CoreRepository:
             return "none"
         with self._session() as session:
             event = self._active_random_event(session)
-            if event is None or event.state != "in_progress":
+            if event is None:
                 return "none"
+            if event.state != "in_progress":
+                return (
+                    "observer_valid"
+                    if _is_parenthesized_observer_message(content)
+                    else "observer_invalid"
+                )
             user = session.scalar(
                 select(UserRecord).where(UserRecord.platform_id == platform_id)
             )

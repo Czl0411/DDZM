@@ -184,6 +184,36 @@ def test_service_uses_random_event_block_message_for_unwrapped_observer(session_
     assert warning.text == "当前有随机事件发生，监事不会处理。"
 
 
+@pytest.mark.parametrize("content", ["（围观一下）", "(围观一下)"])
+def test_service_allows_parenthesized_observer_during_random_event_signup(
+    session_factory, content
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import BEIJING, OutboundRecord
+    from dzmm_bot.core.service import CoreService
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository = CoreRepository(session_factory)
+    repository.create_random_event_scene(
+        "茶水间", "快点加入吧。", ["正式开始。"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(["10:00"], "{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    service = CoreService(repository)
+
+    result = service.receive_inbound(
+        InboundMessage("signup-observer-message", "observer", content, now)
+    )
+
+    with session_factory() as session:
+        assert session.scalar(
+            select(OutboundRecord).where(
+                OutboundRecord.inbound_message_id == result.message_id
+            )
+        ) is None
+
+
 def test_enqueue_failure_rolls_back_inbound(session_factory, inbound):
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import InboundRecord, WorkerCommandRecord

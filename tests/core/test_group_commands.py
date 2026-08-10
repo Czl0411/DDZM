@@ -693,6 +693,19 @@ def test_memory_assessment_duel_is_joined_with_plain_join_command(monkeypatch):
     assert "小明 最先答对，赢得奖池 10 摸鱼币。" in _latest_reply(factory)
 
 
+def test_memory_assessment_duel_replies_when_multiplayer_game_is_active():
+    """Fails if a multiplayer conflict crashes inbound command handling."""
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _receive(service, "join", "u1", "/入职 小明", now)
+    repository.upsert_direct_chats([("u1", "direct-u1")], now)
+    assert repository.start_undercover_signup("u1", 4, now).status == "signup_started"
+
+    _receive(service, "duel", "u1", "/记忆考核 对战", now)
+
+    assert _latest_reply(factory) == "当前已有多人玩法进行中，暂不能发起记忆考核对战。"
+
+
 def test_disabled_command_does_not_reply_or_change_data():
     from dzmm_bot.core.schema import UserRecord
 

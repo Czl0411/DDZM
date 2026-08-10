@@ -167,6 +167,29 @@ def test_direct_inbound_rooms_returns_collecting_round_participant_rooms(
     ).json() == {"chatroom_ids": []}
 
 
+def test_number_bomb_settings_core_api_validates_bounds(client, headers):
+    assert client.get(
+        "/internal/game/number-bomb/settings"
+    ).status_code == 401
+    initial = client.get(
+        "/internal/game/number-bomb/settings", headers=headers
+    )
+    assert initial.json() == {"inactivity_timeout_minutes": 10}
+    for value in (1, 60):
+        response = client.patch(
+            "/internal/game/number-bomb/settings",
+            headers=headers,
+            json={"inactivity_timeout_minutes": value},
+        )
+        assert response.json() == {"inactivity_timeout_minutes": value}
+    for value in (0, 61):
+        assert client.patch(
+            "/internal/game/number-bomb/settings",
+            headers=headers,
+            json={"inactivity_timeout_minutes": value},
+        ).status_code == 422
+
+
 def test_internal_inbound_executes_enabled_group_commands(app_context, headers, payload):
     payload["content"] = "/入职 小明"
 

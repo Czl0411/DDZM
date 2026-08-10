@@ -602,6 +602,44 @@ def create_app(
             scope="game-settings",
         )
 
+    @app.get("/api/game/number-bomb/settings")
+    def number_bomb_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return {
+            **_relay_core(core.get_number_bomb_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/number-bomb/settings")
+    def set_number_bomb_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[
+            str | None, Header(alias="Idempotency-Key")
+        ] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        if set(request) != {"inactivity_timeout_minutes"}:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings"
+            )
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_number_bomb_settings(
+                    {
+                        "inactivity_timeout_minutes": request[
+                            "inactivity_timeout_minutes"
+                        ]
+                    }
+                )
+            ),
+            scope="number-bomb-settings",
+        )
+
     @app.get("/api/ai-assistant/settings")
     def ai_assistant_settings(_: Annotated[None, Depends(authorize)]) -> dict:
         return {

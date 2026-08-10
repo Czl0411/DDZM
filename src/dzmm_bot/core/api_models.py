@@ -551,6 +551,14 @@ class SetActivitySettingsRequest(ApiModel):
     report_times: list[str] = Field(min_length=1)
 
 
+class NumberBombSettingsResponse(ApiModel):
+    inactivity_timeout_minutes: int
+
+
+class SetNumberBombSettingsRequest(ApiModel):
+    inactivity_timeout_minutes: int = Field(ge=1, le=60)
+
+
 class RandomEventSettingsResponse(ApiModel):
     schedule_times: list[str] = Field(min_length=1, max_length=24)
     signup_notice_template: str = Field(min_length=1, max_length=2000)

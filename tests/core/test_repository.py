@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, func, inspect, select, text
+from sqlalchemy import create_engine, exists, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
@@ -421,6 +421,21 @@ def _start_undercover_game(repository, session_factory, now, count=4):
         )
     assert result.status == "speaking"
     return result, platform_ids
+
+
+def _prepare_pending_random_event(repository, now):
+    repository.create_random_event_scene(
+        "茶水间",
+        "报名",
+        [{"name": "咖啡事故", "opening_text": "开始。"}],
+        1,
+        1,
+        [("员工", 1)],
+    )
+    repository.set_random_event_settings(
+        [now.astimezone(BEIJING).strftime("%H:%M")], "{可选身份}", 15, 5
+    )
+    return repository.schedule_random_events(now)[0]
 
 
 def test_undercover_requires_direct_chat_then_deals_configured_roles(
@@ -1476,6 +1491,59 @@ def test_random_event_records_participant_details_and_can_trigger(repository):
     assert repository.list_random_event_details(schedule.id) == [("小明", "开始收拾", now)]
 
 
+def test_manual_random_event_rejects_active_game_single_memory(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.start_memory_assessment_single("u1", now)
+    schedule = _prepare_pending_random_event(repository, now)
+
+    with pytest.raises(ValueError, match="当前有游戏进行中"):
+        repository.trigger_random_event(schedule.id, now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.active_random_event_state() is None
+
+
+def test_manual_random_event_rejects_active_game_memory_duel(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.start_memory_assessment_duel("u1", now)
+    schedule = _prepare_pending_random_event(repository, now)
+
+    with pytest.raises(ValueError, match="当前有游戏进行中"):
+        repository.trigger_random_event(schedule.id, now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.active_random_event_state() is None
+
+
+def test_manual_random_event_rejects_active_game_hide_and_seek(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.start_hide_and_seek("u1", now)
+    schedule = _prepare_pending_random_event(repository, now)
+
+    with pytest.raises(ValueError, match="当前有游戏进行中"):
+        repository.trigger_random_event(schedule.id, now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.active_random_event_state() is None
+
+
+def test_manual_random_event_rejects_active_game_undercover(
+    repository, session_factory, now
+):
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.start_undercover_signup(platform_ids[0], 4, now)
+    schedule = _prepare_pending_random_event(repository, now)
+
+    with pytest.raises(ValueError, match="当前有游戏进行中"):
+        repository.trigger_random_event(schedule.id, now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.active_random_event_state() is None
+
+
 def test_scene_rejects_unknown_formal_opening_role(repository):
     with pytest.raises(ValueError, match="不存在的角色变量"):
         repository.create_random_event_scene(
@@ -2466,3 +2534,49 @@ def test_postgres_concurrent_claims_and_upserts_are_atomic(
             executor.map(record_heartbeat, (LoginState.READY, LoginState.AUTH_REQUIRED))
         )
     assert len({heartbeat.id for heartbeat in heartbeats}) == 1
+
+
+def test_postgres_random_event_game_creation_is_serialized(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import MemoryAssessmentGameRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    engine = create_engine(migrated_postgres_url)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    setup_repository = CoreRepository(factory)
+    game_repository = CoreRepository(factory)
+    event_repository = CoreRepository(factory)
+    setup_repository.create_user("race-user", "小明", now, 0)
+    _prepare_pending_random_event(setup_repository, now)
+    barrier = Barrier(2)
+
+    def start_game():
+        barrier.wait()
+        return game_repository.start_memory_assessment_single("race-user", now).status
+
+    def start_scheduled_event():
+        barrier.wait()
+        event_repository.run_random_event_jobs(now)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        game_future = executor.submit(start_game)
+        event_future = executor.submit(start_scheduled_event)
+        game_status = game_future.result()
+        event_future.result()
+
+    schedule_status = setup_repository.list_today_random_event_schedules(now)[0].status
+    random_event_active = setup_repository.active_random_event_state() is not None
+    with factory() as session:
+        memory_game_active = bool(
+            session.scalar(
+                select(exists().where(MemoryAssessmentGameRecord.active_key == "global"))
+            )
+        )
+
+    assert (schedule_status, game_status) in {
+        ("skipped", "started"),
+        ("signup", "random_event_active"),
+    }
+    assert not (random_event_active and memory_game_active)

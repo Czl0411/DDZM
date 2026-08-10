@@ -1728,8 +1728,9 @@ class CoreRepository:
         if player_count not in range(4, 9):
             return UndercoverGameResult("invalid_player_count")
         with self.transaction():
-            settings = self.get_undercover_settings()
             with self._session() as session:
+                self._lock_gameplay_gate(session)
+                settings = self.get_undercover_settings()
                 user = self._undercover_user(session, platform_id)
                 if user is None:
                     return UndercoverGameResult("not_joined")
@@ -2250,6 +2251,16 @@ class CoreRepository:
             )
         )
 
+    def _lock_gameplay_gate(self, session: Session) -> None:
+        self.get_random_event_settings()
+        record = session.scalar(
+            select(RandomEventSettingsRecord)
+            .where(RandomEventSettingsRecord.id == 1)
+            .with_for_update()
+        )
+        if record is None:
+            raise RuntimeError("随机事件设置消失")
+
     def _undercover_joined_members(
         self, session: Session, session_id: UUID
     ) -> list[UndercoverSessionMemberRecord]:
@@ -2593,8 +2604,9 @@ class CoreRepository:
     ) -> MemoryAssessmentGameResult:
         now = now.astimezone(BEIJING)
         with self.transaction():
-            settings = self.get_memory_assessment_settings()
             with self._session() as session:
+                self._lock_gameplay_gate(session)
+                settings = self.get_memory_assessment_settings()
                 user = session.scalar(
                     select(UserRecord)
                     .where(UserRecord.platform_id == platform_id)
@@ -2714,8 +2726,9 @@ class CoreRepository:
     ) -> MemoryAssessmentGameResult:
         now = now.astimezone(BEIJING)
         with self.transaction():
-            settings = self.get_memory_assessment_settings()
             with self._session() as session:
+                self._lock_gameplay_gate(session)
+                settings = self.get_memory_assessment_settings()
                 user = session.scalar(
                     select(UserRecord)
                     .where(UserRecord.platform_id == platform_id)
@@ -3438,8 +3451,9 @@ class CoreRepository:
     ) -> HideAndSeekGameResult:
         now = now.astimezone(BEIJING)
         with self.transaction():
-            settings = self.get_hide_and_seek_settings()
             with self._session() as session:
+                self._lock_gameplay_gate(session)
+                settings = self.get_hide_and_seek_settings()
                 user = session.scalar(
                     select(UserRecord)
                     .where(UserRecord.platform_id == platform_id)
@@ -3797,13 +3811,14 @@ class CoreRepository:
         now = now.astimezone(BEIJING)
         with self.transaction():
             with self._session() as session:
+                self._lock_gameplay_gate(session)
                 schedule = session.get(RandomEventScheduleRecord, schedule_id, with_for_update=True)
                 if schedule is None or schedule.event_date != now.date() or schedule.status != "pending":
                     raise ValueError("仅待开始事件可以立即触发")
                 if self._active_random_event(session) is not None:
                     raise ValueError("当前已有进行中的随机事件")
-                if self._active_undercover_session(session) is not None or self._active_memory_duel(session):
-                    raise ValueError("当前已有多人玩法进行中")
+                if self._has_active_game(session):
+                    raise ValueError("当前有游戏进行中")
                 if not self._fill_random_event_schedule_snapshot(session, schedule):
                     schedule.status = "skipped"
                     raise ValueError("没有可用的随机事件场景")
@@ -4008,8 +4023,9 @@ class CoreRepository:
     def run_random_event_jobs(self, now: datetime) -> None:
         now = now.astimezone(BEIJING)
         with self.transaction():
-            self.schedule_random_events(now)
             with self._session() as session:
+                self._lock_gameplay_gate(session)
+                self.schedule_random_events(now)
                 active = session.scalar(
                     select(RandomEventRecord)
                     .where(RandomEventRecord.state.in_(("signup", "in_progress")))

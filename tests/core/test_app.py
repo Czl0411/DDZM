@@ -1159,3 +1159,29 @@ def test_today_random_event_can_be_added_and_removed_through_internal_api(
     assert client.delete(
         f"/internal/game/random-events/today/{created.json()['id']}", headers=headers
     ).json() == {"accepted": True}
+
+
+def test_trigger_random_event_rejects_active_game_through_internal_api(
+    app_context, headers
+):
+    repository = app_context.repository
+    repository.create_user("u1", "小明", NOW, 0)
+    repository.start_memory_assessment_single("u1", NOW)
+    repository.create_random_event_scene(
+        "茶水间",
+        "报名",
+        [{"name": "咖啡事故", "opening_text": "开场"}],
+        1,
+        1,
+        [("员工", 1)],
+    )
+    repository.set_random_event_settings(["20:00"], "{可选身份}", 15, 5)
+    schedule = repository.schedule_random_events(NOW)[0]
+
+    response = app_context.client.post(
+        f"/internal/game/random-events/today/{schedule.id}/trigger", headers=headers
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "当前有游戏进行中"}
+    assert repository.list_today_random_event_schedules(NOW)[0].status == "pending"

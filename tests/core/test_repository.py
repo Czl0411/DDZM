@@ -13,7 +13,13 @@ from sqlalchemy import create_engine, exists, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
-from dzmm_bot.core.schema import BEIJING
+from dzmm_bot.core.schema import (
+    BEIJING,
+    NumberBombGameRecord,
+    NumberBombRoundPlayerRecord,
+    NumberBombRoundRecord,
+    UserRecord,
+)
 from dzmm_bot.runtime.contracts import InboundMessage, LoginState, WorkerHeartbeat
 
 
@@ -252,6 +258,104 @@ def test_number_bomb_schema_contains_provenance_state_and_idempotency_constraint
     assert InboundRecord.__table__.c.source_type.nullable is False
     assert InboundRecord.__table__.c.chatroom_id.nullable is True
     assert AIActivityEventRecord.__table__.c.detail.nullable is True
+
+
+def test_number_bomb_settings_validate_timeout_range(repository):
+    assert repository.get_number_bomb_settings().inactivity_timeout_minutes == 10
+    assert repository.set_number_bomb_settings(1).inactivity_timeout_minutes == 1
+    assert repository.set_number_bomb_settings(60).inactivity_timeout_minutes == 60
+    with pytest.raises(ValueError):
+        repository.set_number_bomb_settings(0)
+    with pytest.raises(ValueError):
+        repository.set_number_bomb_settings(61)
+
+
+def test_number_bomb_signup_autostarts_first_truth_round_without_balance_changes(
+    repository, now
+):
+    for index in range(1, 4):
+        repository.create_user(f"number-p{index}", f"玩家{index}", now, 20)
+
+    assert repository.start_number_bomb_game("missing", 3, now).status == "not_joined"
+    assert repository.start_number_bomb_game("number-p1", 2, now).status == "invalid_player_count"
+    created = repository.start_number_bomb_game("number-p1", 3, now)
+    assert created.status == "signup_started"
+    assert repository.start_number_bomb_game("number-p1", 3, now).status == "already_active"
+    assert repository.join_number_bomb_game("number-p1", now).status == "already_joined"
+    assert repository.join_number_bomb_game("number-p2", now).status == "joined"
+
+    started = repository.join_number_bomb_game("number-p3", now)
+
+    assert (started.status, started.round_number, started.punishment_type) == (
+        "started", 1, "truth",
+    )
+    summary = repository.number_bomb_game_summary()
+    assert (summary.state, summary.round_number, summary.attempt_number) == (
+        "collecting", 1, 1,
+    )
+    assert [player.platform_id for player in summary.players] == [
+        "number-p1", "number-p2", "number-p3",
+    ]
+    with repository._session() as session:
+        balances = list(session.scalars(
+            select(UserRecord.balance)
+            .where(UserRecord.platform_id.like("number-p%"))
+            .order_by(UserRecord.platform_id)
+        ))
+        snapshots = list(session.scalars(select(NumberBombRoundPlayerRecord)))
+    assert balances == [20, 20, 20]
+    assert [snapshot.display_order for snapshot in snapshots] == [1, 2, 3]
+
+
+def test_number_bomb_signup_leave_and_last_member_release(repository, now):
+    repository.create_user("number-alone", "独行玩家", now, 7)
+    repository.start_number_bomb_game("number-alone", 3, now)
+
+    left = repository.leave_number_bomb_game("number-alone", now + timedelta(seconds=1))
+
+    assert left.status == "signup_left"
+    assert repository.number_bomb_game_summary().state is None
+    with repository._session() as session:
+        balance = session.scalar(
+            select(UserRecord.balance).where(
+                UserRecord.platform_id == "number-alone"
+            )
+        )
+    assert balance == 7
+
+
+def test_number_bomb_next_round_roster_applies_exit_then_fifo_join(repository, now):
+    for index in range(1, 6):
+        repository.create_user(f"roster-p{index}", f"候选{index}", now, 5)
+    repository.start_number_bomb_game("roster-p1", 3, now)
+    repository.join_number_bomb_game("roster-p2", now)
+    repository.join_number_bomb_game("roster-p3", now)
+
+    queued_at = now + timedelta(seconds=1)
+    assert repository.join_number_bomb_game("roster-p4", queued_at).status == "queued"
+    assert repository.join_number_bomb_game("roster-p4", queued_at).status == "already_joined"
+    assert repository.leave_number_bomb_game("roster-p2", queued_at).status == "exit_queued"
+    assert repository.leave_number_bomb_game("roster-p2", queued_at).status == "cannot_leave"
+    assert repository.join_number_bomb_game("roster-p5", queued_at + timedelta(seconds=1)).status == "queued"
+    assert repository.leave_number_bomb_game("roster-p5", queued_at + timedelta(seconds=2)).status == "candidate_cancelled"
+
+    with repository._session() as session:
+        game = session.scalar(select(NumberBombGameRecord).where(NumberBombGameRecord.active_key == "global"))
+        game.state = "waiting_continue"
+        round_record = session.scalar(select(NumberBombRoundRecord).where(NumberBombRoundRecord.state == "collecting"))
+        round_record.state = "settled"
+    continued = repository.continue_number_bomb_game(
+        "roster-p1", queued_at + timedelta(seconds=3)
+    )
+
+    assert (continued.status, continued.round_number) == ("started", 2)
+    assert [player.platform_id for player in repository.number_bomb_game_summary().players] == [
+        "roster-p1", "roster-p3", "roster-p4",
+    ]
+    assert repository.end_number_bomb_game(
+        "roster-p4", queued_at + timedelta(seconds=4)
+    ).status == "ended"
+    assert repository.number_bomb_game_summary().state is None
 
 
 def test_stable_impression_schema_separates_legacy_candidates_and_facts():

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -302,6 +302,68 @@ def test_blame_group_commands_create_join_transfer_and_end():
 
     _receive(service, "blame-end", target.platform_id, "/结束游戏", now)
     assert "已结束" in _latest_reply(factory)
+
+
+def _start_three_player_blame_group(service, repository, factory, now):
+    from dzmm_bot.core.schema import RankRecord
+
+    for platform_id, display_name in (("blame-a", "甲"), ("blame-b", "乙"), ("blame-c", "丙")):
+        repository.create_user(platform_id, display_name, now, 100)
+    repository.create_blame_incident_card(
+        "咖啡事故", "咖啡泼到了报表", ["咖啡", "报表"]
+    )
+    with factory.begin() as session:
+        rank = session.scalar(select(RankRecord).where(RankRecord.sort_order == 1))
+        rank.multiplayer_game_limit = 3
+    _receive(service, "blame-start-complete", "blame-a", "/甩锅游戏 3", now)
+    _receive(service, "blame-join-b-complete", "blame-b", "/加入", now)
+    _receive(service, "blame-join-c-complete", "blame-c", "/加入", now)
+
+
+def test_blame_active_leave_complete_settlement_notice_includes_net_results():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _start_three_player_blame_group(service, repository, factory, now)
+
+    _receive(service, "blame-leave-complete", "blame-a", "/退出甩锅", now)
+
+    assert _latest_reply(factory) == (
+        "【甩锅游戏】甲 主动退出并背锅，扣除 2 摸鱼币；"
+        "乙、丙 获胜，每人获得 1 摸鱼币。"
+    )
+
+
+def test_blame_due_transfer_complete_settlement_notice_keeps_timeout_reason():
+    from dzmm_bot.core.schema import BlameGamePlayerRecord, BlameGameRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _start_three_player_blame_group(service, repository, factory, now)
+    with factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        players = list(
+            session.scalars(
+                select(BlameGamePlayerRecord)
+                .where(BlameGamePlayerRecord.game_id == game.id)
+                .order_by(BlameGamePlayerRecord.seat_number)
+            )
+        )
+        game.current_holder_user_id = players[0].user_id
+        game.explosion_deadline = now.astimezone(BEIJING) + timedelta(seconds=30)
+        game.turn_deadline = now.astimezone(BEIJING)
+
+    _receive(
+        service,
+        "blame-transfer-due-complete",
+        "blame-a",
+        "/甩锅 2 咖啡碰到报表",
+        now + timedelta(seconds=1),
+    )
+
+    assert _latest_reply(factory) == (
+        "【甩锅游戏】操作超时，甲 背锅，扣除 2 摸鱼币；"
+        "乙、丙 获胜，每人获得 1 摸鱼币。"
+    )
 
 
 def test_department_join_application_keeps_employee_in_default_department_until_approved():

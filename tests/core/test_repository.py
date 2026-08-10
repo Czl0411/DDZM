@@ -1402,6 +1402,51 @@ def test_blame_explosion_settlement_is_conservative_and_idempotent(
         assert fact.participation_count == 1
 
 
+@pytest.mark.parametrize(
+    ("settlement_reason", "expected_prefix"),
+    [
+        ("exploded", "【甩锅游戏】锅爆炸了"),
+        ("turn_timeout", "【甩锅游戏】操作超时"),
+    ],
+)
+def test_blame_automatic_complete_settlement_notice_includes_net_results(
+    repository, session_factory, now, settlement_reason, expected_prefix
+):
+    from dzmm_bot.core.schema import (
+        BlameGamePlayerRecord,
+        BlameGameRecord,
+        UserRecord,
+    )
+
+    _start_blame_round(repository, session_factory, now, count=4)
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        players = list(
+            session.scalars(
+                select(BlameGamePlayerRecord)
+                .where(BlameGamePlayerRecord.game_id == game.id)
+                .order_by(BlameGamePlayerRecord.seat_number)
+            )
+        )
+        for player, display_name in zip(players, ("甲", "乙", "丙", "丁"), strict=True):
+            session.get(UserRecord, player.user_id).display_name = display_name
+        game.current_holder_user_id = players[0].user_id
+        if settlement_reason == "exploded":
+            game.explosion_deadline = now.astimezone(BEIJING)
+            game.turn_deadline = now.astimezone(BEIJING) + timedelta(seconds=30)
+        else:
+            game.explosion_deadline = now.astimezone(BEIJING) + timedelta(seconds=30)
+            game.turn_deadline = now.astimezone(BEIJING)
+
+    assert repository.run_blame_game_jobs(now) == ["settled"]
+    outbound = repository.claim_outbound("settlement-worker", now, 30)
+
+    assert outbound.text == (
+        f"{expected_prefix}，甲 背锅，扣除 3 摸鱼币；"
+        "乙、丙、丁 获胜，每人获得 1 摸鱼币。"
+    )
+
+
 def test_blame_transfer_received_after_deadline_settles_current_holder(
     repository, session_factory, now
 ):

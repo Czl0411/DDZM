@@ -3,7 +3,11 @@ from zoneinfo import ZoneInfo
 from dzmm_bot.runtime.contracts import InboundMessage
 
 from .reply_templates import render_template, template_definition
-from .repository import CoreRepository
+from .repository import (
+    BlameGameResult,
+    CoreRepository,
+    blame_settlement_template_values,
+)
 from .service import CommandReply
 
 
@@ -578,9 +582,7 @@ class GroupCommandHandler:
                 {"{缺少关键词}": "、".join(result.missing_keywords)},
             )
         if result.status == "settled":
-            return self._reply(
-                "/甩锅", "settled", received_at, {"{失败者}": result.loser_display_name}
-            )
+            return self._blame_settlement_reply(result, received_at)
         scenario = result.status if result.status in {
             "duplicate_reason", "invalid_target", "self_target",
             "immediate_return_blocked", "not_holder",
@@ -592,15 +594,7 @@ class GroupCommandHandler:
         if result.status == "left_signup":
             return self._reply("/退出甩锅", "left_signup", received_at)
         if result.status == "settled":
-            if result.settlement_reason in {"exploded", "turn_timeout"}:
-                return self._reply(
-                    "/甩锅", "settled", received_at,
-                    {"{失败者}": result.loser_display_name},
-                )
-            return self._reply(
-                "/退出甩锅", "settled", received_at,
-                {"{失败者}": result.loser_display_name},
-            )
+            return self._blame_settlement_reply(result, received_at)
         if result.status == "signup_expired":
             return self._reply("/甩锅游戏", "signup_expired", received_at)
         return self._reply("/退出甩锅", "cannot_leave", received_at)
@@ -608,16 +602,32 @@ class GroupCommandHandler:
     def _blame_end(self, platform_id: str, received_at) -> str:
         result = self._repository.end_blame_game(platform_id, received_at)
         if result.status == "settled":
-            return self._reply(
-                "/甩锅", "settled", received_at,
-                {"{失败者}": result.loser_display_name},
-            )
+            return self._blame_settlement_reply(result, received_at)
         if result.status == "signup_expired":
             return self._reply("/甩锅游戏", "signup_expired", received_at)
         return self._reply(
             "/结束游戏",
             "blame_cancelled" if result.status == "cancelled" else "cannot_end",
             received_at,
+        )
+
+    def _blame_settlement_reply(
+        self, result: BlameGameResult, received_at
+    ) -> str:
+        if result.settlement_reason in {"exploded", "turn_timeout"}:
+            command = "/甩锅游戏"
+            scenario = result.settlement_reason
+        elif result.settlement_reason == "player_left":
+            command = "/退出甩锅"
+            scenario = "settled"
+        else:
+            command = "/甩锅"
+            scenario = "settled"
+        return self._reply(
+            command,
+            scenario,
+            received_at,
+            blame_settlement_template_values(result),
         )
 
     def _undercover_join(self, platform_id: str, received_at) -> str:

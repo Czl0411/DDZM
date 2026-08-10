@@ -417,6 +417,17 @@ class BlameGameResult:
     settlement_reason: str | None = None
 
 
+def blame_settlement_template_values(
+    result: BlameGameResult,
+) -> dict[str, object]:
+    return {
+        "{失败者}": result.loser_display_name,
+        "{扣除金额}": max(result.player_count - 1, 0),
+        "{获胜者}": "、".join(result.winner_display_names),
+        "{奖励}": 1,
+    }
+
+
 @dataclass(frozen=True)
 class MemoryAssessmentSettings:
     enabled: bool
@@ -5002,7 +5013,7 @@ class CoreRepository:
         if notify:
             self.enqueue_system_outbound(
                 self._blame_automatic_message(
-                    scenario, now, {"{失败者}": settled.loser_display_name}
+                    scenario, now, blame_settlement_template_values(settled)
                 )
             )
         return settled
@@ -5016,7 +5027,11 @@ class CoreRepository:
         definition = template_definition("/甩锅游戏", scenario)
         record = self.get_reply_template("/甩锅游戏", scenario)
         template = definition.default if record is None else record.template
-        context = {"{日期}": now.date().isoformat(), **(values or {})}
+        context = {
+            "{日期}": now.date().isoformat(),
+            "{货币}": self.get_game_settings().currency_name,
+            **(values or {}),
+        }
         try:
             return render_template(definition, template, context)
         except ValueError:

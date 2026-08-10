@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from dzmm_bot.runtime.contracts import LoginState
 
@@ -385,6 +385,50 @@ class AIMemoryClaimResponse(ApiModel):
     max_memory_chars: int = Field(ge=1, le=8000)
     current_memory: str
     source_messages: list[str]
+
+
+AIImpressionCategory = Literal[
+    "expression_style",
+    "group_interaction",
+    "humor_style",
+    "interests",
+    "supervisor_interaction",
+    "boundaries",
+]
+
+
+class AIImpressionOperationModel(ApiModel):
+    action: Literal[
+        "new_candidate",
+        "reinforce_candidate",
+        "weaken_entry",
+        "replace_entry",
+        "keep",
+    ]
+    category: AIImpressionCategory | None = None
+    content: str | None = Field(default=None, max_length=240)
+    candidate_id: UUID | None = None
+    entry_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_action_fields(self):
+        present = {
+            name
+            for name in ("category", "content", "candidate_id", "entry_id")
+            if getattr(self, name) is not None
+        }
+        expected = {
+            "new_candidate": {"category", "content"},
+            "reinforce_candidate": {"candidate_id"},
+            "weaken_entry": {"entry_id"},
+            "replace_entry": {"entry_id", "category", "content"},
+            "keep": set(),
+        }[self.action]
+        if present != expected or (
+            self.content is not None and not self.content.strip()
+        ):
+            raise ValueError("印象操作字段无效")
+        return self
 
 
 class AIMemoryCompleteRequest(ApiModel):

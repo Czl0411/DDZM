@@ -20,6 +20,8 @@ from dzmm_bot.runtime.outbound import (
     requires_bot_group_sender,
 )
 
+from dzmm_bot.ai.impressions import AIImpressionOperation, IMPRESSION_CATEGORIES
+
 from .ai_mentions import normalize_ai_mention
 from .reply_templates import (
     TEMPLATE_DEFINITIONS,
@@ -29,7 +31,9 @@ from .reply_templates import (
 )
 from .schema import (
     AIAssistantSettingsRecord,
+    AIImpressionCandidateRecord,
     AIMemoryJobRecord,
+    AIPlayerImpressionRecord,
     AIPlayerMemoryRecord,
     AIMemorySettingsRecord,
     AIRankQuotaRecord,
@@ -520,8 +524,27 @@ class ClaimedAIMemoryJob:
     extraction_prompt: str
     history_limit: int
     max_memory_chars: int
-    current_memory: str
+    stable_entries: tuple["ClaimedAIImpressionEntry", ...]
+    candidates: tuple["ClaimedAIImpressionCandidate", ...]
     source_messages: tuple[str, ...]
+    source_message_count: int
+
+
+@dataclass(frozen=True)
+class ClaimedAIImpressionEntry:
+    id: UUID
+    category: str
+    content: str
+    pinned: bool
+
+
+@dataclass(frozen=True)
+class ClaimedAIImpressionCandidate:
+    id: UUID
+    category: str
+    content: str
+    support_batches: int
+    conflict_entry_id: UUID | None
 
 
 @dataclass(frozen=True)
@@ -1523,6 +1546,7 @@ class CoreRepository:
                 select(AIMemoryJobRecord)
                 .where(
                     AIMemoryJobRecord.status.in_(("pending", "leased")),
+                    AIMemoryJobRecord.available_at <= now,
                     or_(
                         AIMemoryJobRecord.lease_expires_at.is_(None),
                         AIMemoryJobRecord.lease_expires_at <= now,
@@ -1544,6 +1568,13 @@ class CoreRepository:
             target = session.get(InboundRecord, job.target_message_id)
             if user is None:
                 raise RuntimeError("AI 记忆用户消失")
+            session.execute(
+                delete(AIImpressionCandidateRecord).where(
+                    AIImpressionCandidateRecord.user_id == job.user_id,
+                    AIImpressionCandidateRecord.last_supported_at
+                    < now - timedelta(days=settings.candidate_expiry_days),
+                )
+            )
             token = uuid4()
             job.status = "leased"
             job.lease_worker_id = worker_id
@@ -1559,6 +1590,41 @@ class CoreRepository:
                 target,
                 settings.history_limit,
             )
+            stable_entries = tuple(
+                ClaimedAIImpressionEntry(
+                    id=entry.id,
+                    category=entry.category,
+                    content=entry.content,
+                    pinned=entry.pinned,
+                )
+                for entry in session.scalars(
+                    select(AIPlayerImpressionRecord)
+                    .where(AIPlayerImpressionRecord.user_id == job.user_id)
+                    .order_by(
+                        AIPlayerImpressionRecord.category,
+                        AIPlayerImpressionRecord.created_at,
+                        AIPlayerImpressionRecord.id,
+                    )
+                )
+            )
+            candidates = tuple(
+                ClaimedAIImpressionCandidate(
+                    id=candidate.id,
+                    category=candidate.category,
+                    content=candidate.content,
+                    support_batches=candidate.support_batches,
+                    conflict_entry_id=candidate.conflict_entry_id,
+                )
+                for candidate in session.scalars(
+                    select(AIImpressionCandidateRecord)
+                    .where(AIImpressionCandidateRecord.user_id == job.user_id)
+                    .order_by(
+                        AIImpressionCandidateRecord.category,
+                        AIImpressionCandidateRecord.created_at,
+                        AIImpressionCandidateRecord.id,
+                    )
+                )
+            )
             return ClaimedAIMemoryJob(
                 user_id=job.user_id,
                 target_message_id=job.target_message_id,
@@ -1566,8 +1632,10 @@ class CoreRepository:
                 extraction_prompt=settings.extraction_prompt,
                 history_limit=settings.history_limit,
                 max_memory_chars=settings.max_memory_chars,
-                current_memory=snapshot.memory_text if snapshot is not None else "",
+                stable_entries=stable_entries,
+                candidates=candidates,
                 source_messages=source_messages,
+                source_message_count=len(source_messages),
             )
 
     def complete_ai_memory_job(
@@ -1576,7 +1644,8 @@ class CoreRepository:
         worker_id: str,
         lease_token: UUID | str,
         target_message_id: UUID | str,
-        memory_text: str,
+        operations: list[AIImpressionOperation] | tuple[AIImpressionOperation, ...],
+        source_message_count: int,
         now: datetime,
     ) -> bool:
         with self._session() as session:
@@ -1593,33 +1662,281 @@ class CoreRepository:
             )
             if job is None:
                 return False
+            target_id = UUID(str(target_message_id))
+            if job.target_message_id != target_id:
+                return False
             snapshot = session.get(AIPlayerMemoryRecord, job.user_id)
             if snapshot is None:
                 snapshot = AIPlayerMemoryRecord(
                     user_id=job.user_id,
                     memory_text="",
                     last_scanned_message_id=None,
+                    pending_message_count=0,
                     created_at=now,
                     updated_at=now,
                 )
                 session.add(snapshot)
-            if (text := memory_text.strip()):
-                settings = session.get(AIMemorySettingsRecord, 1)
-                limit = settings.max_memory_chars if settings is not None else 1200
-                snapshot.memory_text = text[:limit]
-            snapshot.last_scanned_message_id = UUID(str(target_message_id))
+                session.flush()
+            settings = session.get(AIMemorySettingsRecord, 1)
+            user = session.get(UserRecord, job.user_id)
+            target = session.get(InboundRecord, target_id)
+            if settings is None or user is None or target is None:
+                return False
+            expected_messages = self._memory_source_messages(
+                session,
+                user.platform_id,
+                snapshot.last_scanned_message_id,
+                target,
+                settings.history_limit,
+            )
+            if source_message_count != len(expected_messages):
+                return False
+            self._merge_ai_impression_operations(
+                session, job.user_id, operations, settings, now
+            )
+            snapshot.last_scanned_message_id = target_id
+            snapshot.pending_message_count = max(
+                0, snapshot.pending_message_count - source_message_count
+            )
             snapshot.updated_at = now
             job.lease_worker_id = None
             job.lease_token = None
             job.lease_expires_at = None
             job.failure_summary = None
-            job.status = (
-                "pending"
-                if job.target_message_id != UUID(str(target_message_id))
-                else "completed"
-            )
+            next_target = None
+            if snapshot.pending_message_count >= settings.batch_message_threshold:
+                next_target = session.scalar(
+                    select(InboundRecord)
+                    .where(
+                        InboundRecord.sender_platform_id == user.platform_id,
+                        InboundRecord.ai_memory_eligible.is_(True),
+                        InboundRecord.received_at > target.received_at,
+                    )
+                    .order_by(InboundRecord.received_at.desc(), InboundRecord.id.desc())
+                    .limit(1)
+                )
+            if next_target is None:
+                job.status = "completed"
+            else:
+                job.target_message_id = next_target.id
+                job.target_message_count = snapshot.pending_message_count
+                job.status = "pending"
+                job.available_at = now
             job.updated_at = now
             return True
+
+    def _merge_ai_impression_operations(
+        self,
+        session: Session,
+        user_id: UUID,
+        operations: list[AIImpressionOperation] | tuple[AIImpressionOperation, ...],
+        settings: AIMemorySettingsRecord,
+        now: datetime,
+    ) -> None:
+        if len(operations) > 50:
+            raise ValueError("印象操作数量无效")
+        seen_candidates: set[UUID] = set()
+        seen_entries: set[UUID] = set()
+        seen_values: set[tuple[str, str, UUID | None]] = set()
+        for operation in operations:
+            if operation.action == "keep":
+                continue
+            if operation.action == "reinforce_candidate":
+                if operation.candidate_id is None:
+                    raise ValueError("候选印象引用无效")
+                if operation.candidate_id in seen_candidates:
+                    continue
+                candidate = session.scalar(
+                    select(AIImpressionCandidateRecord)
+                    .where(
+                        AIImpressionCandidateRecord.id == operation.candidate_id,
+                        AIImpressionCandidateRecord.user_id == user_id,
+                    )
+                    .with_for_update()
+                )
+                if candidate is None:
+                    raise ValueError("候选印象不属于当前玩家")
+                seen_candidates.add(candidate.id)
+                candidate.support_batches += 1
+                candidate.last_supported_at = now
+                candidate.updated_at = now
+                self._promote_ai_impression_candidate(
+                    session, candidate, settings.max_entries_per_category, now
+                )
+                continue
+            if operation.entry_id is not None:
+                if operation.entry_id in seen_entries:
+                    continue
+                entry = session.scalar(
+                    select(AIPlayerImpressionRecord)
+                    .where(
+                        AIPlayerImpressionRecord.id == operation.entry_id,
+                        AIPlayerImpressionRecord.user_id == user_id,
+                    )
+                    .with_for_update()
+                )
+                if entry is None:
+                    raise ValueError("稳定印象不属于当前玩家")
+                seen_entries.add(entry.id)
+                if entry.pinned:
+                    continue
+                if operation.action == "weaken_entry":
+                    entry.contradiction_batches += 1
+                    entry.updated_at = now
+                    if entry.contradiction_batches >= 2:
+                        session.execute(
+                            delete(AIImpressionCandidateRecord).where(
+                                AIImpressionCandidateRecord.conflict_entry_id == entry.id
+                            )
+                        )
+                        session.delete(entry)
+                    continue
+                if operation.action != "replace_entry":
+                    raise ValueError("稳定印象操作无效")
+                category, content = _normalized_impression_value(operation)
+                key = (category, content, entry.id)
+                if key in seen_values:
+                    continue
+                seen_values.add(key)
+                candidate = session.scalar(
+                    select(AIImpressionCandidateRecord)
+                    .where(
+                        AIImpressionCandidateRecord.user_id == user_id,
+                        AIImpressionCandidateRecord.category == category,
+                        AIImpressionCandidateRecord.content == content,
+                        AIImpressionCandidateRecord.conflict_entry_id == entry.id,
+                    )
+                    .with_for_update()
+                )
+                if candidate is None:
+                    session.add(
+                        AIImpressionCandidateRecord(
+                            user_id=user_id,
+                            category=category,
+                            content=content,
+                            support_batches=1,
+                            conflict_entry_id=entry.id,
+                            last_supported_at=now,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                elif candidate.id not in seen_candidates:
+                    seen_candidates.add(candidate.id)
+                    candidate.support_batches += 1
+                    candidate.last_supported_at = now
+                    candidate.updated_at = now
+                    self._promote_ai_impression_candidate(
+                        session, candidate, settings.max_entries_per_category, now
+                    )
+                continue
+            if operation.action != "new_candidate":
+                raise ValueError("候选印象操作无效")
+            category, content = _normalized_impression_value(operation)
+            key = (category, content, None)
+            if key in seen_values:
+                continue
+            seen_values.add(key)
+            stable = session.scalar(
+                select(AIPlayerImpressionRecord)
+                .where(
+                    AIPlayerImpressionRecord.user_id == user_id,
+                    AIPlayerImpressionRecord.category == category,
+                    AIPlayerImpressionRecord.content == content,
+                )
+                .with_for_update()
+            )
+            if stable is not None:
+                if stable.pinned:
+                    continue
+                stable.last_supported_at = now
+                stable.contradiction_batches = 0
+                stable.updated_at = now
+                continue
+            candidate = session.scalar(
+                select(AIImpressionCandidateRecord)
+                .where(
+                    AIImpressionCandidateRecord.user_id == user_id,
+                    AIImpressionCandidateRecord.category == category,
+                    AIImpressionCandidateRecord.content == content,
+                    AIImpressionCandidateRecord.conflict_entry_id.is_(None),
+                )
+                .with_for_update()
+            )
+            if candidate is None:
+                session.add(
+                    AIImpressionCandidateRecord(
+                        user_id=user_id,
+                        category=category,
+                        content=content,
+                        support_batches=1,
+                        conflict_entry_id=None,
+                        last_supported_at=now,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            elif candidate.id not in seen_candidates:
+                seen_candidates.add(candidate.id)
+                candidate.support_batches += 1
+                candidate.last_supported_at = now
+                candidate.updated_at = now
+                self._promote_ai_impression_candidate(
+                    session, candidate, settings.max_entries_per_category, now
+                )
+
+    @staticmethod
+    def _promote_ai_impression_candidate(
+        session: Session,
+        candidate: AIImpressionCandidateRecord,
+        max_entries_per_category: int,
+        now: datetime,
+    ) -> None:
+        if candidate.support_batches < 2:
+            return
+        if candidate.conflict_entry_id is not None:
+            entry = session.get(
+                AIPlayerImpressionRecord,
+                candidate.conflict_entry_id,
+                with_for_update=True,
+            )
+            if entry is None or entry.user_id != candidate.user_id or entry.pinned:
+                session.delete(candidate)
+                return
+            entry.category = candidate.category
+            entry.content = candidate.content
+            entry.contradiction_batches = 0
+            entry.last_supported_at = now
+            entry.updated_at = now
+            session.delete(candidate)
+            return
+        entry_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(AIPlayerImpressionRecord)
+                .where(
+                    AIPlayerImpressionRecord.user_id == candidate.user_id,
+                    AIPlayerImpressionRecord.category == candidate.category,
+                )
+            )
+            or 0
+        )
+        if entry_count >= max_entries_per_category:
+            return
+        session.add(
+            AIPlayerImpressionRecord(
+                user_id=candidate.user_id,
+                category=candidate.category,
+                content=candidate.content,
+                source="auto",
+                pinned=False,
+                contradiction_batches=0,
+                last_supported_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.delete(candidate)
 
     def fail_ai_memory_job(
         self,
@@ -7751,6 +8068,19 @@ def _ai_memory_settings(record: AIMemorySettingsRecord) -> AIMemorySettings:
         max_entries_per_category=record.max_entries_per_category,
         candidate_expiry_days=record.candidate_expiry_days,
     )
+
+
+def _normalized_impression_value(
+    operation: AIImpressionOperation,
+) -> tuple[str, str]:
+    if operation.category not in IMPRESSION_CATEGORIES:
+        raise ValueError("印象分类无效")
+    if not isinstance(operation.content, str):
+        raise ValueError("印象内容无效")
+    content = " ".join(operation.content.strip().split())
+    if not 1 <= len(content) <= 240:
+        raise ValueError("印象内容无效")
+    return operation.category, content
 
 
 def _build_ai_system_prompt(

@@ -367,13 +367,16 @@ def test_ai_memory_claim_reads_only_the_players_effective_messages(repository, n
     claim = repository.claim_ai_memory_job("memory-worker", now + timedelta(seconds=4), 30)
 
     assert claim is not None
-    assert claim.current_memory == ""
+    assert claim.stable_entries == ()
+    assert claim.candidates == ()
     assert claim.source_messages == ("我喜欢简短一点的回复", "@总监事 我喜欢桌游")
+    assert claim.source_message_count == 2
 
 
-def test_leased_ai_memory_job_keeps_its_target_while_new_messages_accumulate(
+def test_ai_memory_completion_retargets_messages_that_arrived_while_leased(
     repository, now
 ):
+    from dzmm_bot.ai.impressions import AIImpressionOperation
     from dzmm_bot.core.schema import (
         AIMemoryJobRecord,
         AIPlayerMemoryRecord,
@@ -414,6 +417,259 @@ def test_leased_ai_memory_job_keeps_its_target_while_new_messages_accumulate(
         assert job.target_message_count == 1
         assert job.status == "leased"
         assert memory.pending_message_count == 2
+
+    assert repository.complete_ai_memory_job(
+        user.id,
+        "memory-worker",
+        claim.lease_token,
+        claim.target_message_id,
+        [AIImpressionOperation(action="keep")],
+        claim.source_message_count,
+        now + timedelta(seconds=2),
+    ) is True
+    with repository._session() as session:
+        job = session.get(AIMemoryJobRecord, user.id)
+        memory = session.get(AIPlayerMemoryRecord, user.id)
+        assert job.target_message_id == second.id
+        assert job.target_message_count == 1
+        assert job.status == "pending"
+        assert memory.pending_message_count == 1
+
+
+def _claim_impression_batch(repository, user, now, suffix, content="普通聊天"):
+    current = repository.get_ai_memory_settings()
+    repository.set_ai_memory_settings(
+        enabled=True,
+        gameplay_guide=current.gameplay_guide,
+        extraction_prompt=current.extraction_prompt,
+        history_limit=current.history_limit,
+        max_memory_chars=current.max_memory_chars,
+        batch_message_threshold=1,
+        max_entries_per_category=current.max_entries_per_category,
+        candidate_expiry_days=current.candidate_expiry_days,
+    )
+    inbound, _ = repository.accept_inbound(
+        InboundMessage(f"impression-{suffix}", user.platform_id, content, now)
+    )
+    repository.record_ai_memory_message(inbound.id, user.platform_id, True, now)
+    claim = repository.claim_ai_memory_job("memory-worker", now, 30)
+    assert claim is not None
+    return claim
+
+
+def test_impression_candidate_requires_two_batches_and_deduplicates_one_batch(
+    repository, now
+):
+    from dzmm_bot.ai.impressions import AIImpressionOperation
+    from dzmm_bot.core.schema import AIImpressionCandidateRecord, AIPlayerImpressionRecord
+
+    user, _ = repository.create_user("impression-player", "印象玩家", now, 0)
+    first = _claim_impression_batch(repository, user, now, "first")
+    operation = AIImpressionOperation(
+        action="new_candidate",
+        category="expression_style",
+        content="偏好简短直接的回复",
+    )
+
+    assert repository.complete_ai_memory_job(
+        user.id,
+        "memory-worker",
+        first.lease_token,
+        first.target_message_id,
+        [operation, operation],
+        first.source_message_count,
+        now,
+    ) is True
+    with repository._session() as session:
+        candidate = session.scalar(select(AIImpressionCandidateRecord))
+        assert candidate.support_batches == 1
+        assert session.scalar(select(AIPlayerImpressionRecord)) is None
+
+    second = _claim_impression_batch(
+        repository, user, now + timedelta(minutes=1), "second"
+    )
+    assert repository.complete_ai_memory_job(
+        user.id,
+        "memory-worker",
+        second.lease_token,
+        second.target_message_id,
+        [AIImpressionOperation(action="reinforce_candidate", candidate_id=candidate.id)],
+        second.source_message_count,
+        now + timedelta(minutes=1),
+    ) is True
+    with repository._session() as session:
+        stable = session.scalar(select(AIPlayerImpressionRecord))
+        assert stable.content == "偏好简短直接的回复"
+        assert stable.source == "auto"
+        assert stable.pinned is False
+        assert session.scalar(select(AIImpressionCandidateRecord)) is None
+
+
+def test_impression_replace_and_weaken_need_two_batches_while_pinned_is_immutable(
+    repository, now
+):
+    from dzmm_bot.ai.impressions import AIImpressionOperation
+    from dzmm_bot.core.schema import AIImpressionCandidateRecord, AIPlayerImpressionRecord
+
+    user, _ = repository.create_user("replace-player", "替换玩家", now, 0)
+    with repository._session() as session:
+        automatic = AIPlayerImpressionRecord(
+            user_id=user.id,
+            category="expression_style",
+            content="偏好简短回复",
+            source="auto",
+            pinned=False,
+            contradiction_batches=0,
+            created_at=now,
+            updated_at=now,
+        )
+        pinned = AIPlayerImpressionRecord(
+            user_id=user.id,
+            category="boundaries",
+            content="不讨论隐私",
+            source="admin",
+            pinned=True,
+            contradiction_batches=0,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add_all([automatic, pinned])
+        session.flush()
+        automatic_id = automatic.id
+        pinned_id = pinned.id
+
+    first = _claim_impression_batch(repository, user, now, "replace-first")
+    assert repository.complete_ai_memory_job(
+        user.id,
+        "memory-worker",
+        first.lease_token,
+        first.target_message_id,
+        [
+            AIImpressionOperation(
+                action="replace_entry",
+                entry_id=automatic_id,
+                category="expression_style",
+                content="更偏好分步骤解释",
+            ),
+            AIImpressionOperation(action="weaken_entry", entry_id=pinned_id),
+        ],
+        first.source_message_count,
+        now,
+    ) is True
+    with repository._session() as session:
+        conflict = session.scalar(select(AIImpressionCandidateRecord))
+        assert conflict.support_batches == 1
+        assert conflict.conflict_entry_id == automatic_id
+        assert session.get(AIPlayerImpressionRecord, pinned_id).content == "不讨论隐私"
+
+    second = _claim_impression_batch(
+        repository, user, now + timedelta(minutes=1), "replace-second"
+    )
+    assert repository.complete_ai_memory_job(
+        user.id,
+        "memory-worker",
+        second.lease_token,
+        second.target_message_id,
+        [AIImpressionOperation(action="reinforce_candidate", candidate_id=conflict.id)],
+        second.source_message_count,
+        now + timedelta(minutes=1),
+    ) is True
+    with repository._session() as session:
+        assert session.get(AIPlayerImpressionRecord, automatic_id).content == "更偏好分步骤解释"
+
+    for index in range(2):
+        at = now + timedelta(minutes=index + 2)
+        claim = _claim_impression_batch(repository, user, at, f"weaken-{index}")
+        assert repository.complete_ai_memory_job(
+            user.id,
+            "memory-worker",
+            claim.lease_token,
+            claim.target_message_id,
+            [AIImpressionOperation(action="weaken_entry", entry_id=automatic_id)],
+            claim.source_message_count,
+            at,
+        ) is True
+    with repository._session() as session:
+        assert session.get(AIPlayerImpressionRecord, automatic_id) is None
+        assert session.get(AIPlayerImpressionRecord, pinned_id) is not None
+
+
+def test_expired_candidates_are_removed_and_full_category_does_not_overflow(
+    repository, now
+):
+    from dzmm_bot.ai.impressions import AIImpressionOperation
+    from dzmm_bot.core.schema import AIImpressionCandidateRecord, AIPlayerImpressionRecord
+
+    user, _ = repository.create_user("expiry-player", "过期玩家", now, 0)
+    with repository._session() as session:
+        session.add_all(
+            [
+                AIPlayerImpressionRecord(
+                    user_id=user.id,
+                    category="interests",
+                    content=f"稳定兴趣 {index}",
+                    source="auto",
+                    pinned=False,
+                    contradiction_batches=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+                for index in range(3)
+            ]
+        )
+        session.add(
+            AIImpressionCandidateRecord(
+                user_id=user.id,
+                category="humor_style",
+                content="已经过期",
+                support_batches=1,
+                last_supported_at=now - timedelta(days=31),
+                created_at=now - timedelta(days=31),
+                updated_at=now - timedelta(days=31),
+            )
+        )
+
+    first = _claim_impression_batch(repository, user, now, "full-first")
+    candidate_op = AIImpressionOperation(
+        action="new_candidate", category="interests", content="持续关注桌游"
+    )
+    assert repository.complete_ai_memory_job(
+        user.id,
+        "memory-worker",
+        first.lease_token,
+        first.target_message_id,
+        [candidate_op],
+        first.source_message_count,
+        now,
+    ) is True
+    with repository._session() as session:
+        candidates = list(session.scalars(select(AIImpressionCandidateRecord)))
+        assert [candidate.content for candidate in candidates] == ["持续关注桌游"]
+        candidate_id = candidates[0].id
+
+    second = _claim_impression_batch(
+        repository, user, now + timedelta(minutes=1), "full-second"
+    )
+    assert repository.complete_ai_memory_job(
+        user.id,
+        "memory-worker",
+        second.lease_token,
+        second.target_message_id,
+        [AIImpressionOperation(action="reinforce_candidate", candidate_id=candidate_id)],
+        second.source_message_count,
+        now + timedelta(minutes=1),
+    ) is True
+    with repository._session() as session:
+        assert session.get(AIImpressionCandidateRecord, candidate_id) is not None
+        assert len(
+            list(
+                session.scalars(
+                    select(AIPlayerImpressionRecord).where(
+                        AIPlayerImpressionRecord.category == "interests"
+                    )
+                )
+            )
+        ) == 3
 
 
 def test_undercover_word_migration_seeds_nine_unique_categories():

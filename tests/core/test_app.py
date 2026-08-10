@@ -158,6 +158,116 @@ def test_undercover_settings_api_validates_roles_and_returns_public_session(clie
     }
 
 
+def test_blame_bomb_settings_and_incidents_are_managed_over_core_api(client, headers):
+    initial = client.get("/internal/game/blame-bomb/settings", headers=headers)
+    durations = [
+        {
+            "player_count": player_count,
+            "minimum_seconds": player_count * 10,
+            "maximum_seconds": player_count * 20,
+        }
+        for player_count in range(2, 11)
+    ]
+    invalid = client.patch(
+        "/internal/game/blame-bomb/settings",
+        headers=headers,
+        json={
+            "enabled": True,
+            "signup_timeout_seconds": 60,
+            "turn_timeout_seconds": 20,
+            "durations": durations[:-1] + [durations[-2]],
+        },
+    )
+    updated = client.patch(
+        "/internal/game/blame-bomb/settings",
+        headers=headers,
+        json={
+            "enabled": False,
+            "signup_timeout_seconds": 90,
+            "turn_timeout_seconds": 15,
+            "durations": durations,
+        },
+    )
+    created = client.post(
+        "/internal/game/blame-bomb/incidents",
+        headers=headers,
+        json={
+            "name": "咖啡事故",
+            "description": "咖啡泼到了报表",
+            "keywords": ["咖啡", "报表"],
+        },
+    )
+    card_id = created.json()["id"]
+    changed = client.put(
+        f"/internal/game/blame-bomb/incidents/{card_id}",
+        headers=headers,
+        json={
+            "name": "会议事故",
+            "description": "会议材料发错了",
+            "keywords": ["会议", "材料"],
+            "enabled": False,
+        },
+    )
+    cards = client.get(
+        "/internal/game/blame-bomb/incidents?page=1&page_size=5", headers=headers
+    )
+    deleted = client.delete(
+        f"/internal/game/blame-bomb/incidents/{card_id}", headers=headers
+    )
+
+    assert initial.status_code == 200
+    assert len(initial.json()["durations"]) == 9
+    assert invalid.status_code == 422
+    assert updated.status_code == 200
+    assert updated.json()["signup_timeout_seconds"] == 90
+    assert updated.json()["durations"][0] == durations[0]
+    assert created.status_code == 201
+    assert changed.status_code == 200
+    assert changed.json()["enabled"] is False
+    assert cards.json()["items"][0]["keywords"] == ["会议", "材料"]
+    assert deleted.json() == {"accepted": True}
+
+
+def test_blame_bomb_session_is_public_and_admin_end_refunds(app_context, headers):
+    from dzmm_bot.core.schema import RankRecord
+
+    repository = app_context.repository
+    repository.create_user("blame-api-1", "甲", NOW, 100)
+    repository.create_user("blame-api-2", "乙", NOW, 100)
+    repository.create_blame_incident_card(
+        "咖啡事故", "咖啡泼到了报表", ["咖啡", "报表"]
+    )
+    with app_context.session_factory.begin() as session:
+        rank = session.scalar(select(RankRecord).where(RankRecord.sort_order == 1))
+        rank.multiplayer_game_limit = 3
+    assert repository.start_blame_game("blame-api-1", 2, NOW).status == "signup_started"
+    assert repository.join_blame_game("blame-api-2", NOW).status == "started"
+
+    response = app_context.client.get(
+        "/internal/game/blame-bomb/session", headers=headers
+    )
+    ended = app_context.client.post("/internal/game/blame-bomb/end", headers=headers)
+
+    assert response.status_code == 200
+    assert set(response.json()) == {
+        "state",
+        "target_player_count",
+        "players",
+        "incident",
+        "current_holder",
+        "temperature",
+    }
+    assert response.json()["state"] == "active"
+    assert response.json()["incident"]["name"] == "咖啡事故"
+    serialized = response.text
+    assert "total_duration_seconds" not in serialized
+    assert "explosion_deadline" not in serialized
+    assert "turn_deadline" not in serialized
+    assert ended.json() == {"accepted": True}
+    assert repository.find_user("blame-api-1").balance == 100
+    assert repository.find_user("blame-api-2").balance == 100
+
+
 def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
     app_context, headers
 ):
@@ -361,8 +471,8 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
-    }
+            "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
+        }
     assert disabled.json()["enabled"] is False
     assert employees.json() == {
         "items": [],

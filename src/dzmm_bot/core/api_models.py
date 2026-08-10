@@ -495,6 +495,77 @@ class UndercoverSessionResponse(ApiModel):
     vote_deadline: datetime | None
 
 
+class BlameGameDurationRuleModel(ApiModel):
+    player_count: int = Field(ge=2, le=10)
+    minimum_seconds: int = Field(ge=1, le=3600)
+    maximum_seconds: int = Field(ge=1, le=3600)
+
+
+class BlameGameSettingsResponse(ApiModel):
+    enabled: bool
+    signup_timeout_seconds: int = Field(ge=1, le=3600)
+    turn_timeout_seconds: int = Field(ge=1, le=3600)
+    durations: list[BlameGameDurationRuleModel] = Field(min_length=9, max_length=9)
+
+
+class SetBlameGameSettingsRequest(BlameGameSettingsResponse):
+    pass
+
+
+class BlameIncidentCardResponse(ApiModel):
+    id: UUID
+    name: str
+    description: str
+    keywords: list[str]
+    enabled: bool
+
+
+class PaginatedBlameIncidentCardsResponse(ApiModel):
+    items: list[BlameIncidentCardResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
+class CreateBlameIncidentCardRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str = Field(min_length=1, max_length=2000)
+    keywords: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        min_length=1, max_length=4
+    )
+
+
+class UpdateBlameIncidentCardRequest(CreateBlameIncidentCardRequest):
+    enabled: bool
+
+
+class BlameGamePlayerResponse(ApiModel):
+    display_name: str
+    seat_number: int | None
+    state: str
+
+
+class BlameGameIncidentResponse(ApiModel):
+    name: str
+    description: str
+    keywords: list[str]
+
+
+class BlameGameHolderResponse(ApiModel):
+    display_name: str
+    seat_number: int
+
+
+class BlameGameSessionResponse(ApiModel):
+    state: str | None
+    target_player_count: int
+    players: list[BlameGamePlayerResponse]
+    incident: BlameGameIncidentResponse | None
+    current_holder: BlameGameHolderResponse | None
+    temperature: str | None
+
+
 class HideAndSeekSceneResponse(ApiModel):
     id: UUID
     name: str

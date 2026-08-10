@@ -72,6 +72,17 @@ from .api_models import (
     UndercoverSettingsResponse,
     SetUndercoverSettingsRequest,
     UndercoverSessionResponse,
+    BlameGameDurationRuleModel,
+    BlameGameSettingsResponse,
+    SetBlameGameSettingsRequest,
+    BlameIncidentCardResponse,
+    PaginatedBlameIncidentCardsResponse,
+    CreateBlameIncidentCardRequest,
+    UpdateBlameIncidentCardRequest,
+    BlameGameSessionResponse,
+    BlameGamePlayerResponse,
+    BlameGameIncidentResponse,
+    BlameGameHolderResponse,
     HideAndSeekSceneResponse,
     PaginatedHideAndSeekScenesResponse,
     CreateHideAndSeekSceneRequest,
@@ -1019,6 +1030,128 @@ def create_app(
         )
 
     @app.get(
+        "/internal/game/blame-bomb/settings",
+        response_model=BlameGameSettingsResponse,
+    )
+    def blame_game_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> BlameGameSettingsResponse:
+        return _blame_game_settings_response(repository)
+
+    @app.patch(
+        "/internal/game/blame-bomb/settings",
+        response_model=BlameGameSettingsResponse,
+    )
+    def set_blame_game_settings(
+        request: SetBlameGameSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> BlameGameSettingsResponse:
+        try:
+            repository.set_blame_game_settings(
+                request.enabled,
+                request.signup_timeout_seconds,
+                request.turn_timeout_seconds,
+                [
+                    (
+                        duration.player_count,
+                        duration.minimum_seconds,
+                        duration.maximum_seconds,
+                    )
+                    for duration in request.durations
+                ],
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _blame_game_settings_response(repository)
+
+    @app.get(
+        "/internal/game/blame-bomb/incidents",
+        response_model=PaginatedBlameIncidentCardsResponse,
+    )
+    def blame_incident_cards(
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> PaginatedBlameIncidentCardsResponse:
+        cards, total = repository.list_blame_incident_cards_page(page, page_size)
+        return PaginatedBlameIncidentCardsResponse(
+            items=[_blame_incident_card_response(card) for card in cards],
+            page=page,
+            page_size=page_size,
+            total=total,
+            pages=(total + page_size - 1) // page_size,
+        )
+
+    @app.post(
+        "/internal/game/blame-bomb/incidents",
+        response_model=BlameIncidentCardResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_blame_incident_card(
+        request: CreateBlameIncidentCardRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> BlameIncidentCardResponse:
+        try:
+            card = repository.create_blame_incident_card(
+                request.name, request.description, request.keywords
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _blame_incident_card_response(card)
+
+    @app.put(
+        "/internal/game/blame-bomb/incidents/{card_id}",
+        response_model=BlameIncidentCardResponse,
+    )
+    def update_blame_incident_card(
+        card_id: UUID,
+        request: UpdateBlameIncidentCardRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> BlameIncidentCardResponse:
+        try:
+            card = repository.update_blame_incident_card(
+                card_id,
+                request.name,
+                request.description,
+                request.keywords,
+                request.enabled,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _blame_incident_card_response(card)
+
+    @app.delete(
+        "/internal/game/blame-bomb/incidents/{card_id}",
+        response_model=AcceptedResponse,
+    )
+    def delete_blame_incident_card(
+        card_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(
+            accepted=repository.delete_blame_incident_card(card_id)
+        )
+
+    @app.get(
+        "/internal/game/blame-bomb/session",
+        response_model=BlameGameSessionResponse,
+    )
+    def blame_game_session(
+        _: Annotated[None, Depends(authorize)],
+    ) -> BlameGameSessionResponse:
+        return _blame_game_session_response(repository)
+
+    @app.post(
+        "/internal/game/blame-bomb/end",
+        response_model=AcceptedResponse,
+    )
+    def end_blame_game(
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        result = repository.admin_end_blame_game(clock())
+        return AcceptedResponse(accepted=result.status == "cancelled")
+
+    @app.get(
         "/internal/game/random-events/scenes",
         response_model=PaginatedRandomEventScenesResponse,
     )
@@ -1543,6 +1676,78 @@ def _undercover_settings_response(repository: CoreRepository) -> UndercoverSetti
             )
             for rule in repository.list_undercover_role_rules()
         ],
+    )
+
+
+def _blame_game_settings_response(
+    repository: CoreRepository,
+) -> BlameGameSettingsResponse:
+    settings = repository.get_blame_game_settings()
+    return BlameGameSettingsResponse(
+        enabled=settings.enabled,
+        signup_timeout_seconds=settings.signup_timeout_seconds,
+        turn_timeout_seconds=settings.turn_timeout_seconds,
+        durations=[
+            BlameGameDurationRuleModel(
+                player_count=duration.player_count,
+                minimum_seconds=duration.minimum_seconds,
+                maximum_seconds=duration.maximum_seconds,
+            )
+            for duration in settings.durations
+        ],
+    )
+
+
+def _blame_incident_card_response(card) -> BlameIncidentCardResponse:
+    return BlameIncidentCardResponse(
+        id=card.id,
+        name=card.name,
+        description=card.description,
+        keywords=list(card.keywords),
+        enabled=card.enabled,
+    )
+
+
+def _blame_game_session_response(
+    repository: CoreRepository,
+) -> BlameGameSessionResponse:
+    summary = repository.blame_game_summary()
+    holder = next(
+        (
+            player
+            for player in summary.players
+            if player.seat_number == summary.current_holder_number
+        ),
+        None,
+    )
+    incident = None
+    if summary.incident_name is not None and summary.incident_description is not None:
+        incident = BlameGameIncidentResponse(
+            name=summary.incident_name,
+            description=summary.incident_description,
+            keywords=list(summary.incident_keywords),
+        )
+    return BlameGameSessionResponse(
+        state=summary.state,
+        target_player_count=summary.target_player_count,
+        players=[
+            BlameGamePlayerResponse(
+                display_name=player.display_name,
+                seat_number=player.seat_number,
+                state=player.state,
+            )
+            for player in summary.players
+        ],
+        incident=incident,
+        current_holder=(
+            None
+            if holder is None or holder.seat_number is None
+            else BlameGameHolderResponse(
+                display_name=holder.display_name,
+                seat_number=holder.seat_number,
+            )
+        ),
+        temperature=summary.temperature,
     )
 
 

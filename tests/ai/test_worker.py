@@ -1,7 +1,12 @@
 from datetime import datetime
 from uuid import uuid4
 
-from dzmm_bot.ai.core_client import AIMemoryClaim
+from dzmm_bot.ai.core_client import (
+    AIImpressionCandidate,
+    AIImpressionEntry,
+    AIMemoryClaim,
+)
+from dzmm_bot.ai.impressions import AIImpressionOperation
 from dzmm_bot.core.repository import ClaimedAIRequest
 from dzmm_bot.core.schema import BEIJING
 
@@ -93,22 +98,41 @@ def test_ai_worker_completes_one_claim_and_leaves_empty_queue_idle():
 def test_ai_worker_extracts_memory_only_after_reply_queue_is_empty():
     from dzmm_bot.ai.worker import AIWorker
 
+    entry = AIImpressionEntry(
+        id=uuid4(),
+        category="interests",
+        content="喜欢桌游",
+        pinned=False,
+    )
+    candidate = AIImpressionCandidate(
+        id=uuid4(),
+        category="expression_style",
+        content="偏好简短回复",
+        support_batches=1,
+        conflict_entry_id=None,
+    )
     claim = AIMemoryClaim(
         user_id=uuid4(),
         target_message_id=uuid4(),
         lease_token=uuid4(),
         extraction_prompt="只记录稳定偏好",
-        max_memory_chars=100,
-        current_memory="喜欢桌游",
+        max_memory_chars=1000,
+        stable_entries=(entry,),
+        candidates=(candidate,),
         source_messages=("我也喜欢短回复",),
+        source_message_count=1,
     )
     core = FakeCore(None, memory_claim=claim)
 
     class SuccessClient:
         def complete(self, system_prompt, user_content, **kwargs):
-            assert "已有记忆：喜欢桌游" in system_prompt
+            assert str(entry.id) in system_prompt
+            assert str(candidate.id) in system_prompt
             assert user_content == "我也喜欢短回复"
-            return "喜欢桌游；偏好简短回复"
+            return (
+                '{"operations":[{"action":"reinforce_candidate",'
+                f'"candidate_id":"{candidate.id}"}}]}}'
+            )
 
     assert AIWorker("ai-1", core, SuccessClient(), clock=lambda: NOW).run_once() is True
     assert core.memory_completed == [
@@ -117,7 +141,12 @@ def test_ai_worker_extracts_memory_only_after_reply_queue_is_empty():
             "ai-1",
             claim.lease_token,
             claim.target_message_id,
-            "喜欢桌游；偏好简短回复",
+            (
+                AIImpressionOperation(
+                    action="reinforce_candidate", candidate_id=candidate.id
+                ),
+            ),
+            1,
             NOW,
         )
     ]

@@ -325,6 +325,9 @@ class AIAssistantSettingsResponse(ApiModel):
     extraction_prompt: str
     history_limit: int = Field(ge=1, le=500)
     max_memory_chars: int = Field(ge=1, le=8000)
+    batch_message_threshold: int = Field(ge=1, le=500)
+    max_entries_per_category: int = Field(ge=1, le=10)
+    candidate_expiry_days: int = Field(ge=1, le=365)
 
 
 class SetAIAssistantSettingsRequest(ApiModel):
@@ -341,6 +344,9 @@ class SetAIAssistantSettingsRequest(ApiModel):
     extraction_prompt: str = Field(min_length=1, max_length=99999)
     history_limit: int = Field(ge=1, le=500)
     max_memory_chars: int = Field(ge=1, le=8000)
+    batch_message_threshold: int = Field(ge=1, le=500)
+    max_entries_per_category: int = Field(ge=1, le=10)
+    candidate_expiry_days: int = Field(ge=1, le=365)
 
 
 class AIPlayerMemoryResponse(ApiModel):
@@ -375,16 +381,6 @@ class AIFailedRequest(ApiModel):
     lease_token: UUID
     failure_summary: Literal["timeout", "network", "http_error", "invalid_response"]
     now: AwareDatetime
-
-
-class AIMemoryClaimResponse(ApiModel):
-    user_id: UUID
-    target_message_id: UUID
-    lease_token: UUID
-    extraction_prompt: str
-    max_memory_chars: int = Field(ge=1, le=8000)
-    current_memory: str
-    source_messages: list[str]
 
 
 AIImpressionCategory = Literal[
@@ -431,11 +427,39 @@ class AIImpressionOperationModel(ApiModel):
         return self
 
 
+class AIImpressionEntryResponse(ApiModel):
+    id: UUID
+    category: AIImpressionCategory
+    content: str
+    pinned: bool
+
+
+class AIImpressionCandidateResponse(ApiModel):
+    id: UUID
+    category: AIImpressionCategory
+    content: str
+    support_batches: int = Field(ge=1)
+    conflict_entry_id: UUID | None
+
+
+class AIMemoryClaimResponse(ApiModel):
+    user_id: UUID
+    target_message_id: UUID
+    lease_token: UUID
+    extraction_prompt: str
+    max_memory_chars: int = Field(ge=1, le=8000)
+    stable_entries: list[AIImpressionEntryResponse]
+    candidates: list[AIImpressionCandidateResponse]
+    source_messages: list[str]
+    source_message_count: int = Field(ge=0, le=500)
+
+
 class AIMemoryCompleteRequest(ApiModel):
     worker_id: str = Field(min_length=1, max_length=255)
     lease_token: UUID
     target_message_id: UUID
-    memory_text: str = Field(max_length=8000)
+    operations: list[AIImpressionOperationModel] = Field(max_length=50)
+    source_message_count: int = Field(ge=0, le=500)
     now: AwareDatetime
 
 

@@ -457,6 +457,29 @@ def _claim_impression_batch(repository, user, now, suffix, content="普通聊天
     return claim
 
 
+def test_failed_impression_job_retries_after_bounded_backoff(repository, now):
+    user, _ = repository.create_user("retry-player", "重试玩家", now, 0)
+    claim = _claim_impression_batch(repository, user, now, "retry")
+    failed_at = now + timedelta(seconds=1)
+
+    assert repository.fail_ai_memory_job(
+        user.id,
+        "memory-worker",
+        claim.lease_token,
+        "timeout",
+        failed_at,
+    ) is True
+    assert repository.claim_ai_memory_job(
+        "memory-worker", failed_at + timedelta(seconds=1), 30
+    ) is None
+    retried = repository.claim_ai_memory_job(
+        "memory-worker", failed_at + timedelta(seconds=2), 30
+    )
+    assert retried is not None
+    assert retried.target_message_id == claim.target_message_id
+    assert retried.source_message_count == claim.source_message_count
+
+
 def test_impression_candidate_requires_two_batches_and_deduplicates_one_batch(
     repository, now
 ):

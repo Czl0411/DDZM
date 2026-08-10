@@ -289,6 +289,7 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
             "persona": "群内美女总监事",
             "system_prompt": "保持简短。",
             "max_response_chars": 10000,
+            "batch_message_threshold": 1,
             "quotas": [
                 {"rank_id": quota["rank_id"], "daily_limit": 1}
                 for quota in initial.json()["quotas"]
@@ -337,6 +338,10 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
     )
     assert memory_claim.status_code == 200
     assert memory_claim.json()["source_messages"] == ["@总监事 今天适合摸鱼吗？"]
+    assert memory_claim.json()["source_message_count"] == 1
+    assert memory_claim.json()["stable_entries"] == []
+    assert memory_claim.json()["candidates"] == []
+    assert "current_memory" not in memory_claim.json()
     memory_completed = app_context.client.post(
         f"/internal/ai/memory/{memory_claim.json()['user_id']}/completed",
         headers=headers,
@@ -344,7 +349,14 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
             "worker_id": "memory-1",
             "lease_token": memory_claim.json()["lease_token"],
             "target_message_id": memory_claim.json()["target_message_id"],
-            "memory_text": "喜欢简短摸鱼建议。",
+            "source_message_count": memory_claim.json()["source_message_count"],
+            "operations": [
+                {
+                    "action": "new_candidate",
+                    "category": "interests",
+                    "content": "持续关注摸鱼玩法",
+                }
+            ],
             "now": NOW.isoformat(),
         },
     )
@@ -352,7 +364,7 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
     memory = app_context.client.get(
         "/internal/game/users/ai-user/ai-memory", headers=headers
     )
-    assert memory.json()["memory_text"] == "喜欢简短摸鱼建议。"
+    assert memory.json()["memory_text"] == ""
 
     completed = app_context.client.post(
         f"/internal/ai/{claim.json()['id']}/completed",

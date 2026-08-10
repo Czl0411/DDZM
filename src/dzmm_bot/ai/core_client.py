@@ -5,6 +5,8 @@ from uuid import UUID
 
 import httpx
 
+from .impressions import AIImpressionOperation
+
 
 @dataclass(frozen=True)
 class AIClaim:
@@ -23,8 +25,27 @@ class AIMemoryClaim:
     lease_token: UUID
     extraction_prompt: str
     max_memory_chars: int
-    current_memory: str
+    stable_entries: tuple["AIImpressionEntry", ...]
+    candidates: tuple["AIImpressionCandidate", ...]
     source_messages: tuple[str, ...]
+    source_message_count: int
+
+
+@dataclass(frozen=True)
+class AIImpressionEntry:
+    id: UUID
+    category: str
+    content: str
+    pinned: bool
+
+
+@dataclass(frozen=True)
+class AIImpressionCandidate:
+    id: UUID
+    category: str
+    content: str
+    support_batches: int
+    conflict_entry_id: UUID | None
 
 
 class AICorePort(Protocol):
@@ -60,7 +81,8 @@ class AICorePort(Protocol):
         worker_id: str,
         lease_token: UUID,
         target_message_id: UUID,
-        memory_text: str,
+        operations: tuple[AIImpressionOperation, ...],
+        source_message_count: int,
         now: datetime,
     ) -> None: ...
 
@@ -161,8 +183,31 @@ class AICoreClient:
             lease_token=UUID(data["lease_token"]),
             extraction_prompt=data["extraction_prompt"],
             max_memory_chars=data["max_memory_chars"],
-            current_memory=data["current_memory"],
+            stable_entries=tuple(
+                AIImpressionEntry(
+                    id=UUID(item["id"]),
+                    category=item["category"],
+                    content=item["content"],
+                    pinned=item["pinned"],
+                )
+                for item in data["stable_entries"]
+            ),
+            candidates=tuple(
+                AIImpressionCandidate(
+                    id=UUID(item["id"]),
+                    category=item["category"],
+                    content=item["content"],
+                    support_batches=item["support_batches"],
+                    conflict_entry_id=(
+                        UUID(item["conflict_entry_id"])
+                        if item["conflict_entry_id"] is not None
+                        else None
+                    ),
+                )
+                for item in data["candidates"]
+            ),
             source_messages=tuple(data["source_messages"]),
+            source_message_count=data["source_message_count"],
         )
 
     def complete_ai_memory_job(
@@ -171,7 +216,8 @@ class AICoreClient:
         worker_id: str,
         lease_token: UUID,
         target_message_id: UUID,
-        memory_text: str,
+        operations: tuple[AIImpressionOperation, ...],
+        source_message_count: int,
         now: datetime,
     ) -> None:
         self._post(
@@ -180,7 +226,8 @@ class AICoreClient:
                 "worker_id": worker_id,
                 "lease_token": str(lease_token),
                 "target_message_id": str(target_message_id),
-                "memory_text": memory_text,
+                "operations": [_impression_operation_payload(item) for item in operations],
+                "source_message_count": source_message_count,
                 "now": now.isoformat(),
             },
         )
@@ -207,3 +254,12 @@ class AICoreClient:
         response = self._client.post(path, json=payload)
         response.raise_for_status()
         return response.json()
+
+
+def _impression_operation_payload(operation: AIImpressionOperation) -> dict:
+    payload = {"action": operation.action}
+    for name in ("category", "content", "candidate_id", "entry_id"):
+        value = getattr(operation, name)
+        if value is not None:
+            payload[name] = str(value) if isinstance(value, UUID) else value
+    return payload

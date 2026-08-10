@@ -1960,11 +1960,14 @@ class CoreRepository:
             )
             if job is None:
                 return False
-            job.status = "failed"
+            job.status = "pending"
             job.failure_summary = failure_summary
             job.lease_worker_id = None
             job.lease_token = None
             job.lease_expires_at = None
+            job.available_at = now + timedelta(
+                seconds=min(300, 2 ** min(job.attempt_count, 8))
+            )
             job.updated_at = now
             return True
 

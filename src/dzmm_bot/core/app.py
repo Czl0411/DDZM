@@ -10,6 +10,7 @@ from uvicorn import Config, Server
 
 from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
 from dzmm_bot.runtime.settings import Settings
+from dzmm_bot.ai.impressions import AIImpressionOperation
 
 from .api_models import (
     AcceptedResponse,
@@ -17,6 +18,8 @@ from .api_models import (
     AIMemoryClaimResponse,
     AIMemoryCompleteRequest,
     AIMemoryFailedRequest,
+    AIImpressionCandidateResponse,
+    AIImpressionEntryResponse,
     AICompleteRequest,
     AIFailedRequest,
     AIAssistantSettingsResponse,
@@ -620,6 +623,9 @@ def create_app(
                 extraction_prompt=request.extraction_prompt,
                 history_limit=request.history_limit,
                 max_memory_chars=request.max_memory_chars,
+                batch_message_threshold=request.batch_message_threshold,
+                max_entries_per_category=request.max_entries_per_category,
+                candidate_expiry_days=request.candidate_expiry_days,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -746,8 +752,27 @@ def create_app(
             lease_token=record.lease_token,
             extraction_prompt=record.extraction_prompt,
             max_memory_chars=record.max_memory_chars,
-            current_memory=record.current_memory,
+            stable_entries=[
+                AIImpressionEntryResponse(
+                    id=entry.id,
+                    category=entry.category,
+                    content=entry.content,
+                    pinned=entry.pinned,
+                )
+                for entry in record.stable_entries
+            ],
+            candidates=[
+                AIImpressionCandidateResponse(
+                    id=candidate.id,
+                    category=candidate.category,
+                    content=candidate.content,
+                    support_batches=candidate.support_batches,
+                    conflict_entry_id=candidate.conflict_entry_id,
+                )
+                for candidate in record.candidates
+            ],
             source_messages=list(record.source_messages),
+            source_message_count=record.source_message_count,
         )
 
     @app.post(
@@ -764,7 +789,17 @@ def create_app(
                 request.worker_id,
                 request.lease_token,
                 request.target_message_id,
-                request.memory_text,
+                [
+                    AIImpressionOperation(
+                        action=operation.action,
+                        category=operation.category,
+                        content=operation.content,
+                        candidate_id=operation.candidate_id,
+                        entry_id=operation.entry_id,
+                    )
+                    for operation in request.operations
+                ],
+                request.source_message_count,
                 request.now,
             )
         )
@@ -1585,6 +1620,9 @@ def _ai_assistant_settings_response(
         extraction_prompt=memory.extraction_prompt,
         history_limit=memory.history_limit,
         max_memory_chars=memory.max_memory_chars,
+        batch_message_threshold=memory.batch_message_threshold,
+        max_entries_per_category=memory.max_entries_per_category,
+        candidate_expiry_days=memory.candidate_expiry_days,
         quotas=[
             AIRankQuotaResponse(
                 rank_id=quota.rank_id,

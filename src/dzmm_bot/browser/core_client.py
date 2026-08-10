@@ -41,6 +41,8 @@ class CorePort(Protocol):
 
     def sync_direct_chats(self, rooms: list[DirectChatRoom], now: datetime) -> None: ...
 
+    def direct_inbound_chatroom_ids(self) -> tuple[str, ...]: ...
+
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int
     ) -> OutboundClaim | None: ...
@@ -123,6 +125,8 @@ class CoreClient:
                 "sender_platform_id": message.sender_platform_id,
                 "content": message.content,
                 "received_at": message.received_at.isoformat(),
+                "source_type": message.source_type,
+                "chatroom_id": message.chatroom_id,
             },
         )
 
@@ -143,6 +147,10 @@ class CoreClient:
                 "now": now.isoformat(),
             },
         )
+
+    def direct_inbound_chatroom_ids(self) -> tuple[str, ...]:
+        data = self._get("/internal/direct-inbound/rooms")
+        return tuple(data["chatroom_ids"])
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int
@@ -291,6 +299,11 @@ class CoreClient:
 
     def _post(self, path: str, payload: dict):
         response = self._client.post(path, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def _get(self, path: str):
+        response = self._client.get(path)
         response.raise_for_status()
         return response.json()
 

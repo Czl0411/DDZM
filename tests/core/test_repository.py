@@ -13,7 +13,19 @@ from sqlalchemy import create_engine, exists, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
-from dzmm_bot.core.schema import BEIJING
+from dzmm_bot.core.schema import (
+    AIActivityEventRecord,
+    BEIJING,
+    NumberBombGameRecord,
+    NumberBombRoundPlayerRecord,
+    NumberBombRoundRecord,
+    UserRecord,
+)
+from dzmm_bot.core.number_bomb import (
+    NumberBombEntry,
+    calculate_number_bomb,
+    render_number_bomb_result,
+)
 from dzmm_bot.runtime.contracts import InboundMessage, LoginState, WorkerHeartbeat
 
 
@@ -116,6 +128,28 @@ def test_authoritative_context_covers_live_game_topics_without_hidden_deadlines(
     assert "具体引爆" not in blame_context.live_facts_text
 
 
+def test_number_bomb_authoritative_context_has_public_rules_without_private_values(
+    repository, now
+):
+    repository.create_user("number-guide", "引导玩家", now, 0)
+    repository.ensure_command_definitions()
+
+    context = repository.build_ai_authoritative_context(
+        "number-guide", "蹦蹦数字炸弹怎么报数", now
+    )
+
+    assert context.topics == ("number_bomb",)
+    assert "3–10 人" in context.live_facts_text
+    assert "1–100" in context.live_facts_text
+    assert "10 分钟" in context.live_facts_text
+    assert "真心话、真心话、大冒险" in context.live_facts_text
+    assert "当前状态：无对局" in context.live_facts_text
+    assert "/蹦蹦数字炸弹 人数" in context.commands_text
+    assert "/报数 1-100（仅私聊）" in context.commands_text
+    assert "私聊" in context.live_facts_text
+    assert "chatroom" not in context.live_facts_text
+
+
 @pytest.fixture
 def session_factory():
     from dzmm_bot.core.schema import Base
@@ -211,6 +245,305 @@ def test_blame_game_schema_contains_state_and_idempotency_constraints():
         tuple(column.name for column in constraint.columns)
         for constraint in daily_starts.constraints
     } >= {("user_id", "play_date")}
+
+
+def test_number_bomb_schema_contains_provenance_state_and_idempotency_constraints():
+    from dzmm_bot.core.schema import AIActivityEventRecord, Base, InboundRecord
+
+    expected_tables = {
+        "number_bomb_settings",
+        "number_bomb_games",
+        "number_bomb_members",
+        "number_bomb_rounds",
+        "number_bomb_round_players",
+    }
+
+    assert expected_tables <= set(Base.metadata.tables)
+    assert "number_bomb_daily_starts" not in Base.metadata.tables
+
+    games = Base.metadata.tables["number_bomb_games"]
+    members = Base.metadata.tables["number_bomb_members"]
+    rounds = Base.metadata.tables["number_bomb_rounds"]
+    round_players = Base.metadata.tables["number_bomb_round_players"]
+
+    assert {index.name for index in games.indexes} >= {
+        "ux_number_bomb_one_active"
+    }
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in members.constraints
+    } >= {("game_id", "user_id")}
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in rounds.constraints
+    } >= {("game_id", "round_number", "attempt_number")}
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in round_players.constraints
+    } >= {("round_id", "user_id")}
+
+    assert InboundRecord.__table__.c.source_type.default.arg == "group"
+    assert InboundRecord.__table__.c.source_type.nullable is False
+    assert InboundRecord.__table__.c.chatroom_id.nullable is True
+    assert AIActivityEventRecord.__table__.c.detail.nullable is True
+
+
+def test_number_bomb_settings_validate_timeout_range(repository):
+    assert repository.get_number_bomb_settings().inactivity_timeout_minutes == 10
+    assert repository.set_number_bomb_settings(1).inactivity_timeout_minutes == 1
+    assert repository.set_number_bomb_settings(60).inactivity_timeout_minutes == 60
+    with pytest.raises(ValueError):
+        repository.set_number_bomb_settings(0)
+    with pytest.raises(ValueError):
+        repository.set_number_bomb_settings(61)
+
+
+def test_number_bomb_signup_autostarts_first_truth_round_without_balance_changes(
+    repository, now
+):
+    for index in range(1, 4):
+        repository.create_user(f"number-p{index}", f"玩家{index}", now, 20)
+
+    assert repository.start_number_bomb_game("missing", 3, now).status == "not_joined"
+    assert repository.start_number_bomb_game("number-p1", 2, now).status == "invalid_player_count"
+    created = repository.start_number_bomb_game("number-p1", 3, now)
+    assert created.status == "signup_started"
+    assert repository.start_number_bomb_game("number-p1", 3, now).status == "already_active"
+    assert repository.join_number_bomb_game("number-p1", now).status == "already_joined"
+    assert repository.join_number_bomb_game("number-p2", now).status == "joined"
+
+    started = repository.join_number_bomb_game("number-p3", now)
+
+    assert (started.status, started.round_number, started.punishment_type) == (
+        "started", 1, "truth",
+    )
+    summary = repository.number_bomb_game_summary()
+    assert (summary.state, summary.round_number, summary.attempt_number) == (
+        "collecting", 1, 1,
+    )
+    assert [player.platform_id for player in summary.players] == [
+        "number-p1", "number-p2", "number-p3",
+    ]
+    with repository._session() as session:
+        balances = list(session.scalars(
+            select(UserRecord.balance)
+            .where(UserRecord.platform_id.like("number-p%"))
+            .order_by(UserRecord.platform_id)
+        ))
+        snapshots = list(session.scalars(select(NumberBombRoundPlayerRecord)))
+    assert balances == [20, 20, 20]
+    assert [snapshot.display_order for snapshot in snapshots] == [1, 2, 3]
+
+
+def test_number_bomb_signup_leave_and_last_member_release(repository, now):
+    repository.create_user("number-alone", "独行玩家", now, 7)
+    repository.start_number_bomb_game("number-alone", 3, now)
+
+    left = repository.leave_number_bomb_game("number-alone", now + timedelta(seconds=1))
+
+    assert left.status == "signup_left"
+    assert repository.number_bomb_game_summary().state is None
+    with repository._session() as session:
+        balance = session.scalar(
+            select(UserRecord.balance).where(
+                UserRecord.platform_id == "number-alone"
+            )
+        )
+    assert balance == 7
+
+
+def test_number_bomb_next_round_roster_applies_exit_then_fifo_join(repository, now):
+    for index in range(1, 6):
+        repository.create_user(f"roster-p{index}", f"候选{index}", now, 5)
+    repository.start_number_bomb_game("roster-p1", 3, now)
+    repository.join_number_bomb_game("roster-p2", now)
+    repository.join_number_bomb_game("roster-p3", now)
+
+    queued_at = now + timedelta(seconds=1)
+    assert repository.join_number_bomb_game("roster-p4", queued_at).status == "queued"
+    assert repository.join_number_bomb_game("roster-p4", queued_at).status == "already_joined"
+    assert repository.leave_number_bomb_game("roster-p2", queued_at).status == "exit_queued"
+    assert repository.leave_number_bomb_game("roster-p2", queued_at).status == "cannot_leave"
+    assert repository.join_number_bomb_game("roster-p5", queued_at + timedelta(seconds=1)).status == "queued"
+    assert repository.leave_number_bomb_game("roster-p5", queued_at + timedelta(seconds=2)).status == "candidate_cancelled"
+
+    with repository._session() as session:
+        game = session.scalar(select(NumberBombGameRecord).where(NumberBombGameRecord.active_key == "global"))
+        game.state = "waiting_continue"
+        round_record = session.scalar(select(NumberBombRoundRecord).where(NumberBombRoundRecord.state == "collecting"))
+        round_record.state = "settled"
+    continued = repository.continue_number_bomb_game(
+        "roster-p1", queued_at + timedelta(seconds=3)
+    )
+
+    assert (continued.status, continued.round_number) == ("started", 2)
+    assert [player.platform_id for player in repository.number_bomb_game_summary().players] == [
+        "roster-p1", "roster-p3", "roster-p4",
+    ]
+    assert repository.end_number_bomb_game(
+        "roster-p4", queued_at + timedelta(seconds=4)
+    ).status == "ended"
+    assert repository.number_bomb_game_summary().state is None
+
+
+def test_number_bomb_submit_is_private_participant_only_and_immutable(repository, now):
+    assert repository.submit_number_bomb("nobody", 20, now).status == "no_game"
+    for index in range(1, 5):
+        repository.create_user(f"submit-p{index}", f"报数{index}", now, 0)
+    repository.start_number_bomb_game("submit-p1", 3, now)
+    repository.join_number_bomb_game("submit-p2", now)
+    repository.join_number_bomb_game("submit-p3", now)
+    repository.join_number_bomb_game("submit-p4", now)
+
+    assert repository.submit_number_bomb("submit-p1", 0, now).status == "invalid_number"
+    assert repository.submit_number_bomb("submit-p1", 101, now).status == "invalid_number"
+    assert repository.submit_number_bomb("submit-p4", 20, now).status == "not_participant"
+    first = repository.submit_number_bomb("submit-p1", 1, now + timedelta(seconds=1))
+    assert (first.status, first.submitted_count, first.player_count) == ("submitted", 1, 3)
+    unchanged_at = repository.number_bomb_game_summary().last_activity_at
+    assert repository.submit_number_bomb("submit-p1", 100, now + timedelta(seconds=2)).status == "already_submitted"
+    assert repository.number_bomb_game_summary().last_activity_at == unchanged_at
+
+
+def test_number_bomb_valid_settlement_persists_exact_results_and_activity_facts(
+    repository, now
+):
+    for index in range(1, 4):
+        repository.create_user(f"settle-p{index}", f"结算{index}", now, 0)
+    repository.start_number_bomb_game("settle-p1", 3, now)
+    repository.join_number_bomb_game("settle-p2", now)
+    repository.join_number_bomb_game("settle-p3", now)
+    repository.submit_number_bomb("settle-p1", 10, now)
+    repository.submit_number_bomb("settle-p2", 50, now)
+
+    result = repository.submit_number_bomb("settle-p3", 90, now)
+
+    assert result.status == "settled"
+    assert result.public_message == render_number_bomb_result(
+        1,
+        "truth",
+        calculate_number_bomb((
+            NumberBombEntry("settle-p1", "结算1", 10, 1),
+            NumberBombEntry("settle-p2", "结算2", 50, 2),
+            NumberBombEntry("settle-p3", "结算3", 90, 3),
+        )),
+    )
+    assert repository.number_bomb_game_summary().state == "waiting_continue"
+    with repository._session() as session:
+        round_record = session.scalar(select(NumberBombRoundRecord))
+        rows = list(session.execute(
+            select(NumberBombRoundPlayerRecord, UserRecord)
+            .join(UserRecord, UserRecord.id == NumberBombRoundPlayerRecord.user_id)
+            .order_by(NumberBombRoundPlayerRecord.display_order)
+        ))
+        events = list(session.scalars(
+            select(AIActivityEventRecord).where(
+                AIActivityEventRecord.activity_type == "number_bomb"
+            ).order_by(AIActivityEventRecord.event_key)
+        ))
+    assert (round_record.total, round_record.target_numerator, round_record.target_denominator) == (150, 600, 15)
+    assert [row.result for row, _ in rows] == ["punished", "winner", "neutral"]
+    assert sorted(event.result for event in events) == ["ended", "loss", "win"]
+    assert {event.detail for event in events} == {"truth"}
+
+
+def test_number_bomb_invalid_round_restarts_same_round_and_keeps_roster_queue(
+    repository, now
+):
+    for index in range(1, 5):
+        repository.create_user(f"invalid-p{index}", f"无效{index}", now, 0)
+    repository.start_number_bomb_game("invalid-p1", 3, now)
+    repository.join_number_bomb_game("invalid-p2", now)
+    repository.join_number_bomb_game("invalid-p3", now)
+    repository.join_number_bomb_game("invalid-p4", now + timedelta(seconds=1))
+    repository.submit_number_bomb("invalid-p1", 10, now)
+    repository.submit_number_bomb("invalid-p2", 10, now)
+
+    result = repository.submit_number_bomb("invalid-p3", 50, now)
+
+    assert result.status == "invalid_round"
+    summary = repository.number_bomb_game_summary()
+    assert (summary.state, summary.round_number, summary.attempt_number) == (
+        "collecting", 1, 2,
+    )
+    assert [player.state for player in summary.players] == [
+        "current", "current", "current", "pending_join",
+    ]
+    with repository._session() as session:
+        new_round = session.scalar(
+            select(NumberBombRoundRecord).where(
+                NumberBombRoundRecord.attempt_number == 2
+            )
+        )
+        submissions = list(session.scalars(
+            select(NumberBombRoundPlayerRecord.submitted_number).where(
+                NumberBombRoundPlayerRecord.round_id == new_round.id
+            )
+        ))
+        event_count = session.scalar(select(func.count(AIActivityEventRecord.event_key)))
+    assert submissions == [None, None, None]
+    assert event_count == 0
+
+
+@pytest.mark.parametrize("state", ["signup", "collecting", "waiting_continue"])
+def test_number_bomb_timeout_releases_every_active_state_once(
+    repository, session_factory, now, state
+):
+    from dzmm_bot.core.repository import CoreRepository
+
+    for index in range(1, 4):
+        repository.create_user(f"timeout-{state}-{index}", f"超时{index}", now, 0)
+    repository.start_number_bomb_game(f"timeout-{state}-1", 3, now)
+    if state != "signup":
+        repository.join_number_bomb_game(f"timeout-{state}-2", now)
+        repository.join_number_bomb_game(f"timeout-{state}-3", now)
+    if state == "waiting_continue":
+        repository.submit_number_bomb(f"timeout-{state}-1", 10, now)
+        repository.submit_number_bomb(f"timeout-{state}-2", 50, now)
+        repository.submit_number_bomb(f"timeout-{state}-3", 90, now)
+
+    due = now + timedelta(minutes=10)
+    first = repository.run_number_bomb_jobs(due)
+    second = CoreRepository(session_factory).run_number_bomb_jobs(due)
+
+    assert first == ["蹦蹦数字炸弹长时间无人操作，本场已自动结束。"]
+    assert second == []
+    assert repository.number_bomb_game_summary().state is None
+    with repository._session() as session:
+        game = session.scalar(select(NumberBombGameRecord))
+        open_round = session.scalar(select(NumberBombRoundRecord).where(
+            NumberBombRoundRecord.game_id == game.id,
+            NumberBombRoundRecord.state == "collecting",
+        ))
+    assert game.finish_reason == "idle_timeout"
+    assert open_round is None
+
+
+def test_number_bomb_latest_timeout_setting_is_immediately_effective(repository, now):
+    repository.create_user("timeout-setting", "设置超时", now, 0)
+    repository.start_number_bomb_game("timeout-setting", 3, now)
+    repository.set_number_bomb_settings(1)
+
+    assert repository.run_number_bomb_jobs(now + timedelta(minutes=1))
+
+
+def test_number_bomb_timeout_job_uses_the_editable_reply_template(repository, now):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    repository.create_user("timeout-template", "超时模板", now, 0)
+    repository.start_number_bomb_game("timeout-template", 3, now)
+    repository.set_number_bomb_settings(1)
+    repository.set_reply_template(
+        "/蹦蹦数字炸弹",
+        "idle_timeout",
+        "管理员超时通知：{日期}",
+    )
+
+    repository.run_daily_jobs(now + timedelta(minutes=1))
+
+    with repository._session() as session:
+        texts = list(session.scalars(select(OutboundRecord.text)))
+    assert "管理员超时通知：2026-08-04" in texts
 
 
 def test_stable_impression_schema_separates_legacy_candidates_and_facts():
@@ -1400,6 +1733,51 @@ def test_blame_explosion_settlement_is_conservative_and_idempotent(
             "loss" if platform_id == loser.platform_id else "win"
         )
         assert fact.participation_count == 1
+
+
+@pytest.mark.parametrize(
+    ("settlement_reason", "expected_prefix"),
+    [
+        ("exploded", "【甩锅游戏】锅爆炸了"),
+        ("turn_timeout", "【甩锅游戏】操作超时"),
+    ],
+)
+def test_blame_automatic_complete_settlement_notice_includes_net_results(
+    repository, session_factory, now, settlement_reason, expected_prefix
+):
+    from dzmm_bot.core.schema import (
+        BlameGamePlayerRecord,
+        BlameGameRecord,
+        UserRecord,
+    )
+
+    _start_blame_round(repository, session_factory, now, count=4)
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        players = list(
+            session.scalars(
+                select(BlameGamePlayerRecord)
+                .where(BlameGamePlayerRecord.game_id == game.id)
+                .order_by(BlameGamePlayerRecord.seat_number)
+            )
+        )
+        for player, display_name in zip(players, ("甲", "乙", "丙", "丁"), strict=True):
+            session.get(UserRecord, player.user_id).display_name = display_name
+        game.current_holder_user_id = players[0].user_id
+        if settlement_reason == "exploded":
+            game.explosion_deadline = now.astimezone(BEIJING)
+            game.turn_deadline = now.astimezone(BEIJING) + timedelta(seconds=30)
+        else:
+            game.explosion_deadline = now.astimezone(BEIJING) + timedelta(seconds=30)
+            game.turn_deadline = now.astimezone(BEIJING)
+
+    assert repository.run_blame_game_jobs(now) == ["settled"]
+    outbound = repository.claim_outbound("settlement-worker", now, 30)
+
+    assert outbound.text == (
+        f"{expected_prefix}，甲 背锅，扣除 3 摸鱼币；"
+        "乙、丙、丁 获胜，每人获得 1 摸鱼币。"
+    )
 
 
 def test_blame_transfer_received_after_deadline_settles_current_holder(
@@ -3018,6 +3396,22 @@ def test_second_reply_waits_until_the_first_reply_is_sent(repository, inbound, n
     assert repository.confirm_sent(
         first.id, "worker-a", claimed_first.lease_token, "sent-1", now
     )
+    assert repository.claim_outbound("worker-b", now, 30).id == second.id
+
+
+def test_second_reply_proceeds_after_the_first_reply_permanently_fails(
+    repository, inbound, now
+):
+    stored, _ = repository.accept_inbound(inbound)
+    first = repository.enqueue_outbound(stored.id, "私聊确认", 0)
+    second = repository.enqueue_outbound(stored.id, "群内结算", 1)
+
+    claimed_first = repository.claim_outbound("worker-a", now, 30)
+    assert claimed_first.id == first.id
+    assert repository.mark_outbound_failed(
+        first.id, "worker-a", claimed_first.lease_token, now
+    )
+
     assert repository.claim_outbound("worker-b", now, 30).id == second.id
 
 

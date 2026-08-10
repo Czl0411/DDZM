@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -78,6 +78,28 @@ def test_join_registers_employee_with_zero_balance_and_beijing_timestamp():
         assert employee.balance == 0
         assert employee.joined_at == received_at.astimezone(BEIJING)
     assert _latest_reply(factory) == "小明，欢迎入职摸鱼公司。当前余额：0 摸鱼币。"
+
+
+def test_number_bomb_group_commands_start_join_and_reject_group_reports():
+    service, _, factory = _service()
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    for index in range(1, 4):
+        _receive(service, f"join-{index}", f"bomb-p{index}", f"/入职 炸弹{index}", now)
+
+    _receive(service, "bad-start", "bomb-p1", "/蹦蹦数字炸弹 2", now)
+    assert _latest_reply(factory) == "请用 /蹦蹦数字炸弹 3-10 创建报名局。"
+    _receive(service, "start", "bomb-p1", "/蹦蹦数字炸弹 3", now)
+    assert "炸弹1 发起了 3 人局，当前 1/3 人" in _latest_reply(factory)
+    _receive(service, "add-2", "bomb-p2", "/加入", now)
+    assert "当前 2/3 人" in _latest_reply(factory)
+    _receive(service, "add-3", "bomb-p3", "/加入", now)
+    started = _latest_reply(factory)
+    assert "第 1 轮 - 真心话" in started
+    assert "参与者：炸弹1、炸弹2、炸弹3" in started
+    assert "私聊总监事发送 /报数 1-100" in started
+
+    _receive(service, "group-report", "bomb-p1", "/报数 29", now)
+    assert _latest_reply(factory) == "请私聊总监事发送 /报数 1-100，群内报数不会生效。"
 
 
 def test_checkin_awards_five_once_per_beijing_date_and_uses_beijing_dates():
@@ -302,6 +324,68 @@ def test_blame_group_commands_create_join_transfer_and_end():
 
     _receive(service, "blame-end", target.platform_id, "/结束游戏", now)
     assert "已结束" in _latest_reply(factory)
+
+
+def _start_three_player_blame_group(service, repository, factory, now):
+    from dzmm_bot.core.schema import RankRecord
+
+    for platform_id, display_name in (("blame-a", "甲"), ("blame-b", "乙"), ("blame-c", "丙")):
+        repository.create_user(platform_id, display_name, now, 100)
+    repository.create_blame_incident_card(
+        "咖啡事故", "咖啡泼到了报表", ["咖啡", "报表"]
+    )
+    with factory.begin() as session:
+        rank = session.scalar(select(RankRecord).where(RankRecord.sort_order == 1))
+        rank.multiplayer_game_limit = 3
+    _receive(service, "blame-start-complete", "blame-a", "/甩锅游戏 3", now)
+    _receive(service, "blame-join-b-complete", "blame-b", "/加入", now)
+    _receive(service, "blame-join-c-complete", "blame-c", "/加入", now)
+
+
+def test_blame_active_leave_complete_settlement_notice_includes_net_results():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _start_three_player_blame_group(service, repository, factory, now)
+
+    _receive(service, "blame-leave-complete", "blame-a", "/退出甩锅", now)
+
+    assert _latest_reply(factory) == (
+        "【甩锅游戏】甲 主动退出并背锅，扣除 2 摸鱼币；"
+        "乙、丙 获胜，每人获得 1 摸鱼币。"
+    )
+
+
+def test_blame_due_transfer_complete_settlement_notice_keeps_timeout_reason():
+    from dzmm_bot.core.schema import BlameGamePlayerRecord, BlameGameRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _start_three_player_blame_group(service, repository, factory, now)
+    with factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        players = list(
+            session.scalars(
+                select(BlameGamePlayerRecord)
+                .where(BlameGamePlayerRecord.game_id == game.id)
+                .order_by(BlameGamePlayerRecord.seat_number)
+            )
+        )
+        game.current_holder_user_id = players[0].user_id
+        game.explosion_deadline = now.astimezone(BEIJING) + timedelta(seconds=30)
+        game.turn_deadline = now.astimezone(BEIJING)
+
+    _receive(
+        service,
+        "blame-transfer-due-complete",
+        "blame-a",
+        "/甩锅 2 咖啡碰到报表",
+        now + timedelta(seconds=1),
+    )
+
+    assert _latest_reply(factory) == (
+        "【甩锅游戏】操作超时，甲 背锅，扣除 2 摸鱼币；"
+        "乙、丙 获胜，每人获得 1 摸鱼币。"
+    )
 
 
 def test_department_join_application_keeps_employee_in_default_department_until_approved():
@@ -825,6 +909,29 @@ def test_help_game_topic_links_to_each_game_guide():
     assert "/帮助 摸鱼躲藏" in reply
     assert "/帮助 记忆考核" in reply
     assert "/帮助 谁是卧底" in reply
+    assert "/帮助 蹦蹦数字炸弹" in reply
+
+
+def test_help_number_bomb_topic_shows_group_and_private_commands():
+    service, _, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+
+    _receive(
+        service,
+        "help-number-bomb",
+        "platform-xiaoming",
+        "/帮助 蹦蹦数字炸弹",
+        received_at,
+    )
+
+    reply = _latest_reply(factory)
+    assert "【蹦蹦数字炸弹】" in reply
+    assert "/蹦蹦数字炸弹 人数" in reply
+    assert "私聊 /报数 1-100" in reply
+    assert "/加入" in reply
+    assert "/退出" in reply
+    assert "/继续" in reply
+    assert "/结束游戏" in reply
 
 
 def test_help_hide_and_seek_topic_shows_start_and_followup_syntax():

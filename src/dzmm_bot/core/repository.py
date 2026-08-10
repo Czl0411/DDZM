@@ -31,6 +31,11 @@ from .ai_knowledge import (
 )
 
 from .ai_mentions import normalize_ai_mention
+from .number_bomb import (
+    NumberBombEntry,
+    calculate_number_bomb,
+    render_number_bomb_result,
+)
 from .reply_templates import (
     TEMPLATE_DEFINITIONS,
     render_template,
@@ -82,6 +87,11 @@ from .schema import (
     MemoryAssessmentParticipantRecord,
     MemoryAssessmentRoundRecord,
     MemoryAssessmentSettingsRecord,
+    NumberBombGameRecord,
+    NumberBombMemberRecord,
+    NumberBombRoundPlayerRecord,
+    NumberBombRoundRecord,
+    NumberBombSettingsRecord,
     OutboundRecord,
     UndercoverGamePlayerRecord,
     UndercoverGameRecord,
@@ -175,6 +185,7 @@ _DEFAULT_HIDE_AND_SEEK_SCENES = (
 )
 _DEFAULT_BLAME_SIGNUP_TIMEOUT_SECONDS = 120
 _DEFAULT_BLAME_TURN_TIMEOUT_SECONDS = 30
+_DEFAULT_NUMBER_BOMB_INACTIVITY_TIMEOUT_MINUTES = 10
 _DEFAULT_BLAME_DURATIONS = (
     (2, 45, 75),
     (3, 60, 90),
@@ -415,6 +426,53 @@ class BlameGameResult:
     loser_display_name: str | None = None
     winner_display_names: tuple[str, ...] = ()
     settlement_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class NumberBombSettings:
+    inactivity_timeout_minutes: int
+
+
+@dataclass(frozen=True)
+class NumberBombPlayer:
+    platform_id: str
+    display_name: str
+    roster_order: int
+    state: str
+
+
+@dataclass(frozen=True)
+class NumberBombGameSummary:
+    state: str | None
+    target_player_count: int = 0
+    round_number: int = 0
+    attempt_number: int = 0
+    players: tuple[NumberBombPlayer, ...] = ()
+    last_activity_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class NumberBombGameResult:
+    status: str
+    game_id: UUID | None = None
+    player_count: int = 0
+    target_player_count: int = 0
+    round_number: int | None = None
+    punishment_type: str | None = None
+    players: tuple[NumberBombPlayer, ...] = ()
+    submitted_count: int = 0
+    public_message: str | None = None
+
+
+def blame_settlement_template_values(
+    result: BlameGameResult,
+) -> dict[str, object]:
+    return {
+        "{失败者}": result.loser_display_name,
+        "{扣除金额}": max(result.player_count - 1, 0),
+        "{获胜者}": "、".join(result.winner_display_names),
+        "{奖励}": 1,
+    }
 
 
 @dataclass(frozen=True)
@@ -808,6 +866,8 @@ _COMMAND_DEFINITIONS = (
     ("/甩锅游戏", "/甩锅游戏 人数", "创建 2 至 10 人甩锅炸弹报名局"),
     ("/甩锅", "/甩锅 玩家编号 甩锅理由", "按玩家编号和理由转移甩锅炸弹"),
     ("/退出甩锅", "/退出甩锅", "退出当前甩锅游戏"),
+    ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹 人数", "创建3至10人蹦蹦数字炸弹报名局"),
+    ("/报数", "/报数 1-100（仅私聊）", "提交蹦蹦数字炸弹本轮整数"),
 )
 
 
@@ -855,6 +915,8 @@ class CoreRepository:
                 sender_platform_id=message.sender_platform_id,
                 content=message.content,
                 received_at=message.received_at,
+                source_type=message.source_type,
+                chatroom_id=message.chatroom_id,
             )
             dialect_name = session.get_bind().dialect.name
             if dialect_name == "postgresql":
@@ -1612,6 +1674,15 @@ class CoreRepository:
                 f"{rule.player_count}人 {rule.minimum_seconds}-{rule.maximum_seconds}秒"
                 for rule in settings.durations
             ))
+        if "number_bomb" in topic_set:
+            settings = self.get_number_bomb_settings()
+            summary = self.number_bomb_game_summary()
+            lines.append(
+                "蹦蹦数字炸弹：3–10 人；每轮每人私聊发送 /报数 1–100；"
+                f"无有效操作 {settings.inactivity_timeout_minutes} 分钟后释放；"
+                "惩罚循环为真心话、真心话、大冒险；"
+                f"当前状态：{summary.state or '无对局'}"
+            )
         if "player_activity" in topic_set:
             facts = self.list_ai_activity_facts(platform_id)
             lines.extend(
@@ -1735,6 +1806,7 @@ class CoreRepository:
         activity_type: str,
         result: str,
         occurred_at: datetime,
+        detail: str | None = None,
     ) -> bool:
         if result not in {"win", "loss", "ended", "cancelled"}:
             raise ValueError("AI 活动结果无效")
@@ -1747,6 +1819,7 @@ class CoreRepository:
             "user_id": user_id,
             "activity_type": activity_type,
             "result": result,
+            "detail": detail,
             "occurred_at": occurred_at,
         }
         dialect_name = session.get_bind().dialect.name
@@ -2700,6 +2773,661 @@ class CoreRepository:
                         record.chatroom_id = chatroom_id
                         record.discovered_at = now
 
+    def number_bomb_direct_chatroom_ids(self) -> tuple[str, ...]:
+        with self._session() as session:
+            return tuple(
+                session.scalars(
+                    select(DirectChatRecord.chatroom_id)
+                    .join(
+                        UserRecord,
+                        UserRecord.platform_id == DirectChatRecord.platform_user_id,
+                    )
+                    .join(
+                        NumberBombRoundPlayerRecord,
+                        NumberBombRoundPlayerRecord.user_id == UserRecord.id,
+                    )
+                    .join(
+                        NumberBombRoundRecord,
+                        NumberBombRoundRecord.id
+                        == NumberBombRoundPlayerRecord.round_id,
+                    )
+                    .join(
+                        NumberBombGameRecord,
+                        NumberBombGameRecord.id == NumberBombRoundRecord.game_id,
+                    )
+                    .where(
+                        NumberBombGameRecord.active_key == "global",
+                        NumberBombGameRecord.state == "collecting",
+                        NumberBombRoundRecord.state == "collecting",
+                    )
+                    .order_by(NumberBombRoundPlayerRecord.display_order)
+                )
+            )
+
+    def get_number_bomb_settings(self) -> NumberBombSettings:
+        with self._session() as session:
+            record = session.get(NumberBombSettingsRecord, 1)
+            if record is None:
+                record = NumberBombSettingsRecord(
+                    id=1,
+                    inactivity_timeout_minutes=(
+                        _DEFAULT_NUMBER_BOMB_INACTIVITY_TIMEOUT_MINUTES
+                    ),
+                )
+                session.add(record)
+                session.flush()
+            return NumberBombSettings(record.inactivity_timeout_minutes)
+
+    def set_number_bomb_settings(
+        self, inactivity_timeout_minutes: int
+    ) -> NumberBombSettings:
+        if (
+            not isinstance(inactivity_timeout_minutes, int)
+            or not 1 <= inactivity_timeout_minutes <= 60
+        ):
+            raise ValueError("无操作释放时间必须为 1 至 60 分钟")
+        self.get_number_bomb_settings()
+        with self._session() as session:
+            record = session.get(NumberBombSettingsRecord, 1)
+            if record is None:
+                raise RuntimeError("蹦蹦数字炸弹设置消失")
+            record.inactivity_timeout_minutes = inactivity_timeout_minutes
+            session.flush()
+            return NumberBombSettings(record.inactivity_timeout_minutes)
+
+    def number_bomb_game_summary(self) -> NumberBombGameSummary:
+        with self._session() as session:
+            game = session.scalar(
+                select(NumberBombGameRecord).where(
+                    NumberBombGameRecord.active_key == "global"
+                )
+            )
+            if game is None:
+                return NumberBombGameSummary(None)
+            players = self._number_bomb_players(session, game.id)
+            return NumberBombGameSummary(
+                state=game.state,
+                target_player_count=game.target_player_count,
+                round_number=game.round_number,
+                attempt_number=game.attempt_number,
+                players=players,
+                last_activity_at=game.last_activity_at,
+            )
+
+    def start_number_bomb_game(
+        self, platform_id: str, target_player_count: int, now: datetime
+    ) -> NumberBombGameResult:
+        now = now.astimezone(BEIJING)
+        if target_player_count not in range(3, 11):
+            return NumberBombGameResult("invalid_player_count")
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                if self._active_number_bomb_game(session) is not None:
+                    return NumberBombGameResult("already_active")
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return NumberBombGameResult("not_joined")
+                if self._active_random_event(session) is not None or self._has_active_game(session):
+                    return NumberBombGameResult("multiplayer_active")
+                game = NumberBombGameRecord(
+                    active_key="global",
+                    state="signup",
+                    target_player_count=target_player_count,
+                    round_number=0,
+                    attempt_number=0,
+                    last_activity_at=now,
+                    created_at=now,
+                )
+                session.add(game)
+                session.flush()
+                session.add(
+                    NumberBombMemberRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        roster_order=1,
+                        state="current",
+                        queued_at=now,
+                    )
+                )
+                session.flush()
+                return NumberBombGameResult(
+                    "signup_started",
+                    game_id=game.id,
+                    player_count=1,
+                    target_player_count=target_player_count,
+                    players=self._number_bomb_players(session, game.id),
+                )
+
+    def join_number_bomb_game(
+        self, platform_id: str, now: datetime
+    ) -> NumberBombGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_number_bomb_game(session)
+                if game is None:
+                    return NumberBombGameResult("no_game")
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return NumberBombGameResult("not_joined", game_id=game.id)
+                member = session.scalar(
+                    select(NumberBombMemberRecord)
+                    .where(
+                        NumberBombMemberRecord.game_id == game.id,
+                        NumberBombMemberRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if member is not None and member.state != "left":
+                    return NumberBombGameResult("already_joined", game_id=game.id)
+                maximum_order = int(
+                    session.scalar(
+                        select(func.coalesce(func.max(NumberBombMemberRecord.roster_order), 0))
+                        .where(NumberBombMemberRecord.game_id == game.id)
+                    )
+                    or 0
+                )
+                if game.state == "signup":
+                    if member is None:
+                        member = NumberBombMemberRecord(
+                            game_id=game.id,
+                            user_id=user.id,
+                            roster_order=maximum_order + 1,
+                            state="current",
+                            queued_at=now,
+                        )
+                        session.add(member)
+                    else:
+                        member.roster_order = maximum_order + 1
+                        member.state = "current"
+                        member.queued_at = now
+                    game.last_activity_at = now
+                    session.flush()
+                    current_count = self._number_bomb_member_count(
+                        session, game.id, ("current",)
+                    )
+                    if current_count < game.target_player_count:
+                        return NumberBombGameResult(
+                            "joined",
+                            game_id=game.id,
+                            player_count=current_count,
+                            target_player_count=game.target_player_count,
+                        )
+                    return self._start_number_bomb_round(session, game, 1, 1, now)
+                if game.state not in {"collecting", "waiting_continue"}:
+                    return NumberBombGameResult("no_game")
+                current_count = self._number_bomb_member_count(
+                    session, game.id, ("current", "pending_exit")
+                )
+                pending_exit_count = self._number_bomb_member_count(
+                    session, game.id, ("pending_exit",)
+                )
+                pending_join_count = self._number_bomb_member_count(
+                    session, game.id, ("pending_join",)
+                )
+                if current_count - pending_exit_count + pending_join_count >= 10:
+                    return NumberBombGameResult("next_round_full", game_id=game.id)
+                if member is None:
+                    session.add(
+                        NumberBombMemberRecord(
+                            game_id=game.id,
+                            user_id=user.id,
+                            roster_order=maximum_order + 1,
+                            state="pending_join",
+                            queued_at=now,
+                        )
+                    )
+                else:
+                    member.roster_order = maximum_order + 1
+                    member.state = "pending_join"
+                    member.queued_at = now
+                game.last_activity_at = now
+                return NumberBombGameResult("queued", game_id=game.id)
+
+    def leave_number_bomb_game(
+        self, platform_id: str, now: datetime
+    ) -> NumberBombGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_number_bomb_game(session)
+                if game is None:
+                    return NumberBombGameResult("no_game")
+                member = session.scalar(
+                    select(NumberBombMemberRecord)
+                    .join(UserRecord, UserRecord.id == NumberBombMemberRecord.user_id)
+                    .where(
+                        NumberBombMemberRecord.game_id == game.id,
+                        UserRecord.platform_id == platform_id,
+                    )
+                    .with_for_update()
+                )
+                if member is None or member.state == "left":
+                    return NumberBombGameResult("cannot_leave", game_id=game.id)
+                if game.state == "signup":
+                    member.state = "left"
+                    game.last_activity_at = now
+                    if self._number_bomb_member_count(session, game.id, ("current",)) == 0:
+                        self._finish_number_bomb_game(
+                            session, game, "empty_signup", now
+                        )
+                    return NumberBombGameResult("signup_left", game_id=game.id)
+                if member.state == "pending_join":
+                    member.state = "left"
+                    game.last_activity_at = now
+                    return NumberBombGameResult("candidate_cancelled", game_id=game.id)
+                if member.state == "pending_exit":
+                    return NumberBombGameResult("cannot_leave", game_id=game.id)
+                if member.state == "current":
+                    member.state = "pending_exit"
+                    game.last_activity_at = now
+                    return NumberBombGameResult("exit_queued", game_id=game.id)
+                return NumberBombGameResult("cannot_leave", game_id=game.id)
+
+    def submit_number_bomb(
+        self, platform_id: str, number: int, now: datetime
+    ) -> NumberBombGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_number_bomb_game(session)
+                if game is None:
+                    return NumberBombGameResult("no_game")
+                if game.state != "collecting":
+                    return NumberBombGameResult("wrong_state", game_id=game.id)
+                if not isinstance(number, int) or not 1 <= number <= 100:
+                    return NumberBombGameResult("invalid_number", game_id=game.id)
+                round_record = session.scalar(
+                    select(NumberBombRoundRecord)
+                    .where(
+                        NumberBombRoundRecord.game_id == game.id,
+                        NumberBombRoundRecord.state == "collecting",
+                        NumberBombRoundRecord.round_number == game.round_number,
+                        NumberBombRoundRecord.attempt_number == game.attempt_number,
+                    )
+                    .with_for_update()
+                )
+                if round_record is None:
+                    raise RuntimeError("蹦蹦数字炸弹收数轮消失")
+                row = session.scalar(
+                    select(NumberBombRoundPlayerRecord)
+                    .join(UserRecord, UserRecord.id == NumberBombRoundPlayerRecord.user_id)
+                    .where(
+                        NumberBombRoundPlayerRecord.round_id == round_record.id,
+                        UserRecord.platform_id == platform_id,
+                    )
+                    .with_for_update()
+                )
+                if row is None:
+                    return NumberBombGameResult("not_participant", game_id=game.id)
+                if row.submitted_number is not None:
+                    return NumberBombGameResult("already_submitted", game_id=game.id)
+                row.submitted_number = number
+                game.last_activity_at = now
+                session.flush()
+                submitted_count = int(
+                    session.scalar(
+                        select(func.count(NumberBombRoundPlayerRecord.id)).where(
+                            NumberBombRoundPlayerRecord.round_id == round_record.id,
+                            NumberBombRoundPlayerRecord.submitted_number.is_not(None),
+                        )
+                    )
+                    or 0
+                )
+                if submitted_count < round_record.player_count:
+                    return NumberBombGameResult(
+                        "submitted",
+                        game_id=game.id,
+                        player_count=round_record.player_count,
+                        round_number=round_record.round_number,
+                        punishment_type=round_record.punishment_type,
+                        submitted_count=submitted_count,
+                    )
+
+                rows = list(
+                    session.execute(
+                        select(NumberBombRoundPlayerRecord, UserRecord)
+                        .join(UserRecord, UserRecord.id == NumberBombRoundPlayerRecord.user_id)
+                        .where(NumberBombRoundPlayerRecord.round_id == round_record.id)
+                        .order_by(NumberBombRoundPlayerRecord.display_order)
+                        .with_for_update()
+                    )
+                )
+                calculation = calculate_number_bomb(
+                    tuple(
+                        NumberBombEntry(
+                            user.platform_id,
+                            user.display_name,
+                            player.submitted_number,
+                            player.display_order,
+                        )
+                        for player, user in rows
+                    )
+                )
+                round_record.total = calculation.total
+                round_record.target_numerator = calculation.target_numerator
+                round_record.target_denominator = calculation.target_denominator
+                round_record.finished_at = now
+                standings_by_user = {
+                    standing.entry.platform_id: standing
+                    for standing in calculation.standings
+                }
+                for player, user in rows:
+                    standing = standings_by_user[user.platform_id]
+                    player.deviation_numerator = standing.deviation_numerator
+                    player.result = standing.result
+                public_message = render_number_bomb_result(
+                    round_record.round_number,
+                    round_record.punishment_type,
+                    calculation,
+                )
+                if not calculation.valid:
+                    round_record.state = "invalid"
+                    next_attempt = round_record.attempt_number + 1
+                    retry = NumberBombRoundRecord(
+                        game_id=game.id,
+                        round_number=round_record.round_number,
+                        attempt_number=next_attempt,
+                        punishment_type=round_record.punishment_type,
+                        state="collecting",
+                        player_count=round_record.player_count,
+                        created_at=now,
+                    )
+                    session.add(retry)
+                    session.flush()
+                    session.add_all(
+                        [
+                            NumberBombRoundPlayerRecord(
+                                round_id=retry.id,
+                                user_id=player.user_id,
+                                display_order=player.display_order,
+                            )
+                            for player, _ in rows
+                        ]
+                    )
+                    game.attempt_number = next_attempt
+                    game.last_activity_at = now
+                    return NumberBombGameResult(
+                        "invalid_round",
+                        game_id=game.id,
+                        player_count=round_record.player_count,
+                        round_number=round_record.round_number,
+                        punishment_type=round_record.punishment_type,
+                        submitted_count=submitted_count,
+                        public_message=public_message,
+                    )
+
+                round_record.state = "settled"
+                game.state = "waiting_continue"
+                for player, user in rows:
+                    result = player.result
+                    self._record_ai_activity_fact(
+                        session,
+                        event_key=(
+                            f"number_bomb:{game.id}:{round_record.round_number}:"
+                            f"{round_record.attempt_number}:{user.id}"
+                        ),
+                        user_id=user.id,
+                        activity_type="number_bomb",
+                        result=(
+                            "win"
+                            if result == "winner"
+                            else "loss"
+                            if result == "punished"
+                            else "ended"
+                        ),
+                        occurred_at=now,
+                        detail=round_record.punishment_type,
+                    )
+                return NumberBombGameResult(
+                    "settled",
+                    game_id=game.id,
+                    player_count=round_record.player_count,
+                    round_number=round_record.round_number,
+                    punishment_type=round_record.punishment_type,
+                    submitted_count=submitted_count,
+                    public_message=public_message,
+                )
+
+    def continue_number_bomb_game(
+        self, platform_id: str, now: datetime
+    ) -> NumberBombGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_number_bomb_game(session)
+                if game is None or game.state != "waiting_continue":
+                    return NumberBombGameResult("cannot_continue")
+                actor = session.scalar(
+                    select(NumberBombMemberRecord)
+                    .join(UserRecord, UserRecord.id == NumberBombMemberRecord.user_id)
+                    .where(
+                        NumberBombMemberRecord.game_id == game.id,
+                        UserRecord.platform_id == platform_id,
+                        NumberBombMemberRecord.state.in_(("current", "pending_exit")),
+                    )
+                )
+                if actor is None:
+                    return NumberBombGameResult("cannot_continue", game_id=game.id)
+                members = list(
+                    session.scalars(
+                        select(NumberBombMemberRecord)
+                        .where(NumberBombMemberRecord.game_id == game.id)
+                        .order_by(
+                            NumberBombMemberRecord.queued_at,
+                            NumberBombMemberRecord.roster_order,
+                        )
+                        .with_for_update()
+                    )
+                )
+                for member in members:
+                    if member.state == "pending_exit":
+                        member.state = "left"
+                for member in members:
+                    if member.state == "pending_join":
+                        member.state = "current"
+                current_count = sum(member.state == "current" for member in members)
+                if current_count < 3:
+                    return self._finish_number_bomb_game(
+                        session, game, "insufficient_players", now,
+                        status="insufficient_players",
+                    )
+                return self._start_number_bomb_round(
+                    session, game, game.round_number + 1, 1, now
+                )
+
+    def end_number_bomb_game(
+        self, platform_id: str, now: datetime
+    ) -> NumberBombGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_number_bomb_game(session)
+                if game is None:
+                    return NumberBombGameResult("cannot_end")
+                member = session.scalar(
+                    select(NumberBombMemberRecord)
+                    .join(UserRecord, UserRecord.id == NumberBombMemberRecord.user_id)
+                    .where(
+                        NumberBombMemberRecord.game_id == game.id,
+                        UserRecord.platform_id == platform_id,
+                        NumberBombMemberRecord.state.in_(("current", "pending_exit")),
+                    )
+                )
+                if member is None:
+                    return NumberBombGameResult("cannot_end", game_id=game.id)
+                return self._finish_number_bomb_game(
+                    session, game, "participant_ended", now, status="ended"
+                )
+
+    def _active_number_bomb_game(
+        self, session: Session
+    ) -> NumberBombGameRecord | None:
+        return session.scalar(
+            select(NumberBombGameRecord)
+            .where(NumberBombGameRecord.active_key == "global")
+            .with_for_update()
+        )
+
+    def _number_bomb_member_count(
+        self, session: Session, game_id: UUID, states: tuple[str, ...]
+    ) -> int:
+        return int(
+            session.scalar(
+                select(func.count(NumberBombMemberRecord.id)).where(
+                    NumberBombMemberRecord.game_id == game_id,
+                    NumberBombMemberRecord.state.in_(states),
+                )
+            )
+            or 0
+        )
+
+    def _number_bomb_players(
+        self, session: Session, game_id: UUID
+    ) -> tuple[NumberBombPlayer, ...]:
+        return tuple(
+            NumberBombPlayer(
+                platform_id=user.platform_id,
+                display_name=user.display_name,
+                roster_order=member.roster_order,
+                state=member.state,
+            )
+            for member, user in session.execute(
+                select(NumberBombMemberRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == NumberBombMemberRecord.user_id)
+                .where(
+                    NumberBombMemberRecord.game_id == game_id,
+                    NumberBombMemberRecord.state != "left",
+                )
+                .order_by(NumberBombMemberRecord.roster_order)
+            )
+        )
+
+    def _start_number_bomb_round(
+        self,
+        session: Session,
+        game: NumberBombGameRecord,
+        round_number: int,
+        attempt_number: int,
+        now: datetime,
+    ) -> NumberBombGameResult:
+        members = list(
+            session.scalars(
+                select(NumberBombMemberRecord)
+                .where(
+                    NumberBombMemberRecord.game_id == game.id,
+                    NumberBombMemberRecord.state == "current",
+                )
+                .order_by(NumberBombMemberRecord.roster_order)
+                .with_for_update()
+            )
+        )
+        punishment_type = "dare" if round_number % 3 == 0 else "truth"
+        round_record = NumberBombRoundRecord(
+            game_id=game.id,
+            round_number=round_number,
+            attempt_number=attempt_number,
+            punishment_type=punishment_type,
+            state="collecting",
+            player_count=len(members),
+            created_at=now,
+        )
+        session.add(round_record)
+        session.flush()
+        session.add_all(
+            [
+                NumberBombRoundPlayerRecord(
+                    round_id=round_record.id,
+                    user_id=member.user_id,
+                    display_order=display_order,
+                )
+                for display_order, member in enumerate(members, 1)
+            ]
+        )
+        game.state = "collecting"
+        game.round_number = round_number
+        game.attempt_number = attempt_number
+        game.last_activity_at = now
+        if game.started_at is None:
+            game.started_at = now
+        session.flush()
+        players = self._number_bomb_players(session, game.id)
+        return NumberBombGameResult(
+            "started",
+            game_id=game.id,
+            player_count=len(members),
+            target_player_count=game.target_player_count,
+            round_number=round_number,
+            punishment_type=punishment_type,
+            players=players,
+        )
+
+    def _finish_number_bomb_game(
+        self,
+        session: Session,
+        game: NumberBombGameRecord,
+        reason: str,
+        now: datetime,
+        *,
+        status: str = "ended",
+    ) -> NumberBombGameResult:
+        game.state = "ended"
+        game.active_key = None
+        game.finished_at = now
+        game.finish_reason = reason
+        collecting_round = session.scalar(
+            select(NumberBombRoundRecord).where(
+                NumberBombRoundRecord.game_id == game.id,
+                NumberBombRoundRecord.state == "collecting",
+            )
+        )
+        if collecting_round is not None:
+            collecting_round.state = "abandoned"
+            collecting_round.finished_at = now
+        return NumberBombGameResult(
+            status,
+            game_id=game.id,
+            target_player_count=game.target_player_count,
+            round_number=game.round_number or None,
+        )
+
+    def run_number_bomb_jobs(self, now: datetime) -> list[str]:
+        now = now.astimezone(BEIJING)
+        settings = self.get_number_bomb_settings()
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_number_bomb_game(session)
+                if game is None:
+                    return []
+                deadline = game.last_activity_at + timedelta(
+                    minutes=settings.inactivity_timeout_minutes
+                )
+                if now < deadline:
+                    return []
+                self._finish_number_bomb_game(
+                    session, game, "idle_timeout", now
+                )
+                return [self._number_bomb_automatic_message("idle_timeout", now)]
+
+    def _number_bomb_automatic_message(self, scenario: str, now: datetime) -> str:
+        definition = template_definition("/蹦蹦数字炸弹", scenario)
+        record = self.get_reply_template("/蹦蹦数字炸弹", scenario)
+        template = definition.default if record is None else record.template
+        context = {"{日期}": now.date().isoformat()}
+        try:
+            return render_template(definition, template, context)
+        except ValueError:
+            return render_template(definition, definition.default, context)
+
     def start_undercover_signup(
         self, platform_id: str, player_count: int, now: datetime
     ) -> UndercoverGameResult:
@@ -2720,6 +3448,8 @@ class CoreRepository:
                 if self._active_random_event(session) is not None or self._active_memory_duel(session):
                     return UndercoverGameResult("multiplayer_active")
                 if self._active_blame_game(session) is not None:
+                    return UndercoverGameResult("multiplayer_active")
+                if self._active_number_bomb_game(session) is not None:
                     return UndercoverGameResult("multiplayer_active")
                 if self._active_undercover_session(session) is not None:
                     return UndercoverGameResult("already_active")
@@ -3235,6 +3965,11 @@ class CoreRepository:
             or session.scalar(
                 select(exists().where(BlameGameRecord.active_key == "global"))
             )
+            or session.scalar(
+                select(
+                    exists().where(NumberBombGameRecord.active_key == "global")
+                )
+            )
         )
 
     def _lock_gameplay_gate(self, session: Session) -> None:
@@ -3633,6 +4368,10 @@ class CoreRepository:
                     return MemoryAssessmentGameResult(
                         "random_event_active", display_name=user.display_name
                     )
+                if self._active_number_bomb_game(session) is not None:
+                    return MemoryAssessmentGameResult(
+                        "already_active", display_name=user.display_name
+                    )
                 self._expire_previous_day_memory_assessment_single(session, now)
                 active = session.scalar(
                     select(MemoryAssessmentGameRecord)
@@ -3760,6 +4499,10 @@ class CoreRepository:
                         "multiplayer_active", display_name=user.display_name
                     )
                 if self._active_blame_game(session) is not None:
+                    return MemoryAssessmentGameResult(
+                        "multiplayer_active", display_name=user.display_name
+                    )
+                if self._active_number_bomb_game(session) is not None:
                     return MemoryAssessmentGameResult(
                         "multiplayer_active", display_name=user.display_name
                     )
@@ -4606,6 +5349,7 @@ class CoreRepository:
                     self._active_random_event(session) is not None
                     or self._active_memory_duel(session)
                     or self._active_undercover_session(session) is not None
+                    or self._active_number_bomb_game(session) is not None
                 ):
                     return BlameGameResult("multiplayer_active")
                 if session.scalar(
@@ -5002,7 +5746,7 @@ class CoreRepository:
         if notify:
             self.enqueue_system_outbound(
                 self._blame_automatic_message(
-                    scenario, now, {"{失败者}": settled.loser_display_name}
+                    scenario, now, blame_settlement_template_values(settled)
                 )
             )
         return settled
@@ -5016,7 +5760,11 @@ class CoreRepository:
         definition = template_definition("/甩锅游戏", scenario)
         record = self.get_reply_template("/甩锅游戏", scenario)
         template = definition.default if record is None else record.template
-        context = {"{日期}": now.date().isoformat(), **(values or {})}
+        context = {
+            "{日期}": now.date().isoformat(),
+            "{货币}": self.get_game_settings().currency_name,
+            **(values or {}),
+        }
         try:
             return render_template(definition, template, context)
         except ValueError:
@@ -5409,6 +6157,10 @@ class CoreRepository:
                 if self._active_random_event(session) is not None:
                     return HideAndSeekGameResult(
                         "random_event_active", display_name=user.display_name
+                    )
+                if self._active_number_bomb_game(session) is not None:
+                    return HideAndSeekGameResult(
+                        "already_active", display_name=user.display_name
                     )
                 active = session.scalar(
                     select(HideAndSeekGameRecord)
@@ -6690,6 +7442,8 @@ class CoreRepository:
             self._enqueue_due_income_reports(now)
             self.run_undercover_jobs(now)
             self.run_blame_game_jobs(now)
+            for message in self.run_number_bomb_jobs(now):
+                self.enqueue_system_outbound(message)
             self.run_random_event_jobs(now)
         if should_backfill:
             self._current_day_history_backfilled = now.date()
@@ -8106,12 +8860,12 @@ class CoreRepository:
     ) -> OutboundRecord | None:
         with self._session() as session:
             earlier_reply = aliased(OutboundRecord)
-            has_unsent_earlier_reply = exists(
+            has_unfinished_earlier_reply = exists(
                 select(1).where(
                     earlier_reply.inbound_message_id
                     == OutboundRecord.inbound_message_id,
                     earlier_reply.reply_index < OutboundRecord.reply_index,
-                    earlier_reply.status != "sent",
+                    earlier_reply.status.in_(("pending", "leased")),
                 )
             )
             record = session.scalar(
@@ -8124,7 +8878,7 @@ class CoreRepository:
                     ),
                     or_(
                         OutboundRecord.inbound_message_id.is_(None),
-                        ~has_unsent_earlier_reply,
+                        ~has_unfinished_earlier_reply,
                     ),
                 )
                 .order_by(

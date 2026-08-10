@@ -16,6 +16,14 @@ class InboundRequest(ApiModel):
     sender_platform_id: str = Field(min_length=1, max_length=255)
     content: str
     received_at: AwareDatetime
+    source_type: Literal["group", "direct"] = "group"
+    chatroom_id: str | None = Field(default=None, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_direct_room(self):
+        if self.source_type == "direct" and not self.chatroom_id:
+            raise ValueError("direct inbound requires chatroom_id")
+        return self
 
 
 class InboundResponse(ApiModel):
@@ -31,6 +39,10 @@ class DirectChatRoomRequest(ApiModel):
 class DirectChatSyncRequest(ApiModel):
     rooms: list[DirectChatRoomRequest]
     now: AwareDatetime
+
+
+class DirectInboundRoomsResponse(ApiModel):
+    chatroom_ids: list[str]
 
 
 class ClaimRequest(ApiModel):
@@ -359,7 +371,7 @@ AIImpressionCategory = Literal[
 AIKnowledgeTopic = Literal[
     "economy", "departments", "ranks", "shop", "checkin_activity",
     "random_events", "hide_and_seek", "memory_assessment", "undercover",
-    "blame_bomb", "commands_help", "player_activity",
+    "blame_bomb", "number_bomb", "commands_help", "player_activity",
 ]
 
 
@@ -537,6 +549,14 @@ class ActivitySettingsResponse(ApiModel):
 class SetActivitySettingsRequest(ApiModel):
     rules: list[ActivityLevelRuleModel] = Field(min_length=10, max_length=10)
     report_times: list[str] = Field(min_length=1)
+
+
+class NumberBombSettingsResponse(ApiModel):
+    inactivity_timeout_minutes: int
+
+
+class SetNumberBombSettingsRequest(ApiModel):
+    inactivity_timeout_minutes: int = Field(ge=1, le=60)
 
 
 class RandomEventSettingsResponse(ApiModel):

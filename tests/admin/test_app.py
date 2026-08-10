@@ -77,6 +77,9 @@ class FakeCore:
             "report_times": ["12:00", "16:00", "20:00", "23:59"],
         }
     )
+    number_bomb_settings: dict = field(
+        default_factory=lambda: {"inactivity_timeout_minutes": 10}
+    )
     ai_assistant_settings: dict = field(
         default_factory=lambda: {
             "enabled": False,
@@ -428,6 +431,13 @@ class FakeCore:
     def set_activity_settings(self, settings):
         self.activity_settings = settings
         return self.activity_settings
+
+    def get_number_bomb_settings(self):
+        return self.number_bomb_settings
+
+    def set_number_bomb_settings(self, settings):
+        self.number_bomb_settings = settings
+        return self.number_bomb_settings
 
     def get_random_event_settings(self):
         return self.random_event_settings
@@ -2060,3 +2070,33 @@ def test_admin_updates_random_event_scene_with_named_events(client, headers):
     assert created.status_code == 201
     assert updated.status_code == 200
     assert updated.json()["events"][0]["name"] == "新事件"
+
+
+def test_admin_proxies_versioned_number_bomb_settings(client, headers, core):
+    initial = client.get("/api/game/number-bomb/settings", headers=headers)
+    updated = client.patch(
+        "/api/game/number-bomb/settings",
+        headers={
+            **headers,
+            "If-Match": str(initial.json()["version"]),
+            "Idempotency-Key": "number-bomb-timeout-1",
+        },
+        json={"inactivity_timeout_minutes": 15},
+    )
+
+    assert initial.json()["inactivity_timeout_minutes"] == 10
+    assert updated.json()["inactivity_timeout_minutes"] == 15
+    assert updated.json()["version"] == initial.json()["version"] + 1
+    assert core.number_bomb_settings == {"inactivity_timeout_minutes": 15}
+
+
+def test_number_bomb_settings_surface_has_one_bounded_timeout_input():
+    root = Path(__file__).resolve().parents[2]
+    page = (root / "src/dzmm_bot/admin/templates/index.html").read_text()
+    script = (root / "src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert 'id="number-bomb-settings-card"' in page
+    assert 'id="edit-number-bomb-settings"' in page
+    assert 'id="number-bomb-timeout-minutes"' in page
+    assert 'min="1" max="60"' in page
+    assert "/api/game/number-bomb/settings" in script

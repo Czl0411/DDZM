@@ -40,6 +40,7 @@ from .api_models import (
     CreateItemRequest,
     DailyJobsRequest,
     DirectChatSyncRequest,
+    DirectInboundRoomsResponse,
     FailedRequest,
     GameSettingsResponse,
     HealthResponse,
@@ -51,12 +52,14 @@ from .api_models import (
     ManualLoginLeaseResponse,
     OutboundClaimResponse,
     OutboundRecallClaimResponse,
+    NumberBombSettingsResponse,
     QueueCountsResponse,
     RecalledRequest,
     SentRequest,
     SetCommandEnabledRequest,
     SetCommandTemplateRequest,
     SetActivitySettingsRequest,
+    SetNumberBombSettingsRequest,
     SetAIAssistantSettingsRequest,
     SetAIKnowledgeCardRequest,
     UpdateAIPlayerImpressionRequest,
@@ -172,6 +175,8 @@ def create_app(
                 sender_platform_id=request.sender_platform_id,
                 content=request.content,
                 received_at=request.received_at,
+                source_type=request.source_type,
+                chatroom_id=request.chatroom_id,
             )
         )
         return InboundResponse(
@@ -187,6 +192,17 @@ def create_app(
             request.now,
         )
         return AcceptedResponse(accepted=True)
+
+    @app.get(
+        "/internal/direct-inbound/rooms",
+        response_model=DirectInboundRoomsResponse,
+    )
+    def direct_inbound_rooms(
+        _: Annotated[None, Depends(authorize)],
+    ) -> DirectInboundRoomsResponse:
+        return DirectInboundRoomsResponse(
+            chatroom_ids=list(repository.number_bomb_direct_chatroom_ids())
+        )
 
     @app.post(
         "/internal/outbound/claim",
@@ -914,6 +930,33 @@ def create_app(
         _: Annotated[None, Depends(authorize)],
     ) -> ActivitySettingsResponse:
         return _activity_settings_response(repository.get_activity_settings())
+
+    @app.get(
+        "/internal/game/number-bomb/settings",
+        response_model=NumberBombSettingsResponse,
+    )
+    def number_bomb_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> NumberBombSettingsResponse:
+        settings = repository.get_number_bomb_settings()
+        return NumberBombSettingsResponse(
+            inactivity_timeout_minutes=settings.inactivity_timeout_minutes
+        )
+
+    @app.patch(
+        "/internal/game/number-bomb/settings",
+        response_model=NumberBombSettingsResponse,
+    )
+    def set_number_bomb_settings(
+        request: SetNumberBombSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> NumberBombSettingsResponse:
+        settings = repository.set_number_bomb_settings(
+            request.inactivity_timeout_minutes
+        )
+        return NumberBombSettingsResponse(
+            inactivity_timeout_minutes=settings.inactivity_timeout_minutes
+        )
 
     @app.patch(
         "/internal/game/activity-settings", response_model=ActivitySettingsResponse

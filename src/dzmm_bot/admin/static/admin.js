@@ -10,6 +10,7 @@ let consoleLoading = false;
 let refreshLoading = false;
 let gameSettings = null;
 let activitySettings = null;
+let numberBombSettings = null;
 let randomEventSettings = null;
 let employeePage = 1;
 let shopPage = 1;
@@ -244,6 +245,8 @@ const settingsWeeklyAttendanceReward = document.querySelector("#settings-weekly-
 const activitySettingsModal = document.querySelector("#activity-settings-modal");
 const activityRuleInputs = document.querySelector("#activity-rule-inputs");
 const incomeReportTimeInputs = document.querySelector("#income-report-time-inputs");
+const numberBombSettingsModal = document.querySelector("#number-bomb-settings-modal");
+const numberBombTimeoutMinutes = document.querySelector("#number-bomb-timeout-minutes");
 const randomEventSettingsModal = document.querySelector("#random-event-settings-modal");
 const randomEventSceneModal = document.querySelector("#random-event-scene-modal");
 const randomEventTimeModal = document.querySelector("#random-event-time-modal");
@@ -363,6 +366,10 @@ function closeActivitySettingsModal() {
   activitySettingsModal.hidden = true;
 }
 
+function closeNumberBombSettingsModal() {
+  numberBombSettingsModal.hidden = true;
+}
+
 function closeRandomEventSettingsModal() { randomEventSettingsModal.hidden = true; }
 function closeRandomEventSceneModal() { randomEventSceneModal.hidden = true; }
 function closeRandomEventTimeModal() {
@@ -398,6 +405,11 @@ function renderActivitySettings(settings) {
     <article><span>活跃等级</span><strong>LV1–LV10</strong><small>按累计有效字数结算</small></article>
     <article><span>最高每日奖励</span><strong>${settings.rules.at(-1).reward}</strong><small>达到最高等级后自动入账</small></article>
     <article><span>收益榜推送</span><strong>${settings.report_times.length} 个时段</strong><small>${escapeHtml(settings.report_times.join(" · "))}（北京时间）</small></article>`;
+}
+
+function renderNumberBombSettings(settings) {
+  document.querySelector("#number-bomb-settings-card").innerHTML = `
+    <article><span>无操作释放时间</span><strong>${settings.inactivity_timeout_minutes} 分钟</strong><small>允许范围 1–60 分钟，修改后立即生效</small></article>`;
 }
 
 function eventStatusLabel(status) {
@@ -492,7 +504,7 @@ function renderAiKnowledgeCards() {
   const topicLabels = {
     economy: "金币与余额", departments: "部门", ranks: "职位与晋升", shop: "商店与物品",
     checkin_activity: "打卡与活跃度", random_events: "随机事件", hide_and_seek: "摸鱼躲猫猫",
-    memory_assessment: "记忆考核", undercover: "谁是卧底", blame_bomb: "甩锅游戏",
+    memory_assessment: "记忆考核", undercover: "谁是卧底", blame_bomb: "甩锅游戏", number_bomb: "蹦蹦数字炸弹",
     commands_help: "指令帮助", player_activity: "个人游戏经历",
   };
   document.querySelector("#ai-knowledge-card-list").innerHTML = aiKnowledgeCards.length
@@ -569,11 +581,12 @@ function activityTypeLabel(value) {
     memory_assessment: "记忆考核",
     undercover: "谁是卧底",
     blame_bomb: "甩锅游戏",
+    number_bomb: "蹦蹦数字炸弹",
   })[value] || value;
 }
 
 function activityResultLabel(value) {
-  return ({win: "胜利", loss: "失败", draw: "平局", participated: "已参与"})[value] || value;
+  return ({win: "胜利", loss: "失败", draw: "平局", participated: "已参与", ended: "已参与"})[value] || value;
 }
 
 function renderEmployeeMemory(memory) {
@@ -923,6 +936,20 @@ async function loadActivitySettings() {
   return activitySettings;
 }
 
+async function loadNumberBombSettings() {
+  numberBombSettings = await requestGame("/api/game/number-bomb/settings");
+  configurationVersion = numberBombSettings.version;
+  renderNumberBombSettings(numberBombSettings);
+  return numberBombSettings;
+}
+
+async function openNumberBombSettingsModal() {
+  const settings = numberBombSettings || await loadNumberBombSettings();
+  numberBombTimeoutMinutes.value = settings.inactivity_timeout_minutes;
+  numberBombSettingsModal.hidden = false;
+  numberBombTimeoutMinutes.focus();
+}
+
 async function openSettingsModal() {
   const settings = gameSettings || await loadSettings();
   settingsCurrencyName.value = settings.currency_name;
@@ -1196,7 +1223,7 @@ async function loadGameView(view) {
   try {
     if (view === "overview") return refresh();
     if (view === "settings") {
-      await Promise.all([loadSettings(), loadActivitySettings()]);
+      await Promise.all([loadSettings(), loadActivitySettings(), loadNumberBombSettings()]);
       return;
     }
     if (view === "events") return loadRandomEvents();
@@ -1440,6 +1467,7 @@ document.querySelector("#cancel-login").addEventListener("click", async (event) 
 });
 document.querySelector("#edit-settings").addEventListener("click", () => void openSettingsModal());
 document.querySelector("#edit-activity-settings").addEventListener("click", () => void openActivitySettingsModal());
+document.querySelector("#edit-number-bomb-settings").addEventListener("click", () => void openNumberBombSettingsModal());
 document.querySelector("#edit-random-event-settings").addEventListener("click", () => void openRandomEventSettingsModal());
 document.querySelector("#create-random-event-scene").addEventListener("click", () => openRandomEventSceneModal());
 document.querySelector("#edit-hide-and-seek-settings").addEventListener("click", () => void openHideAndSeekSettingsModal());
@@ -1714,6 +1742,34 @@ activitySettingsModal.addEventListener("click", async (event) => {
       closeActivitySettingsModal();
     });
     setResult("日活跃度规则已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+numberBombSettingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-number-bomb-settings-modal]")) {
+    closeNumberBombSettingsModal();
+    return;
+  }
+  if (event.target.id !== "save-number-bomb-settings") return;
+  const inactivity_timeout_minutes = Number(numberBombTimeoutMinutes.value);
+  if (!Number.isInteger(inactivity_timeout_minutes) || inactivity_timeout_minutes < 1 || inactivity_timeout_minutes > 60) {
+    setResult("无操作释放时间必须为 1–60 分钟", "error");
+    return;
+  }
+  const button = event.target;
+  try {
+    await runMutation(button, "保存中…", async () => {
+      numberBombSettings = await requestGame("/api/game/number-bomb/settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify({inactivity_timeout_minutes}),
+      });
+      configurationVersion = numberBombSettings.version;
+      renderNumberBombSettings(numberBombSettings);
+      closeNumberBombSettingsModal();
+    });
+    setResult("蹦蹦数字炸弹设置已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
   }
@@ -2432,6 +2488,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !settingsModal.hidden) closeSettingsModal();
   if (event.key === "Escape" && !randomEventDetailsModal.hidden) randomEventDetailsModal.hidden = true;
   if (event.key === "Escape" && !activitySettingsModal.hidden) closeActivitySettingsModal();
+  if (event.key === "Escape" && !numberBombSettingsModal.hidden) closeNumberBombSettingsModal();
   if (event.key === "Escape" && !randomEventSettingsModal.hidden) closeRandomEventSettingsModal();
   if (event.key === "Escape" && !randomEventSceneModal.hidden) closeRandomEventSceneModal();
   if (event.key === "Escape" && !randomEventTimeModal.hidden) closeRandomEventTimeModal();

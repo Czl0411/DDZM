@@ -3,13 +3,17 @@ from zoneinfo import ZoneInfo
 from dzmm_bot.runtime.contracts import InboundMessage
 
 from .reply_templates import render_template, template_definition
-from .repository import CoreRepository
+from .repository import (
+    BlameGameResult,
+    CoreRepository,
+    blame_settlement_template_values,
+)
 from .service import CommandReply
 
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅",
+    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数",
 }
 
 
@@ -43,6 +47,14 @@ class GroupCommandHandler:
         received_at = message.received_at.astimezone(_BEIJING)
         if command == "/入职":
             return self._join(message.sender_platform_id, content, received_at)
+        if command == "/蹦蹦数字炸弹":
+            return self._number_bomb_start(
+                message.sender_platform_id, content, received_at
+            )
+        if command == "/报数":
+            if message.source_type != "direct":
+                return self._reply("/报数", "group_only", received_at)
+            return self._number_bomb_submit(message, content, received_at)
         if command == "/甩锅游戏":
             return self._blame_start(message.sender_platform_id, content, received_at)
         if command == "/甩锅":
@@ -58,6 +70,8 @@ class GroupCommandHandler:
         if command == "/退出谁是卧底":
             return self._undercover_leave(message.sender_platform_id, received_at)
         if command == "/结束游戏":
+            if self._repository.number_bomb_game_summary().state is not None:
+                return self._number_bomb_end(message.sender_platform_id, received_at)
             if self._repository.blame_game_summary(received_at).state is not None:
                 return self._blame_end(message.sender_platform_id, received_at)
             return self._undercover_end(message.sender_platform_id, received_at)
@@ -94,8 +108,12 @@ class GroupCommandHandler:
                 message.sender_platform_id, command, content, received_at
             )
         if command == "/加入":
+            if self._repository.number_bomb_game_summary().state is not None:
+                return self._number_bomb_join(message.sender_platform_id, received_at)
             return self._event_join(message.sender_platform_id, content, received_at)
         if command == "/退出":
+            if self._repository.number_bomb_game_summary().state is not None:
+                return self._number_bomb_leave(message.sender_platform_id, received_at)
             return self._event_leave(message.sender_platform_id, received_at)
         if command == "/摸鱼躲猫猫":
             return self._hide_and_seek(message.sender_platform_id, content, received_at)
@@ -104,6 +122,10 @@ class GroupCommandHandler:
                 message.sender_platform_id, content, received_at
             )
         if command == "/继续":
+            if self._repository.number_bomb_game_summary().state is not None:
+                return self._number_bomb_continue(
+                    message.sender_platform_id, received_at
+                )
             if self._repository.undercover_session_summary().state == "awaiting_continue":
                 return self._undercover_continue(message.sender_platform_id, received_at)
             return self._memory_assessment_continue(message.sender_platform_id, received_at)
@@ -501,6 +523,162 @@ class GroupCommandHandler:
             {"{保证金}": max(player_count - 1, 0)},
         )
 
+    def _number_bomb_start(
+        self, platform_id: str, content: str, received_at
+    ) -> str:
+        parts = content.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            return self._reply("/蹦蹦数字炸弹", "usage", received_at)
+        player_count = int(parts[1])
+        result = self._repository.start_number_bomb_game(
+            platform_id, player_count, received_at
+        )
+        if result.status == "signup_started":
+            user = self._repository.find_user(platform_id)
+            return self._reply(
+                "/蹦蹦数字炸弹",
+                "signup_started",
+                received_at,
+                {
+                    "{昵称}": user.display_name,
+                    "{人数}": player_count,
+                    "{当前人数}": result.player_count,
+                },
+            )
+        if result.status == "invalid_player_count":
+            return self._reply("/蹦蹦数字炸弹", "usage", received_at)
+        scenario = result.status if result.status in {
+            "not_joined", "multiplayer_active", "already_active"
+        } else "multiplayer_active"
+        return self._reply("/蹦蹦数字炸弹", scenario, received_at)
+
+    def _number_bomb_join(self, platform_id: str, received_at) -> str:
+        result = self._repository.join_number_bomb_game(platform_id, received_at)
+        if result.status == "joined":
+            user = self._repository.find_user(platform_id)
+            return self._reply(
+                "/加入",
+                "number_bomb_joined",
+                received_at,
+                {
+                    "{昵称}": user.display_name,
+                    "{当前人数}": result.player_count,
+                    "{人数}": result.target_player_count,
+                },
+            )
+        if result.status == "started":
+            return self._number_bomb_round_started_reply(
+                "/加入", result, received_at
+            )
+        scenarios = {
+            "queued": "number_bomb_queued",
+            "next_round_full": "number_bomb_next_round_full",
+            "already_joined": "number_bomb_already_joined",
+            "not_joined": "number_bomb_not_joined",
+        }
+        return self._reply(
+            "/加入",
+            scenarios.get(result.status, "number_bomb_already_joined"),
+            received_at,
+        )
+
+    def _number_bomb_leave(self, platform_id: str, received_at) -> str:
+        result = self._repository.leave_number_bomb_game(platform_id, received_at)
+        scenarios = {
+            "signup_left": "number_bomb_signup_left",
+            "exit_queued": "number_bomb_exit_queued",
+            "candidate_cancelled": "number_bomb_candidate_cancelled",
+        }
+        return self._reply(
+            "/退出",
+            scenarios.get(result.status, "number_bomb_cannot_leave"),
+            received_at,
+        )
+
+    def _number_bomb_continue(self, platform_id: str, received_at) -> str:
+        result = self._repository.continue_number_bomb_game(platform_id, received_at)
+        if result.status == "started":
+            return self._number_bomb_round_started_reply(
+                "/继续", result, received_at
+            )
+        return self._reply(
+            "/继续",
+            "number_bomb_insufficient"
+            if result.status == "insufficient_players"
+            else "number_bomb_cannot_continue",
+            received_at,
+        )
+
+    def _number_bomb_end(self, platform_id: str, received_at) -> str:
+        result = self._repository.end_number_bomb_game(platform_id, received_at)
+        return self._reply(
+            "/结束游戏",
+            "number_bomb_ended"
+            if result.status == "ended"
+            else "number_bomb_cannot_end",
+            received_at,
+        )
+
+    def _number_bomb_submit(
+        self, message: InboundMessage, content: str, received_at
+    ) -> list[CommandReply]:
+        parts = content.split()
+        number = int(parts[1]) if len(parts) == 2 and parts[1].isdigit() else 0
+        result = self._repository.submit_number_bomb(
+            message.sender_platform_id, number, received_at
+        )
+        scenarios = {
+            "submitted": "submitted",
+            "settled": "submitted",
+            "invalid_round": "submitted",
+            "invalid_number": "invalid_number",
+            "already_submitted": "duplicate",
+            "not_participant": "not_participant",
+            "no_game": "not_collecting",
+            "wrong_state": "not_collecting",
+        }
+        replies = [
+            CommandReply(
+                self._reply(
+                    "/报数", scenarios.get(result.status, "not_collecting"), received_at
+                ),
+                destination_chatroom_id=message.chatroom_id,
+                delivery_kind="number_bomb_private",
+            )
+        ]
+        if result.status in {"settled", "invalid_round"}:
+            replies.append(
+                CommandReply(
+                    self._reply(
+                        "/报数",
+                        "result",
+                        received_at,
+                        {"{结果正文}": result.public_message},
+                    )
+                )
+            )
+        return replies
+
+    def _number_bomb_round_started_reply(
+        self, command: str, result, received_at
+    ) -> str:
+        return self._reply(
+            command,
+            "number_bomb_started",
+            received_at,
+            {
+                "{轮次}": result.round_number,
+                "{惩罚类型}": (
+                    "大冒险" if result.punishment_type == "dare" else "真心话"
+                ),
+                "{玩家列表}": "、".join(
+                    player.display_name
+                    for player in result.players
+                    if player.state == "current"
+                ),
+            },
+        )
+
     def _blame_join(self, platform_id: str, received_at) -> str:
         result = self._repository.join_blame_game(platform_id, received_at)
         if result.status == "joined":
@@ -578,9 +756,7 @@ class GroupCommandHandler:
                 {"{缺少关键词}": "、".join(result.missing_keywords)},
             )
         if result.status == "settled":
-            return self._reply(
-                "/甩锅", "settled", received_at, {"{失败者}": result.loser_display_name}
-            )
+            return self._blame_settlement_reply(result, received_at)
         scenario = result.status if result.status in {
             "duplicate_reason", "invalid_target", "self_target",
             "immediate_return_blocked", "not_holder",
@@ -592,15 +768,7 @@ class GroupCommandHandler:
         if result.status == "left_signup":
             return self._reply("/退出甩锅", "left_signup", received_at)
         if result.status == "settled":
-            if result.settlement_reason in {"exploded", "turn_timeout"}:
-                return self._reply(
-                    "/甩锅", "settled", received_at,
-                    {"{失败者}": result.loser_display_name},
-                )
-            return self._reply(
-                "/退出甩锅", "settled", received_at,
-                {"{失败者}": result.loser_display_name},
-            )
+            return self._blame_settlement_reply(result, received_at)
         if result.status == "signup_expired":
             return self._reply("/甩锅游戏", "signup_expired", received_at)
         return self._reply("/退出甩锅", "cannot_leave", received_at)
@@ -608,16 +776,32 @@ class GroupCommandHandler:
     def _blame_end(self, platform_id: str, received_at) -> str:
         result = self._repository.end_blame_game(platform_id, received_at)
         if result.status == "settled":
-            return self._reply(
-                "/甩锅", "settled", received_at,
-                {"{失败者}": result.loser_display_name},
-            )
+            return self._blame_settlement_reply(result, received_at)
         if result.status == "signup_expired":
             return self._reply("/甩锅游戏", "signup_expired", received_at)
         return self._reply(
             "/结束游戏",
             "blame_cancelled" if result.status == "cancelled" else "cannot_end",
             received_at,
+        )
+
+    def _blame_settlement_reply(
+        self, result: BlameGameResult, received_at
+    ) -> str:
+        if result.settlement_reason in {"exploded", "turn_timeout"}:
+            command = "/甩锅游戏"
+            scenario = result.settlement_reason
+        elif result.settlement_reason == "player_left":
+            command = "/退出甩锅"
+            scenario = "settled"
+        else:
+            command = "/甩锅"
+            scenario = "settled"
+        return self._reply(
+            command,
+            scenario,
+            received_at,
+            blame_settlement_template_values(result),
         )
 
     def _undercover_join(self, platform_id: str, received_at) -> str:
@@ -1118,6 +1302,17 @@ class GroupCommandHandler:
                     ("/结束游戏", "/结束游戏：参与者结束并退款（到期局优先结算）"),
                 ),
             ),
+            "蹦蹦数字炸弹": (
+                "【蹦蹦数字炸弹】",
+                (
+                    ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹 人数：创建 3 至 10 人报名局"),
+                    ("/加入", "/加入：报名当前对局；游戏中加入会从下一轮生效"),
+                    ("/报数", "私聊 /报数 1-100：提交本轮整数"),
+                    ("/退出", "/退出：退出对局；游戏中退出会从下一轮生效"),
+                    ("/继续", "/继续：本轮结算后，由任一参与者开启下一轮"),
+                    ("/结束游戏", "/结束游戏：任一参与者终止整场游戏"),
+                ),
+            ),
             "部门": (
                 "【部门与审批】",
                 (
@@ -1149,7 +1344,13 @@ class GroupCommandHandler:
             if category == "游戏":
                 return any(
                     any(command in commands for command, _ in guides[name][1])
-                    for name in ("摸鱼躲藏", "记忆考核", "谁是卧底", "甩锅游戏")
+                    for name in (
+                        "摸鱼躲藏",
+                        "记忆考核",
+                        "谁是卧底",
+                        "甩锅游戏",
+                        "蹦蹦数字炸弹",
+                    )
                 )
             return any(command in commands for command, _ in guides[category][1])
 
@@ -1158,7 +1359,7 @@ class GroupCommandHandler:
                 ("基础", "/帮助 基础：入职、资产与商店"),
                 (
                     "游戏",
-                    "/帮助 游戏：玩法总览；/帮助 摸鱼躲藏、/帮助 记忆考核、/帮助 谁是卧底、/帮助 甩锅游戏",
+                    "/帮助 游戏：玩法总览；/帮助 摸鱼躲藏、/帮助 记忆考核、/帮助 谁是卧底、/帮助 甩锅游戏、/帮助 蹦蹦数字炸弹",
                 ),
                 ("随机事件", "/帮助 随机事件：报名与退出"),
                 ("部门", "/帮助 部门：部门申请与审批"),
@@ -1172,7 +1373,13 @@ class GroupCommandHandler:
         elif topic == "游戏":
             game_topics = [
                 name
-                for name in ("摸鱼躲藏", "记忆考核", "谁是卧底", "甩锅游戏")
+                for name in (
+                    "摸鱼躲藏",
+                    "记忆考核",
+                    "谁是卧底",
+                    "甩锅游戏",
+                    "蹦蹦数字炸弹",
+                )
                 if any(command in commands for command, _ in guides[name][1])
             ]
             guide = "【游戏玩法】\n" + "\n".join(

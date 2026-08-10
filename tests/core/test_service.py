@@ -108,6 +108,55 @@ def test_service_records_an_accepted_joined_message_once(session_factory):
     assert repository.personal_activity("sender-1", received_at).level == 1
 
 
+def test_direct_number_bomb_reports_are_isolated_and_destination_aware(session_factory):
+    from dzmm_bot.core.commands import GroupCommandHandler
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import InboundRecord, OutboundRecord
+    from dzmm_bot.core.service import CoreService
+
+    repository = CoreRepository(
+        session_factory, preserve_long_group_messages=True
+    )
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    for index in range(1, 4):
+        repository.create_user(f"direct-p{index}", f"私聊{index}", now, 0)
+    repository.start_number_bomb_game("direct-p1", 3, now)
+    repository.join_number_bomb_game("direct-p2", now)
+    repository.join_number_bomb_game("direct-p3", now)
+    service = CoreService(repository, GroupCommandHandler(repository))
+
+    for index, number in ((1, 10), (2, 50), (3, 90)):
+        service.receive_inbound(InboundMessage(
+            f"direct-inbound-{index}", f"direct-p{index}", f"/报数 {number}", now,
+            source_type="direct", chatroom_id=f"direct-room-{index}",
+        ))
+
+    with session_factory() as session:
+        inbound = session.scalar(select(InboundRecord).where(
+            InboundRecord.platform_message_id == "direct-inbound-1"
+        ))
+        last = session.scalar(select(InboundRecord).where(
+            InboundRecord.platform_message_id == "direct-inbound-3"
+        ))
+        replies = list(session.scalars(
+            select(OutboundRecord)
+            .where(OutboundRecord.inbound_message_id == last.id)
+            .order_by(OutboundRecord.reply_index)
+        ))
+    assert (inbound.source_type, inbound.chatroom_id, inbound.ai_memory_eligible) == (
+        "direct", "direct-room-1", False,
+    )
+    assert len(replies) == 2
+    assert (replies[0].destination_chatroom_id, replies[0].delivery_kind) == (
+        "direct-room-3", "number_bomb_private",
+    )
+    assert "报数成功" in replies[0].text
+    assert (replies[1].destination_chatroom_id, replies[1].delivery_kind) == (
+        None, "group",
+    )
+    assert "第 1 轮 - 真心话" in replies[1].text
+
+
 def test_commands_and_parenthesized_messages_are_not_memory_eligible(session_factory):
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import InboundRecord

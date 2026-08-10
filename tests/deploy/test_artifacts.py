@@ -1,7 +1,128 @@
 from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Integer,
+    JSON,
+    MetaData,
+    String,
+    Table,
+    Text,
+    Uuid,
+    create_engine,
+    inspect,
+    text,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'number-bomb.db'}"
+    monkeypatch.setenv("DZMM_DATABASE_URL", database_url)
+    config = Config(str(ROOT / "alembic.ini"))
+    engine = create_engine(database_url)
+    before_upgrade = MetaData()
+    Table(
+        "users",
+        before_upgrade,
+        Column("id", Uuid, primary_key=True),
+    )
+    Table(
+        "inbound_messages",
+        before_upgrade,
+        Column("id", Uuid, primary_key=True),
+        Column("platform_message_id", String(255), nullable=False),
+        Column("sender_platform_id", String(255), nullable=False),
+        Column("content", Text, nullable=False),
+        Column("received_at", DateTime(timezone=True), nullable=False),
+        Column("status", String(32), nullable=False),
+        Column("ai_memory_eligible", Boolean, nullable=False),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+    )
+    Table(
+        "ai_activity_events",
+        before_upgrade,
+        Column("event_key", String(255), primary_key=True),
+        Column("user_id", Uuid, nullable=False),
+        Column("activity_type", String(48), nullable=False),
+        Column("result", String(32), nullable=False),
+        Column("occurred_at", DateTime(timezone=True), nullable=False),
+    )
+    Table(
+        "ai_knowledge_cards",
+        before_upgrade,
+        Column("id", Uuid, primary_key=True),
+        Column("topic", String(48), nullable=False),
+        Column("title", String(128), nullable=False),
+        Column("keywords", JSON, nullable=False),
+        Column("content", Text, nullable=False),
+        Column("enabled", Boolean, nullable=False),
+        Column("priority", Integer, nullable=False),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("updated_at", DateTime(timezone=True), nullable=False),
+    )
+    before_upgrade.create_all(engine)
+    command.stamp(config, "20260810_33")
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(engine)
+    assert {
+        "number_bomb_settings",
+        "number_bomb_games",
+        "number_bomb_members",
+        "number_bomb_rounds",
+        "number_bomb_round_players",
+    } <= set(inspector.get_table_names())
+    assert {column["name"] for column in inspector.get_columns("inbound_messages")} >= {
+        "source_type",
+        "chatroom_id",
+    }
+    assert "detail" in {
+        column["name"] for column in inspector.get_columns("ai_activity_events")
+    }
+
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one() == "20260810_34"
+        assert connection.execute(
+            text("SELECT inactivity_timeout_minutes FROM number_bomb_settings WHERE id = 1")
+        ).scalar_one() == 10
+        assert connection.execute(
+            text("SELECT title FROM ai_knowledge_cards WHERE topic = 'number_bomb'")
+        ).scalar_one() == "蹦蹦数字炸弹"
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO ai_knowledge_cards
+                    (id, topic, title, keywords, content, enabled, priority, created_at, updated_at)
+                VALUES
+                    (:id, 'number_bomb', '管理员自建数字玩法', :keywords, '自定义内容', 1, 1, :now, :now)
+                """
+            ),
+            {
+                "id": "11111111111111111111111111111111",
+                "keywords": '["自定义"]',
+                "now": "2026-08-10 12:00:00",
+            },
+        )
+
+    command.downgrade(config, "20260810_33")
+
+    with engine.connect() as connection:
+        titles = connection.execute(
+            text("SELECT title FROM ai_knowledge_cards WHERE topic = 'number_bomb'")
+        ).scalars().all()
+    assert titles == ["管理员自建数字玩法"]
 
 
 def test_systemd_units_use_environment_factories_and_isolated_ports():

@@ -3,7 +3,7 @@ import json
 
 import httpx
 
-from dzmm_bot.runtime.contracts import DirectChatRoom, LoginState
+from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
 
 
 def test_core_client_heartbeat_reports_actual_and_returns_desired_listener_state():
@@ -108,3 +108,50 @@ def test_core_client_syncs_discovered_direct_chatrooms():
             "now": now.isoformat(),
         },
     }
+
+
+def test_core_client_serializes_provenance_and_fetches_direct_inbound_rooms():
+    from dzmm_bot.browser.core_client import CoreClient
+
+    observed = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append((request.method, request.url.path, json.loads(request.content) if request.content else None))
+        if request.method == "GET":
+            return httpx.Response(200, json={"chatroom_ids": ["direct-1"]})
+        return httpx.Response(200, json={"accepted": True})
+
+    client = CoreClient(
+        "http://core.test",
+        "token",
+        client=httpx.Client(
+            base_url="http://core.test",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    now = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+
+    rooms = client.direct_inbound_chatroom_ids()
+    client.submit_inbound(
+        InboundMessage(
+            "direct-message-1", "employee-1", "/报数 29", now,
+            source_type="direct", chatroom_id="direct-1",
+        )
+    )
+
+    assert rooms == ("direct-1",)
+    assert observed == [
+        ("GET", "/internal/direct-inbound/rooms", None),
+        (
+            "POST",
+            "/internal/inbound",
+            {
+                "platform_message_id": "direct-message-1",
+                "sender_platform_id": "employee-1",
+                "content": "/报数 29",
+                "received_at": now.isoformat(),
+                "source_type": "direct",
+                "chatroom_id": "direct-1",
+            },
+        ),
+    ]

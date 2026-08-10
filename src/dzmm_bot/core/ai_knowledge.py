@@ -6,7 +6,7 @@ from uuid import UUID
 KNOWLEDGE_TOPICS = (
     "economy", "departments", "ranks", "shop", "checkin_activity",
     "random_events", "hide_and_seek", "memory_assessment", "undercover",
-    "blame_bomb", "commands_help", "player_activity",
+    "blame_bomb", "number_bomb", "commands_help", "player_activity",
 )
 
 TOPIC_COMMANDS = {
@@ -20,6 +20,7 @@ TOPIC_COMMANDS = {
     "memory_assessment": ("/记忆考核", "/继续", "/收手", "/投降"),
     "undercover": ("/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/加入", "/继续"),
     "blame_bomb": ("/甩锅游戏", "/甩锅", "/退出甩锅", "/加入", "/结束游戏"),
+    "number_bomb": ("/蹦蹦数字炸弹", "/报数", "/加入", "/退出", "/继续", "/结束游戏"),
     "commands_help": (),
     "player_activity": ("/我",),
 }
@@ -35,6 +36,7 @@ _TOPIC_ALIASES = {
     "memory_assessment": ("记忆考核", "答案", "收手", "对战"),
     "undercover": ("谁是卧底", "卧底", "白板", "投票"),
     "blame_bomb": ("甩锅", "事故卡", "关键词"),
+    "number_bomb": ("蹦蹦数字炸弹", "平均数炸弹", "报数", "真心话", "大冒险"),
     "commands_help": ("指令", "命令", "帮助", "怎么操作"),
     "player_activity": ("战绩", "玩过", "赢过", "输了", "参加过"),
 }

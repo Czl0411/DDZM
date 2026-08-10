@@ -489,6 +489,9 @@ class AIMemorySettings:
     extraction_prompt: str
     history_limit: int
     max_memory_chars: int
+    batch_message_threshold: int
+    max_entries_per_category: int
+    candidate_expiry_days: int
 
 
 @dataclass(frozen=True)
@@ -1192,6 +1195,9 @@ class CoreRepository:
         extraction_prompt: str,
         history_limit: int,
         max_memory_chars: int,
+        batch_message_threshold: int = 20,
+        max_entries_per_category: int = 3,
+        candidate_expiry_days: int = 30,
     ) -> AIMemorySettings:
         if not gameplay_guide.strip() or len(gameplay_guide) > 99999:
             raise ValueError("核心玩法指引不能为空且不能超过 99999 个字符")
@@ -1201,6 +1207,12 @@ class CoreRepository:
             raise ValueError("首次历史消息数必须在 1 到 500 之间")
         if not 1 <= max_memory_chars <= 8000:
             raise ValueError("单位玩家记忆上限必须在 1 到 8000 之间")
+        if not 1 <= batch_message_threshold <= 500:
+            raise ValueError("批量消息阈值必须在 1 到 500 之间")
+        if not 1 <= max_entries_per_category <= 10:
+            raise ValueError("每类稳定印象上限必须在 1 到 10 之间")
+        if not 1 <= candidate_expiry_days <= 365:
+            raise ValueError("候选印象有效期必须在 1 到 365 天之间")
         with self._session() as session:
             self._ensure_ai_memory_defaults(session)
             record = session.get(AIMemorySettingsRecord, 1)
@@ -1211,8 +1223,130 @@ class CoreRepository:
             record.extraction_prompt = extraction_prompt.strip()
             record.history_limit = history_limit
             record.max_memory_chars = max_memory_chars
+            record.batch_message_threshold = batch_message_threshold
+            record.max_entries_per_category = max_entries_per_category
+            record.candidate_expiry_days = candidate_expiry_days
             session.flush()
             return _ai_memory_settings(record)
+
+    def user_has_active_game_context(self, platform_id: str) -> bool:
+        with self._session() as session:
+            user_id = session.scalar(
+                select(UserRecord.id).where(UserRecord.platform_id == platform_id)
+            )
+            if user_id is None:
+                return False
+            checks = (
+                select(RandomEventParticipantRecord.id)
+                .join(
+                    RandomEventRecord,
+                    RandomEventRecord.id == RandomEventParticipantRecord.event_id,
+                )
+                .where(
+                    RandomEventParticipantRecord.user_id == user_id,
+                    RandomEventParticipantRecord.left_at.is_(None),
+                    RandomEventRecord.state.in_(("signup", "in_progress")),
+                ),
+                select(UndercoverSessionMemberRecord.id)
+                .join(
+                    UndercoverSessionRecord,
+                    UndercoverSessionRecord.id
+                    == UndercoverSessionMemberRecord.session_id,
+                )
+                .where(
+                    UndercoverSessionMemberRecord.user_id == user_id,
+                    UndercoverSessionMemberRecord.state == "joined",
+                    UndercoverSessionRecord.active_key.is_not(None),
+                ),
+                select(MemoryAssessmentParticipantRecord.id)
+                .join(
+                    MemoryAssessmentGameRecord,
+                    MemoryAssessmentGameRecord.id
+                    == MemoryAssessmentParticipantRecord.game_id,
+                )
+                .where(
+                    MemoryAssessmentParticipantRecord.user_id == user_id,
+                    MemoryAssessmentGameRecord.active_key.is_not(None),
+                ),
+                select(HideAndSeekGameRecord.id).where(
+                    HideAndSeekGameRecord.user_id == user_id,
+                    HideAndSeekGameRecord.state == "selecting",
+                ),
+                select(BlameGamePlayerRecord.id)
+                .join(BlameGameRecord, BlameGameRecord.id == BlameGamePlayerRecord.game_id)
+                .where(
+                    BlameGamePlayerRecord.user_id == user_id,
+                    BlameGamePlayerRecord.state == "joined",
+                    BlameGameRecord.active_key.is_not(None),
+                ),
+            )
+            return any(session.scalar(select(exists(check))) for check in checks)
+
+    def record_ai_memory_message(
+        self,
+        message_id: UUID | str,
+        platform_id: str,
+        eligible: bool,
+        now: datetime,
+    ) -> None:
+        with self._session() as session:
+            inbound = session.get(
+                InboundRecord, UUID(str(message_id)), with_for_update=True
+            )
+            if inbound is None:
+                return
+            inbound.ai_memory_eligible = eligible
+            if not eligible:
+                return
+            self._ensure_ai_memory_defaults(session)
+            settings = session.get(AIMemorySettingsRecord, 1)
+            if settings is None or not settings.enabled:
+                return
+            user = session.scalar(
+                select(UserRecord)
+                .where(UserRecord.platform_id == platform_id)
+                .with_for_update()
+            )
+            if user is None:
+                return
+            memory = session.get(AIPlayerMemoryRecord, user.id, with_for_update=True)
+            if memory is None:
+                memory = AIPlayerMemoryRecord(
+                    user_id=user.id,
+                    memory_text="",
+                    last_scanned_message_id=None,
+                    pending_message_count=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(memory)
+                session.flush()
+            memory.pending_message_count += 1
+            memory.updated_at = now
+            if memory.pending_message_count < settings.batch_message_threshold:
+                return
+            job = session.get(AIMemoryJobRecord, user.id, with_for_update=True)
+            if job is None:
+                session.add(
+                    AIMemoryJobRecord(
+                        user_id=user.id,
+                        target_message_id=inbound.id,
+                        target_message_count=memory.pending_message_count,
+                        status="pending",
+                        available_at=now,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                return
+            if job.status == "leased":
+                return
+            job.target_message_id = inbound.id
+            job.target_message_count = memory.pending_message_count
+            job.status = "pending"
+            job.failure_summary = None
+            job.available_at = now
+            job.updated_at = now
 
     def get_ai_player_memory(
         self, platform_id: str
@@ -1341,8 +1475,6 @@ class CoreRepository:
                 settings = session.get(AIAssistantSettingsRecord, 1)
                 if settings is None or not settings.enabled:
                     return AIEnqueueResult("disabled")
-                self._ensure_ai_memory_defaults(session)
-                memory_settings = session.get(AIMemorySettingsRecord, 1)
                 user = session.scalar(
                     select(UserRecord)
                     .where(UserRecord.platform_id == sender_platform_id)
@@ -1379,22 +1511,6 @@ class CoreRepository:
                         created_at=now,
                     )
                 )
-                memory_job = session.get(AIMemoryJobRecord, user.id)
-                if memory_settings is not None and memory_settings.enabled and memory_job is None:
-                    session.add(
-                        AIMemoryJobRecord(
-                            user_id=user.id,
-                            target_message_id=UUID(str(inbound_message_id)),
-                            status="pending",
-                            created_at=now,
-                            updated_at=now,
-                        )
-                    )
-                elif memory_settings is not None and memory_settings.enabled:
-                    memory_job.target_message_id = UUID(str(inbound_message_id))
-                    if memory_job.status != "leased":
-                        memory_job.status = "pending"
-                    memory_job.updated_at = now
                 session.flush()
                 return AIEnqueueResult("queued")
 
@@ -1544,7 +1660,8 @@ class CoreRepository:
         history_limit: int,
     ) -> tuple[str, ...]:
         statement = select(InboundRecord).where(
-            InboundRecord.sender_platform_id == platform_id
+            InboundRecord.sender_platform_id == platform_id,
+            InboundRecord.ai_memory_eligible.is_(True),
         )
         if target is not None:
             statement = statement.where(InboundRecord.received_at <= target.received_at)
@@ -1561,7 +1678,7 @@ class CoreRepository:
         return tuple(
             record.content.strip()
             for record in records
-            if _is_effective_memory_message(record.content)
+            if record.content.strip()
         )
 
     def claim_ai_request(
@@ -6918,6 +7035,9 @@ class CoreRepository:
                     extraction_prompt=_DEFAULT_AI_MEMORY_EXTRACTION_PROMPT,
                     history_limit=500,
                     max_memory_chars=1200,
+                    batch_message_threshold=20,
+                    max_entries_per_category=3,
+                    candidate_expiry_days=30,
                 )
             )
         session.flush()
@@ -7627,6 +7747,9 @@ def _ai_memory_settings(record: AIMemorySettingsRecord) -> AIMemorySettings:
         extraction_prompt=record.extraction_prompt,
         history_limit=record.history_limit,
         max_memory_chars=record.max_memory_chars,
+        batch_message_threshold=record.batch_message_threshold,
+        max_entries_per_category=record.max_entries_per_category,
+        candidate_expiry_days=record.candidate_expiry_days,
     )
 
 
@@ -7657,11 +7780,6 @@ def _build_ai_system_prompt(
             f"【玩家记忆】\n{player_memory.strip() or '暂无'}",
         )
     )
-
-
-def _is_effective_memory_message(content: str) -> bool:
-    text = content.strip()
-    return bool(text) and not text.startswith(("/", "(", "（"))
 
 
 def _undercover_role_rule(record: UndercoverRoleRuleRecord) -> UndercoverRoleRule:

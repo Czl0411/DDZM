@@ -283,23 +283,46 @@ def test_ai_memory_schema_keeps_one_snapshot_per_player():
     assert AIMemorySettingsRecord.__tablename__ == "ai_memory_settings"
 
 
-def test_ai_request_queues_one_memory_job_for_the_same_player(repository, now):
-    from dzmm_bot.core.schema import AIAssistantSettingsRecord
-
-    user, _ = repository.create_user("memory-player", "阿彻", now, 0)
-    repository.get_ai_assistant_settings()
-    with repository._session() as session:
-        session.get(AIAssistantSettingsRecord, 1).enabled = True
-        session.commit()
-
-    result = repository.try_enqueue_ai_request(
-        uuid4(), user.platform_id, "@总监事 我喜欢简短回复", now
+def test_twenty_ordinary_messages_enqueue_memory_without_ai_quota(repository, now):
+    from dzmm_bot.core.schema import (
+        AIMemoryJobRecord,
+        AIPlayerMemoryRecord,
+        DailyAIUsageRecord,
     )
 
-    assert result.state == "queued"
-    claim = repository.claim_ai_memory_job("memory-worker", now, 30)
-    assert claim is not None
-    assert claim.user_id == user.id
+    user, _ = repository.create_user("memory-player", "阿彻", now, 0)
+    current = repository.get_ai_memory_settings()
+    repository.set_ai_memory_settings(
+        enabled=True,
+        gameplay_guide=current.gameplay_guide,
+        extraction_prompt="只提取稳定可观察倾向",
+        history_limit=current.history_limit,
+        max_memory_chars=current.max_memory_chars,
+        batch_message_threshold=20,
+        max_entries_per_category=3,
+        candidate_expiry_days=30,
+    )
+    for index in range(20):
+        inbound, _ = repository.accept_inbound(
+            InboundMessage(
+                f"ordinary-{index}",
+                user.platform_id,
+                f"普通聊天 {index}",
+                now + timedelta(seconds=index),
+            )
+        )
+        repository.record_ai_memory_message(
+            inbound.id, user.platform_id, True, inbound.received_at
+        )
+
+    with repository._session() as session:
+        memory = session.get(AIPlayerMemoryRecord, user.id)
+        job = session.get(AIMemoryJobRecord, user.id)
+        assert memory is not None
+        assert memory.pending_message_count == 20
+        assert job is not None
+        assert job.target_message_count == 20
+        assert session.scalar(select(DailyAIUsageRecord)) is None
 
 
 def test_ai_memory_claim_reads_only_the_players_effective_messages(repository, now):
@@ -310,17 +333,32 @@ def test_ai_memory_claim_reads_only_the_players_effective_messages(repository, n
     with repository._session() as session:
         session.get(AIAssistantSettingsRecord, 1).enabled = True
         session.commit()
-    repository.accept_inbound(
+    current = repository.get_ai_memory_settings()
+    repository.set_ai_memory_settings(
+        enabled=True,
+        gameplay_guide=current.gameplay_guide,
+        extraction_prompt=current.extraction_prompt,
+        history_limit=current.history_limit,
+        max_memory_chars=current.max_memory_chars,
+        batch_message_threshold=2,
+    )
+    ordinary, _ = repository.accept_inbound(
         InboundMessage("memory-1", user.platform_id, "我喜欢简短一点的回复", now)
     )
-    repository.accept_inbound(
+    command, _ = repository.accept_inbound(
         InboundMessage("memory-2", user.platform_id, "/打卡", now + timedelta(seconds=1))
     )
-    repository.accept_inbound(
+    observer, _ = repository.accept_inbound(
         InboundMessage("memory-3", user.platform_id, "（围观一下）", now + timedelta(seconds=2))
     )
     trigger, _ = repository.accept_inbound(
         InboundMessage("memory-4", user.platform_id, "@总监事 我喜欢桌游", now + timedelta(seconds=3))
+    )
+    repository.record_ai_memory_message(ordinary.id, user.platform_id, True, now)
+    repository.record_ai_memory_message(command.id, user.platform_id, False, now)
+    repository.record_ai_memory_message(observer.id, user.platform_id, False, now)
+    repository.record_ai_memory_message(
+        trigger.id, user.platform_id, True, now + timedelta(seconds=3)
     )
 
     assert repository.try_enqueue_ai_request(
@@ -333,52 +371,49 @@ def test_ai_memory_claim_reads_only_the_players_effective_messages(repository, n
     assert claim.source_messages == ("我喜欢简短一点的回复", "@总监事 我喜欢桌游")
 
 
-def test_ai_memory_completion_keeps_a_newer_trigger_pending(repository, now):
+def test_leased_ai_memory_job_keeps_its_target_while_new_messages_accumulate(
+    repository, now
+):
     from dzmm_bot.core.schema import (
-        AIAssistantSettingsRecord,
         AIMemoryJobRecord,
-        AIRankQuotaRecord,
+        AIPlayerMemoryRecord,
     )
 
     user, _ = repository.create_user("memory-follow-up", "阿彻", now, 0)
-    repository.get_ai_assistant_settings()
-    with repository._session() as session:
-        session.get(AIAssistantSettingsRecord, 1).enabled = True
-        session.get(AIRankQuotaRecord, user.rank_id).daily_limit = 2
-        session.commit()
-    first, _ = repository.accept_inbound(
-        InboundMessage("memory-follow-up-1", user.platform_id, "@总监事 我喜欢桌游", now)
+    current = repository.get_ai_memory_settings()
+    repository.set_ai_memory_settings(
+        enabled=True,
+        gameplay_guide=current.gameplay_guide,
+        extraction_prompt=current.extraction_prompt,
+        history_limit=current.history_limit,
+        max_memory_chars=current.max_memory_chars,
+        batch_message_threshold=1,
     )
-    assert repository.try_enqueue_ai_request(
-        first.id, user.platform_id, first.content, now
-    ).state == "queued"
+    first, _ = repository.accept_inbound(
+        InboundMessage("memory-follow-up-1", user.platform_id, "我喜欢桌游", now)
+    )
+    repository.record_ai_memory_message(first.id, user.platform_id, True, now)
     claim = repository.claim_ai_memory_job("memory-worker", now, 30)
     assert claim is not None
     second, _ = repository.accept_inbound(
         InboundMessage(
             "memory-follow-up-2",
             user.platform_id,
-            "@总监事 也喜欢短回复",
+            "我也喜欢短回复",
             now + timedelta(seconds=1),
         )
     )
-    assert repository.try_enqueue_ai_request(
-        second.id, user.platform_id, second.content, now + timedelta(seconds=1)
-    ).state == "queued"
+    repository.record_ai_memory_message(
+        second.id, user.platform_id, True, now + timedelta(seconds=1)
+    )
 
-    assert repository.complete_ai_memory_job(
-        user.id,
-        "memory-worker",
-        claim.lease_token,
-        claim.target_message_id,
-        "喜欢桌游",
-        now + timedelta(seconds=2),
-    ) is True
     with repository._session() as session:
         job = session.get(AIMemoryJobRecord, user.id)
-        assert job is not None
-        assert job.target_message_id == second.id
-        assert job.status == "pending"
+        memory = session.get(AIPlayerMemoryRecord, user.id)
+        assert job.target_message_id == first.id
+        assert job.target_message_count == 1
+        assert job.status == "leased"
+        assert memory.pending_message_count == 2
 
 
 def test_undercover_word_migration_seeds_nine_unique_categories():

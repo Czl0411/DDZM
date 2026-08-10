@@ -57,13 +57,28 @@ class CoreService:
             event_state = self._repository.active_random_event_state()
             if event_state is not None:
                 if event_message_status in {"participant", "observer_valid"}:
+                    self._repository.record_ai_memory_message(
+                        stored.id,
+                        message.sender_platform_id,
+                        False,
+                        message.received_at,
+                    )
                     return ReceiveResult(stored.id, True)
                 settings = self._repository.get_random_event_settings()
                 if not _allows_random_event_command(message.content, event_state, settings):
+                    self._repository.record_ai_memory_message(
+                        stored.id,
+                        message.sender_platform_id,
+                        False,
+                        message.received_at,
+                    )
                     self._repository.enqueue_outbound(
                         stored.id, settings.blocked_message, 0
                     )
                     return ReceiveResult(stored.id, True)
+            had_active_game_context = self._repository.user_has_active_game_context(
+                message.sender_platform_id
+            )
             reply = self._command_handler.handle(message)
             if isinstance(reply, list):
                 replies.extend(
@@ -91,6 +106,21 @@ class CoreService:
                                 self._repository.get_ai_assistant_settings().over_limit_reply
                             )
                         )
+            eligible = (
+                bool(message.content.strip())
+                and not message.content.lstrip().startswith(("/", "(", "（"))
+                and event_message_status == "none"
+                and not had_active_game_context
+                and not self._repository.user_has_active_game_context(
+                    message.sender_platform_id
+                )
+            )
+            self._repository.record_ai_memory_message(
+                stored.id,
+                message.sender_platform_id,
+                eligible,
+                message.received_at,
+            )
             for reply_index, reply in enumerate(replies):
                 if (
                     reply.recall_after_seconds is None

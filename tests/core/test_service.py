@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -108,10 +108,98 @@ def test_service_records_an_accepted_joined_message_once(session_factory):
     assert repository.personal_activity("sender-1", received_at).level == 1
 
 
+def test_commands_and_parenthesized_messages_are_not_memory_eligible(session_factory):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import InboundRecord
+    from dzmm_bot.core.service import CoreService
+
+    repository = CoreRepository(session_factory)
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    repository.create_user("player", "玩家", now, 0)
+    service = CoreService(repository)
+
+    service.receive_inbound(InboundMessage("command", "player", "/打卡", now))
+    service.receive_inbound(
+        InboundMessage("observer", "player", "（围观）", now + timedelta(seconds=1))
+    )
+    service.receive_inbound(
+        InboundMessage("ordinary", "player", "今天群里很热闹", now + timedelta(seconds=2))
+    )
+
+    with session_factory() as session:
+        rows = list(
+            session.scalars(select(InboundRecord).order_by(InboundRecord.received_at))
+        )
+    assert [row.ai_memory_eligible for row in rows] == [False, False, True]
+
+
+def test_active_blame_dialogue_is_excluded_until_the_game_ends(session_factory):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import (
+        BlameGamePlayerRecord,
+        BlameGameRecord,
+        InboundRecord,
+    )
+    from dzmm_bot.core.service import CoreService
+
+    repository = CoreRepository(session_factory)
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    user, _ = repository.create_user("blame-player", "甩锅玩家", now, 100)
+    with session_factory.begin() as session:
+        game = BlameGameRecord(
+            state="active",
+            active_key="global",
+            creator_user_id=user.id,
+            target_player_count=2,
+            signup_deadline=now + timedelta(minutes=1),
+            settlement_complete=False,
+            created_at=now,
+        )
+        session.add(game)
+        session.flush()
+        session.add(
+            BlameGamePlayerRecord(
+                game_id=game.id,
+                user_id=user.id,
+                signup_order=1,
+                seat_number=1,
+                state="joined",
+                guarantee_amount=0,
+                guarantee_state="held",
+                joined_at=now,
+            )
+        )
+    service = CoreService(repository)
+
+    service.receive_inbound(
+        InboundMessage("blame-dialogue", user.platform_id, "这个锅不是我的", now)
+    )
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.state = "finished"
+        game.active_key = None
+        game.finished_at = now + timedelta(seconds=1)
+    service.receive_inbound(
+        InboundMessage(
+            "after-blame", user.platform_id, "这局终于结束了", now + timedelta(seconds=2)
+        )
+    )
+
+    with session_factory() as session:
+        rows = list(
+            session.scalars(select(InboundRecord).order_by(InboundRecord.received_at))
+        )
+    assert [row.ai_memory_eligible for row in rows] == [False, True]
+
+
 def test_service_queues_only_non_command_bot_mentions(session_factory):
     """Fails if commands or ordinary text are routed to the model queue."""
     from dzmm_bot.core.repository import CoreRepository
-    from dzmm_bot.core.schema import AIAssistantSettingsRecord, AIRequestRecord
+    from dzmm_bot.core.schema import (
+        AIAssistantSettingsRecord,
+        AIMemoryJobRecord,
+        AIRequestRecord,
+    )
     from dzmm_bot.core.service import CoreService
 
     now = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
@@ -129,7 +217,9 @@ def test_service_queues_only_non_command_bot_mentions(session_factory):
 
     with session_factory() as session:
         requests = list(session.scalars(select(AIRequestRecord)))
+        memory_job = session.scalar(select(AIMemoryJobRecord))
     assert len(requests) == 1
+    assert memory_job is None
 
 
 def test_service_strips_platform_bot_label_from_ai_mention(session_factory):
@@ -158,7 +248,7 @@ def test_service_strips_platform_bot_label_from_ai_mention(session_factory):
 
 def test_service_uses_random_event_block_message_for_unwrapped_observer(session_factory):
     from dzmm_bot.core.repository import CoreRepository
-    from dzmm_bot.core.schema import BEIJING, OutboundRecord
+    from dzmm_bot.core.schema import BEIJING, InboundRecord, OutboundRecord
     from dzmm_bot.core.service import CoreService
 
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
@@ -181,7 +271,9 @@ def test_service_uses_random_event_block_message_for_unwrapped_observer(session_
         warning = session.scalar(
             select(OutboundRecord).where(OutboundRecord.inbound_message_id == result.message_id)
         )
+        inbound = session.get(InboundRecord, result.message_id)
     assert warning.text == "当前有随机事件发生，监事不会处理。"
+    assert inbound.ai_memory_eligible is False
 
 
 @pytest.mark.parametrize("content", ["（围观一下）", "(围观一下)"])

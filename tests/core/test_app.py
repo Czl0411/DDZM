@@ -9,7 +9,16 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from dzmm_bot.core.schema import DirectChatRecord, OutboundRecord, WorkerCommandRecord
+from dzmm_bot.core.schema import (
+    DirectChatRecord,
+    NumberBombGameRecord,
+    NumberBombMemberRecord,
+    NumberBombRoundPlayerRecord,
+    NumberBombRoundRecord,
+    OutboundRecord,
+    UserRecord,
+    WorkerCommandRecord,
+)
 
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
@@ -91,6 +100,71 @@ def test_direct_chat_sync_persists_discovered_room(app_context, headers):
         record = session.scalar(select(DirectChatRecord))
     assert record is not None
     assert (record.platform_user_id, record.chatroom_id) == ("employee-1", "direct-1")
+
+
+def test_direct_inbound_rooms_returns_collecting_round_participant_rooms(
+    app_context, headers
+):
+    with app_context.session_factory.begin() as session:
+        user = UserRecord(
+            platform_id="employee-1",
+            display_name="员工一",
+            balance=0,
+            joined_at=NOW,
+        )
+        game = NumberBombGameRecord(
+            active_key="global",
+            state="collecting",
+            target_player_count=3,
+            round_number=1,
+            attempt_number=1,
+            last_activity_at=NOW,
+            created_at=NOW,
+            started_at=NOW,
+        )
+        session.add_all([user, game])
+        session.flush()
+        round_record = NumberBombRoundRecord(
+            game_id=game.id,
+            round_number=1,
+            attempt_number=1,
+            punishment_type="truth",
+            state="collecting",
+            player_count=1,
+            created_at=NOW,
+        )
+        session.add_all([
+            DirectChatRecord(
+                platform_user_id="employee-1",
+                chatroom_id="direct-1",
+                discovered_at=NOW,
+            ),
+            NumberBombMemberRecord(
+                game_id=game.id,
+                user_id=user.id,
+                roster_order=1,
+                state="current",
+                queued_at=NOW,
+            ),
+            round_record,
+        ])
+        session.flush()
+        session.add(NumberBombRoundPlayerRecord(
+            round_id=round_record.id,
+            user_id=user.id,
+            display_order=1,
+        ))
+
+    response = app_context.client.get(
+        "/internal/direct-inbound/rooms", headers=headers
+    )
+    assert response.json() == {"chatroom_ids": ["direct-1"]}
+
+    with app_context.session_factory.begin() as session:
+        session.query(NumberBombGameRecord).update({"state": "waiting_continue"})
+    assert app_context.client.get(
+        "/internal/direct-inbound/rooms", headers=headers
+    ).json() == {"chatroom_ids": []}
 
 
 def test_internal_inbound_executes_enabled_group_commands(app_context, headers, payload):

@@ -104,7 +104,8 @@ class BrowserWorker:
         self._sync_direct_chats(gateway, now)
         if self._listening:
             try:
-                messages = gateway.read_new()
+                direct_targets = self._core.direct_inbound_chatroom_ids()
+                messages = gateway.read_new(direct_targets)
             except NotImplementedError:
                 self._listening = False
                 messages = []

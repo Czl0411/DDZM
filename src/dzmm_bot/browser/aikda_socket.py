@@ -47,9 +47,20 @@ class AikdaSocketGateway:
         self._pending: deque[InboundMessage] = deque()
         self._seen_ids: set[str] = set()
         self._pending_lock = Lock()
+        self._direct_chatroom_ids: set[str] = set()
+        self._joined_direct_chatroom_ids: set[str] = set()
 
-    def read_new(self) -> list[InboundMessage]:
+    def read_new(
+        self, direct_chatroom_ids: tuple[str, ...] = ()
+    ) -> list[InboundMessage]:
         self._ensure_connected()
+        targets = set(direct_chatroom_ids)
+        if targets != self._direct_chatroom_ids:
+            self._direct_chatroom_ids = targets
+            self._reconcile_needed = True
+        for chatroom_id in direct_chatroom_ids:
+            if chatroom_id not in self._joined_direct_chatroom_ids:
+                self._join_direct_room(chatroom_id)
         now = self._clock()
         initial_sync = self._reconcile_needed
         if initial_sync or self._history_sync_due(now):
@@ -59,6 +70,15 @@ class AikdaSocketGateway:
         with self._pending_lock:
             messages, self._pending = self._pending, deque()
         return sorted(messages, key=lambda message: message.received_at)
+
+    def _join_direct_room(self, chatroom_id: str) -> None:
+        joined = self._socket.call(
+            "message:join-room", {"chatroomId": chatroom_id}, timeout=10
+        )
+        if not joined or joined.get("success") is not True:
+            error = joined.get("error", "message room join failed") if joined else "message room join failed"
+            raise RuntimeError(error)
+        self._joined_direct_chatroom_ids.add(chatroom_id)
 
     def send(self, text: str) -> str:
         return self.send_to(self.chatroom_id, text)
@@ -203,9 +223,12 @@ class AikdaSocketGateway:
 
     def _reconcile_history(self, now: datetime) -> bool:
         seen_before = len(self._seen_ids)
-        payload = self._request("chatroom.getMessages", {"chatroomId": self.chatroom_id})
-        for message in payload.get("messages", []):
-            self._accept_message(self.chatroom_id, message)
+        for chatroom_id in (self.chatroom_id, *sorted(self._direct_chatroom_ids)):
+            payload = self._request(
+                "chatroom.getMessages", {"chatroomId": chatroom_id}
+            )
+            for message in payload.get("messages", []):
+                self._accept_message(chatroom_id, message)
         self._reconcile_needed = False
         self._last_history_sync_at = now
         return len(self._seen_ids) > seen_before
@@ -214,6 +237,7 @@ class AikdaSocketGateway:
         self._socket.disconnect()
         self._authenticated = False
         self._joined.clear()
+        self._joined_direct_chatroom_ids.clear()
         self._reconcile_needed = True
 
     def _on_message(self, payload: dict[str, Any]) -> None:
@@ -227,10 +251,11 @@ class AikdaSocketGateway:
     def _on_disconnect(self) -> None:
         self._authenticated = False
         self._joined.clear()
+        self._joined_direct_chatroom_ids.clear()
         self._reconcile_needed = True
 
     def _accept_message(self, chatroom_id: str | None, message: dict[str, Any]) -> None:
-        if chatroom_id != self.chatroom_id or message.get("sent_by") == self._bot_id:
+        if message.get("sent_by") == self._bot_id:
             return
         content = message.get("content")
         message_id = message.get("message_id")
@@ -245,11 +270,22 @@ class AikdaSocketGateway:
             or not isinstance(sent_at, str)
         ):
             return
+        if chatroom_id == self.chatroom_id:
+            source_type = "group"
+        elif (
+            chatroom_id in self._direct_chatroom_ids
+            and content["text"].strip().startswith("/报数")
+        ):
+            source_type = "direct"
+        else:
+            return
         inbound = InboundMessage(
             message_id,
             sent_by,
             content["text"],
             _shanghai_time(sent_at),
+            source_type=source_type,
+            chatroom_id=chatroom_id,
         )
         with self._pending_lock:
             if message_id in self._seen_ids:

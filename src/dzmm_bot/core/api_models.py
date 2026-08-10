@@ -16,6 +16,8 @@ class InboundRequest(ApiModel):
     sender_platform_id: str = Field(min_length=1, max_length=255)
     content: str
     received_at: AwareDatetime
+    source_type: Literal["group", "direct"] = "group"
+    chatroom_id: str | None = Field(default=None, max_length=255)
 
 
 class InboundResponse(ApiModel):
@@ -31,6 +33,10 @@ class DirectChatRoomRequest(ApiModel):
 class DirectChatSyncRequest(ApiModel):
     rooms: list[DirectChatRoomRequest]
     now: AwareDatetime
+
+
+class DirectInboundRoomsResponse(ApiModel):
+    chatroom_ids: list[str]
 
 
 class ClaimRequest(ApiModel):

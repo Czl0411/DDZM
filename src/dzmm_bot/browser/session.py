@@ -12,7 +12,9 @@ from .aikda_socket import AikdaSocketGateway
 
 
 class ChatGateway(Protocol):
-    def read_new(self) -> list[InboundMessage]: ...
+    def read_new(
+        self, direct_chatroom_ids: tuple[str, ...] = ()
+    ) -> list[InboundMessage]: ...
 
     def send(self, text: str) -> str: ...
 
@@ -168,7 +170,9 @@ class _PlaywrightGateway:
         self._context = context
         self._login_url = login_url
 
-    def read_new(self) -> list[InboundMessage]:
+    def read_new(
+        self, direct_chatroom_ids: tuple[str, ...] = ()
+    ) -> list[InboundMessage]:
         page = self._active_page()
         return [
             InboundMessage(

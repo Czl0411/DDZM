@@ -25,8 +25,10 @@ class FakeGateway:
     retracted: list[str] = field(default_factory=list)
     send_error: Exception | None = None
     read_error: Exception | None = None
+    read_targets: list[tuple[str, ...]] = field(default_factory=list)
 
-    def read_new(self):
+    def read_new(self, direct_chatroom_ids=()):
+        self.read_targets.append(direct_chatroom_ids)
         if self.read_error:
             raise self.read_error
         return list(self.messages)
@@ -113,6 +115,7 @@ class FakeCore:
     daily_job_times: list[datetime] = field(default_factory=list)
     direct_chat_syncs: list[tuple[list[DirectChatRoom], datetime]] = field(default_factory=list)
     listening_desired: bool = True
+    direct_rooms_to_read: tuple[str, ...] = ()
 
     def submit_inbound(self, message):
         self.submitted_ids.append(message.platform_message_id)
@@ -160,6 +163,9 @@ class FakeCore:
     def sync_direct_chats(self, rooms, now):
         self.direct_chat_syncs.append((rooms, now))
 
+    def direct_inbound_chatroom_ids(self):
+        return self.direct_rooms_to_read
+
 
 @pytest.fixture
 def context():
@@ -187,6 +193,22 @@ def test_worker_submits_each_platform_message_once(context):
     worker.run_once()
 
     assert core.submitted_ids == ["p-1"]
+
+
+def test_worker_reads_only_core_selected_direct_rooms(context):
+    worker, gateway, _, _, core, _ = context
+    core.direct_rooms_to_read = ("direct-1",)
+    gateway.messages = [
+        InboundMessage(
+            "dm-1", "u-1", "/报数 29", NOW,
+            source_type="direct", chatroom_id="direct-1",
+        )
+    ]
+
+    worker.run_once()
+
+    assert gateway.read_targets == [("direct-1",)]
+    assert core.submitted_ids == ["dm-1"]
 
 
 def test_worker_runs_daily_jobs_after_submitting_messages(context):

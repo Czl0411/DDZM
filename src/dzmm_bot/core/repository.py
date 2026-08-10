@@ -82,6 +82,9 @@ from .schema import (
     MemoryAssessmentParticipantRecord,
     MemoryAssessmentRoundRecord,
     MemoryAssessmentSettingsRecord,
+    NumberBombGameRecord,
+    NumberBombRoundPlayerRecord,
+    NumberBombRoundRecord,
     OutboundRecord,
     UndercoverGamePlayerRecord,
     UndercoverGameRecord,
@@ -2710,6 +2713,37 @@ class CoreRepository:
                     else:
                         record.chatroom_id = chatroom_id
                         record.discovered_at = now
+
+    def number_bomb_direct_chatroom_ids(self) -> tuple[str, ...]:
+        with self._session() as session:
+            return tuple(
+                session.scalars(
+                    select(DirectChatRecord.chatroom_id)
+                    .join(
+                        UserRecord,
+                        UserRecord.platform_id == DirectChatRecord.platform_user_id,
+                    )
+                    .join(
+                        NumberBombRoundPlayerRecord,
+                        NumberBombRoundPlayerRecord.user_id == UserRecord.id,
+                    )
+                    .join(
+                        NumberBombRoundRecord,
+                        NumberBombRoundRecord.id
+                        == NumberBombRoundPlayerRecord.round_id,
+                    )
+                    .join(
+                        NumberBombGameRecord,
+                        NumberBombGameRecord.id == NumberBombRoundRecord.game_id,
+                    )
+                    .where(
+                        NumberBombGameRecord.active_key == "global",
+                        NumberBombGameRecord.state == "collecting",
+                        NumberBombRoundRecord.state == "collecting",
+                    )
+                    .order_by(NumberBombRoundPlayerRecord.display_order)
+                )
+            )
 
     def start_undercover_signup(
         self, platform_id: str, player_count: int, now: datetime

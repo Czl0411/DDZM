@@ -58,6 +58,7 @@ class FakeSocket:
 class FakeRequest:
     def __init__(self, messages=None):
         self.messages = messages or []
+        self.messages_by_room = None
         self.calls = []
         self.profile = {"id": "bot-1"}
 
@@ -68,6 +69,8 @@ class FakeRequest:
         if procedure == "chat.listAll":
             return {"items": []}
         if procedure == "chatroom.getMessages":
+            if self.messages_by_room is not None:
+                return {"messages": self.messages_by_room.get(payload["chatroomId"], [])}
             return {"messages": self.messages}
         raise AssertionError(f"unexpected procedure {procedure}")
 
@@ -111,9 +114,62 @@ def test_live_target_room_text_event_is_read_once(gateway):
             "u-1",
             "/余额",
             datetime(2026, 8, 5, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            chatroom_id="room-1",
         )
     ]
     assert adapter.read_new() == []
+
+
+def test_targeted_private_report_is_joined_filtered_and_read_once(gateway):
+    adapter, socket, request = gateway
+    request.messages_by_room = {"room-1": [], "direct-1": []}
+
+    assert adapter.read_new(("direct-1",)) == []
+    assert socket.calls == [
+        ("message:join-room", {"chatroomId": "direct-1"}, 10)
+    ]
+
+    socket.trigger(
+        "message:new",
+        {"chatroomId": "direct-1", "message": message("dm-1", "u-1", "/报数 29")},
+    )
+    socket.trigger(
+        "message:new",
+        {"chatroomId": "direct-1", "message": message("dm-text", "u-1", "29")},
+    )
+    socket.trigger(
+        "message:new",
+        {"chatroomId": "direct-2", "message": message("dm-other", "u-2", "/报数 30")},
+    )
+
+    assert adapter.read_new(("direct-1",)) == [
+        InboundMessage(
+            "dm-1",
+            "u-1",
+            "/报数 29",
+            datetime(2026, 8, 5, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            source_type="direct",
+            chatroom_id="direct-1",
+        )
+    ]
+    assert adapter.read_new(("direct-1",)) == []
+    assert socket.calls == [
+        ("message:join-room", {"chatroomId": "direct-1"}, 10)
+    ]
+
+
+def test_targeted_private_history_recovers_unseen_report_once(gateway):
+    adapter, _, request = gateway
+    request.messages_by_room = {
+        "room-1": [],
+        "direct-1": [message("dm-history", "u-1", "/报数 41")],
+    }
+
+    recovered = adapter.read_new(("direct-1",))
+
+    assert [item.platform_message_id for item in recovered] == ["dm-history"]
+    assert recovered[0].source_type == "direct"
+    assert adapter.read_new(("direct-1",)) == []
 
 
 def test_self_and_other_room_events_are_ignored(gateway):

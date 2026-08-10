@@ -40,6 +40,7 @@ from .api_models import (
     CreateItemRequest,
     DailyJobsRequest,
     DirectChatSyncRequest,
+    DirectInboundRoomsResponse,
     FailedRequest,
     GameSettingsResponse,
     HealthResponse,
@@ -172,6 +173,8 @@ def create_app(
                 sender_platform_id=request.sender_platform_id,
                 content=request.content,
                 received_at=request.received_at,
+                source_type=request.source_type,
+                chatroom_id=request.chatroom_id,
             )
         )
         return InboundResponse(
@@ -187,6 +190,17 @@ def create_app(
             request.now,
         )
         return AcceptedResponse(accepted=True)
+
+    @app.get(
+        "/internal/direct-inbound/rooms",
+        response_model=DirectInboundRoomsResponse,
+    )
+    def direct_inbound_rooms(
+        _: Annotated[None, Depends(authorize)],
+    ) -> DirectInboundRoomsResponse:
+        return DirectInboundRoomsResponse(
+            chatroom_ids=list(repository.number_bomb_direct_chatroom_ids())
+        )
 
     @app.post(
         "/internal/outbound/claim",

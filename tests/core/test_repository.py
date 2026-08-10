@@ -140,6 +140,95 @@ def test_blame_game_schema_contains_state_and_idempotency_constraints():
     } >= {("user_id", "play_date")}
 
 
+def test_blame_settings_default_to_approved_duration_ranges(repository):
+    settings = repository.get_blame_game_settings()
+
+    assert (settings.enabled, settings.signup_timeout_seconds, settings.turn_timeout_seconds) == (
+        True,
+        120,
+        30,
+    )
+    assert [
+        (rule.player_count, rule.minimum_seconds, rule.maximum_seconds)
+        for rule in settings.durations
+    ] == [
+        (2, 45, 75),
+        (3, 60, 90),
+        (4, 75, 120),
+        (5, 90, 135),
+        (6, 90, 150),
+        (7, 105, 165),
+        (8, 120, 180),
+        (9, 135, 210),
+        (10, 150, 240),
+    ]
+
+
+def test_blame_settings_update_requires_all_player_counts_and_valid_ranges(repository):
+    durations = [(count, count * 10, count * 10 + 20) for count in range(2, 11)]
+
+    updated = repository.set_blame_game_settings(False, 90, 25, durations)
+
+    assert (updated.enabled, updated.signup_timeout_seconds, updated.turn_timeout_seconds) == (
+        False,
+        90,
+        25,
+    )
+    assert updated.durations[-1].maximum_seconds == 120
+    with pytest.raises(ValueError, match="2 至 10"):
+        repository.set_blame_game_settings(True, 120, 30, durations[:-1])
+    with pytest.raises(ValueError, match="最短时间"):
+        repository.set_blame_game_settings(
+            True,
+            120,
+            30,
+            [(count, 100, 90) if count == 6 else (count, 60, 90) for count in range(2, 11)],
+        )
+
+
+def test_blame_incident_cards_support_trimmed_crud_and_pagination(repository):
+    first = repository.create_blame_incident_card(
+        " 咖啡事故 ", " 咖啡泼到了季度报表 ", [" 咖啡 ", "报表", "deadline"]
+    )
+    repository.create_blame_incident_card("电梯事故", "电梯停运", ["电梯"])
+
+    cards, total = repository.list_blame_incident_cards_page(1, 1)
+    updated = repository.update_blame_incident_card(
+        first.id, "咖啡事故", "描述更新", ["咖啡", "报表"], False
+    )
+
+    assert total == 2
+    assert len(cards) == 1
+    assert (first.name, first.description, first.keywords, first.enabled) == (
+        "咖啡事故",
+        "咖啡泼到了季度报表",
+        ("咖啡", "报表", "deadline"),
+        True,
+    )
+    assert (updated.description, updated.keywords, updated.enabled) == (
+        "描述更新",
+        ("咖啡", "报表"),
+        False,
+    )
+    assert repository.delete_blame_incident_card(first.id) is True
+    assert repository.delete_blame_incident_card(first.id) is False
+
+
+@pytest.mark.parametrize(
+    ("keywords", "message"),
+    [
+        ([], "1 至 4"),
+        (["一", "二", "三", "四", "五"], "1 至 4"),
+        (["deadline", "DeadLine"], "不能重复"),
+        (["咖啡", " 咖啡 "], "不能重复"),
+        ([""], "不能为空"),
+    ],
+)
+def test_blame_incident_rejects_invalid_keywords(repository, keywords, message):
+    with pytest.raises(ValueError, match=message):
+        repository.create_blame_incident_card("咖啡事故", "描述", keywords)
+
+
 def test_ai_memory_schema_keeps_one_snapshot_per_player():
     from dzmm_bot.core.schema import (
         AIPlayerMemoryRecord,

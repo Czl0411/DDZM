@@ -32,6 +32,13 @@ from .schema import (
     ActivityRewardSettlementRecord,
     BalanceTransactionRecord,
     BEIJING,
+    BlameGameDailyStartRecord,
+    BlameGameDurationRuleRecord,
+    BlameGamePlayerRecord,
+    BlameGameRecord,
+    BlameGameSettingsRecord,
+    BlameGameTransferRecord,
+    BlameIncidentCardRecord,
     CommandDefinitionRecord,
     CommandReplyTemplateRecord,
     DailyActivityRecord,
@@ -143,6 +150,19 @@ _DEFAULT_HIDE_AND_SEEK_SCENES = (
     "公司天台",
     "楼下公园",
     "员工休息室",
+)
+_DEFAULT_BLAME_SIGNUP_TIMEOUT_SECONDS = 120
+_DEFAULT_BLAME_TURN_TIMEOUT_SECONDS = 30
+_DEFAULT_BLAME_DURATIONS = (
+    (2, 45, 75),
+    (3, 60, 90),
+    (4, 75, 120),
+    (5, 90, 135),
+    (6, 90, 150),
+    (7, 105, 165),
+    (8, 120, 180),
+    (9, 135, 210),
+    (10, 150, 240),
 )
 _DEFAULT_MEMORY_ASSESSMENT_LEVELS = (
     (1, 5, 1),
@@ -307,6 +327,30 @@ class HideAndSeekGameResult:
     entry_fee: int = 0
     win_reward: int = 0
     selection_timeout_minutes: int = 0
+
+
+@dataclass(frozen=True)
+class BlameGameDurationRule:
+    player_count: int
+    minimum_seconds: int
+    maximum_seconds: int
+
+
+@dataclass(frozen=True)
+class BlameGameSettings:
+    enabled: bool
+    signup_timeout_seconds: int
+    turn_timeout_seconds: int
+    durations: tuple[BlameGameDurationRule, ...]
+
+
+@dataclass(frozen=True)
+class BlameIncidentCard:
+    id: UUID
+    name: str
+    description: str
+    keywords: tuple[str, ...]
+    enabled: bool
 
 
 @dataclass(frozen=True)
@@ -3347,6 +3391,173 @@ class CoreRepository:
                 )
                 session.flush()
             return _hide_and_seek_settings(record)
+
+    def get_blame_game_settings(self) -> BlameGameSettings:
+        with self._session() as session:
+            record = session.get(BlameGameSettingsRecord, 1)
+            if record is None:
+                record = BlameGameSettingsRecord(
+                    id=1,
+                    enabled=True,
+                    signup_timeout_seconds=_DEFAULT_BLAME_SIGNUP_TIMEOUT_SECONDS,
+                    turn_timeout_seconds=_DEFAULT_BLAME_TURN_TIMEOUT_SECONDS,
+                )
+                session.add(record)
+            existing_counts = set(
+                session.scalars(select(BlameGameDurationRuleRecord.player_count))
+            )
+            for player_count, minimum_seconds, maximum_seconds in _DEFAULT_BLAME_DURATIONS:
+                if player_count not in existing_counts:
+                    session.add(
+                        BlameGameDurationRuleRecord(
+                            player_count=player_count,
+                            minimum_seconds=minimum_seconds,
+                            maximum_seconds=maximum_seconds,
+                        )
+                    )
+            session.flush()
+            durations = list(
+                session.scalars(
+                    select(BlameGameDurationRuleRecord).order_by(
+                        BlameGameDurationRuleRecord.player_count
+                    )
+                )
+            )
+            return _blame_game_settings(record, durations)
+
+    def set_blame_game_settings(
+        self,
+        enabled: bool,
+        signup_timeout_seconds: int,
+        turn_timeout_seconds: int,
+        durations: list[tuple[int, int, int]],
+    ) -> BlameGameSettings:
+        if not isinstance(enabled, bool):
+            raise ValueError("玩法开关无效")
+        if not isinstance(signup_timeout_seconds, int) or signup_timeout_seconds < 1:
+            raise ValueError("报名时间必须为正整数")
+        if not isinstance(turn_timeout_seconds, int) or turn_timeout_seconds < 1:
+            raise ValueError("操作时间必须为正整数")
+        if (
+            not isinstance(durations, list)
+            or len(durations) != 9
+            or {item[0] for item in durations} != set(range(2, 11))
+        ):
+            raise ValueError("必须逐项配置 2 至 10 人的引爆时间")
+        if any(
+            not isinstance(minimum_seconds, int)
+            or not isinstance(maximum_seconds, int)
+            or minimum_seconds < 1
+            or maximum_seconds < 1
+            for _, minimum_seconds, maximum_seconds in durations
+        ):
+            raise ValueError("引爆时间必须为正整数")
+        if any(
+            minimum_seconds > maximum_seconds
+            for _, minimum_seconds, maximum_seconds in durations
+        ):
+            raise ValueError("最短时间不能大于最长时间")
+        self.get_blame_game_settings()
+        with self._session() as session:
+            record = session.get(BlameGameSettingsRecord, 1)
+            if record is None:
+                raise RuntimeError("甩锅游戏设置消失")
+            record.enabled = enabled
+            record.signup_timeout_seconds = signup_timeout_seconds
+            record.turn_timeout_seconds = turn_timeout_seconds
+            for player_count, minimum_seconds, maximum_seconds in durations:
+                rule = session.get(BlameGameDurationRuleRecord, player_count)
+                if rule is None:
+                    raise RuntimeError("甩锅游戏时长规则消失")
+                rule.minimum_seconds = minimum_seconds
+                rule.maximum_seconds = maximum_seconds
+            session.flush()
+            records = list(
+                session.scalars(
+                    select(BlameGameDurationRuleRecord).order_by(
+                        BlameGameDurationRuleRecord.player_count
+                    )
+                )
+            )
+            return _blame_game_settings(record, records)
+
+    def list_blame_incident_cards_page(
+        self, page: int, page_size: int
+    ) -> tuple[list[BlameIncidentCard], int]:
+        with self._session() as session:
+            total = int(
+                session.scalar(select(func.count()).select_from(BlameIncidentCardRecord))
+                or 0
+            )
+            records = list(
+                session.scalars(
+                    select(BlameIncidentCardRecord)
+                    .order_by(BlameIncidentCardRecord.name)
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            return [_blame_incident_card(record) for record in records], total
+
+    def create_blame_incident_card(
+        self, name: str, description: str, keywords: list[str]
+    ) -> BlameIncidentCard:
+        name, description = _validate_blame_incident_text(name, description)
+        normalized_keywords = _validate_blame_keywords(keywords)
+        with self._session() as session:
+            if session.scalar(
+                select(BlameIncidentCardRecord.id).where(
+                    BlameIncidentCardRecord.name == name
+                )
+            ) is not None:
+                raise ValueError("事故名称已存在")
+            record = BlameIncidentCardRecord(
+                name=name,
+                description=description,
+                keywords=normalized_keywords,
+                enabled=True,
+            )
+            session.add(record)
+            session.flush()
+            return _blame_incident_card(record)
+
+    def update_blame_incident_card(
+        self,
+        card_id: UUID,
+        name: str,
+        description: str,
+        keywords: list[str],
+        enabled: bool,
+    ) -> BlameIncidentCard:
+        name, description = _validate_blame_incident_text(name, description)
+        normalized_keywords = _validate_blame_keywords(keywords)
+        if not isinstance(enabled, bool):
+            raise ValueError("事故卡状态无效")
+        with self._session() as session:
+            record = session.get(BlameIncidentCardRecord, card_id)
+            if record is None:
+                raise ValueError("事故卡不存在")
+            if session.scalar(
+                select(BlameIncidentCardRecord.id).where(
+                    BlameIncidentCardRecord.name == name,
+                    BlameIncidentCardRecord.id != card_id,
+                )
+            ) is not None:
+                raise ValueError("事故名称已存在")
+            record.name = name
+            record.description = description
+            record.keywords = normalized_keywords
+            record.enabled = enabled
+            session.flush()
+            return _blame_incident_card(record)
+
+    def delete_blame_incident_card(self, card_id: UUID) -> bool:
+        with self._session() as session:
+            record = session.get(BlameIncidentCardRecord, card_id)
+            if record is None:
+                return False
+            session.delete(record)
+            return True
 
     def set_hide_and_seek_settings(
         self,
@@ -6769,6 +6980,61 @@ def _validate_memory_assessment_settings(
 
 def _hide_and_seek_scene(record: HideAndSeekSceneRecord) -> HideAndSeekScene:
     return HideAndSeekScene(record.id, record.name, record.enabled)
+
+
+def _blame_game_settings(
+    record: BlameGameSettingsRecord,
+    durations: list[BlameGameDurationRuleRecord],
+) -> BlameGameSettings:
+    return BlameGameSettings(
+        enabled=record.enabled,
+        signup_timeout_seconds=record.signup_timeout_seconds,
+        turn_timeout_seconds=record.turn_timeout_seconds,
+        durations=tuple(
+            BlameGameDurationRule(
+                player_count=rule.player_count,
+                minimum_seconds=rule.minimum_seconds,
+                maximum_seconds=rule.maximum_seconds,
+            )
+            for rule in durations
+        ),
+    )
+
+
+def _blame_incident_card(record: BlameIncidentCardRecord) -> BlameIncidentCard:
+    return BlameIncidentCard(
+        id=record.id,
+        name=record.name,
+        description=record.description,
+        keywords=tuple(record.keywords),
+        enabled=record.enabled,
+    )
+
+
+def _validate_blame_incident_text(name: str, description: str) -> tuple[str, str]:
+    if not isinstance(name, str) or not isinstance(description, str):
+        raise ValueError("事故名称和描述不能为空")
+    name = name.strip()
+    description = description.strip()
+    if not 1 <= len(name) <= 128 or not 1 <= len(description) <= 2000:
+        raise ValueError("事故名称和描述不能为空且不能超过限制")
+    return name, description
+
+
+def _validate_blame_keywords(keywords: list[str]) -> list[str]:
+    if not isinstance(keywords, list) or not 1 <= len(keywords) <= 4:
+        raise ValueError("事故关键词必须为 1 至 4 个")
+    normalized = []
+    for keyword in keywords:
+        if not isinstance(keyword, str) or not keyword.strip():
+            raise ValueError("事故关键词不能为空")
+        value = keyword.strip()
+        if len(value) > 64:
+            raise ValueError("事故关键词不能超过 64 个字符")
+        normalized.append(value)
+    if len({keyword.casefold() for keyword in normalized}) != len(normalized):
+        raise ValueError("事故关键词不能重复")
+    return normalized
 
 
 def _validate_hide_and_seek_scene_name(name: str) -> str:

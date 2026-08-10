@@ -41,6 +41,18 @@ def test_deployment_runs_migrations_with_the_private_environment():
     assert "systemctl restart dzmm-core.service dzmm-admin-web.service dzmm-browser-worker.service dzmm-ai-worker.service" in deploy
 
 
+def test_deployment_starts_a_separate_ai_memory_worker():
+    memory_worker = (
+        ROOT / "deploy/systemd/dzmm-ai-memory-worker.service"
+    ).read_text()
+    deploy = (ROOT / "deploy/scripts/deploy.sh").read_text()
+
+    assert "Description=DZMM DeepSeek AI Memory Worker" in memory_worker
+    assert "-m dzmm_bot.ai.memory_main" in memory_worker
+    assert "After=network-online.target dzmm-core.service" in memory_worker
+    assert "dzmm-ai-memory-worker.service" in deploy
+
+
 def test_weekly_attendance_migration_preserves_custom_me_templates():
     migration = (ROOT / "migrations/versions/20260806_11_weekly_attendance.py").read_text()
 

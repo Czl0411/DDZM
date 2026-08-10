@@ -21,7 +21,14 @@ from dzmm_bot.runtime.outbound import (
 )
 
 from dzmm_bot.ai.impressions import AIImpressionOperation, IMPRESSION_CATEGORIES
-from .ai_knowledge import KNOWLEDGE_TOPICS
+from .ai_knowledge import (
+    AIAuthoritativeContext,
+    AIKnowledgeCard,
+    KNOWLEDGE_TOPICS,
+    TOPIC_COMMANDS,
+    route_ai_topics,
+    select_knowledge_cards,
+)
 
 from .ai_mentions import normalize_ai_mention
 from .reply_templates import (
@@ -1403,6 +1410,19 @@ class CoreRepository:
             user_id = session.scalar(
                 select(UserRecord.id).where(UserRecord.platform_id == platform_id)
             )
+            if user_id is None:
+                return ()
+            return tuple(
+                session.scalars(
+                    select(AIPlayerImpressionRecord)
+                    .where(AIPlayerImpressionRecord.user_id == user_id)
+                    .order_by(
+                        AIPlayerImpressionRecord.category,
+                        AIPlayerImpressionRecord.created_at,
+                        AIPlayerImpressionRecord.id,
+                    )
+                )
+            )
 
     def list_ai_knowledge_cards(self) -> tuple[AIKnowledgeCardRecord, ...]:
         with self._session() as session:
@@ -1474,19 +1494,131 @@ class CoreRepository:
                 return False
             session.delete(record)
             return True
-            if user_id is None:
-                return ()
-            return tuple(
-                session.scalars(
-                    select(AIPlayerImpressionRecord)
-                    .where(AIPlayerImpressionRecord.user_id == user_id)
-                    .order_by(
-                        AIPlayerImpressionRecord.category,
-                        AIPlayerImpressionRecord.created_at,
-                        AIPlayerImpressionRecord.id,
-                    )
-                )
+
+    def build_ai_authoritative_context(
+        self, platform_id: str, question: str, now: datetime
+    ) -> AIAuthoritativeContext:
+        cards = tuple(
+            AIKnowledgeCard(
+                id=record.id,
+                topic=record.topic,
+                title=record.title,
+                keywords=tuple(record.keywords),
+                content=record.content,
+                enabled=record.enabled,
+                priority=record.priority,
             )
+            for record in self.list_ai_knowledge_cards()
+        )
+        topics = route_ai_topics(question, cards)
+        selected_cards = select_knowledge_cards(topics, cards)
+        card_lines = [f"{card.title}：{card.content}" for card in selected_cards]
+        facts = self._ai_live_fact_lines(platform_id, topics, now)
+        enabled_commands = {
+            command.command: command
+            for command in self.list_enabled_command_definitions()
+        }
+        requested_commands = (
+            tuple(enabled_commands)
+            if "commands_help" in topics
+            else tuple(dict.fromkeys(
+                command for topic in topics for command in TOPIC_COMMANDS[topic]
+            ))
+        )
+        command_lines = [
+            f"{enabled_commands[command].syntax}：{enabled_commands[command].description}"
+            for command in requested_commands
+            if command in enabled_commands
+        ]
+        return AIAuthoritativeContext(
+            topics=topics,
+            cards_text=_knowledge_block("规则知识卡", card_lines, 12000),
+            live_facts_text=_knowledge_block("实时系统事实", facts, 12000),
+            commands_text=_knowledge_block("准确可用指令", command_lines, 6000),
+            has_authoritative_source=bool(card_lines or facts or command_lines),
+        )
+
+    def _ai_live_fact_lines(
+        self, platform_id: str, topics: Sequence[str], now: datetime
+    ) -> list[str]:
+        lines: list[str] = []
+        topic_set = set(topics)
+        profile = self.get_user_profile(platform_id)
+        if "economy" in topic_set:
+            settings = self.get_game_settings()
+            activity = self.get_activity_settings()
+            lines.extend((
+                f"当前货币：{settings.currency_name}；当前余额：{profile.user.balance if profile else '未知'}",
+                f"入职奖励 {settings.onboarding_bonus}；打卡奖励 {settings.checkin_reward}；每周全勤奖励 {settings.weekly_attendance_reward}",
+                "活跃度奖励：" + "、".join(f"LV{rule.level}={rule.reward}" for rule in activity.rules),
+            ))
+        if "departments" in topic_set:
+            departments = [item for item in self.list_departments() if item.enabled]
+            lines.append(f"当前部门：{profile.department.name if profile else '未入职'}")
+            lines.append("当前开放部门：" + "、".join(
+                f"{item.name}{f'（{item.description}）' if item.description else ''}"
+                for item in departments
+            ))
+        if "ranks" in topic_set:
+            ranks = [item for item in self.list_ranks() if item.enabled]
+            lines.append(f"当前职位：{profile.rank.name if profile else '未入职'}")
+            lines.append("当前职位阶梯：" + "、".join(
+                f"{item.name}（晋升价 {item.promotion_price}）" for item in ranks
+            ))
+        if "shop" in topic_set:
+            currency = self.get_game_settings().currency_name
+            items = [item for item in self.list_active_items() if item.stock > 0]
+            lines.append("当前在售商品：" + ("、".join(
+                f"{item.name}（{item.price} {currency}，库存 {item.stock}）" for item in items
+            ) or "无"))
+        if "checkin_activity" in topic_set:
+            settings = self.get_game_settings()
+            activity = self.get_activity_settings()
+            checked_in = False
+            activity_chars = 0
+            if profile:
+                with self._session() as session:
+                    checked_in = bool(session.scalar(select(DailyCheckinRecord.id).where(
+                        DailyCheckinRecord.user_id == profile.user.id,
+                        DailyCheckinRecord.checkin_date == now.astimezone(BEIJING).date(),
+                    )))
+                    activity_chars = int(session.scalar(select(DailyActivityRecord.character_count).where(
+                        DailyActivityRecord.user_id == profile.user.id,
+                        DailyActivityRecord.activity_date == now.astimezone(BEIJING).date(),
+                    )) or 0)
+            lines.append(f"今日打卡：{'已完成' if checked_in else '未完成'}；打卡奖励 {settings.checkin_reward}")
+            lines.append(f"今日有效发言字符 {activity_chars}；活跃规则：" + "、".join(
+                f"LV{rule.level}需 {rule.character_threshold} 字奖 {rule.reward}" for rule in activity.rules
+            ))
+        if "random_events" in topic_set:
+            settings = self.get_random_event_settings()
+            lines.append(f"随机事件时刻：{'、'.join(settings.schedule_times)}；当前状态：{self.active_random_event_state() or '无进行中事件'}")
+        if "hide_and_seek" in topic_set:
+            settings = self.get_hide_and_seek_settings()
+            scenes = self.list_hide_and_seek_scenes_page(1, 100)[0]
+            lines.append(f"摸鱼躲猫猫：{'可用' if settings.enabled else '已停用'}；每日 {settings.daily_limit} 次；失败扣 {settings.entry_fee}；胜利奖 {settings.win_reward}；选择限时 {settings.selection_timeout_minutes} 分钟；开放地点 {sum(scene.enabled for scene in scenes)} 个")
+        if "memory_assessment" in topic_set:
+            settings = self.get_memory_assessment_settings()
+            lines.append(f"记忆考核：{'可用' if settings.enabled else '已停用'}；单人每日 {settings.single_daily_limit} 次；单人展示 {settings.single_recall_seconds} 秒；对战展示 {settings.duel_recall_seconds} 秒")
+        if "undercover" in topic_set:
+            settings = self.get_undercover_settings()
+            summary = self.undercover_session_summary()
+            lines.append(f"谁是卧底：{'可用' if settings.enabled else '已停用'}；投票 {settings.vote_seconds} 秒；白板阈值 {settings.whiteboard_win_remaining}；当前状态 {summary.state or '无对局'}")
+        if "blame_bomb" in topic_set:
+            settings = self.get_blame_game_settings()
+            summary = self.blame_game_summary(now)
+            lines.append(f"甩锅游戏：{'可用' if settings.enabled else '已停用'}；单次操作 {settings.turn_timeout_seconds} 秒；当前状态 {summary.state or '无对局'}")
+            lines.append("人数时长范围：" + "、".join(
+                f"{rule.player_count}人 {rule.minimum_seconds}-{rule.maximum_seconds}秒"
+                for rule in settings.durations
+            ))
+        if "player_activity" in topic_set:
+            facts = self.list_ai_activity_facts(platform_id)
+            lines.extend(
+                f"{fact.activity_type}：参与 {fact.participation_count}，胜 {fact.win_count}，负 {fact.loss_count}，最近 {fact.last_result}"
+                for fact in facts
+            )
+        return lines
 
     def create_ai_player_impression(
         self,
@@ -8545,6 +8677,11 @@ def _normalize_knowledge_card(
     if not 0 <= priority <= 10000:
         raise ValueError("知识卡优先级无效")
     return topic, title, normalized_keywords, content, priority
+
+
+def _knowledge_block(title: str, lines: Sequence[str], limit: int) -> str:
+    body = "\n".join(line for line in lines if line.strip()) or "本题无相关权威数据"
+    return f"【{title}】\n{body[:limit]}"
 
 
 def _build_ai_system_prompt(

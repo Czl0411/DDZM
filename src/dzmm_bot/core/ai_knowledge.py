@@ -59,6 +59,15 @@ class AIKnowledgeCard:
     id: UUID | None = None
 
 
+@dataclass(frozen=True)
+class AIAuthoritativeContext:
+    topics: tuple[str, ...]
+    cards_text: str
+    live_facts_text: str
+    commands_text: str
+    has_authoritative_source: bool
+
+
 def route_ai_topics(
     question: str, cards: Sequence[AIKnowledgeCard]
 ) -> tuple[str, ...]:

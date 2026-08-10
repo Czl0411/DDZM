@@ -65,6 +65,35 @@ def test_command_registry_exposes_exact_enabled_syntax(repository):
     assert commands["/甩锅"] == "/甩锅 玩家编号 甩锅理由"
 
 
+def test_department_authoritative_context_uses_live_data_and_exact_commands(
+    repository, now
+):
+    repository.create_user("guide", "引导玩家", now, 0)
+    repository.create_ai_knowledge_card(
+        "departments", "部门说明", ["部门"], "部门规则以实时开放名单为准。",
+        True, 10, now,
+    )
+
+    context = repository.build_ai_authoritative_context(
+        "guide", "我能加入哪些部门", now
+    )
+
+    assert context.topics == ("departments",)
+    assert "当前开放部门" in context.live_facts_text
+    assert "/部门" in context.commands_text
+    assert "/加入部门 部门名" in context.commands_text
+    assert "部门说明" in context.cards_text
+
+
+def test_disabled_command_is_never_in_ai_guidance(repository, now):
+    repository.create_user("guide", "引导玩家", now, 0)
+    repository.set_command_enabled("/晋升", False)
+
+    context = repository.build_ai_authoritative_context("guide", "我要怎么晋升", now)
+
+    assert "/晋升：" not in context.commands_text
+
+
 @pytest.fixture
 def session_factory():
     from dzmm_bot.core.schema import Base

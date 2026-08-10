@@ -385,6 +385,8 @@ class BlameGameResult:
     from_display_name: str | None = None
     to_display_name: str | None = None
     temperature: str | None = None
+    loser_display_name: str | None = None
+    winner_display_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -3754,19 +3756,23 @@ class CoreRepository:
                 game = self._active_blame_game(session)
                 if game is None:
                     return BlameGameResult("no_game")
-                if game.state != "signup":
-                    return BlameGameResult("cannot_leave", game_id=game.id)
                 player = session.scalar(
                     select(BlameGamePlayerRecord)
                     .where(
                         BlameGamePlayerRecord.game_id == game.id,
                         BlameGamePlayerRecord.user_id == user.id,
-                        BlameGamePlayerRecord.state == "joined",
+                        BlameGamePlayerRecord.state.in_(("joined", "active")),
                     )
                     .with_for_update()
                 )
                 if player is None:
                     return BlameGameResult("not_in_game", game_id=game.id)
+                if game.state == "active":
+                    return self._settle_blame_game(
+                        session, game, user.id, "player_left", now
+                    )
+                if game.state != "signup":
+                    return BlameGameResult("cannot_leave", game_id=game.id)
                 player.state = "left"
                 player.left_at = now
                 return BlameGameResult(
@@ -3789,6 +3795,25 @@ class CoreRepository:
                 game = self._active_blame_game(session)
                 if game is None or game.state != "active":
                     return BlameGameResult("no_game")
+                if (
+                    game.explosion_deadline is not None
+                    and game.explosion_deadline <= now
+                ):
+                    return self._settle_blame_game(
+                        session,
+                        game,
+                        game.current_holder_user_id,
+                        "exploded",
+                        now,
+                    )
+                if game.turn_deadline is not None and game.turn_deadline <= now:
+                    return self._settle_blame_game(
+                        session,
+                        game,
+                        game.current_holder_user_id,
+                        "turn_timeout",
+                        now,
+                    )
                 user = session.scalar(
                     select(UserRecord).where(UserRecord.platform_id == platform_id)
                 )
@@ -3881,6 +3906,188 @@ class CoreRepository:
                     to_display_name=target_user.display_name,
                     temperature=_blame_temperature(game, now),
                 )
+
+    def end_blame_game(self, platform_id: str, now: datetime) -> BlameGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_blame_game(session)
+                if game is None:
+                    return BlameGameResult("no_game")
+                user = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if user is None:
+                    return BlameGameResult("not_joined", game_id=game.id)
+                participant = session.scalar(
+                    select(BlameGamePlayerRecord).where(
+                        BlameGamePlayerRecord.game_id == game.id,
+                        BlameGamePlayerRecord.user_id == user.id,
+                        BlameGamePlayerRecord.state.in_(("joined", "active")),
+                    )
+                )
+                if participant is None:
+                    return BlameGameResult("not_participant", game_id=game.id)
+                return self._cancel_blame_game(session, game, "participant_ended", now)
+
+    def admin_end_blame_game(self, now: datetime) -> BlameGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_blame_game(session)
+                if game is None:
+                    return BlameGameResult("no_game")
+                return self._cancel_blame_game(session, game, "admin_ended", now)
+
+    def run_blame_game_jobs(self, now: datetime) -> list[str]:
+        now = now.astimezone(BEIJING)
+        results: list[str] = []
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_blame_game(session)
+                if game is None:
+                    return results
+                if game.state == "signup":
+                    if game.signup_deadline <= now:
+                        game.state = "dissolved"
+                        game.active_key = None
+                        game.finished_at = now
+                        self.enqueue_system_outbound(
+                            "【甩锅游戏】报名超时，本局已解散。"
+                        )
+                        results.append("signup_expired")
+                    return results
+                if game.state != "active":
+                    return results
+                if (
+                    game.explosion_deadline is not None
+                    and game.explosion_deadline <= now
+                ):
+                    settled = self._settle_blame_game(
+                        session,
+                        game,
+                        game.current_holder_user_id,
+                        "exploded",
+                        now,
+                    )
+                    self.enqueue_system_outbound(
+                        f"【甩锅游戏】锅爆炸了，{settled.loser_display_name} 背锅。"
+                    )
+                    results.append("settled")
+                    return results
+                if game.turn_deadline is not None and game.turn_deadline <= now:
+                    settled = self._settle_blame_game(
+                        session,
+                        game,
+                        game.current_holder_user_id,
+                        "turn_timeout",
+                        now,
+                    )
+                    self.enqueue_system_outbound(
+                        f"【甩锅游戏】操作超时，{settled.loser_display_name} 背锅。"
+                    )
+                    results.append("settled")
+                    return results
+                temperature = _blame_temperature(game, now)
+                if temperature != game.last_announced_temperature:
+                    game.last_announced_temperature = temperature
+                    self.enqueue_system_outbound(
+                        f"【甩锅游戏】当前温度：{temperature}。"
+                    )
+                    results.append("temperature_changed")
+                return results
+
+    def _settle_blame_game(
+        self,
+        session: Session,
+        game: BlameGameRecord,
+        loser_user_id: UUID | None,
+        reason: str,
+        now: datetime,
+    ) -> BlameGameResult:
+        if game.state != "active" or game.settlement_complete:
+            return BlameGameResult("already_finished", game_id=game.id)
+        if loser_user_id is None:
+            raise RuntimeError("甩锅失败者消失")
+        rows = list(
+            session.execute(
+                select(BlameGamePlayerRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == BlameGamePlayerRecord.user_id)
+                .where(
+                    BlameGamePlayerRecord.game_id == game.id,
+                    BlameGamePlayerRecord.state == "active",
+                )
+                .order_by(BlameGamePlayerRecord.seat_number)
+                .with_for_update()
+            )
+        )
+        loser_name = None
+        winner_names = []
+        player_count = len(rows)
+        for player, user in rows:
+            if user.id == loser_user_id:
+                player.state = "loser"
+                loser_name = user.display_name
+            else:
+                self._apply_balance_change(user, player_count, "blame_win", now)
+                player.state = "winner"
+                winner_names.append(user.display_name)
+            player.guarantee_state = "settled"
+        if loser_name is None:
+            raise RuntimeError("甩锅失败者不在对局中")
+        game.state = "settled"
+        game.active_key = None
+        game.loser_user_id = loser_user_id
+        game.settlement_reason = reason
+        game.settlement_complete = True
+        game.finished_at = now
+        return BlameGameResult(
+            "settled",
+            game_id=game.id,
+            player_count=player_count,
+            target_player_count=game.target_player_count,
+            loser_display_name=loser_name,
+            winner_display_names=tuple(winner_names),
+        )
+
+    def _cancel_blame_game(
+        self,
+        session: Session,
+        game: BlameGameRecord,
+        reason: str,
+        now: datetime,
+    ) -> BlameGameResult:
+        if game.state not in {"signup", "active"}:
+            return BlameGameResult("already_finished", game_id=game.id)
+        players = list(
+            session.scalars(
+                select(BlameGamePlayerRecord)
+                .where(BlameGamePlayerRecord.game_id == game.id)
+                .with_for_update()
+            )
+        )
+        for player in players:
+            if player.guarantee_state == "held":
+                user = session.get(UserRecord, player.user_id, with_for_update=True)
+                if user is None:
+                    raise RuntimeError("甩锅退款玩家消失")
+                self._apply_balance_change(
+                    user, player.guarantee_amount, "blame_refund", now
+                )
+                player.guarantee_state = "refunded"
+            if player.state in {"joined", "active"}:
+                player.state = "cancelled"
+        game.state = "cancelled"
+        game.active_key = None
+        game.settlement_reason = reason
+        game.settlement_complete = True
+        game.finished_at = now
+        return BlameGameResult(
+            "cancelled",
+            game_id=game.id,
+            player_count=len(players),
+            target_player_count=game.target_player_count,
+        )
 
     def blame_game_summary(self, now: datetime | None = None) -> BlameGameSummary:
         with self._session() as session:
@@ -5407,6 +5614,7 @@ class CoreRepository:
             self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)
             self.run_undercover_jobs(now)
+            self.run_blame_game_jobs(now)
             self.run_random_event_jobs(now)
         if should_backfill:
             self._current_day_history_backfilled = now.date()

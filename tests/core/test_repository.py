@@ -539,12 +539,14 @@ def _prepare_blame_players(
     balance=100,
     daily_limit=99,
     keywords=("咖啡", "报表"),
+    create_incident=True,
 ):
     from dzmm_bot.core.schema import RankRecord
 
-    repository.create_blame_incident_card(
-        "咖啡事故", "咖啡泼到了季度报表", list(keywords)
-    )
+    if create_incident:
+        repository.create_blame_incident_card(
+            "咖啡事故", "咖啡泼到了季度报表", list(keywords)
+        )
     platform_ids = [f"blame-{number}" for number in range(1, count + 1)]
     for platform_id in platform_ids:
         repository.create_user(platform_id, platform_id, now, balance)
@@ -826,6 +828,135 @@ def test_blame_english_keywords_ignore_case(repository, session_factory, now):
     assert repository.transfer_blame(
         holder.platform_id, target.seat_number, "DEADLINE 已写进报表", now
     ).status == "transferred"
+
+
+@pytest.mark.parametrize("player_count", range(2, 11))
+def test_blame_explosion_settlement_is_conservative_and_idempotent(
+    repository, session_factory, now, player_count
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    platform_ids, summary, _, _ = _start_blame_round(
+        repository, session_factory, now, count=player_count
+    )
+    loser = next(
+        player for player in summary.players if player.seat_number == summary.current_holder_number
+    )
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.explosion_deadline = now.astimezone(BEIJING)
+        game.turn_deadline = now.astimezone(BEIJING)
+
+    assert repository.run_blame_game_jobs(now) == ["settled"]
+    balances = {
+        platform_id: repository.find_user(platform_id).balance for platform_id in platform_ids
+    }
+    assert balances[loser.platform_id] == 100 - (player_count - 1)
+    assert all(
+        balance == 101
+        for platform_id, balance in balances.items()
+        if platform_id != loser.platform_id
+    )
+    assert sum(balances.values()) == 100 * player_count
+
+    repository.run_blame_game_jobs(now + timedelta(seconds=1))
+    assert {
+        platform_id: repository.find_user(platform_id).balance for platform_id in platform_ids
+    } == balances
+
+
+def test_blame_transfer_received_after_deadline_settles_current_holder(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    _, summary, holder, targets = _start_blame_round(repository, session_factory, now)
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.turn_deadline = now.astimezone(BEIJING)
+
+    result = repository.transfer_blame(
+        holder.platform_id,
+        targets[0].seat_number,
+        "咖啡报表来不及了",
+        now + timedelta(seconds=1),
+    )
+
+    assert result.status == "settled"
+    assert result.loser_display_name == holder.display_name
+    assert repository.blame_game_summary(now).state is None
+
+
+def test_blame_active_leave_settles_leaver_as_loser(repository, session_factory, now):
+    platform_ids, _, holder, _ = _start_blame_round(repository, session_factory, now)
+
+    result = repository.leave_blame_game(platform_ids[-1], now)
+
+    assert result.status == "settled"
+    assert result.loser_display_name == platform_ids[-1]
+    assert repository.find_user(platform_ids[-1]).balance == 98
+    assert repository.find_user(holder.platform_id).balance in {98, 101}
+
+
+def test_blame_participant_end_and_admin_end_refund_all_guarantees(
+    repository, session_factory, now
+):
+    platform_ids, _, _, _ = _start_blame_round(repository, session_factory, now)
+    repository.create_user("outsider", "局外人", now, 100)
+
+    assert repository.end_blame_game("outsider", now).status == "not_participant"
+    assert repository.end_blame_game(platform_ids[0], now).status == "cancelled"
+    assert [repository.find_user(pid).balance for pid in platform_ids] == [100, 100, 100]
+
+    second_repository = type(repository)(session_factory)
+    second_ids = _prepare_blame_players(
+        second_repository,
+        session_factory,
+        now + timedelta(days=1),
+        2,
+        create_incident=False,
+    )
+    second_repository.start_blame_game(second_ids[0], 2, now + timedelta(days=1))
+    second_repository.join_blame_game(second_ids[1], now + timedelta(days=1))
+    assert second_repository.admin_end_blame_game(now + timedelta(days=1)).status == "cancelled"
+    assert [second_repository.find_user(pid).balance for pid in second_ids] == [100, 100]
+
+
+def test_blame_signup_timeout_dissolves_and_temperature_notice_is_sent_once(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord, OutboundRecord
+
+    platform_ids = _prepare_blame_players(repository, session_factory, now, 3)
+    repository.start_blame_game(platform_ids[0], 3, now)
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.signup_deadline = now.astimezone(BEIJING)
+    assert repository.run_blame_game_jobs(now) == ["signup_expired"]
+    assert repository.blame_game_summary(now).state is None
+
+    next_now = now + timedelta(days=1)
+    second_ids = _prepare_blame_players(
+        repository, session_factory, next_now, 2, create_incident=False
+    )
+    repository.start_blame_game(second_ids[0], 2, next_now)
+    repository.join_blame_game(second_ids[1], next_now)
+    with session_factory.begin() as session:
+        game = session.scalar(
+            select(BlameGameRecord).where(BlameGameRecord.active_key == "global")
+        )
+        game.total_duration_seconds = 100
+        game.explosion_deadline = next_now.astimezone(BEIJING) + timedelta(seconds=50)
+        game.turn_deadline = next_now.astimezone(BEIJING) + timedelta(seconds=60)
+    assert repository.run_blame_game_jobs(next_now) == ["temperature_changed"]
+    assert repository.run_blame_game_jobs(next_now) == []
+    with session_factory() as session:
+        notices = list(
+            session.scalars(
+                select(OutboundRecord.text).where(OutboundRecord.text.contains("发烫"))
+            )
+        )
+    assert len(notices) == 1
 
 
 def test_undercover_requires_direct_chat_then_deals_configured_roles(

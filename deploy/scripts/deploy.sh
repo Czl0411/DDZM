@@ -19,5 +19,6 @@ cd /opt/dzmm/current
 /opt/dzmm/venv/bin/alembic -c /opt/dzmm/current/alembic.ini upgrade head
 install -m 644 /opt/dzmm/current/deploy/systemd/dzmm-*.service /etc/systemd/system/
 systemctl daemon-reload
+systemctl enable dzmm-ai-worker.service
 systemctl enable dzmm-ai-memory-worker.service
 systemctl restart dzmm-core.service dzmm-admin-web.service dzmm-browser-worker.service dzmm-ai-worker.service dzmm-ai-memory-worker.service

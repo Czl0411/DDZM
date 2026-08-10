@@ -54,6 +54,12 @@ def test_deployment_starts_a_separate_ai_memory_worker():
     assert "systemctl enable dzmm-ai-memory-worker.service" in deploy
 
 
+def test_deployment_enables_the_main_ai_worker_at_boot():
+    deploy = (ROOT / "deploy/scripts/deploy.sh").read_text()
+
+    assert "systemctl enable dzmm-ai-worker.service" in deploy
+
+
 def test_weekly_attendance_migration_preserves_custom_me_templates():
     migration = (ROOT / "migrations/versions/20260806_11_weekly_attendance.py").read_text()
 

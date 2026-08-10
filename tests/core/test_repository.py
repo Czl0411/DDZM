@@ -2839,7 +2839,10 @@ def migrated_postgres_url():
         {"options": f"-csearch_path={schema}"}
     )
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", test_url.render_as_string(hide_password=False))
+    config.set_main_option(
+        "sqlalchemy.url",
+        test_url.render_as_string(hide_password=False).replace("%", "%%"),
+    )
     command.upgrade(config, "head")
     try:
         yield test_url
@@ -3165,3 +3168,112 @@ def test_postgres_random_event_game_creation_is_serialized(
         ("signup", "random_event_active"),
     }
     assert not (random_event_active and memory_game_active)
+
+
+def test_postgres_blame_transfers_from_same_holder_are_serialized(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import BlameGameTransferRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    factory = sessionmaker(
+        create_engine(migrated_postgres_url), expire_on_commit=False
+    )
+    setup_repository = CoreRepository(factory)
+    first_repository = CoreRepository(factory)
+    second_repository = CoreRepository(factory)
+    _, _, holder, targets = _start_blame_round(
+        setup_repository, factory, now, count=3
+    )
+    barrier = Barrier(2)
+
+    def transfer(repository, target, reason):
+        barrier.wait()
+        return repository.transfer_blame(
+            holder.platform_id,
+            target.seat_number,
+            reason,
+            now + timedelta(seconds=1),
+        ).status
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            transfer, first_repository, targets[0], "咖啡弄脏了报表"
+        )
+        second = executor.submit(
+            transfer, second_repository, targets[1], "报表沾到了咖啡"
+        )
+        statuses = sorted((first.result(), second.result()))
+
+    with factory() as session:
+        transfer_count = int(
+            session.scalar(
+                select(func.count()).select_from(BlameGameTransferRecord)
+            )
+            or 0
+        )
+    assert statuses == ["not_holder", "transferred"]
+    assert transfer_count == 1
+
+
+def test_postgres_blame_transfer_and_jobs_preserve_single_active_transition(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import (
+        BalanceTransactionRecord,
+        BlameGameTransferRecord,
+    )
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    factory = sessionmaker(
+        create_engine(migrated_postgres_url), expire_on_commit=False
+    )
+    setup_repository = CoreRepository(factory)
+    transfer_repository = CoreRepository(factory)
+    jobs_repository = CoreRepository(factory)
+    _, _, holder, targets = _start_blame_round(
+        setup_repository, factory, now, count=3
+    )
+    received_at = now + timedelta(seconds=1)
+    barrier = Barrier(2)
+
+    def transfer():
+        barrier.wait()
+        return transfer_repository.transfer_blame(
+            holder.platform_id,
+            targets[0].seat_number,
+            "咖啡弄脏了报表",
+            received_at,
+        ).status
+
+    def run_jobs():
+        barrier.wait()
+        return jobs_repository.run_blame_game_jobs(received_at)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        transfer_future = executor.submit(transfer)
+        jobs_future = executor.submit(run_jobs)
+        transfer_status = transfer_future.result()
+        jobs_future.result()
+
+    with factory() as session:
+        transfer_count = int(
+            session.scalar(
+                select(func.count()).select_from(BlameGameTransferRecord)
+            )
+            or 0
+        )
+        guarantee_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(BalanceTransactionRecord)
+                .where(BalanceTransactionRecord.source == "blame_guarantee")
+            )
+            or 0
+        )
+    assert transfer_status == "transferred"
+    assert transfer_count == 1
+    assert guarantee_count == 3
+    assert setup_repository.blame_game_summary(received_at).state == "active"

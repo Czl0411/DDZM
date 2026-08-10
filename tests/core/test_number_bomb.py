@@ -83,7 +83,7 @@ def test_render_result_contains_fixed_sections_sorting_and_truth_outcome():
     assert "3. 最终游戏结果" in rendered
     assert "胜出者：玩家2（50）" in rendered
     assert "受罚者：玩家1（10）" in rendered
-    assert "本轮为真心话轮，由胜出者监督" in rendered
+    assert "本轮为真心话轮，由胜出者出题并监督，受罚者必须完成对应的惩罚。" in rendered
 
 
 def test_render_result_lists_ties_and_dare_copy():
@@ -103,6 +103,6 @@ def test_render_invalid_result_requests_replay_without_annotations():
     )
 
     assert "3. 最终游戏结果" in rendered
-    assert "本轮偏离值不足三个不同档位，本轮无效，请所有参与者重新报数。" in rendered
+    assert "本轮偏离值不足三个不同档位，本轮无效，请所有参与者重新私聊报数。" in rendered
     assert "受罚者）" not in rendered
     assert "胜出者）" not in rendered

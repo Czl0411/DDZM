@@ -896,6 +896,29 @@ def test_help_game_topic_links_to_each_game_guide():
     assert "/帮助 摸鱼躲藏" in reply
     assert "/帮助 记忆考核" in reply
     assert "/帮助 谁是卧底" in reply
+    assert "/帮助 蹦蹦数字炸弹" in reply
+
+
+def test_help_number_bomb_topic_shows_group_and_private_commands():
+    service, _, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+
+    _receive(
+        service,
+        "help-number-bomb",
+        "platform-xiaoming",
+        "/帮助 蹦蹦数字炸弹",
+        received_at,
+    )
+
+    reply = _latest_reply(factory)
+    assert "【蹦蹦数字炸弹】" in reply
+    assert "/蹦蹦数字炸弹 人数" in reply
+    assert "私聊 /报数 1-100" in reply
+    assert "/加入" in reply
+    assert "/退出" in reply
+    assert "/继续" in reply
+    assert "/结束游戏" in reply
 
 
 def test_help_hide_and_seek_topic_shows_start_and_followup_syntax():

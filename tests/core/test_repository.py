@@ -527,6 +527,25 @@ def test_number_bomb_latest_timeout_setting_is_immediately_effective(repository,
     assert repository.run_number_bomb_jobs(now + timedelta(minutes=1))
 
 
+def test_number_bomb_timeout_job_uses_the_editable_reply_template(repository, now):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    repository.create_user("timeout-template", "超时模板", now, 0)
+    repository.start_number_bomb_game("timeout-template", 3, now)
+    repository.set_number_bomb_settings(1)
+    repository.set_reply_template(
+        "/蹦蹦数字炸弹",
+        "idle_timeout",
+        "管理员超时通知：{日期}",
+    )
+
+    repository.run_daily_jobs(now + timedelta(minutes=1))
+
+    with repository._session() as session:
+        texts = list(session.scalars(select(OutboundRecord.text)))
+    assert "管理员超时通知：2026-08-04" in texts
+
+
 def test_stable_impression_schema_separates_legacy_candidates_and_facts():
     from dzmm_bot.core.schema import (
         AIActivityEventRecord,
@@ -3377,6 +3396,22 @@ def test_second_reply_waits_until_the_first_reply_is_sent(repository, inbound, n
     assert repository.confirm_sent(
         first.id, "worker-a", claimed_first.lease_token, "sent-1", now
     )
+    assert repository.claim_outbound("worker-b", now, 30).id == second.id
+
+
+def test_second_reply_proceeds_after_the_first_reply_permanently_fails(
+    repository, inbound, now
+):
+    stored, _ = repository.accept_inbound(inbound)
+    first = repository.enqueue_outbound(stored.id, "私聊确认", 0)
+    second = repository.enqueue_outbound(stored.id, "群内结算", 1)
+
+    claimed_first = repository.claim_outbound("worker-a", now, 30)
+    assert claimed_first.id == first.id
+    assert repository.mark_outbound_failed(
+        first.id, "worker-a", claimed_first.lease_token, now
+    )
+
     assert repository.claim_outbound("worker-b", now, 30).id == second.id
 
 

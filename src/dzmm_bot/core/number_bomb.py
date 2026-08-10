@@ -114,7 +114,7 @@ def render_number_bomb_result(
         )
     lines.append("3. 最终游戏结果")
     if not calculation.valid:
-        lines.append("本轮偏离值不足三个不同档位，本轮无效，请所有参与者重新报数。")
+        lines.append("本轮偏离值不足三个不同档位，本轮无效，请所有参与者重新私聊报数。")
         return "\n".join(lines)
 
     winners = _result_names(calculation, "winner")
@@ -123,7 +123,7 @@ def render_number_bomb_result(
         [
             f"胜出者：{winners}",
             f"受罚者：{punished}",
-            f"本轮为{punishment}轮，由胜出者监督，受罚者必须完成对应的惩罚。",
+            f"本轮为{punishment}轮，由胜出者出题并监督，受罚者必须完成对应的惩罚。",
         ]
     )
     return "\n".join(lines)

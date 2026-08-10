@@ -99,6 +99,31 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
             text("SELECT title FROM ai_knowledge_cards WHERE topic = 'number_bomb'")
         ).scalar_one() == "蹦蹦数字炸弹"
 
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO ai_knowledge_cards
+                    (id, topic, title, keywords, content, enabled, priority, created_at, updated_at)
+                VALUES
+                    (:id, 'number_bomb', '管理员自建数字玩法', :keywords, '自定义内容', 1, 1, :now, :now)
+                """
+            ),
+            {
+                "id": "11111111111111111111111111111111",
+                "keywords": '["自定义"]',
+                "now": "2026-08-10 12:00:00",
+            },
+        )
+
+    command.downgrade(config, "20260810_33")
+
+    with engine.connect() as connection:
+        titles = connection.execute(
+            text("SELECT title FROM ai_knowledge_cards WHERE topic = 'number_bomb'")
+        ).scalars().all()
+    assert titles == ["管理员自建数字玩法"]
+
 
 def test_systemd_units_use_environment_factories_and_isolated_ports():
     core = (ROOT / "deploy/systemd/dzmm-core.service").read_text()

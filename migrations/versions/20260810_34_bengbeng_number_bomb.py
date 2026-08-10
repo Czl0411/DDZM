@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from datetime import datetime
-from uuid import uuid4
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from alembic import op
@@ -13,6 +13,8 @@ revision: str = "20260810_34"
 down_revision: str | None = "20260810_33"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+NUMBER_BOMB_KNOWLEDGE_CARD_ID = UUID("01c667a1-8f6e-4bcb-bde6-e1fba5d63c9d")
 
 
 def upgrade() -> None:
@@ -136,7 +138,7 @@ def upgrade() -> None:
         knowledge_cards,
         [
             {
-                "id": uuid4(),
+                "id": NUMBER_BOMB_KNOWLEDGE_CARD_ID,
                 "topic": "number_bomb",
                 "title": "蹦蹦数字炸弹",
                 "keywords": ["蹦蹦数字炸弹", "平均数炸弹", "报数", "真心话", "大冒险"],
@@ -156,10 +158,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     knowledge_cards = sa.table(
         "ai_knowledge_cards",
-        sa.column("topic", sa.String()),
+        sa.column("id", sa.Uuid()),
     )
     op.execute(
-        knowledge_cards.delete().where(knowledge_cards.c.topic == "number_bomb")
+        knowledge_cards.delete().where(
+            knowledge_cards.c.id == NUMBER_BOMB_KNOWLEDGE_CARD_ID
+        )
     )
     op.drop_table("number_bomb_round_players")
     op.drop_table("number_bomb_rounds")

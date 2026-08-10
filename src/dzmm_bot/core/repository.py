@@ -3416,7 +3416,17 @@ class CoreRepository:
                 self._finish_number_bomb_game(
                     session, game, "idle_timeout", now
                 )
-                return ["蹦蹦数字炸弹长时间无人操作，本场已自动结束。"]
+                return [self._number_bomb_automatic_message("idle_timeout", now)]
+
+    def _number_bomb_automatic_message(self, scenario: str, now: datetime) -> str:
+        definition = template_definition("/蹦蹦数字炸弹", scenario)
+        record = self.get_reply_template("/蹦蹦数字炸弹", scenario)
+        template = definition.default if record is None else record.template
+        context = {"{日期}": now.date().isoformat()}
+        try:
+            return render_template(definition, template, context)
+        except ValueError:
+            return render_template(definition, definition.default, context)
 
     def start_undercover_signup(
         self, platform_id: str, player_count: int, now: datetime
@@ -8850,12 +8860,12 @@ class CoreRepository:
     ) -> OutboundRecord | None:
         with self._session() as session:
             earlier_reply = aliased(OutboundRecord)
-            has_unsent_earlier_reply = exists(
+            has_unfinished_earlier_reply = exists(
                 select(1).where(
                     earlier_reply.inbound_message_id
                     == OutboundRecord.inbound_message_id,
                     earlier_reply.reply_index < OutboundRecord.reply_index,
-                    earlier_reply.status != "sent",
+                    earlier_reply.status.in_(("pending", "leased")),
                 )
             )
             record = session.scalar(
@@ -8868,7 +8878,7 @@ class CoreRepository:
                     ),
                     or_(
                         OutboundRecord.inbound_message_id.is_(None),
-                        ~has_unsent_earlier_reply,
+                        ~has_unfinished_earlier_reply,
                     ),
                 )
                 .order_by(

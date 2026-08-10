@@ -601,6 +601,7 @@ class MemoryAssessmentSettingsResponse(ApiModel):
     duel_wrong_freeze: int = Field(ge=1, le=999)
     duel_wrong_limit: int = Field(ge=1, le=99)
     duel_answer_timeout_minutes: int = Field(ge=1, le=60)
+    duel_signup_timeout_minutes: int = Field(default=2, ge=1, le=60)
     character_set: str = Field(min_length=2, max_length=200)
     levels: list[MemoryAssessmentLevelRuleModel] = Field(min_length=1, max_length=20)
 
@@ -620,6 +621,7 @@ class UndercoverSettingsResponse(ApiModel):
     enabled: bool
     vote_seconds: int = Field(ge=1, le=3600)
     whiteboard_win_remaining: int = Field(ge=2, le=8)
+    signup_timeout_minutes: int = Field(default=2, ge=1, le=60)
     roles: list[UndercoverRoleRuleModel] = Field(min_length=5, max_length=5)
 
 

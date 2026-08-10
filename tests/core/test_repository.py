@@ -2659,6 +2659,48 @@ def test_memory_assessment_duel_freezes_pool_and_awards_first_exact_answer(
     assert repository.list_ai_activity_facts("u2")[0].last_result == "win"
 
 
+def test_waiting_memory_duel_expires_once_without_economy_or_memory_facts(
+    repository, now
+):
+    from dzmm_bot.core.schema import MemoryAssessmentGameRecord
+
+    repository.create_user("waiting-host", "甲", now, 20)
+    waiting = repository.start_memory_assessment_duel("waiting-host", now)
+
+    with repository._session() as session:
+        game = session.get(MemoryAssessmentGameRecord, waiting.game_id)
+        assert game.signup_deadline == now.astimezone(BEIJING) + timedelta(minutes=2)
+
+    assert repository.expire_memory_assessment_duels(
+        now + timedelta(minutes=2) - timedelta(microseconds=1)
+    ) == []
+    expired = repository.expire_memory_assessment_duels(now + timedelta(minutes=2))
+    assert [result.status for result in expired] == ["waiting_expired"]
+    assert repository.expire_memory_assessment_duels(now + timedelta(minutes=3)) == []
+    assert repository.active_gameplay_summary("waiting-host", now).game_type is None
+    assert repository.find_user("waiting-host").balance == 20
+    assert repository.list_ai_activity_facts("waiting-host") == ()
+
+
+def test_undercover_signup_uses_configured_independent_timeout(
+    repository, session_factory, now
+):
+    settings = repository.get_undercover_settings()
+    repository.set_undercover_settings(
+        settings.enabled,
+        settings.vote_seconds,
+        settings.whiteboard_win_remaining,
+        repository.list_undercover_role_rules(),
+        signup_timeout_minutes=3,
+    )
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+
+    repository.start_undercover_signup(platform_ids[0], 4, now)
+
+    summary = repository.active_gameplay_summary(platform_ids[0], now)
+    assert summary.signup_deadline == now.astimezone(BEIJING) + timedelta(minutes=3)
+
+
 def test_memory_assessment_duel_with_missing_round_ignores_answers(repository, monkeypatch):
     from dzmm_bot.core.schema import MemoryAssessmentRoundRecord
 

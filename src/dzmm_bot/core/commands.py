@@ -81,6 +81,10 @@ class GroupCommandHandler:
                 return self._blame_end(message.sender_platform_id, received_at)
             if summary.game_type == "undercover":
                 return self._undercover_end(message.sender_platform_id, received_at)
+            if summary.game_type == "memory_duel" and summary.state == "waiting_opponent":
+                return self._memory_assessment_cancel_waiting(
+                    "/结束游戏", message.sender_platform_id, received_at
+                )
             if summary.game_type in {"memory_duel", "memory_single"}:
                 return self._reply("/结束游戏", "memory_use_exit", received_at)
             if summary.game_type == "conflict":
@@ -142,6 +146,10 @@ class GroupCommandHandler:
             if summary.game_type == "undercover":
                 return self._undercover_leave(message.sender_platform_id, received_at)
             if summary.game_type == "memory_duel":
+                if summary.state == "waiting_opponent":
+                    return self._memory_assessment_cancel_waiting(
+                        "/退出", message.sender_platform_id, received_at
+                    )
                 return self._memory_assessment_surrender(
                     message.sender_platform_id, received_at
                 )
@@ -1290,6 +1298,20 @@ class GroupCommandHandler:
                 },
             )
         return self._reply("/投降", "cannot_surrender", received_at)
+
+    def _memory_assessment_cancel_waiting(
+        self, command: str, platform_id: str, received_at
+    ) -> str:
+        result = self._repository.cancel_waiting_memory_assessment_duel(
+            platform_id, received_at
+        )
+        return self._reply(
+            command,
+            "memory_waiting_cancelled"
+            if result.status == "waiting_cancelled"
+            else "memory_waiting_cannot_cancel",
+            received_at,
+        )
 
     def _memory_assessment_round_reply(self, command: str, scenario: str, result, received_at) -> CommandReply:
         return CommandReply(

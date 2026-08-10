@@ -259,7 +259,6 @@ _DEFAULT_AI_MEMORY_EXTRACTION_PROMPT = (
     "没有稳定信息时返回空文本。"
 )
 _UNDERCOVER_ACTIVE_KEY = "global"
-_UNDERCOVER_SIGNUP_TIMEOUT = timedelta(minutes=2)
 _UNDERCOVER_CONTINUE_TIMEOUT = timedelta(minutes=20)
 _ROLE_VARIABLE = re.compile(r"\{([^{}]*\S[^{}]*)\}")
 
@@ -498,6 +497,7 @@ class MemoryAssessmentSettings:
     duel_wrong_freeze: int
     duel_wrong_limit: int
     duel_answer_timeout_minutes: int
+    duel_signup_timeout_minutes: int
     character_set: str
 
 
@@ -554,6 +554,7 @@ class UndercoverSettings:
     enabled: bool
     vote_seconds: int
     whiteboard_win_remaining: int
+    signup_timeout_minutes: int
 
 
 @dataclass(frozen=True)
@@ -1203,6 +1204,7 @@ class CoreRepository:
                     duel_wrong_freeze=1,
                     duel_wrong_limit=10,
                     duel_answer_timeout_minutes=10,
+                    duel_signup_timeout_minutes=2,
                     character_set=_DEFAULT_MEMORY_ASSESSMENT_CHARACTER_SET,
                 )
                 session.add(record)
@@ -1246,6 +1248,7 @@ class CoreRepository:
         duel_answer_timeout_minutes: int,
         character_set: str,
         levels: list[MemoryAssessmentLevelRule],
+        duel_signup_timeout_minutes: int = 2,
     ) -> MemoryAssessmentSettings:
         _validate_memory_assessment_settings(
             single_daily_limit=single_daily_limit,
@@ -1261,6 +1264,8 @@ class CoreRepository:
         )
         if not isinstance(enabled, bool):
             raise ValueError("玩法开关无效")
+        if not isinstance(duel_signup_timeout_minutes, int) or not 1 <= duel_signup_timeout_minutes <= 60:
+            raise ValueError("对战报名超时必须为 1 至 60 分钟")
         self.get_memory_assessment_settings()
         with self._session() as session:
             record = session.get(MemoryAssessmentSettingsRecord, 1)
@@ -1275,6 +1280,7 @@ class CoreRepository:
             record.duel_wrong_freeze = duel_wrong_freeze
             record.duel_wrong_limit = duel_wrong_limit
             record.duel_answer_timeout_minutes = duel_answer_timeout_minutes
+            record.duel_signup_timeout_minutes = duel_signup_timeout_minutes
             record.character_set = character_set
             session.execute(delete(MemoryAssessmentLevelRuleRecord))
             session.add_all(
@@ -2673,6 +2679,7 @@ class CoreRepository:
                     enabled=True,
                     vote_seconds=120,
                     whiteboard_win_remaining=3,
+                    signup_timeout_minutes=2,
                 )
                 session.add(record)
             if not session.scalar(select(UndercoverRoleRuleRecord.player_count).limit(1)):
@@ -2713,6 +2720,7 @@ class CoreRepository:
         vote_seconds: int,
         whiteboard_win_remaining: int,
         roles: list[UndercoverRoleRule],
+        signup_timeout_minutes: int = 2,
     ) -> UndercoverSettings:
         if not isinstance(enabled, bool):
             raise ValueError("玩法开关无效")
@@ -2720,6 +2728,8 @@ class CoreRepository:
             raise ValueError("投票时长至少为 1 秒")
         if not isinstance(whiteboard_win_remaining, int) or whiteboard_win_remaining < 2:
             raise ValueError("白板胜利人数至少为 2")
+        if not isinstance(signup_timeout_minutes, int) or not 1 <= signup_timeout_minutes <= 60:
+            raise ValueError("报名超时必须为 1 至 60 分钟")
         if [rule.player_count for rule in roles] != [4, 5, 6, 7, 8]:
             raise ValueError("必须配置 4 至 8 人的全部身份配比")
         if any(
@@ -2738,6 +2748,7 @@ class CoreRepository:
             record.enabled = enabled
             record.vote_seconds = vote_seconds
             record.whiteboard_win_remaining = whiteboard_win_remaining
+            record.signup_timeout_minutes = signup_timeout_minutes
             session.execute(delete(UndercoverRoleRuleRecord))
             session.add_all(
                 [
@@ -3696,7 +3707,8 @@ class CoreRepository:
                     state="signup",
                     active_key=_UNDERCOVER_ACTIVE_KEY,
                     target_player_count=player_count,
-                    signup_deadline=now + _UNDERCOVER_SIGNUP_TIMEOUT,
+                    signup_deadline=now
+                    + timedelta(minutes=settings.signup_timeout_minutes),
                     created_at=now,
                     updated_at=now,
                 )
@@ -4349,7 +4361,9 @@ class CoreRepository:
             game.state = "discarded"
             game.finished_at = now
             session_record.state = "signup"
-            session_record.signup_deadline = now + _UNDERCOVER_SIGNUP_TIMEOUT
+            session_record.signup_deadline = now + timedelta(
+                minutes=self.get_undercover_settings().signup_timeout_minutes
+            )
             pending_card_ids = list(
                 session.scalars(
                     select(UndercoverGamePlayerRecord.card_outbound_message_id).where(
@@ -4767,6 +4781,8 @@ class CoreRepository:
                     level=rule.level,
                     reward=0,
                     base_pool=0,
+                    signup_deadline=now
+                    + timedelta(minutes=settings.duel_signup_timeout_minutes),
                     created_at=now,
                 )
                 session.add(game)
@@ -4845,6 +4861,7 @@ class CoreRepository:
                 participants[0].state = "active"
                 participants[0].frozen_amount = settings.duel_base_pool
                 game.state = "showing_answer"
+                game.signup_deadline = None
                 game.base_pool = settings.duel_base_pool * 2
                 game.answer_deadline = now + timedelta(
                     minutes=settings.duel_answer_timeout_minutes
@@ -4918,17 +4935,89 @@ class CoreRepository:
                     session, game, winner, now
                 )
 
+    def cancel_waiting_memory_assessment_duel(
+        self, platform_id: str, now: datetime
+    ) -> MemoryAssessmentGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                row = session.execute(
+                    select(
+                        MemoryAssessmentGameRecord,
+                        MemoryAssessmentParticipantRecord,
+                        UserRecord,
+                    )
+                    .join(
+                        MemoryAssessmentParticipantRecord,
+                        MemoryAssessmentParticipantRecord.game_id
+                        == MemoryAssessmentGameRecord.id,
+                    )
+                    .join(UserRecord, UserRecord.id == MemoryAssessmentParticipantRecord.user_id)
+                    .where(
+                        MemoryAssessmentGameRecord.active_key == "global",
+                        MemoryAssessmentGameRecord.mode == "duel",
+                        MemoryAssessmentGameRecord.state == "waiting_opponent",
+                        UserRecord.platform_id == platform_id,
+                    )
+                    .with_for_update()
+                ).one_or_none()
+                if row is None:
+                    return MemoryAssessmentGameResult("cannot_cancel")
+                game, participant, user = row
+                game.state = "cancelled"
+                game.active_key = None
+                game.signup_deadline = None
+                game.finished_at = now
+                participant.state = "cancelled"
+                return MemoryAssessmentGameResult(
+                    "waiting_cancelled",
+                    display_name=user.display_name,
+                    game_id=game.id,
+                )
+
     def expire_memory_assessment_duels(self, now: datetime) -> list[MemoryAssessmentGameResult]:
         now = now.astimezone(BEIJING)
         expired = []
         with self.transaction():
             with self._session() as session:
+                waiting_games = list(
+                    session.scalars(
+                        select(MemoryAssessmentGameRecord)
+                        .where(
+                            MemoryAssessmentGameRecord.mode == "duel",
+                            MemoryAssessmentGameRecord.active_key == "global",
+                            MemoryAssessmentGameRecord.state == "waiting_opponent",
+                            MemoryAssessmentGameRecord.signup_deadline <= now,
+                        )
+                        .with_for_update()
+                    )
+                )
+                for game in waiting_games:
+                    participants = list(
+                        session.scalars(
+                            select(MemoryAssessmentParticipantRecord)
+                            .where(MemoryAssessmentParticipantRecord.game_id == game.id)
+                            .with_for_update()
+                        )
+                    )
+                    for participant in participants:
+                        participant.state = "expired"
+                    game.state = "expired"
+                    game.active_key = None
+                    game.signup_deadline = None
+                    game.finished_at = now
+                    expired.append(
+                        MemoryAssessmentGameResult(
+                            "waiting_expired", game_id=game.id
+                        )
+                    )
                 games = list(
                     session.scalars(
                         select(MemoryAssessmentGameRecord)
                         .where(
                             MemoryAssessmentGameRecord.mode == "duel",
                             MemoryAssessmentGameRecord.active_key == "global",
+                            MemoryAssessmentGameRecord.state != "waiting_opponent",
                             MemoryAssessmentGameRecord.answer_deadline <= now,
                         )
                         .with_for_update()
@@ -7673,9 +7762,14 @@ class CoreRepository:
                     f"【摸鱼躲猫猫】{game.display_name} 未在 {game.selection_timeout_minutes} 分钟内选择地点，本局已取消，次数已返还。"
                 )
             for game in self.expire_memory_assessment_duels(now):
-                self.enqueue_system_outbound(
-                    f"【记忆考核对战】作答超时，{game.reward} 摸鱼币奖池已由系统回收。"
-                )
+                if game.status == "waiting_expired":
+                    self.enqueue_system_outbound(
+                        "【记忆考核对战】等待加入超时，本场已自动取消。"
+                    )
+                else:
+                    self.enqueue_system_outbound(
+                        f"【记忆考核对战】作答超时，{game.reward} 摸鱼币奖池已由系统回收。"
+                    )
             self._settle_weekly_attendance_rewards(now)
             self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)
@@ -9581,6 +9675,7 @@ def _memory_assessment_settings(
         duel_wrong_freeze=record.duel_wrong_freeze,
         duel_wrong_limit=record.duel_wrong_limit,
         duel_answer_timeout_minutes=record.duel_answer_timeout_minutes,
+        duel_signup_timeout_minutes=record.duel_signup_timeout_minutes,
         character_set=record.character_set,
     )
 
@@ -9600,6 +9695,7 @@ def _undercover_settings(record: UndercoverSettingsRecord) -> UndercoverSettings
         enabled=record.enabled,
         vote_seconds=record.vote_seconds,
         whiteboard_win_remaining=record.whiteboard_win_remaining,
+        signup_timeout_minutes=record.signup_timeout_minutes,
     )
 
 

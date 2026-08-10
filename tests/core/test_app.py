@@ -212,6 +212,7 @@ def test_undercover_settings_api_validates_roles_and_returns_public_session(clie
             "enabled": True,
             "vote_seconds": 120,
             "whiteboard_win_remaining": 3,
+            "signup_timeout_minutes": 2,
             "roles": [
                 {"player_count": 4, "civilian_count": 3, "undercover_count": 2, "whiteboard_count": 0},
                 {"player_count": 5, "civilian_count": 3, "undercover_count": 1, "whiteboard_count": 1},
@@ -228,6 +229,7 @@ def test_undercover_settings_api_validates_roles_and_returns_public_session(clie
             "enabled": False,
             "vote_seconds": 90,
             "whiteboard_win_remaining": 2,
+            "signup_timeout_minutes": 3,
             "roles": [
                 {"player_count": 4, "civilian_count": 3, "undercover_count": 1, "whiteboard_count": 0},
                 {"player_count": 5, "civilian_count": 3, "undercover_count": 1, "whiteboard_count": 1},
@@ -245,6 +247,7 @@ def test_undercover_settings_api_validates_roles_and_returns_public_session(clie
     assert updated.status_code == 200
     assert updated.json()["enabled"] is False
     assert updated.json()["vote_seconds"] == 90
+    assert updated.json()["signup_timeout_minutes"] == 3
     assert session.json() == {
         "state": None,
         "target_player_count": 0,
@@ -683,7 +686,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-            "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
+            "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
             }
     assert disabled.json()["enabled"] is False
     assert employees.json() == {
@@ -877,6 +880,7 @@ def test_memory_assessment_settings_are_managed_over_core_api(client, headers):
             "duel_wrong_freeze": 2,
             "duel_wrong_limit": 8,
             "duel_answer_timeout_minutes": 9,
+            "duel_signup_timeout_minutes": 4,
             "character_set": "ABC123",
             "levels": [
                 {"level": level, "answer_length": level * 2 + 3, "reward": level}
@@ -889,6 +893,7 @@ def test_memory_assessment_settings_are_managed_over_core_api(client, headers):
     assert initial.json()["single_recall_seconds"] == 3
     assert updated.status_code == 200
     assert updated.json()["duel_base_pool"] == 6
+    assert updated.json()["duel_signup_timeout_minutes"] == 4
     assert updated.json()["levels"][4] == {
         "level": 5,
         "answer_length": 13,

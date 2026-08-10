@@ -127,6 +127,20 @@ def test_end_game_hits_waiting_memory_duel_instead_of_undercover_fallback():
     reply = _latest_reply(factory)
     assert "记忆考核" in reply
     assert "谁是卧底" not in reply
+    assert repository.active_gameplay_summary("memory-host", now).game_type is None
+
+
+def test_generic_exit_cancels_waiting_memory_duel_immediately():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    repository.create_user("memory-exit-host", "甲", now, 20)
+    repository.start_memory_assessment_duel("memory-exit-host", now)
+
+    _receive(service, "exit-memory", "memory-exit-host", "/退出", now)
+
+    assert "已取消" in _latest_reply(factory)
+    assert repository.active_gameplay_summary("memory-exit-host", now).game_type is None
+    assert repository.find_user("memory-exit-host").balance == 20
 
 
 def test_checkin_awards_five_once_per_beijing_date_and_uses_beijing_dates():

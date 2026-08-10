@@ -1127,6 +1127,7 @@ def create_app(
                 duel_wrong_freeze=request.duel_wrong_freeze,
                 duel_wrong_limit=request.duel_wrong_limit,
                 duel_answer_timeout_minutes=request.duel_answer_timeout_minutes,
+                duel_signup_timeout_minutes=request.duel_signup_timeout_minutes,
                 character_set=request.character_set,
                 levels=[
                     MemoryAssessmentLevelRule(
@@ -1172,6 +1173,7 @@ def create_app(
                     )
                     for role in request.roles
                 ],
+                signup_timeout_minutes=request.signup_timeout_minutes,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -1876,6 +1878,7 @@ def _memory_assessment_settings_response(
         duel_wrong_freeze=settings.duel_wrong_freeze,
         duel_wrong_limit=settings.duel_wrong_limit,
         duel_answer_timeout_minutes=settings.duel_answer_timeout_minutes,
+        duel_signup_timeout_minutes=settings.duel_signup_timeout_minutes,
         character_set=settings.character_set,
         levels=[
             MemoryAssessmentLevelRuleModel(
@@ -1894,6 +1897,7 @@ def _undercover_settings_response(repository: CoreRepository) -> UndercoverSetti
         enabled=settings.enabled,
         vote_seconds=settings.vote_seconds,
         whiteboard_win_remaining=settings.whiteboard_win_remaining,
+        signup_timeout_minutes=settings.signup_timeout_minutes,
         roles=[
             UndercoverRoleRuleModel(
                 player_count=rule.player_count,

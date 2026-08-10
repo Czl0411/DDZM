@@ -223,6 +223,8 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/退出", "number_bomb_exit_queued", "下一轮退出", "你将在本轮结算后退出，当前轮仍需私聊报数。", ("{日期}",)),
     TemplateDefinition("/退出", "number_bomb_candidate_cancelled", "取消候选", "你已取消加入蹦蹦数字炸弹下一轮。", ("{日期}",)),
     TemplateDefinition("/退出", "number_bomb_cannot_leave", "无法退出", "当前没有你可以退出的蹦蹦数字炸弹对局。", ("{日期}",)),
+    TemplateDefinition("/退出", "memory_waiting_cancelled", "取消等待对战", "【记忆考核对战】等待报名已取消。", ("{日期}",)),
+    TemplateDefinition("/退出", "memory_waiting_cannot_cancel", "无法取消等待", "当前没有你可以取消的记忆考核对战。", ("{日期}",)),
     TemplateDefinition("/报数", "group_only", "仅限私聊", "请私聊总监事发送 /报数 1-100，群内报数不会生效。", ("{日期}",)),
     TemplateDefinition("/报数", "submitted", "报数成功", "报数成功，本轮数字已锁定。", ("{日期}",)),
     TemplateDefinition("/报数", "invalid_number", "数字无效", "请发送 /报数 1-100，数字必须是范围内的整数。", ("{日期}",)),
@@ -237,6 +239,8 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/结束游戏", "number_bomb_cannot_end", "无法结束", "当前没有你可以结束的蹦蹦数字炸弹对局。", ("{日期}",)),
     TemplateDefinition("/结束游戏", "memory_use_exit", "记忆考核结束方式", "已命中当前记忆考核；对战开始后请发送 /退出 执行投降，等待对手阶段可直接取消。", ("{日期}",)),
     TemplateDefinition("/结束游戏", "no_current_game", "暂无游戏", "当前没有你可以结束的游戏。", ("{日期}",)),
+    TemplateDefinition("/结束游戏", "memory_waiting_cancelled", "取消等待对战", "【记忆考核对战】等待报名已取消。", ("{日期}",)),
+    TemplateDefinition("/结束游戏", "memory_waiting_cannot_cancel", "无法取消等待", "当前没有你可以取消的记忆考核对战。", ("{日期}",)),
 )
 
 

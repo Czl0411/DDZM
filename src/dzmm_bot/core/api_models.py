@@ -358,6 +358,33 @@ AIImpressionCategory = Literal[
     "boundaries",
 ]
 
+AIKnowledgeTopic = Literal[
+    "economy", "departments", "ranks", "shop", "checkin_activity",
+    "random_events", "hide_and_seek", "memory_assessment", "undercover",
+    "blame_bomb", "commands_help", "player_activity",
+]
+
+
+class AIKnowledgeCardResponse(ApiModel):
+    id: UUID
+    topic: AIKnowledgeTopic
+    title: str
+    keywords: list[str]
+    content: str
+    enabled: bool
+    priority: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class SetAIKnowledgeCardRequest(ApiModel):
+    topic: AIKnowledgeTopic
+    title: str = Field(min_length=1, max_length=128)
+    keywords: list[str] = Field(min_length=1, max_length=30)
+    content: str = Field(min_length=1, max_length=12000)
+    enabled: bool
+    priority: int = Field(ge=0, le=10000)
+
 
 class AIPlayerImpressionResponse(ApiModel):
     id: UUID

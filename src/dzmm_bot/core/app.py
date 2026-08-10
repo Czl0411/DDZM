@@ -15,6 +15,7 @@ from dzmm_bot.ai.impressions import AIImpressionOperation
 from .api_models import (
     AcceptedResponse,
     AIClaimResponse,
+    AIKnowledgeCardResponse,
     AIActivityFactResponse,
     AIPlayerImpressionResponse,
     AIMemoryClaimResponse,
@@ -57,6 +58,7 @@ from .api_models import (
     SetCommandTemplateRequest,
     SetActivitySettingsRequest,
     SetAIAssistantSettingsRequest,
+    SetAIKnowledgeCardRequest,
     UpdateAIPlayerImpressionRequest,
     SetGameSettingsRequest,
     RandomEventSettingsResponse,
@@ -642,6 +644,64 @@ def create_app(
         platform_id: str, _: Annotated[None, Depends(authorize)]
     ) -> AIPlayerMemoryResponse:
         return _ai_player_memory_response(repository, platform_id)
+
+    @app.get(
+        "/internal/game/ai-knowledge-cards",
+        response_model=list[AIKnowledgeCardResponse],
+    )
+    def ai_knowledge_cards(
+        _: Annotated[None, Depends(authorize)],
+    ) -> list[AIKnowledgeCardResponse]:
+        return [_ai_knowledge_card_response(card) for card in repository.list_ai_knowledge_cards()]
+
+    @app.post(
+        "/internal/game/ai-knowledge-cards",
+        response_model=AIKnowledgeCardResponse,
+    )
+    def create_ai_knowledge_card(
+        request: SetAIKnowledgeCardRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AIKnowledgeCardResponse:
+        try:
+            card = repository.create_ai_knowledge_card(
+                request.topic, request.title, request.keywords, request.content,
+                request.enabled, request.priority, beijing_now(),
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _ai_knowledge_card_response(card)
+
+    @app.put(
+        "/internal/game/ai-knowledge-cards/{card_id}",
+        response_model=AIKnowledgeCardResponse,
+    )
+    def update_ai_knowledge_card(
+        card_id: UUID,
+        request: SetAIKnowledgeCardRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AIKnowledgeCardResponse:
+        try:
+            card = repository.update_ai_knowledge_card(
+                card_id, request.topic, request.title, request.keywords,
+                request.content, request.enabled, request.priority, beijing_now(),
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        if card is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "knowledge card not found")
+        return _ai_knowledge_card_response(card)
+
+    @app.delete(
+        "/internal/game/ai-knowledge-cards/{card_id}",
+        response_model=AcceptedResponse,
+    )
+    def delete_ai_knowledge_card(
+        card_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        if not repository.delete_ai_knowledge_card(card_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "knowledge card not found")
+        return AcceptedResponse(accepted=True)
 
     @app.post(
         "/internal/game/users/{platform_id}/ai-impressions",
@@ -1669,6 +1729,20 @@ def _ai_player_impression_response(record) -> AIPlayerImpressionResponse:
         content=record.content,
         source=record.source,
         pinned=record.pinned,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def _ai_knowledge_card_response(record) -> AIKnowledgeCardResponse:
+    return AIKnowledgeCardResponse(
+        id=record.id,
+        topic=record.topic,
+        title=record.title,
+        keywords=list(record.keywords),
+        content=record.content,
+        enabled=record.enabled,
+        priority=record.priority,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )

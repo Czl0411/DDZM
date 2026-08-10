@@ -458,6 +458,43 @@ def test_ai_impression_crud_is_categorized_pinned_and_player_scoped(
     assert after_clear["legacy_memory_text"] == "旧的自由文本备份"
 
 
+def test_ai_knowledge_card_crud_is_typed_and_validated(app_context, headers):
+    payload = {
+        "topic": "economy",
+        "title": "额外金币说明",
+        "keywords": ["金币", "收入"],
+        "content": "金额和开放状态以实时数据为准。",
+        "enabled": True,
+        "priority": 50,
+    }
+    created = app_context.client.post(
+        "/internal/game/ai-knowledge-cards", headers=headers, json=payload
+    )
+
+    assert created.status_code == 200
+    card_id = created.json()["id"]
+    assert app_context.client.get(
+        "/internal/game/ai-knowledge-cards", headers=headers
+    ).json()[0]["title"] == "额外金币说明"
+    updated = app_context.client.put(
+        f"/internal/game/ai-knowledge-cards/{card_id}",
+        headers=headers,
+        json={**payload, "title": "金币说明", "keywords": ["赚钱"]},
+    )
+    assert updated.json()["title"] == "金币说明"
+    assert app_context.client.post(
+        "/internal/game/ai-knowledge-cards",
+        headers=headers,
+        json={**payload, "keywords": ["金币", "金币"]},
+    ).status_code == 422
+    assert app_context.client.delete(
+        f"/internal/game/ai-knowledge-cards/{card_id}", headers=headers
+    ).json() == {"accepted": True}
+    assert app_context.client.delete(
+        f"/internal/game/ai-knowledge-cards/{card_id}", headers=headers
+    ).status_code == 404
+
+
 def test_ai_assistant_settings_reject_response_limit_over_ten_thousand(client, headers):
     initial = client.get("/internal/game/ai-assistant/settings", headers=headers).json()
     payload = {

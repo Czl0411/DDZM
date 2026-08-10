@@ -21,6 +21,7 @@ from dzmm_bot.runtime.outbound import (
 )
 
 from dzmm_bot.ai.impressions import AIImpressionOperation, IMPRESSION_CATEGORIES
+from .ai_knowledge import KNOWLEDGE_TOPICS
 
 from .ai_mentions import normalize_ai_mention
 from .reply_templates import (
@@ -1402,6 +1403,77 @@ class CoreRepository:
             user_id = session.scalar(
                 select(UserRecord.id).where(UserRecord.platform_id == platform_id)
             )
+
+    def list_ai_knowledge_cards(self) -> tuple[AIKnowledgeCardRecord, ...]:
+        with self._session() as session:
+            return tuple(
+                session.scalars(
+                    select(AIKnowledgeCardRecord).order_by(
+                        AIKnowledgeCardRecord.topic,
+                        AIKnowledgeCardRecord.priority,
+                        AIKnowledgeCardRecord.title,
+                        AIKnowledgeCardRecord.id,
+                    )
+                )
+            )
+
+    def create_ai_knowledge_card(
+        self,
+        topic: str,
+        title: str,
+        keywords: Sequence[str],
+        content: str,
+        enabled: bool,
+        priority: int,
+        now: datetime,
+    ) -> AIKnowledgeCardRecord:
+        topic, title, keywords, content, priority = _normalize_knowledge_card(
+            topic, title, keywords, content, priority
+        )
+        with self._session() as session:
+            record = AIKnowledgeCardRecord(
+                topic=topic, title=title, keywords=list(keywords), content=content,
+                enabled=enabled, priority=priority, created_at=now, updated_at=now,
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def update_ai_knowledge_card(
+        self,
+        card_id: UUID | str,
+        topic: str,
+        title: str,
+        keywords: Sequence[str],
+        content: str,
+        enabled: bool,
+        priority: int,
+        now: datetime,
+    ) -> AIKnowledgeCardRecord | None:
+        topic, title, keywords, content, priority = _normalize_knowledge_card(
+            topic, title, keywords, content, priority
+        )
+        with self._session() as session:
+            record = session.get(AIKnowledgeCardRecord, UUID(str(card_id)))
+            if record is None:
+                return None
+            record.topic = topic
+            record.title = title
+            record.keywords = list(keywords)
+            record.content = content
+            record.enabled = enabled
+            record.priority = priority
+            record.updated_at = now
+            session.flush()
+            return record
+
+    def delete_ai_knowledge_card(self, card_id: UUID | str) -> bool:
+        with self._session() as session:
+            record = session.get(AIKnowledgeCardRecord, UUID(str(card_id)))
+            if record is None:
+                return False
+            session.delete(record)
+            return True
             if user_id is None:
                 return ()
             return tuple(
@@ -8444,6 +8516,35 @@ def _normalize_impression_fields(category: str | None, content: str) -> tuple[st
     if not 1 <= len(content) <= 240:
         raise ValueError("印象内容无效")
     return category, content
+
+
+def _normalize_knowledge_card(
+    topic: str,
+    title: str,
+    keywords: Sequence[str],
+    content: str,
+    priority: int,
+) -> tuple[str, str, tuple[str, ...], str, int]:
+    if topic not in KNOWLEDGE_TOPICS:
+        raise ValueError("知识卡主题无效")
+    title = title.strip()
+    content = content.strip()
+    normalized_keywords = tuple(keyword.strip() for keyword in keywords)
+    if not 1 <= len(title) <= 128:
+        raise ValueError("知识卡标题无效")
+    if not 1 <= len(content) <= 12000:
+        raise ValueError("知识卡内容无效")
+    if not 1 <= len(normalized_keywords) <= 30 or any(
+        not keyword or len(keyword) > 64 for keyword in normalized_keywords
+    ):
+        raise ValueError("知识卡关键词无效")
+    if len({keyword.casefold() for keyword in normalized_keywords}) != len(
+        normalized_keywords
+    ):
+        raise ValueError("知识卡关键词不能重复")
+    if not 0 <= priority <= 10000:
+        raise ValueError("知识卡优先级无效")
+    return topic, title, normalized_keywords, content, priority
 
 
 def _build_ai_system_prompt(

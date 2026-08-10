@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import re
 from secrets import choice, randbelow
+import unicodedata
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, exists, func, or_, select, update
@@ -380,6 +381,10 @@ class BlameGameResult:
     player_count: int = 0
     target_player_count: int = 0
     removed_display_names: tuple[str, ...] = ()
+    missing_keywords: tuple[str, ...] = ()
+    from_display_name: str | None = None
+    to_display_name: str | None = None
+    temperature: str | None = None
 
 
 @dataclass(frozen=True)
@@ -3769,6 +3774,112 @@ class CoreRepository:
                     game_id=game.id,
                     player_count=len(self._joined_blame_players(session, game.id)),
                     target_player_count=game.target_player_count,
+                )
+
+    def transfer_blame(
+        self,
+        platform_id: str,
+        target_number: int,
+        reason: str,
+        now: datetime,
+    ) -> BlameGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_blame_game(session)
+                if game is None or game.state != "active":
+                    return BlameGameResult("no_game")
+                user = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if user is None:
+                    return BlameGameResult("not_joined", game_id=game.id)
+                player = session.scalar(
+                    select(BlameGamePlayerRecord)
+                    .where(
+                        BlameGamePlayerRecord.game_id == game.id,
+                        BlameGamePlayerRecord.user_id == user.id,
+                        BlameGamePlayerRecord.state == "active",
+                    )
+                    .with_for_update()
+                )
+                if player is None or game.current_holder_user_id != user.id:
+                    return BlameGameResult("not_holder", game_id=game.id)
+                target = session.scalar(
+                    select(BlameGamePlayerRecord)
+                    .where(
+                        BlameGamePlayerRecord.game_id == game.id,
+                        BlameGamePlayerRecord.seat_number == target_number,
+                        BlameGamePlayerRecord.state == "active",
+                    )
+                    .with_for_update()
+                )
+                if target is None:
+                    return BlameGameResult("invalid_target", game_id=game.id)
+                if target.user_id == user.id:
+                    return BlameGameResult("self_target", game_id=game.id)
+                player_count = int(
+                    session.scalar(
+                        select(func.count())
+                        .select_from(BlameGamePlayerRecord)
+                        .where(
+                            BlameGamePlayerRecord.game_id == game.id,
+                            BlameGamePlayerRecord.state == "active",
+                        )
+                    )
+                    or 0
+                )
+                if (
+                    player_count >= 3
+                    and game.previous_holder_user_id == target.user_id
+                ):
+                    return BlameGameResult("immediate_return_blocked", game_id=game.id)
+                folded_reason = reason.casefold()
+                missing_keywords = tuple(
+                    keyword
+                    for keyword in game.keywords_snapshot or ()
+                    if keyword.casefold() not in folded_reason
+                )
+                if missing_keywords:
+                    return BlameGameResult(
+                        "missing_keywords",
+                        game_id=game.id,
+                        missing_keywords=missing_keywords,
+                    )
+                normalized_reason = _normalize_blame_reason(reason)
+                if session.scalar(
+                    select(exists().where(
+                        BlameGameTransferRecord.game_id == game.id,
+                        BlameGameTransferRecord.normalized_reason == normalized_reason,
+                    ))
+                ):
+                    return BlameGameResult("duplicate_reason", game_id=game.id)
+                target_user = session.get(UserRecord, target.user_id)
+                if target_user is None:
+                    raise RuntimeError("甩锅目标玩家消失")
+                session.add(
+                    BlameGameTransferRecord(
+                        game_id=game.id,
+                        from_user_id=user.id,
+                        to_user_id=target.user_id,
+                        reason=reason.strip(),
+                        normalized_reason=normalized_reason,
+                        created_at=now,
+                    )
+                )
+                settings = self.get_blame_game_settings()
+                game.previous_holder_user_id = user.id
+                game.current_holder_user_id = target.user_id
+                game.turn_deadline = min(
+                    now + timedelta(seconds=settings.turn_timeout_seconds),
+                    game.explosion_deadline,
+                )
+                return BlameGameResult(
+                    "transferred",
+                    game_id=game.id,
+                    from_display_name=user.display_name,
+                    to_display_name=target_user.display_name,
+                    temperature=_blame_temperature(game, now),
                 )
 
     def blame_game_summary(self, now: datetime | None = None) -> BlameGameSummary:
@@ -7398,6 +7509,36 @@ def _validate_blame_keywords(keywords: list[str]) -> list[str]:
     if len({keyword.casefold() for keyword in normalized}) != len(normalized):
         raise ValueError("事故关键词不能重复")
     return normalized
+
+
+def _normalize_blame_reason(reason: str) -> str:
+    without_punctuation = "".join(
+        character
+        for character in reason
+        if not unicodedata.category(character).startswith("P")
+    )
+    return re.sub(r"\s+", " ", without_punctuation.strip().casefold())
+
+
+def _blame_temperature(game: BlameGameRecord, now: datetime) -> str:
+    if (
+        game.explosion_deadline is None
+        or game.total_duration_seconds is None
+        or game.total_duration_seconds < 1
+    ):
+        raise RuntimeError("甩锅游戏引爆时间消失")
+    remaining_ratio = max(
+        0.0,
+        (game.explosion_deadline - now).total_seconds()
+        / game.total_duration_seconds,
+    )
+    if remaining_ratio > 0.70:
+        return "温热"
+    if remaining_ratio > 0.40:
+        return "发烫"
+    if remaining_ratio > 0.15:
+        return "滚烫"
+    return "即将爆炸"
 
 
 def _validate_hide_and_seek_scene_name(name: str) -> str:

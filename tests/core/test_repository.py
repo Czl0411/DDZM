@@ -531,12 +531,19 @@ def _prepare_undercover_players(repository, session_factory, now, count=4):
 
 
 def _prepare_blame_players(
-    repository, session_factory, now, count, *, balance=100, daily_limit=99
+    repository,
+    session_factory,
+    now,
+    count,
+    *,
+    balance=100,
+    daily_limit=99,
+    keywords=("咖啡", "报表"),
 ):
     from dzmm_bot.core.schema import RankRecord
 
     repository.create_blame_incident_card(
-        "咖啡事故", "咖啡泼到了季度报表", ["咖啡", "报表"]
+        "咖啡事故", "咖啡泼到了季度报表", list(keywords)
     )
     platform_ids = [f"blame-{number}" for number in range(1, count + 1)]
     for platform_id in platform_ids:
@@ -689,6 +696,136 @@ def test_blame_signup_leave_and_active_join_behavior(repository, session_factory
     assert repository.join_blame_game(platform_ids[2], now).status == "started"
     repository.create_user("late-player", "迟到玩家", now, 100)
     assert repository.join_blame_game("late-player", now).status == "game_started"
+
+
+def _start_blame_round(repository, session_factory, now, count=3):
+    platform_ids = _prepare_blame_players(repository, session_factory, now, count)
+    repository.start_blame_game(platform_ids[0], count, now)
+    for platform_id in platform_ids[1:]:
+        repository.join_blame_game(platform_id, now)
+    summary = repository.blame_game_summary(now)
+    holder = next(
+        player for player in summary.players if player.seat_number == summary.current_holder_number
+    )
+    targets = [player for player in summary.players if player.platform_id != holder.platform_id]
+    return platform_ids, summary, holder, targets
+
+
+def test_blame_transfer_requires_all_keywords_and_preserves_deadlines_on_failure(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    _, summary, holder, targets = _start_blame_round(repository, session_factory, now)
+    with session_factory() as session:
+        game = session.scalar(select(BlameGameRecord))
+        original_deadlines = (game.explosion_deadline, game.turn_deadline)
+
+    missing = repository.transfer_blame(
+        holder.platform_id, targets[0].seat_number, "只有咖啡", now + timedelta(seconds=1)
+    )
+
+    with session_factory() as session:
+        game = session.scalar(select(BlameGameRecord))
+        current_deadlines = (game.explosion_deadline, game.turn_deadline)
+    assert missing.status == "missing_keywords"
+    assert missing.missing_keywords == ("报表",)
+    assert repository.blame_game_summary(now).current_holder_number == summary.current_holder_number
+    assert current_deadlines == original_deadlines
+
+
+def test_blame_transfer_accepts_keywords_and_rejects_normalized_duplicate(
+    repository, session_factory, now
+):
+    _, _, holder, targets = _start_blame_round(repository, session_factory, now)
+    first = repository.transfer_blame(
+        holder.platform_id,
+        targets[0].seat_number,
+        "咖啡，碰到  报表！",
+        now + timedelta(seconds=1),
+    )
+    next_summary = repository.blame_game_summary(now)
+    next_holder = next(
+        player
+        for player in next_summary.players
+        if player.seat_number == next_summary.current_holder_number
+    )
+    next_target = next(
+        player
+        for player in next_summary.players
+        if player.platform_id not in {next_holder.platform_id, holder.platform_id}
+    )
+
+    duplicate = repository.transfer_blame(
+        next_holder.platform_id,
+        next_target.seat_number,
+        "  咖啡碰到 报表  ",
+        now + timedelta(seconds=2),
+    )
+
+    assert first.status == "transferred"
+    assert first.temperature == "温热"
+    assert duplicate.status == "duplicate_reason"
+
+
+def test_blame_transfer_validates_holder_target_and_three_player_return(
+    repository, session_factory, now
+):
+    platform_ids, summary, holder, targets = _start_blame_round(
+        repository, session_factory, now
+    )
+    nonholder = next(platform_id for platform_id in platform_ids if platform_id != holder.platform_id)
+
+    assert repository.transfer_blame(
+        nonholder, targets[0].seat_number, "咖啡报表", now
+    ).status == "not_holder"
+    assert repository.transfer_blame(
+        holder.platform_id, holder.seat_number, "咖啡报表", now
+    ).status == "self_target"
+    assert repository.transfer_blame(
+        holder.platform_id, 99, "咖啡报表", now
+    ).status == "invalid_target"
+
+    assert repository.transfer_blame(
+        holder.platform_id, targets[0].seat_number, "咖啡报表第一次", now
+    ).status == "transferred"
+    assert repository.transfer_blame(
+        targets[0].platform_id, summary.current_holder_number, "咖啡报表第二次", now
+    ).status == "immediate_return_blocked"
+
+
+def test_two_player_blame_game_allows_immediate_return(repository, session_factory, now):
+    _, summary, holder, targets = _start_blame_round(
+        repository, session_factory, now, count=2
+    )
+
+    assert repository.transfer_blame(
+        holder.platform_id, targets[0].seat_number, "咖啡报表第一次", now
+    ).status == "transferred"
+    assert repository.transfer_blame(
+        targets[0].platform_id, summary.current_holder_number, "咖啡报表第二次", now
+    ).status == "transferred"
+
+
+def test_blame_english_keywords_ignore_case(repository, session_factory, now):
+    platform_ids = _prepare_blame_players(
+        repository,
+        session_factory,
+        now,
+        2,
+        keywords=("deadline", "报表"),
+    )
+    repository.start_blame_game(platform_ids[0], 2, now)
+    repository.join_blame_game(platform_ids[1], now)
+    summary = repository.blame_game_summary(now)
+    holder = next(
+        player for player in summary.players if player.seat_number == summary.current_holder_number
+    )
+    target = next(player for player in summary.players if player.platform_id != holder.platform_id)
+
+    assert repository.transfer_blame(
+        holder.platform_id, target.seat_number, "DEADLINE 已写进报表", now
+    ).status == "transferred"
 
 
 def test_undercover_requires_direct_chat_then_deals_configured_roles(

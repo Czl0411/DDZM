@@ -265,6 +265,10 @@ def test_number_bomb_schema_contains_provenance_state_and_idempotency_constraint
     members = Base.metadata.tables["number_bomb_members"]
     rounds = Base.metadata.tables["number_bomb_rounds"]
     round_players = Base.metadata.tables["number_bomb_round_players"]
+    memory_settings = Base.metadata.tables["memory_assessment_settings"]
+    memory_games = Base.metadata.tables["memory_assessment_games"]
+    undercover_settings = Base.metadata.tables["undercover_settings"]
+    number_settings = Base.metadata.tables["number_bomb_settings"]
 
     assert {index.name for index in games.indexes} >= {
         "ux_number_bomb_one_active"
@@ -286,6 +290,18 @@ def test_number_bomb_schema_contains_provenance_state_and_idempotency_constraint
     assert InboundRecord.__table__.c.source_type.nullable is False
     assert InboundRecord.__table__.c.chatroom_id.nullable is True
     assert AIActivityEventRecord.__table__.c.detail.nullable is True
+    assert "duel_signup_timeout_minutes" in memory_settings.c
+    assert "signup_deadline" in memory_games.c
+    assert "signup_timeout_minutes" in undercover_settings.c
+    assert {
+        "enabled",
+        "signup_timeout_minutes",
+        "reminder_interval_seconds",
+    } <= set(number_settings.c.keys())
+    assert {"signup_deadline", "next_reminder_at", "skip_enabled"} <= set(
+        games.c.keys()
+    )
+    assert "skipped_at" in round_players.c
 
 
 def test_number_bomb_settings_validate_timeout_range(repository):

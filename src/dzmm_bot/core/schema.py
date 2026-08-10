@@ -197,6 +197,9 @@ class UndercoverSettingsRecord(Base):
     whiteboard_win_remaining: Mapped[int] = mapped_column(
         Integer, default=3, nullable=False
     )
+    signup_timeout_minutes: Mapped[int] = mapped_column(
+        Integer, default=2, nullable=False
+    )
 
 
 class UndercoverRoleRuleRecord(Base):
@@ -430,6 +433,13 @@ class NumberBombSettingsRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     inactivity_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    signup_timeout_minutes: Mapped[int] = mapped_column(
+        Integer, default=2, nullable=False
+    )
+    reminder_interval_seconds: Mapped[int] = mapped_column(
+        Integer, default=15, nullable=False
+    )
 
 
 class NumberBombGameRecord(Base):
@@ -451,6 +461,9 @@ class NumberBombGameRecord(Base):
     round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     attempt_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_activity_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    signup_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    next_reminder_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    skip_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
@@ -508,6 +521,7 @@ class NumberBombRoundPlayerRecord(Base):
     submitted_number: Mapped[int | None] = mapped_column(Integer)
     deviation_numerator: Mapped[int | None] = mapped_column(Integer)
     result: Mapped[str | None] = mapped_column(String(16))
+    skipped_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
 
 
 class HideAndSeekDailyPlayRecord(Base):
@@ -561,6 +575,9 @@ class MemoryAssessmentSettingsRecord(Base):
     duel_wrong_freeze: Mapped[int] = mapped_column(Integer, nullable=False)
     duel_wrong_limit: Mapped[int] = mapped_column(Integer, nullable=False)
     duel_answer_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    duel_signup_timeout_minutes: Mapped[int] = mapped_column(
+        Integer, default=2, nullable=False
+    )
     character_set: Mapped[str] = mapped_column(Text, nullable=False)
 
 
@@ -603,6 +620,7 @@ class MemoryAssessmentGameRecord(Base):
     reward: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     base_pool: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     answer_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    signup_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     winner_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False

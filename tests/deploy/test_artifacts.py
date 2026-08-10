@@ -67,7 +67,25 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
         Column("created_at", DateTime(timezone=True), nullable=False),
         Column("updated_at", DateTime(timezone=True), nullable=False),
     )
+    Table(
+        "memory_assessment_settings",
+        before_upgrade,
+        Column("id", Integer, primary_key=True),
+    )
+    Table(
+        "memory_assessment_games",
+        before_upgrade,
+        Column("id", Uuid, primary_key=True),
+    )
+    Table(
+        "undercover_settings",
+        before_upgrade,
+        Column("id", Integer, primary_key=True),
+    )
     before_upgrade.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO memory_assessment_settings (id) VALUES (1)"))
+        connection.execute(text("INSERT INTO undercover_settings (id) VALUES (1)"))
     command.stamp(config, "20260810_33")
 
     command.upgrade(config, "head")
@@ -91,10 +109,28 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
     with engine.connect() as connection:
         assert connection.execute(
             text("SELECT version_num FROM alembic_version")
-        ).scalar_one() == "20260810_34"
+        ).scalar_one() == "20260811_35"
         assert connection.execute(
             text("SELECT inactivity_timeout_minutes FROM number_bomb_settings WHERE id = 1")
         ).scalar_one() == 10
+        assert connection.execute(
+            text(
+                "SELECT enabled, signup_timeout_minutes, reminder_interval_seconds "
+                "FROM number_bomb_settings WHERE id = 1"
+            )
+        ).one() == (1, 2, 15)
+        assert connection.execute(
+            text(
+                "SELECT duel_signup_timeout_minutes "
+                "FROM memory_assessment_settings WHERE id = 1"
+            )
+        ).scalar_one() == 2
+        assert connection.execute(
+            text(
+                "SELECT signup_timeout_minutes "
+                "FROM undercover_settings WHERE id = 1"
+            )
+        ).scalar_one() == 2
         assert connection.execute(
             text("SELECT title FROM ai_knowledge_cards WHERE topic = 'number_bomb'")
         ).scalar_one() == "蹦蹦数字炸弹"

@@ -654,6 +654,55 @@ def create_app(
     ) -> dict:
         return _relay_core(lambda: core.get_ai_player_memory(platform_id))
 
+    @app.get("/api/ai-knowledge-cards")
+    def ai_knowledge_cards(
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return {
+            "items": _relay_core(core.list_ai_knowledge_cards),
+            "version": repository.config_version(),
+        }
+
+    @app.post("/api/ai-knowledge-cards")
+    def create_ai_knowledge_card(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity, idempotency_key, if_match,
+            lambda: _relay_core(lambda: core.create_ai_knowledge_card(request)),
+            scope="ai-knowledge-card:create",
+        )
+
+    @app.put("/api/ai-knowledge-cards/{card_id}")
+    def update_ai_knowledge_card(
+        card_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity, idempotency_key, if_match,
+            lambda: _relay_core(lambda: core.update_ai_knowledge_card(card_id, request)),
+            scope=f"ai-knowledge-card:{card_id}",
+        )
+
+    @app.delete("/api/ai-knowledge-cards/{card_id}")
+    def delete_ai_knowledge_card(
+        card_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity, idempotency_key, if_match,
+            lambda: _relay_core(lambda: core.delete_ai_knowledge_card(card_id)),
+            scope=f"ai-knowledge-card:{card_id}",
+        )
+
     @app.post("/api/game/users/{platform_id}/ai-impressions")
     def create_ai_player_impression(
         platform_id: str,

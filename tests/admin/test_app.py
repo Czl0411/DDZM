@@ -98,6 +98,7 @@ class FakeCore:
         }
     )
     ai_player_memories: dict = field(default_factory=dict)
+    ai_knowledge_cards: list[dict] = field(default_factory=list)
     random_event_settings: dict = field(
         default_factory=lambda: {
             "schedule_times": ["00:00", "02:00", "10:00", "14:00", "16:00", "20:00"],
@@ -349,6 +350,28 @@ class FakeCore:
             ],
         }
         return self.ai_assistant_settings
+
+    def list_ai_knowledge_cards(self):
+        return self.ai_knowledge_cards
+
+    def create_ai_knowledge_card(self, card):
+        saved = {"id": f"card-{len(self.ai_knowledge_cards) + 1}", **card}
+        self.ai_knowledge_cards.append(saved)
+        return saved
+
+    def update_ai_knowledge_card(self, card_id, card):
+        index = next(
+            index for index, item in enumerate(self.ai_knowledge_cards)
+            if item["id"] == card_id
+        )
+        self.ai_knowledge_cards[index] = {"id": card_id, **card}
+        return self.ai_knowledge_cards[index]
+
+    def delete_ai_knowledge_card(self, card_id):
+        self.ai_knowledge_cards = [
+            item for item in self.ai_knowledge_cards if item["id"] != card_id
+        ]
+        return {"accepted": True}
 
     def get_ai_player_memory(self, platform_id):
         return self.ai_player_memories.setdefault(
@@ -754,6 +777,38 @@ def test_admin_proxies_categorized_ai_impression_crud(client, headers):
     assert client.get(
         "/api/game/users/player/ai-memory", headers=headers
     ).json()["impressions"] == []
+
+
+def test_admin_proxies_versioned_ai_knowledge_card_crud(client, headers):
+    listed = client.get("/api/ai-knowledge-cards", headers=headers)
+    payload = {
+        "topic": "economy",
+        "title": "金币说明",
+        "keywords": ["金币"],
+        "content": "动态金额以实时数据为准。",
+        "enabled": True,
+        "priority": 50,
+    }
+    created = client.post(
+        "/api/ai-knowledge-cards",
+        headers={**headers, "Idempotency-Key": "card-create", "If-Match": str(listed.json()["version"])},
+        json=payload,
+    )
+
+    assert created.status_code == 200
+    assert created.json()["version"] == 1
+    card_id = created.json()["id"]
+    updated = client.put(
+        f"/api/ai-knowledge-cards/{card_id}",
+        headers={**headers, "Idempotency-Key": "card-update", "If-Match": "1"},
+        json={**payload, "title": "金币与余额"},
+    )
+    assert updated.json()["version"] == 2
+    removed = client.delete(
+        f"/api/ai-knowledge-cards/{card_id}",
+        headers={**headers, "Idempotency-Key": "card-delete", "If-Match": "2"},
+    )
+    assert removed.json() == {"accepted": True, "version": 3}
 
 
 def test_admin_renders_structured_ai_memory_controls(client, headers):

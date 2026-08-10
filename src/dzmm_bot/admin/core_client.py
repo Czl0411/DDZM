@@ -61,6 +61,14 @@ class AdminCorePort(Protocol):
 
     def set_ai_assistant_settings(self, settings: dict) -> dict: ...
 
+    def list_ai_knowledge_cards(self) -> list[dict]: ...
+
+    def create_ai_knowledge_card(self, card: dict) -> dict: ...
+
+    def update_ai_knowledge_card(self, card_id: str, card: dict) -> dict: ...
+
+    def delete_ai_knowledge_card(self, card_id: str) -> dict: ...
+
     def get_ai_player_memory(self, platform_id: str) -> dict: ...
 
     def create_ai_player_impression(self, platform_id: str, impression: dict) -> dict: ...
@@ -279,6 +287,26 @@ class CoreClient:
         response = self._client.patch(
             "/internal/game/ai-assistant/settings", json=settings
         )
+        response.raise_for_status()
+        return response.json()
+
+    def list_ai_knowledge_cards(self) -> list[dict]:
+        return self._get("/internal/game/ai-knowledge-cards")
+
+    def create_ai_knowledge_card(self, card: dict) -> dict:
+        response = self._client.post("/internal/game/ai-knowledge-cards", json=card)
+        response.raise_for_status()
+        return response.json()
+
+    def update_ai_knowledge_card(self, card_id: str, card: dict) -> dict:
+        response = self._client.put(
+            f"/internal/game/ai-knowledge-cards/{card_id}", json=card
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_ai_knowledge_card(self, card_id: str) -> dict:
+        response = self._client.delete(f"/internal/game/ai-knowledge-cards/{card_id}")
         response.raise_for_status()
         return response.json()
 

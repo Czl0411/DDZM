@@ -316,14 +316,19 @@ def _prepare_number_bomb_players(repository, now, prefix, count, balance=0):
     return platform_ids
 
 
-def test_number_bomb_settings_validate_timeout_range(repository):
-    assert repository.get_number_bomb_settings().inactivity_timeout_minutes == 10
-    assert repository.set_number_bomb_settings(1).inactivity_timeout_minutes == 1
-    assert repository.set_number_bomb_settings(60).inactivity_timeout_minutes == 60
-    with pytest.raises(ValueError):
-        repository.set_number_bomb_settings(0)
-    with pytest.raises(ValueError):
-        repository.set_number_bomb_settings(61)
+def test_number_bomb_settings_validate_admin_ranges(repository):
+    initial = repository.get_number_bomb_settings()
+    assert (initial.enabled, initial.signup_timeout_minutes, initial.reminder_interval_seconds) == (
+        True, 2, 15,
+    )
+    updated = repository.set_number_bomb_settings(False, 60, 300)
+    assert (updated.enabled, updated.signup_timeout_minutes, updated.reminder_interval_seconds) == (
+        False, 60, 300,
+    )
+    with pytest.raises(ValueError, match="1 至 60"):
+        repository.set_number_bomb_settings(True, 0, 15)
+    with pytest.raises(ValueError, match="5 至 300"):
+        repository.set_number_bomb_settings(True, 2, 301)
 
 
 def test_active_gameplay_summary_identifies_number_bomb_participant(repository, now):

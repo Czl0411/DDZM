@@ -53,6 +53,8 @@ from .api_models import (
     OutboundClaimResponse,
     OutboundRecallClaimResponse,
     NumberBombSettingsResponse,
+    GameplayParticipantResponse,
+    GameplaySummaryResponse,
     QueueCountsResponse,
     RecalledRequest,
     SentRequest,
@@ -940,7 +942,9 @@ def create_app(
     ) -> NumberBombSettingsResponse:
         settings = repository.get_number_bomb_settings()
         return NumberBombSettingsResponse(
-            inactivity_timeout_minutes=settings.inactivity_timeout_minutes
+            enabled=settings.enabled,
+            signup_timeout_minutes=settings.signup_timeout_minutes,
+            reminder_interval_seconds=settings.reminder_interval_seconds,
         )
 
     @app.patch(
@@ -952,11 +956,56 @@ def create_app(
         _: Annotated[None, Depends(authorize)],
     ) -> NumberBombSettingsResponse:
         settings = repository.set_number_bomb_settings(
-            request.inactivity_timeout_minutes
+            request.enabled,
+            request.signup_timeout_minutes,
+            request.reminder_interval_seconds,
         )
         return NumberBombSettingsResponse(
-            inactivity_timeout_minutes=settings.inactivity_timeout_minutes
+            enabled=settings.enabled,
+            signup_timeout_minutes=settings.signup_timeout_minutes,
+            reminder_interval_seconds=settings.reminder_interval_seconds,
         )
+
+    @app.get(
+        "/internal/gameplay/current",
+        response_model=GameplaySummaryResponse,
+    )
+    def current_gameplay(
+        _: Annotated[None, Depends(authorize)],
+    ) -> GameplaySummaryResponse:
+        summary = repository.current_gameplay_admin_summary(clock())
+        return GameplaySummaryResponse(
+            game_type=summary.game_type,
+            game_id=summary.game_id,
+            state=summary.state,
+            participants=[
+                GameplayParticipantResponse(
+                    number=participant.number,
+                    display_name=participant.display_name,
+                    reported=participant.reported,
+                )
+                for participant in summary.participants
+            ],
+            signup_deadline=summary.signup_deadline,
+            next_reminder_at=summary.next_reminder_at,
+            skip_enabled=summary.skip_enabled,
+        )
+
+    @app.post(
+        "/internal/gameplay/{game_type}/{game_id}/force-end",
+        response_model=AcceptedResponse,
+    )
+    def force_end_gameplay(
+        game_type: str,
+        game_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        if not repository.force_end_gameplay(game_type, game_id, clock()):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="gameplay identity is stale or mismatched",
+            )
+        return AcceptedResponse(accepted=True)
 
     @app.patch(
         "/internal/game/activity-settings", response_model=ActivitySettingsResponse

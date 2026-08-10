@@ -429,7 +429,6 @@ class BlameGameResult:
 
 @dataclass(frozen=True)
 class NumberBombSettings:
-    inactivity_timeout_minutes: int
     enabled: bool
     signup_timeout_minutes: int
     reminder_interval_seconds: int
@@ -477,6 +476,24 @@ class ActiveGameplaySummary:
     available_commands: tuple[str, ...] = ()
     signup_deadline: datetime | None = None
     next_reminder_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class GameplayAdminParticipant:
+    number: int | None
+    display_name: str
+    reported: bool | None = None
+
+
+@dataclass(frozen=True)
+class GameplayAdminSummary:
+    game_type: str | None = None
+    game_id: UUID | None = None
+    state: str | None = None
+    participants: tuple[GameplayAdminParticipant, ...] = ()
+    signup_deadline: datetime | None = None
+    next_reminder_at: datetime | None = None
+    skip_enabled: bool = False
 
 
 def blame_settlement_template_values(
@@ -2851,32 +2868,36 @@ class CoreRepository:
                 session.add(record)
                 session.flush()
             return NumberBombSettings(
-                record.inactivity_timeout_minutes,
-                record.enabled,
-                record.signup_timeout_minutes,
-                record.reminder_interval_seconds,
+                enabled=record.enabled,
+                signup_timeout_minutes=record.signup_timeout_minutes,
+                reminder_interval_seconds=record.reminder_interval_seconds,
             )
 
     def set_number_bomb_settings(
-        self, inactivity_timeout_minutes: int
+        self,
+        enabled: bool,
+        signup_timeout_minutes: int,
+        reminder_interval_seconds: int,
     ) -> NumberBombSettings:
-        if (
-            not isinstance(inactivity_timeout_minutes, int)
-            or not 1 <= inactivity_timeout_minutes <= 60
-        ):
-            raise ValueError("无操作释放时间必须为 1 至 60 分钟")
+        if not isinstance(enabled, bool):
+            raise ValueError("启用状态必须是布尔值")
+        if not isinstance(signup_timeout_minutes, int) or not 1 <= signup_timeout_minutes <= 60:
+            raise ValueError("报名超时必须为 1 至 60 分钟")
+        if not isinstance(reminder_interval_seconds, int) or not 5 <= reminder_interval_seconds <= 300:
+            raise ValueError("提醒间隔必须为 5 至 300 秒")
         self.get_number_bomb_settings()
         with self._session() as session:
             record = session.get(NumberBombSettingsRecord, 1)
             if record is None:
                 raise RuntimeError("蹦蹦数字炸弹设置消失")
-            record.inactivity_timeout_minutes = inactivity_timeout_minutes
+            record.enabled = enabled
+            record.signup_timeout_minutes = signup_timeout_minutes
+            record.reminder_interval_seconds = reminder_interval_seconds
             session.flush()
             return NumberBombSettings(
-                record.inactivity_timeout_minutes,
-                record.enabled,
-                record.signup_timeout_minutes,
-                record.reminder_interval_seconds,
+                enabled=record.enabled,
+                signup_timeout_minutes=record.signup_timeout_minutes,
+                reminder_interval_seconds=record.reminder_interval_seconds,
             )
 
     def number_bomb_game_summary(self) -> NumberBombGameSummary:
@@ -3123,6 +3144,167 @@ class CoreRepository:
             if len(active) > 1:
                 return ActiveGameplaySummary("conflict", state="conflict")
             return active[0]
+
+    def current_gameplay_admin_summary(
+        self, now: datetime
+    ) -> GameplayAdminSummary:
+        summary = self.active_gameplay_summary("", now)
+        if summary.game_type is None:
+            return GameplayAdminSummary()
+        if summary.game_type != "number_bomb":
+            return GameplayAdminSummary(
+                game_type=summary.game_type,
+                game_id=summary.game_id,
+                state=summary.state,
+                participants=tuple(
+                    GameplayAdminParticipant(None, name)
+                    for name in summary.participant_names
+                ),
+                signup_deadline=summary.signup_deadline,
+                next_reminder_at=summary.next_reminder_at,
+            )
+        with self._session() as session:
+            game = session.get(NumberBombGameRecord, summary.game_id)
+            if game is None or game.active_key != "global":
+                return GameplayAdminSummary()
+            reported_user_ids: set[UUID] = set()
+            if game.state == "collecting":
+                round_record = session.scalar(
+                    select(NumberBombRoundRecord).where(
+                        NumberBombRoundRecord.game_id == game.id,
+                        NumberBombRoundRecord.state == "collecting",
+                        NumberBombRoundRecord.round_number == game.round_number,
+                        NumberBombRoundRecord.attempt_number == game.attempt_number,
+                    )
+                )
+                if round_record is not None:
+                    reported_user_ids = set(
+                        session.scalars(
+                            select(NumberBombRoundPlayerRecord.user_id).where(
+                                NumberBombRoundPlayerRecord.round_id == round_record.id,
+                                NumberBombRoundPlayerRecord.submitted_number.is_not(None),
+                                NumberBombRoundPlayerRecord.skipped_at.is_(None),
+                            )
+                        )
+                    )
+            rows = list(
+                session.execute(
+                    select(NumberBombMemberRecord, UserRecord)
+                    .join(UserRecord, UserRecord.id == NumberBombMemberRecord.user_id)
+                    .where(
+                        NumberBombMemberRecord.game_id == game.id,
+                        NumberBombMemberRecord.state != "left",
+                    )
+                    .order_by(NumberBombMemberRecord.roster_order)
+                )
+            )
+            return GameplayAdminSummary(
+                game_type="number_bomb",
+                game_id=game.id,
+                state=game.state,
+                participants=tuple(
+                    GameplayAdminParticipant(
+                        member.roster_order,
+                        user.display_name,
+                        user.id in reported_user_ids
+                        if game.state == "collecting" and member.state == "current"
+                        else None,
+                    )
+                    for member, user in rows
+                ),
+                signup_deadline=game.signup_deadline,
+                next_reminder_at=game.next_reminder_at,
+                skip_enabled=game.skip_enabled,
+            )
+
+    def force_end_gameplay(
+        self, game_type: str, game_id: UUID, now: datetime
+    ) -> bool:
+        now = now.astimezone(BEIJING)
+        game_names = {
+            "number_bomb": "蹦蹦数字炸弹",
+            "blame_bomb": "甩锅游戏",
+            "undercover": "谁是卧底",
+            "memory_duel": "记忆考核对战",
+            "random_event": "随机事件",
+        }
+        if game_type not in game_names:
+            return False
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                ended = False
+                if game_type == "number_bomb":
+                    game = session.get(NumberBombGameRecord, game_id, with_for_update=True)
+                    if game is not None and game.active_key == "global":
+                        self._finish_number_bomb_game(
+                            session, game, "admin_forced", now
+                        )
+                        ended = True
+                elif game_type == "blame_bomb":
+                    game = session.get(BlameGameRecord, game_id, with_for_update=True)
+                    if game is not None and game.active_key == "global":
+                        self._cancel_blame_game(session, game, "admin_forced", now)
+                        ended = True
+                elif game_type == "undercover":
+                    game = session.get(UndercoverSessionRecord, game_id, with_for_update=True)
+                    if game is not None and game.active_key == _UNDERCOVER_ACTIVE_KEY:
+                        game.state = "closed"
+                        game.active_key = None
+                        game.finished_at = now
+                        active_round = session.scalar(
+                            select(UndercoverGameRecord)
+                            .where(
+                                UndercoverGameRecord.session_id == game.id,
+                                UndercoverGameRecord.state.notin_(("ended", "settled")),
+                            )
+                            .with_for_update()
+                        )
+                        if active_round is not None:
+                            active_round.state = "ended"
+                            active_round.finished_at = now
+                        ended = True
+                elif game_type == "memory_duel":
+                    game = session.get(MemoryAssessmentGameRecord, game_id, with_for_update=True)
+                    if (
+                        game is not None
+                        and game.active_key == "global"
+                        and game.mode == "duel"
+                    ):
+                        game.state = "cancelled"
+                        game.active_key = None
+                        game.signup_deadline = None
+                        game.answer_deadline = None
+                        game.finished_at = now
+                        for participant in session.scalars(
+                            select(MemoryAssessmentParticipantRecord)
+                            .where(MemoryAssessmentParticipantRecord.game_id == game.id)
+                            .with_for_update()
+                        ):
+                            participant.state = "cancelled"
+                        ended = True
+                else:
+                    event = session.get(RandomEventRecord, game_id, with_for_update=True)
+                    if event is not None and event.state in {"signup", "in_progress"}:
+                        event.state = "cancelled"
+                        event.ended_at = now
+                        event.next_reminder_at = None
+                        ended = True
+                if not ended:
+                    return False
+                definition = template_definition("/结束游戏", "admin_forced")
+                record = self.get_reply_template("/结束游戏", "admin_forced")
+                template = definition.default if record is None else record.template
+                context = {
+                    "{游戏}": game_names[game_type],
+                    "{日期}": now.date().isoformat(),
+                }
+                try:
+                    message = render_template(definition, template, context)
+                except ValueError:
+                    message = render_template(definition, definition.default, context)
+                self.enqueue_system_outbound(message)
+                return True
 
     def start_number_bomb_game(
         self, platform_id: str, now: datetime
@@ -6494,7 +6676,7 @@ class CoreRepository:
                 player.guarantee_state = "refunded"
             if player.state in {"joined", "active"}:
                 player.state = "cancelled"
-            if was_active:
+            if was_active and reason != "admin_forced":
                 self._record_ai_activity_fact(
                     session,
                     event_key=f"blame_bomb:{game.id}:{player.user_id}",

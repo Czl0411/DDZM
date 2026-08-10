@@ -552,11 +552,31 @@ class SetActivitySettingsRequest(ApiModel):
 
 
 class NumberBombSettingsResponse(ApiModel):
-    inactivity_timeout_minutes: int
+    enabled: bool
+    signup_timeout_minutes: int
+    reminder_interval_seconds: int
 
 
 class SetNumberBombSettingsRequest(ApiModel):
-    inactivity_timeout_minutes: int = Field(ge=1, le=60)
+    enabled: bool
+    signup_timeout_minutes: int = Field(ge=1, le=60)
+    reminder_interval_seconds: int = Field(ge=5, le=300)
+
+
+class GameplayParticipantResponse(ApiModel):
+    number: int | None = None
+    display_name: str
+    reported: bool | None = None
+
+
+class GameplaySummaryResponse(ApiModel):
+    game_type: str | None = None
+    game_id: UUID | None = None
+    state: str | None = None
+    participants: list[GameplayParticipantResponse] = Field(default_factory=list)
+    signup_deadline: AwareDatetime | None = None
+    next_reminder_at: AwareDatetime | None = None
+    skip_enabled: bool = False
 
 
 class RandomEventSettingsResponse(ApiModel):

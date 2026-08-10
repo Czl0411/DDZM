@@ -260,6 +260,7 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/结束游戏", "number_bomb_cannot_end", "无法结束", "当前没有你可以结束的蹦蹦数字炸弹对局。", ("{日期}",)),
     TemplateDefinition("/结束游戏", "memory_use_exit", "记忆考核结束方式", "已命中当前记忆考核；对战开始后请发送 /退出 执行投降，等待对手阶段可直接取消。", ("{日期}",)),
     TemplateDefinition("/结束游戏", "no_current_game", "暂无游戏", "当前没有你可以结束的游戏。", ("{日期}",)),
+    TemplateDefinition("/结束游戏", "admin_forced", "管理员强制结束", "【{游戏}】管理员已强制结束当前游戏。", ("{游戏}", "{日期}")),
     TemplateDefinition("/结束游戏", "memory_waiting_cancelled", "取消等待对战", "【记忆考核对战】等待报名已取消。", ("{日期}",)),
     TemplateDefinition("/结束游戏", "memory_waiting_cannot_cancel", "无法取消等待", "当前没有你可以取消的记忆考核对战。", ("{日期}",)),
 )

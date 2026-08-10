@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from dzmm_bot.core.schema import (
+    AIActivityEventRecord,
     DirectChatRecord,
     NumberBombGameRecord,
     NumberBombMemberRecord,
@@ -174,20 +176,101 @@ def test_number_bomb_settings_core_api_validates_bounds(client, headers):
     initial = client.get(
         "/internal/game/number-bomb/settings", headers=headers
     )
-    assert initial.json() == {"inactivity_timeout_minutes": 10}
-    for value in (1, 60):
-        response = client.patch(
-            "/internal/game/number-bomb/settings",
-            headers=headers,
-            json={"inactivity_timeout_minutes": value},
-        )
-        assert response.json() == {"inactivity_timeout_minutes": value}
-    for value in (0, 61):
+    assert initial.json() == {
+        "enabled": True,
+        "signup_timeout_minutes": 2,
+        "reminder_interval_seconds": 15,
+    }
+    response = client.patch(
+        "/internal/game/number-bomb/settings",
+        headers=headers,
+        json={
+            "enabled": False,
+            "signup_timeout_minutes": 60,
+            "reminder_interval_seconds": 300,
+        },
+    )
+    assert response.json() == {
+        "enabled": False,
+        "signup_timeout_minutes": 60,
+        "reminder_interval_seconds": 300,
+    }
+    for payload in (
+        {"enabled": True, "signup_timeout_minutes": 0, "reminder_interval_seconds": 15},
+        {"enabled": True, "signup_timeout_minutes": 61, "reminder_interval_seconds": 15},
+        {"enabled": True, "signup_timeout_minutes": 2, "reminder_interval_seconds": 4},
+        {"enabled": True, "signup_timeout_minutes": 2, "reminder_interval_seconds": 301},
+    ):
         assert client.patch(
             "/internal/game/number-bomb/settings",
             headers=headers,
-            json={"inactivity_timeout_minutes": value},
+            json=payload,
         ).status_code == 422
+
+
+def test_gameplay_current_hides_numbers_and_force_end_requires_exact_identity(
+    app_context, headers
+):
+    repository = app_context.repository
+    for index in range(1, 4):
+        repository.create_user(f"admin-game-p{index}", f"管理玩家{index}", NOW, 0)
+    repository.upsert_direct_chats(
+        [
+            (f"admin-game-p{index}", f"direct-admin-game-p{index}")
+            for index in range(1, 4)
+        ],
+        NOW,
+    )
+    created = repository.start_number_bomb_game("admin-game-p1", NOW)
+    repository.join_number_bomb_game("admin-game-p2", NOW)
+    repository.join_number_bomb_game("admin-game-p3", NOW)
+    repository.start_number_bomb_round("admin-game-p1", NOW)
+    repository.submit_number_bomb("admin-game-p1", 73, NOW)
+
+    current = app_context.client.get("/internal/gameplay/current", headers=headers)
+
+    assert current.status_code == 200
+    assert current.json() == {
+        "game_type": "number_bomb",
+        "game_id": str(created.game_id),
+        "state": "collecting",
+        "participants": [
+            {"number": 1, "display_name": "管理玩家1", "reported": True},
+            {"number": 2, "display_name": "管理玩家2", "reported": False},
+            {"number": 3, "display_name": "管理玩家3", "reported": False},
+        ],
+        "signup_deadline": None,
+        "next_reminder_at": (
+            NOW.astimezone(ZoneInfo("Asia/Shanghai")) + timedelta(seconds=15)
+        ).isoformat(),
+        "skip_enabled": False,
+    }
+    assert "73" not in current.text
+
+    stale = app_context.client.post(
+        f"/internal/gameplay/blame_bomb/{created.game_id}/force-end",
+        headers=headers,
+    )
+    ended = app_context.client.post(
+        f"/internal/gameplay/number_bomb/{created.game_id}/force-end",
+        headers=headers,
+    )
+    repeated = app_context.client.post(
+        f"/internal/gameplay/number_bomb/{created.game_id}/force-end",
+        headers=headers,
+    )
+
+    assert stale.status_code == 409
+    assert ended.json() == {"accepted": True}
+    assert repeated.status_code == 409
+    assert repository.number_bomb_game_summary().state is None
+    with app_context.session_factory() as session:
+        game = session.get(NumberBombGameRecord, created.game_id)
+        outbounds = list(session.scalars(select(OutboundRecord.text)))
+        activity_events = list(session.scalars(select(AIActivityEventRecord)))
+    assert game.finish_reason == "admin_forced"
+    assert outbounds == ["【蹦蹦数字炸弹】管理员已强制结束当前游戏。"]
+    assert activity_events == []
 
 
 def test_internal_inbound_executes_enabled_group_commands(app_context, headers, payload):
@@ -686,7 +769,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-            "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
+        "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
             }
     assert disabled.json()["enabled"] is False
     assert employees.json() == {

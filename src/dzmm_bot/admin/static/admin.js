@@ -504,7 +504,7 @@ function renderAiKnowledgeCards() {
   const topicLabels = {
     economy: "金币与余额", departments: "部门", ranks: "职位与晋升", shop: "商店与物品",
     checkin_activity: "打卡与活跃度", random_events: "随机事件", hide_and_seek: "摸鱼躲猫猫",
-    memory_assessment: "记忆考核", undercover: "谁是卧底", blame_bomb: "甩锅游戏",
+    memory_assessment: "记忆考核", undercover: "谁是卧底", blame_bomb: "甩锅游戏", number_bomb: "蹦蹦数字炸弹",
     commands_help: "指令帮助", player_activity: "个人游戏经历",
   };
   document.querySelector("#ai-knowledge-card-list").innerHTML = aiKnowledgeCards.length
@@ -581,11 +581,12 @@ function activityTypeLabel(value) {
     memory_assessment: "记忆考核",
     undercover: "谁是卧底",
     blame_bomb: "甩锅游戏",
+    number_bomb: "蹦蹦数字炸弹",
   })[value] || value;
 }
 
 function activityResultLabel(value) {
-  return ({win: "胜利", loss: "失败", draw: "平局", participated: "已参与"})[value] || value;
+  return ({win: "胜利", loss: "失败", draw: "平局", participated: "已参与", ended: "已参与"})[value] || value;
 }
 
 function renderEmployeeMemory(memory) {

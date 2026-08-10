@@ -128,6 +128,28 @@ def test_authoritative_context_covers_live_game_topics_without_hidden_deadlines(
     assert "具体引爆" not in blame_context.live_facts_text
 
 
+def test_number_bomb_authoritative_context_has_public_rules_without_private_values(
+    repository, now
+):
+    repository.create_user("number-guide", "引导玩家", now, 0)
+    repository.ensure_command_definitions()
+
+    context = repository.build_ai_authoritative_context(
+        "number-guide", "蹦蹦数字炸弹怎么报数", now
+    )
+
+    assert context.topics == ("number_bomb",)
+    assert "3–10 人" in context.live_facts_text
+    assert "1–100" in context.live_facts_text
+    assert "10 分钟" in context.live_facts_text
+    assert "真心话、真心话、大冒险" in context.live_facts_text
+    assert "当前状态：无对局" in context.live_facts_text
+    assert "/蹦蹦数字炸弹 人数" in context.commands_text
+    assert "/报数 1-100（仅私聊）" in context.commands_text
+    assert "私聊" in context.live_facts_text
+    assert "chatroom" not in context.live_facts_text
+
+
 @pytest.fixture
 def session_factory():
     from dzmm_bot.core.schema import Base

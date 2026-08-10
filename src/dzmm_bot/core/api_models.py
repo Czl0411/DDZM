@@ -371,7 +371,7 @@ AIImpressionCategory = Literal[
 AIKnowledgeTopic = Literal[
     "economy", "departments", "ranks", "shop", "checkin_activity",
     "random_events", "hide_and_seek", "memory_assessment", "undercover",
-    "blame_bomb", "commands_help", "player_activity",
+    "blame_bomb", "number_bomb", "commands_help", "player_activity",
 ]
 
 

@@ -1674,6 +1674,15 @@ class CoreRepository:
                 f"{rule.player_count}人 {rule.minimum_seconds}-{rule.maximum_seconds}秒"
                 for rule in settings.durations
             ))
+        if "number_bomb" in topic_set:
+            settings = self.get_number_bomb_settings()
+            summary = self.number_bomb_game_summary()
+            lines.append(
+                "蹦蹦数字炸弹：3–10 人；每轮每人私聊发送 /报数 1–100；"
+                f"无有效操作 {settings.inactivity_timeout_minutes} 分钟后释放；"
+                "惩罚循环为真心话、真心话、大冒险；"
+                f"当前状态：{summary.state or '无对局'}"
+            )
         if "player_activity" in topic_set:
             facts = self.list_ai_activity_facts(platform_id)
             lines.extend(

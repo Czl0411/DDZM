@@ -756,6 +756,19 @@ def test_admin_proxies_categorized_ai_impression_crud(client, headers):
     ).json()["impressions"] == []
 
 
+def test_admin_renders_structured_ai_memory_controls(client, headers):
+    page = client.get("/", headers=headers).text
+    script = client.get("/static/admin.js", headers=headers).text
+
+    assert 'id="ai-memory-batch-threshold"' in page
+    assert 'id="ai-memory-max-entries"' in page
+    assert 'id="ai-memory-candidate-expiry-days"' in page
+    assert 'id="employee-memory-impressions"' in page
+    assert 'id="employee-memory-activity-facts"' in page
+    assert "data-impression-category" in script
+    assert "memory_text:" not in script
+
+
 def test_regular_admin_authenticates_but_cannot_manage_administrators(
     client, admin_repository
 ):

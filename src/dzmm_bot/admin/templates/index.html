@@ -430,18 +430,21 @@
         <hr>
         <label><input id="ai-memory-enabled" type="checkbox"> 自动更新玩家记忆</label>
         <label>核心玩法指引<textarea id="ai-memory-gameplay-guide" rows="3" maxlength="99999"></textarea></label>
-        <label>记忆提炼提示词<textarea id="ai-memory-extraction-prompt" rows="4" maxlength="99999"></textarea></label>
-        <div class="event-input-grid"><label>首次读取有效历史消息数<input id="ai-memory-history-limit" type="number" min="1" max="500" required></label><label>单个玩家记忆上限（字符）<input id="ai-memory-max-chars" type="number" min="1" max="8000" required></label></div>
+        <div class="event-input-grid"><label>有效普通消息批量阈值<input id="ai-memory-batch-threshold" type="number" min="5" max="200" required></label><label>每类稳定印象上限<input id="ai-memory-max-entries" type="number" min="1" max="10" required></label><label>候选有效期（天）<input id="ai-memory-candidate-expiry-days" type="number" min="1" max="365" required></label></div>
+        <details><summary>高级：记忆提炼提示词</summary><label>记忆提炼提示词<textarea id="ai-memory-extraction-prompt" rows="4" maxlength="99999"></textarea></label></details>
         <div><label>每日调用上限</label><div class="ai-quota-scroll"><table class="data-table"><thead><tr><th>职位</th><th>等级</th><th>每日次数</th></tr></thead><tbody id="ai-assistant-quotas"></tbody></table></div></div>
         <div class="template-modal-actions"><button class="secondary" data-close-ai-assistant-settings-modal type="button">取消</button><button id="save-ai-assistant-settings" class="primary" type="button">保存配置</button></div>
       </section>
     </div>
     <div id="employee-memory-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="employee-memory-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-employee-memory-modal></div>
-      <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">AI 玩家记忆</p><h2 id="employee-memory-modal-title">编辑玩家记忆</h2><p class="muted">仅保存稳定偏好与互动习惯；清空后该玩家下次艾特会重新从近期有效消息提炼。</p></div><button class="text-button" data-close-employee-memory-modal type="button">关闭</button></div>
-        <label>记忆内容<textarea id="employee-memory-text" rows="10" maxlength="8000"></textarea></label>
+      <section class="template-modal-card employee-memory-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">AI 玩家印象</p><h2 id="employee-memory-modal-title">管理稳定印象</h2><p class="muted">自动候选需跨两批证据才会稳定；管理员固定的印象不会被自动修改。</p></div><button class="text-button" data-close-employee-memory-modal type="button">关闭</button></div>
+        <div class="impression-add-row"><select id="employee-memory-new-category"><option value="expression_style">表达方式</option><option value="group_interaction">群聊互动</option><option value="humor_style">幽默风格</option><option value="interests">长期兴趣</option><option value="supervisor_interaction">与总监事互动</option><option value="boundaries">互动边界</option></select><input id="employee-memory-new-content" maxlength="240" placeholder="新增一条稳定、可观察的印象"><button id="add-employee-impression" class="primary" type="button">新增印象</button></div>
+        <div id="employee-memory-impressions" class="impression-sections"></div>
+        <div><h3>活动事实</h3><div id="employee-memory-activity-facts" class="data-list compact-list"></div></div>
+        <details><summary>旧版自由文本备份（只读）</summary><pre id="employee-memory-legacy-text" class="legacy-memory-text"></pre></details>
         <p id="employee-memory-updated-at" class="muted"></p>
-        <div class="template-modal-actions"><button id="clear-employee-memory" class="danger-button" type="button">清空记忆</button><button class="secondary" data-close-employee-memory-modal type="button">取消</button><button id="save-employee-memory" class="primary" type="button">保存记忆</button></div>
+        <div class="template-modal-actions"><button id="clear-employee-memory" class="danger-button" type="button">清空印象</button><button class="secondary" data-close-employee-memory-modal type="button">关闭</button></div>
       </section>
     </div>
     <div id="rank-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="rank-modal-title" hidden>

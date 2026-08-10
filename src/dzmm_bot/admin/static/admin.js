@@ -26,6 +26,7 @@ let undercoverSettings = null;
 let blameBombSettings = null;
 let blameIncidentPage = 1;
 let aiAssistantSettings = null;
+let currentEmployeeMemory = null;
 let commandDefinitions = [];
 let commandPage = 1;
 let administratorAccounts = [];
@@ -482,7 +483,7 @@ function renderAiAssistantSettings(settings) {
     <article><span>调用状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>仅响应 @总监事 内容</small></article>
     <article><span>每日调用上限</span><strong>${settings.quotas.length} 个职位</strong><small>北京时间 00:00 自动重置</small></article>
     <article><span>回复限制</span><strong>${settings.max_response_chars} 字 / ${settings.timeout_seconds} 秒</strong><small>失败与超限回复均可配置</small></article>
-    <article><span>玩家记忆</span><strong>${settings.memory_enabled ? "自动提炼" : "已停用"}</strong><small>首轮读取近 ${settings.history_limit} 条有效消息，单人最多 ${settings.max_memory_chars} 字</small></article>`;
+    <article><span>玩家印象</span><strong>${settings.memory_enabled ? "自动提炼" : "已停用"}</strong><small>每 ${settings.batch_message_threshold} 条有效普通消息更新；每类最多 ${settings.max_entries_per_category} 条</small></article>`;
 }
 
 async function loadAiAssistant() {
@@ -504,21 +505,68 @@ async function openAiAssistantSettingsModal() {
   document.querySelector("#ai-memory-enabled").checked = settings.memory_enabled;
   document.querySelector("#ai-memory-gameplay-guide").value = settings.gameplay_guide;
   document.querySelector("#ai-memory-extraction-prompt").value = settings.extraction_prompt;
-  document.querySelector("#ai-memory-history-limit").value = settings.history_limit;
-  document.querySelector("#ai-memory-max-chars").value = settings.max_memory_chars;
+  document.querySelector("#ai-memory-batch-threshold").value = settings.batch_message_threshold;
+  document.querySelector("#ai-memory-max-entries").value = settings.max_entries_per_category;
+  document.querySelector("#ai-memory-candidate-expiry-days").value = settings.candidate_expiry_days;
   document.querySelector("#ai-assistant-quotas").innerHTML = settings.quotas.map((quota) => `
     <tr><td><b>${escapeHtml(quota.rank_name)}</b></td><td>${escapeHtml(quota.rank_level_label)}</td><td><input data-ai-quota="${escapeHtml(quota.rank_id)}" type="number" min="0" max="100" value="${quota.daily_limit}"></td></tr>`).join("");
   aiAssistantSettingsModal.hidden = false;
 }
 
+const impressionCategories = [
+  ["expression_style", "表达方式"],
+  ["group_interaction", "群聊互动"],
+  ["humor_style", "幽默风格"],
+  ["interests", "长期兴趣"],
+  ["supervisor_interaction", "与总监事互动"],
+  ["boundaries", "互动边界"],
+];
+
+function activityTypeLabel(value) {
+  return ({
+    random_event: "随机事件",
+    hide_and_seek: "摸鱼躲猫猫",
+    memory_assessment: "记忆考核",
+    undercover: "谁是卧底",
+    blame_bomb: "甩锅游戏",
+  })[value] || value;
+}
+
+function activityResultLabel(value) {
+  return ({win: "胜利", loss: "失败", draw: "平局", participated: "已参与"})[value] || value;
+}
+
+function renderEmployeeMemory(memory) {
+  currentEmployeeMemory = memory;
+  document.querySelector("#employee-memory-impressions").innerHTML = impressionCategories.map(([category, label]) => {
+    const entries = memory.impressions.filter((entry) => entry.category === category);
+    return `<section class="impression-section" data-impression-category="${category}">
+      <h3>${label}</h3>
+      ${entries.length ? entries.map((entry) => `<article class="impression-entry" data-impression-id="${escapeHtml(entry.id)}">
+        <p>${escapeHtml(entry.content)} <small>${entry.pinned ? "管理员固定" : "自动维护"}</small></p>
+        <div class="impression-entry-actions"><button class="secondary" data-impression-edit="${escapeHtml(entry.id)}" type="button">编辑</button><button class="secondary" data-impression-pin="${escapeHtml(entry.id)}" type="button">${entry.pinned ? "解除固定" : "固定"}</button><button class="danger-button" data-impression-delete="${escapeHtml(entry.id)}" type="button">删除</button></div>
+      </article>`).join("") : '<p class="muted">暂无</p>'}
+    </section>`;
+  }).join("");
+  document.querySelector("#employee-memory-activity-facts").innerHTML = memory.activity_facts.length
+    ? memory.activity_facts.map((fact) => `<article class="data-row"><div><b>${escapeHtml(activityTypeLabel(fact.activity_type))}</b><small>参与 ${fact.participation_count} 次 · 胜 ${fact.win_count} · 负 ${fact.loss_count}</small></div><div><span>${escapeHtml(activityResultLabel(fact.last_result))}</span><small>${formatHeartbeat(fact.last_result_at)}</small></div></article>`).join("")
+    : '<p class="muted">暂无已结算的活动事实。</p>';
+  document.querySelector("#employee-memory-legacy-text").textContent = memory.legacy_memory_text || "无";
+  document.querySelector("#employee-memory-updated-at").textContent = memory.updated_at
+    ? `最近更新：${formatHeartbeat(memory.updated_at)}`
+    : "尚未形成稳定印象。";
+}
+
+async function refreshEmployeeMemory() {
+  const platformId = employeeMemoryModal.dataset.platformId;
+  renderEmployeeMemory(await requestGame(`/api/game/users/${platformId}/ai-memory`));
+}
+
 async function openEmployeeMemoryModal(platformId, displayName) {
   const memory = await requestGame(`/api/game/users/${platformId}/ai-memory`);
   employeeMemoryModal.dataset.platformId = platformId;
-  document.querySelector("#employee-memory-modal-title").textContent = `编辑 ${displayName} 的 AI 记忆`;
-  document.querySelector("#employee-memory-text").value = memory.memory_text;
-  document.querySelector("#employee-memory-updated-at").textContent = memory.updated_at
-    ? `最近更新：${formatHeartbeat(memory.updated_at)}`
-    : "尚未生成记忆。";
+  document.querySelector("#employee-memory-modal-title").textContent = `管理 ${displayName} 的稳定印象`;
+  renderEmployeeMemory(memory);
   employeeMemoryModal.hidden = false;
 }
 
@@ -2111,8 +2159,11 @@ aiAssistantSettingsModal.addEventListener("click", async (event) => {
     memory_enabled: document.querySelector("#ai-memory-enabled").checked,
     gameplay_guide: document.querySelector("#ai-memory-gameplay-guide").value,
     extraction_prompt: document.querySelector("#ai-memory-extraction-prompt").value,
-    history_limit: Number(document.querySelector("#ai-memory-history-limit").value),
-    max_memory_chars: Number(document.querySelector("#ai-memory-max-chars").value),
+    history_limit: aiAssistantSettings.history_limit,
+    max_memory_chars: aiAssistantSettings.max_memory_chars,
+    batch_message_threshold: Number(document.querySelector("#ai-memory-batch-threshold").value),
+    max_entries_per_category: Number(document.querySelector("#ai-memory-max-entries").value),
+    candidate_expiry_days: Number(document.querySelector("#ai-memory-candidate-expiry-days").value),
     quotas: aiAssistantSettings.quotas.map((quota) => ({
       rank_id: quota.rank_id,
       daily_limit: Number(document.querySelector(`[data-ai-quota="${quota.rank_id}"]`).value),
@@ -2138,36 +2189,81 @@ employeeMemoryModal.addEventListener("click", async (event) => {
     return;
   }
   const platformId = employeeMemoryModal.dataset.platformId;
+  if (event.target.id === "add-employee-impression") {
+    const category = document.querySelector("#employee-memory-new-category").value;
+    const content = document.querySelector("#employee-memory-new-content").value.trim();
+    if (!content) {
+      setResult("请填写稳定印象内容", "error");
+      return;
+    }
+    try {
+      await runMutation(event.target, "新增中…", async () => {
+        const created = await requestGame(`/api/game/users/${platformId}/ai-impressions`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json", ...configurationHeaders()},
+          body: JSON.stringify({category, content}),
+        });
+        configurationVersion = created.version;
+        document.querySelector("#employee-memory-new-content").value = "";
+        await refreshEmployeeMemory();
+      });
+      setResult("稳定印象已新增并固定", "success");
+    } catch (error) {
+      setResult(`新增失败（${error.message}）`, "error");
+    }
+    return;
+  }
   if (event.target.id === "clear-employee-memory") {
-    if (!window.confirm("确认清空该玩家的 AI 记忆？下次艾特会重新提炼。")) return;
+    if (!window.confirm("确认清空该玩家的稳定印象和候选？旧版备份会保留。")) return;
     try {
       await runMutation(event.target, "清空中…", async () => {
         const updated = await requestGame(`/api/game/users/${platformId}/ai-memory`, {
           method: "DELETE", headers: configurationHeaders(),
         });
         configurationVersion = updated.version;
-        document.querySelector("#employee-memory-text").value = "";
-        document.querySelector("#employee-memory-updated-at").textContent = "已清空；下次艾特会重新提炼。";
+        await refreshEmployeeMemory();
       });
-      setResult("玩家 AI 记忆已清空", "success");
+      setResult("玩家稳定印象和候选已清空", "success");
     } catch (error) {
       setResult(`清空失败（${error.message}）`, "error");
     }
     return;
   }
-  if (event.target.id !== "save-employee-memory") return;
+  const actionButton = event.target.closest("[data-impression-edit], [data-impression-pin], [data-impression-delete]");
+  if (!actionButton) return;
+  const entryId = actionButton.dataset.impressionEdit || actionButton.dataset.impressionPin || actionButton.dataset.impressionDelete;
+  const entry = currentEmployeeMemory?.impressions.find((item) => String(item.id) === entryId);
+  if (!entry) return;
+  if (actionButton.dataset.impressionDelete && !window.confirm(`确认删除“${entry.content}”？`)) return;
+  let content = entry.content;
+  if (actionButton.dataset.impressionEdit) {
+    const edited = window.prompt("编辑稳定印象", entry.content);
+    if (edited === null) return;
+    content = edited.trim();
+    if (!content) {
+      setResult("稳定印象内容不能为空", "error");
+      return;
+    }
+  }
   try {
-    await runMutation(event.target, "保存中…", async () => {
-      const updated = await requestGame(`/api/game/users/${platformId}/ai-memory`, {
+    await runMutation(actionButton, "处理中…", async () => {
+      const deleting = Boolean(actionButton.dataset.impressionDelete);
+      const updated = await requestGame(`/api/game/users/${platformId}/ai-impressions/${entryId}`, deleting ? {
+        method: "DELETE", headers: configurationHeaders(),
+      } : {
         method: "PUT", headers: {"Content-Type": "application/json", ...configurationHeaders()},
-        body: JSON.stringify({memory_text: document.querySelector("#employee-memory-text").value}),
+        body: JSON.stringify({
+          category: entry.category,
+          content,
+          pinned: actionButton.dataset.impressionPin ? !entry.pinned : entry.pinned,
+        }),
       });
       configurationVersion = updated.version;
-      closeEmployeeMemoryModal();
+      await refreshEmployeeMemory();
     });
-    setResult("玩家 AI 记忆已保存", "success");
+    setResult(actionButton.dataset.impressionDelete ? "稳定印象已删除" : "稳定印象已更新", "success");
   } catch (error) {
-    setResult(`保存失败（${error.message}）`, "error");
+    setResult(`操作失败（${error.message}）`, "error");
   }
 });
 hideAndSeekSceneModal.addEventListener("click", async (event) => {

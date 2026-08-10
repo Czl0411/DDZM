@@ -136,6 +136,17 @@ select:hover { border-color: #bdb5ff; }
 .undercover-role-row { display: grid; grid-template-columns: minmax(68px, .7fr) repeat(3, 1fr); gap: 10px; align-items: end; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #f8f9fd; }
 .undercover-role-row label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
 .event-input-grid label { display: grid; gap: 6px; color: var(--muted); }
+.employee-memory-modal-card { width: min(100%, 820px); max-height: min(88vh, 900px); overflow: auto; }
+.impression-add-row { display: grid; grid-template-columns: 160px 1fr auto; gap: 10px; align-items: end; }
+.impression-add-row select { min-height: 42px; padding: 8px 10px; border: 1px solid #cfd6e4; border-radius: 8px; background: var(--surface); }
+.impression-sections { display: grid; gap: 12px; }
+.impression-section { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #fafbff; }
+.impression-section h3 { margin: 0; font-size: 14px; }
+.impression-entry { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 9px 10px; border-radius: 9px; background: var(--surface); }
+.impression-entry p { margin: 0; line-height: 1.55; }
+.impression-entry-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.legacy-memory-text { white-space: pre-wrap; color: var(--muted); padding: 12px; border-radius: 9px; background: #f6f7fb; }
+.compact-list { margin-top: 8px; }
 .command-permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
 .command-permission-grid label { display: flex; gap: 7px; align-items: center; color: var(--ink); font-weight: 600; }
 .command-permission-grid input { width: auto; min-height: auto; }
@@ -195,4 +206,4 @@ select:hover { border-color: #bdb5ff; }
 .notification-close:hover { background: #f0f2f7; }
 @keyframes notification-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 [hidden] { display: none !important; }
-@media (max-width: 760px) { .topbar { padding: 0 20px; } .connection { display: none; } main { width: min(100% - 32px, 1180px); padding: 32px 0; } .login-card { padding: 28px; } .page-heading, .workspace, .dashboard-layout { display: grid; } .dashboard-layout { grid-template-columns: 1fr; } .side-nav-shell { position: static; } .side-nav { grid-template-columns: repeat(2, 1fr); gap: 10px; } .nav-group { gap: 2px; } .nav-group-label, .sidebar-footer { display: none; } .status-grid, .settings-card, .event-input-grid, .undercover-role-row { grid-template-columns: 1fr; } .item-form { grid-template-columns: 1fr; } .data-row, .command-heading, .command-actions, .template-modal-heading, .template-modal-actions { align-items: start; flex-direction: column; } .scene-seat-row, .scene-opening-row { grid-template-columns: 1fr; } .pagination { align-items: stretch; flex-wrap: wrap; } .pagination small { width: 100%; margin-right: 0; } .page-heading .secondary { justify-self: start; } .topbar-meta { gap: 4px; } #login-console-frame { min-height: 480px; } }
+@media (max-width: 760px) { .topbar { padding: 0 20px; } .connection { display: none; } main { width: min(100% - 32px, 1180px); padding: 32px 0; } .login-card { padding: 28px; } .page-heading, .workspace, .dashboard-layout { display: grid; } .dashboard-layout { grid-template-columns: 1fr; } .side-nav-shell { position: static; } .side-nav { grid-template-columns: repeat(2, 1fr); gap: 10px; } .nav-group { gap: 2px; } .nav-group-label, .sidebar-footer { display: none; } .status-grid, .settings-card, .event-input-grid, .undercover-role-row, .impression-add-row { grid-template-columns: 1fr; } .item-form { grid-template-columns: 1fr; } .data-row, .command-heading, .command-actions, .template-modal-heading, .template-modal-actions, .impression-entry { align-items: start; flex-direction: column; } .scene-seat-row, .scene-opening-row { grid-template-columns: 1fr; } .pagination { align-items: stretch; flex-wrap: wrap; } .pagination small { width: 100%; margin-right: 0; } .page-heading .secondary { justify-self: start; } .topbar-meta { gap: 4px; } #login-console-frame { min-height: 480px; } }

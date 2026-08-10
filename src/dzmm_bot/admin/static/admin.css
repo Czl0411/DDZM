@@ -137,6 +137,8 @@ select:hover { border-color: #bdb5ff; }
 .undercover-role-row label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
 .event-input-grid label { display: grid; gap: 6px; color: var(--muted); }
 .employee-memory-modal-card { width: min(100%, 820px); max-height: min(88vh, 900px); overflow: auto; }
+.ai-knowledge-card-modal-card { width: min(100%, 760px); max-height: min(88vh, 900px); overflow: auto; }
+.ai-knowledge-card-modal-card select { min-height: 42px; padding: 8px 10px; border: 1px solid #cfd6e4; border-radius: 8px; background: var(--surface); }
 .impression-add-row { display: grid; grid-template-columns: 160px 1fr auto; gap: 10px; align-items: end; }
 .impression-add-row select { min-height: 42px; padding: 8px 10px; border: 1px solid #cfd6e4; border-radius: 8px; background: var(--surface); }
 .impression-sections { display: grid; gap: 12px; }

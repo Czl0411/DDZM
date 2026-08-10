@@ -26,6 +26,7 @@ let undercoverSettings = null;
 let blameBombSettings = null;
 let blameIncidentPage = 1;
 let aiAssistantSettings = null;
+let aiKnowledgeCards = [];
 let currentEmployeeMemory = null;
 let commandDefinitions = [];
 let commandPage = 1;
@@ -259,6 +260,7 @@ const blameBombSettingsModal = document.querySelector("#blame-bomb-settings-moda
 const blameIncidentModal = document.querySelector("#blame-incident-modal");
 const aiAssistantSettingsModal = document.querySelector("#ai-assistant-settings-modal");
 const employeeMemoryModal = document.querySelector("#employee-memory-modal");
+const aiKnowledgeCardModal = document.querySelector("#ai-knowledge-card-modal");
 const rankModal = document.querySelector("#rank-modal");
 const departmentModal = document.querySelector("#department-modal");
 
@@ -486,10 +488,49 @@ function renderAiAssistantSettings(settings) {
     <article><span>玩家印象</span><strong>${settings.memory_enabled ? "自动提炼" : "已停用"}</strong><small>每 ${settings.batch_message_threshold} 条有效普通消息更新；每类最多 ${settings.max_entries_per_category} 条</small></article>`;
 }
 
+function renderAiKnowledgeCards() {
+  const topicLabels = {
+    economy: "金币与余额", departments: "部门", ranks: "职位与晋升", shop: "商店与物品",
+    checkin_activity: "打卡与活跃度", random_events: "随机事件", hide_and_seek: "摸鱼躲猫猫",
+    memory_assessment: "记忆考核", undercover: "谁是卧底", blame_bomb: "甩锅游戏",
+    commands_help: "指令帮助", player_activity: "个人游戏经历",
+  };
+  document.querySelector("#ai-knowledge-card-list").innerHTML = aiKnowledgeCards.length
+    ? aiKnowledgeCards.map((card) => `<article class="data-row" data-ai-knowledge-card-id="${escapeHtml(card.id)}"><div><b>${escapeHtml(card.title)}</b><small>${escapeHtml(topicLabels[card.topic] || card.topic)} · 优先级 ${card.priority} · ${card.enabled ? "已启用" : "已停用"}</small><small>${card.keywords.map(escapeHtml).join("、")}</small></div><div class="command-actions"><button class="secondary" data-edit-ai-knowledge-card type="button">编辑</button><button class="secondary" data-toggle-ai-knowledge-card type="button">${card.enabled ? "停用" : "启用"}</button><button class="danger-button" data-delete-ai-knowledge-card type="button">删除</button></div></article>`).join("")
+    : '<p class="muted">暂无玩法知识卡。</p>';
+}
+
 async function loadAiAssistant() {
-  aiAssistantSettings = await requestGame("/api/ai-assistant/settings");
-  configurationVersion = aiAssistantSettings.version;
+  const [settings, knowledge] = await Promise.all([
+    requestGame("/api/ai-assistant/settings"),
+    requestGame("/api/ai-knowledge-cards"),
+  ]);
+  aiAssistantSettings = settings;
+  aiKnowledgeCards = knowledge.items;
+  configurationVersion = Math.max(settings.version, knowledge.version);
   renderAiAssistantSettings(aiAssistantSettings);
+  renderAiKnowledgeCards();
+}
+
+function openAiKnowledgeCardModal(card = null) {
+  aiKnowledgeCardModal.dataset.cardId = card?.id || "";
+  document.querySelector("#ai-knowledge-card-modal-title").textContent = card ? "编辑知识卡" : "新增知识卡";
+  document.querySelector("#ai-knowledge-card-topic").value = card?.topic || "economy";
+  document.querySelector("#ai-knowledge-card-title").value = card?.title || "";
+  document.querySelector("#ai-knowledge-card-keywords").value = card?.keywords.join("\n") || "";
+  document.querySelector("#ai-knowledge-card-content").value = card?.content || "";
+  document.querySelector("#ai-knowledge-card-priority").value = card?.priority ?? 100;
+  document.querySelector("#ai-knowledge-card-enabled").checked = card?.enabled ?? true;
+  aiKnowledgeCardModal.hidden = false;
+}
+
+function closeAiKnowledgeCardModal() { aiKnowledgeCardModal.hidden = true; }
+
+async function reloadAiKnowledgeCards() {
+  const result = await requestGame("/api/ai-knowledge-cards");
+  aiKnowledgeCards = result.items;
+  configurationVersion = result.version;
+  renderAiKnowledgeCards();
 }
 
 async function openAiAssistantSettingsModal() {
@@ -1408,6 +1449,7 @@ document.querySelector("#edit-undercover-settings").addEventListener("click", ()
 document.querySelector("#edit-blame-bomb-settings").addEventListener("click", () => void openBlameBombSettingsModal());
 document.querySelector("#create-blame-incident").addEventListener("click", () => openBlameIncidentModal());
 document.querySelector("#edit-ai-assistant-settings").addEventListener("click", () => void openAiAssistantSettingsModal());
+document.querySelector("#add-ai-knowledge-card").addEventListener("click", () => openAiKnowledgeCardModal());
 document.querySelector("#create-department").addEventListener("click", () => openDepartmentModal());
 document.querySelector("#add-today-random-event").addEventListener("click", async (event) => {
   try {
@@ -2181,6 +2223,69 @@ aiAssistantSettingsModal.addEventListener("click", async (event) => {
     setResult(`保存失败（${error.message}）`, "error");
   }
 });
+document.querySelector("#ai-knowledge-card-list").addEventListener("click", async (event) => {
+  const row = event.target.closest("[data-ai-knowledge-card-id]");
+  if (!row) return;
+  const card = aiKnowledgeCards.find((item) => String(item.id) === row.dataset.aiKnowledgeCardId);
+  if (!card) return;
+  if (event.target.closest("[data-edit-ai-knowledge-card]")) {
+    openAiKnowledgeCardModal(card);
+    return;
+  }
+  const deleting = Boolean(event.target.closest("[data-delete-ai-knowledge-card]"));
+  const toggling = Boolean(event.target.closest("[data-toggle-ai-knowledge-card]"));
+  if (!deleting && !toggling) return;
+  if (deleting && !window.confirm(`确认删除知识卡“${card.title}”？`)) return;
+  try {
+    await runMutation(event.target.closest("button"), "处理中…", async () => {
+      const result = await requestGame(`/api/ai-knowledge-cards/${card.id}`, deleting ? {
+        method: "DELETE", headers: configurationHeaders(),
+      } : {
+        method: "PUT", headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify({
+          topic: card.topic, title: card.title, keywords: card.keywords,
+          content: card.content, enabled: !card.enabled, priority: card.priority,
+        }),
+      });
+      configurationVersion = result.version;
+      await reloadAiKnowledgeCards();
+    });
+    setResult(deleting ? "知识卡已删除" : `知识卡已${card.enabled ? "停用" : "启用"}`, "success");
+  } catch (error) {
+    setResult(`知识卡操作失败（${error.message}）`, "error");
+  }
+});
+aiKnowledgeCardModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-ai-knowledge-card-modal]")) {
+    closeAiKnowledgeCardModal();
+    return;
+  }
+  if (event.target.id !== "save-ai-knowledge-card") return;
+  const cardId = aiKnowledgeCardModal.dataset.cardId;
+  const payload = {
+    topic: document.querySelector("#ai-knowledge-card-topic").value,
+    title: document.querySelector("#ai-knowledge-card-title").value.trim(),
+    keywords: document.querySelector("#ai-knowledge-card-keywords").value.split("\n").map((value) => value.trim()).filter(Boolean),
+    content: document.querySelector("#ai-knowledge-card-content").value.trim(),
+    enabled: document.querySelector("#ai-knowledge-card-enabled").checked,
+    priority: Number(document.querySelector("#ai-knowledge-card-priority").value),
+  };
+  try {
+    await runMutation(event.target, "保存中…", async () => {
+      const result = await requestGame(cardId ? `/api/ai-knowledge-cards/${cardId}` : "/api/ai-knowledge-cards", {
+        method: cardId ? "PUT" : "POST",
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify(payload),
+      });
+      configurationVersion = result.version;
+      closeAiKnowledgeCardModal();
+      await reloadAiKnowledgeCards();
+    });
+    setResult("知识卡已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
 employeeMemoryModal.addEventListener("click", async (event) => {
   if (event.target.closest("[data-close-employee-memory-modal]")) {
     closeEmployeeMemoryModal();
@@ -2336,6 +2441,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !blameBombSettingsModal.hidden) closeBlameBombSettingsModal();
   if (event.key === "Escape" && !blameIncidentModal.hidden) closeBlameIncidentModal();
   if (event.key === "Escape" && !aiAssistantSettingsModal.hidden) closeAiAssistantSettingsModal();
+  if (event.key === "Escape" && !aiKnowledgeCardModal.hidden) closeAiKnowledgeCardModal();
   if (event.key === "Escape" && !employeeMemoryModal.hidden) closeEmployeeMemoryModal();
 });
 document.querySelector("#item-form").addEventListener("submit", async (event) => {

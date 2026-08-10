@@ -866,6 +866,125 @@ def create_app(
             "version": repository.config_version(),
         }
 
+    @app.get("/api/game/blame-bomb/settings")
+    def blame_bomb_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_blame_bomb_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/blame-bomb/settings")
+    def set_blame_bomb_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "enabled",
+            "signup_timeout_seconds",
+            "turn_timeout_seconds",
+            "durations",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_blame_bomb_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="blame-bomb-settings",
+        )
+
+    @app.get("/api/game/blame-bomb/incidents")
+    def blame_incidents(
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        return {
+            **_relay_core(lambda: core.list_blame_incidents(page, page_size)),
+            "version": repository.config_version(),
+        }
+
+    @app.post(
+        "/api/game/blame-bomb/incidents",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_blame_incident(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = ("name", "description", "keywords")
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid incident")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.create_blame_incident(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="blame-bomb-incidents",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    @app.put("/api/game/blame-bomb/incidents/{incident_id}")
+    def update_blame_incident(
+        incident_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = ("name", "description", "keywords", "enabled")
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid incident")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.update_blame_incident(
+                    incident_id, {key: request[key] for key in required}
+                )
+            ),
+            scope=f"blame-bomb-incident:{incident_id}",
+        )
+
+    @app.delete("/api/game/blame-bomb/incidents/{incident_id}")
+    def delete_blame_incident(
+        incident_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(lambda: core.delete_blame_incident(incident_id)),
+            scope=f"blame-bomb-incident:{incident_id}",
+        )
+
+    @app.get("/api/game/blame-bomb/session")
+    def blame_bomb_session(_: Annotated[None, Depends(authorize)]) -> dict:
+        return _relay_core(core.get_blame_bomb_session)
+
+    @app.post("/api/game/blame-bomb/end")
+    def end_blame_bomb_session(
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return _relay_core(core.end_blame_bomb_session)
+
     @app.get("/api/game/hide-and-seek/scenes")
     def hide_and_seek_scenes(
         _: Annotated[None, Depends(authorize)],

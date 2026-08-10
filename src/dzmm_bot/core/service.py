@@ -41,6 +41,9 @@ class CoreService:
 
     def receive_inbound(self, message: InboundMessage) -> ReceiveResult:
         with self._repository.transaction():
+            command_parts = message.content.strip().split(maxsplit=1)
+            if command_parts and command_parts[0] == "/甩锅":
+                self._repository.lock_gameplay_order()
             stored, inserted = self._repository.accept_inbound(message)
             if not inserted:
                 return ReceiveResult(stored.id, False)

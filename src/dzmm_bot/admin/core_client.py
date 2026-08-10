@@ -89,6 +89,22 @@ class AdminCorePort(Protocol):
 
     def get_undercover_session(self) -> dict: ...
 
+    def get_blame_bomb_settings(self) -> dict: ...
+
+    def set_blame_bomb_settings(self, settings: dict) -> dict: ...
+
+    def list_blame_incidents(self, page: int, page_size: int) -> dict: ...
+
+    def create_blame_incident(self, incident: dict) -> dict: ...
+
+    def update_blame_incident(self, incident_id: str, incident: dict) -> dict: ...
+
+    def delete_blame_incident(self, incident_id: str) -> dict: ...
+
+    def get_blame_bomb_session(self) -> dict: ...
+
+    def end_blame_bomb_session(self) -> dict: ...
+
     def list_hide_and_seek_scenes(self, page: int, page_size: int) -> dict: ...
 
     def create_hide_and_seek_scene(self, scene: dict) -> dict: ...
@@ -324,6 +340,51 @@ class CoreClient:
 
     def get_undercover_session(self) -> dict:
         return self._get("/internal/game/undercover/session")
+
+    def get_blame_bomb_settings(self) -> dict:
+        return self._get("/internal/game/blame-bomb/settings")
+
+    def set_blame_bomb_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/blame-bomb/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def list_blame_incidents(self, page: int, page_size: int) -> dict:
+        return self._get(
+            "/internal/game/blame-bomb/incidents",
+            params={"page": page, "page_size": page_size},
+        )
+
+    def create_blame_incident(self, incident: dict) -> dict:
+        response = self._client.post(
+            "/internal/game/blame-bomb/incidents", json=incident
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def update_blame_incident(self, incident_id: str, incident: dict) -> dict:
+        response = self._client.put(
+            f"/internal/game/blame-bomb/incidents/{incident_id}", json=incident
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_blame_incident(self, incident_id: str) -> dict:
+        response = self._client.delete(
+            f"/internal/game/blame-bomb/incidents/{incident_id}"
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_blame_bomb_session(self) -> dict:
+        return self._get("/internal/game/blame-bomb/session")
+
+    def end_blame_bomb_session(self) -> dict:
+        response = self._client.post("/internal/game/blame-bomb/end")
+        response.raise_for_status()
+        return response.json()
 
     def list_hide_and_seek_scenes(self, page: int, page_size: int) -> dict:
         return self._get(

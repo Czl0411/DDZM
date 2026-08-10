@@ -3,13 +3,13 @@ import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from uuid import uuid4
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, func, inspect, select, text
+from sqlalchemy import create_engine, exists, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
@@ -106,6 +106,127 @@ def test_memory_assessment_defaults_seed_five_levels(repository):
         (rule.level, rule.answer_length, rule.reward)
         for rule in repository.list_memory_assessment_levels()
     ] == [(1, 5, 1), (2, 7, 2), (3, 9, 3), (4, 11, 4), (5, 13, 5)]
+
+
+def test_blame_game_schema_contains_state_and_idempotency_constraints():
+    from dzmm_bot.core.schema import Base
+
+    expected_tables = {
+        "blame_game_settings",
+        "blame_game_duration_rules",
+        "blame_incident_cards",
+        "blame_games",
+        "blame_game_players",
+        "blame_game_transfers",
+        "blame_game_daily_starts",
+    }
+
+    assert expected_tables <= set(Base.metadata.tables)
+    games = Base.metadata.tables["blame_games"]
+    players = Base.metadata.tables["blame_game_players"]
+    transfers = Base.metadata.tables["blame_game_transfers"]
+    daily_starts = Base.metadata.tables["blame_game_daily_starts"]
+    assert {index.name for index in games.indexes} >= {"ux_blame_game_one_active"}
+    assert {tuple(column.name for column in constraint.columns) for constraint in players.constraints} >= {
+        ("game_id", "user_id"),
+        ("game_id", "seat_number"),
+    }
+    assert {tuple(column.name for column in constraint.columns) for constraint in transfers.constraints} >= {
+        ("game_id", "normalized_reason"),
+    }
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in daily_starts.constraints
+    } >= {("user_id", "play_date")}
+
+
+def test_blame_settings_default_to_approved_duration_ranges(repository):
+    settings = repository.get_blame_game_settings()
+
+    assert (settings.enabled, settings.signup_timeout_seconds, settings.turn_timeout_seconds) == (
+        True,
+        120,
+        30,
+    )
+    assert [
+        (rule.player_count, rule.minimum_seconds, rule.maximum_seconds)
+        for rule in settings.durations
+    ] == [
+        (2, 45, 75),
+        (3, 60, 90),
+        (4, 75, 120),
+        (5, 90, 135),
+        (6, 90, 150),
+        (7, 105, 165),
+        (8, 120, 180),
+        (9, 135, 210),
+        (10, 150, 240),
+    ]
+
+
+def test_blame_settings_update_requires_all_player_counts_and_valid_ranges(repository):
+    durations = [(count, count * 10, count * 10 + 20) for count in range(2, 11)]
+
+    updated = repository.set_blame_game_settings(False, 90, 25, durations)
+
+    assert (updated.enabled, updated.signup_timeout_seconds, updated.turn_timeout_seconds) == (
+        False,
+        90,
+        25,
+    )
+    assert updated.durations[-1].maximum_seconds == 120
+    with pytest.raises(ValueError, match="2 至 10"):
+        repository.set_blame_game_settings(True, 120, 30, durations[:-1])
+    with pytest.raises(ValueError, match="最短时间"):
+        repository.set_blame_game_settings(
+            True,
+            120,
+            30,
+            [(count, 100, 90) if count == 6 else (count, 60, 90) for count in range(2, 11)],
+        )
+
+
+def test_blame_incident_cards_support_trimmed_crud_and_pagination(repository):
+    first = repository.create_blame_incident_card(
+        " 咖啡事故 ", " 咖啡泼到了季度报表 ", [" 咖啡 ", "报表", "deadline"]
+    )
+    repository.create_blame_incident_card("电梯事故", "电梯停运", ["电梯"])
+
+    cards, total = repository.list_blame_incident_cards_page(1, 1)
+    updated = repository.update_blame_incident_card(
+        first.id, "咖啡事故", "描述更新", ["咖啡", "报表"], False
+    )
+
+    assert total == 2
+    assert len(cards) == 1
+    assert (first.name, first.description, first.keywords, first.enabled) == (
+        "咖啡事故",
+        "咖啡泼到了季度报表",
+        ("咖啡", "报表", "deadline"),
+        True,
+    )
+    assert (updated.description, updated.keywords, updated.enabled) == (
+        "描述更新",
+        ("咖啡", "报表"),
+        False,
+    )
+    assert repository.delete_blame_incident_card(first.id) is True
+    assert repository.delete_blame_incident_card(first.id) is False
+
+
+@pytest.mark.parametrize(
+    ("keywords", "message"),
+    [
+        ([], "1 至 4"),
+        (["一", "二", "三", "四", "五"], "1 至 4"),
+        (["deadline", "DeadLine"], "不能重复"),
+        (["咖啡", " 咖啡 "], "不能重复"),
+        ([""], "不能为空"),
+    ],
+)
+def test_blame_incident_rejects_invalid_keywords(repository, keywords, message):
+    with pytest.raises(ValueError, match=message):
+        repository.create_blame_incident_card("咖啡事故", "描述", keywords)
 
 
 def test_ai_memory_schema_keeps_one_snapshot_per_player():
@@ -409,6 +530,32 @@ def _prepare_undercover_players(repository, session_factory, now, count=4):
     return platform_ids
 
 
+def _prepare_blame_players(
+    repository,
+    session_factory,
+    now,
+    count,
+    *,
+    balance=100,
+    daily_limit=99,
+    keywords=("咖啡", "报表"),
+    create_incident=True,
+):
+    from dzmm_bot.core.schema import RankRecord
+
+    if create_incident:
+        repository.create_blame_incident_card(
+            "咖啡事故", "咖啡泼到了季度报表", list(keywords)
+        )
+    platform_ids = [f"blame-{number}" for number in range(1, count + 1)]
+    for platform_id in platform_ids:
+        repository.create_user(platform_id, platform_id, now, balance)
+    with session_factory.begin() as session:
+        rank = session.scalar(select(RankRecord).where(RankRecord.sort_order == 1))
+        rank.multiplayer_game_limit = daily_limit
+    return platform_ids
+
+
 def _start_undercover_game(repository, session_factory, now, count=4):
     platform_ids = _prepare_undercover_players(repository, session_factory, now, count)
     first = repository.start_undercover_signup(platform_ids[0], count, now)
@@ -421,6 +568,543 @@ def _start_undercover_game(repository, session_factory, now, count=4):
         )
     assert result.status == "speaking"
     return result, platform_ids
+
+
+def _prepare_pending_random_event(repository, now):
+    repository.create_random_event_scene(
+        "茶水间",
+        "报名",
+        [{"name": "咖啡事故", "opening_text": "开始。"}],
+        1,
+        1,
+        [("员工", 1)],
+    )
+    repository.set_random_event_settings(
+        [now.astimezone(BEIJING).strftime("%H:%M")], "{可选身份}", 15, 5
+    )
+    return repository.schedule_random_events(now)[0]
+
+
+@pytest.mark.parametrize("player_count", range(2, 11))
+def test_blame_signup_starts_with_frozen_seats_and_guarantees(
+    repository, session_factory, now, player_count
+):
+    platform_ids = _prepare_blame_players(
+        repository, session_factory, now, player_count
+    )
+
+    result = repository.start_blame_game(platform_ids[0], player_count, now)
+    for platform_id in platform_ids[1:]:
+        result = repository.join_blame_game(platform_id, now)
+    summary = repository.blame_game_summary(now)
+
+    assert result.status == "started"
+    assert summary.state == "active"
+    assert [player.seat_number for player in summary.players] == list(
+        range(1, player_count + 1)
+    )
+    assert summary.incident_name == "咖啡事故"
+    assert summary.incident_keywords == ("咖啡", "报表")
+    assert summary.current_holder_number in range(1, player_count + 1)
+    assert all(
+        repository.find_user(platform_id).balance == 100 - (player_count - 1)
+        for platform_id in platform_ids
+    )
+
+
+@pytest.mark.parametrize("player_count", [1, 11])
+def test_blame_start_rejects_invalid_player_count(repository, now, player_count):
+    repository.create_user("blame-creator", "发起者", now, 100)
+
+    assert repository.start_blame_game("blame-creator", player_count, now).status == (
+        "invalid_player_count"
+    )
+
+
+def test_blame_start_checks_incident_balance_and_daily_rank_limit(
+    repository, session_factory, now
+):
+    repository.create_user("blame-creator", "发起者", now, 100)
+    with session_factory.begin() as session:
+        from dzmm_bot.core.schema import RankRecord
+
+        session.scalar(select(RankRecord).where(RankRecord.sort_order == 1)).multiplayer_game_limit = 5
+
+    assert repository.start_blame_game("blame-creator", 3, now).status == "incident_unavailable"
+    repository.create_blame_incident_card("咖啡事故", "描述", ["咖啡"])
+    with session_factory.begin() as session:
+        from dzmm_bot.core.schema import RankRecord, UserRecord
+
+        session.scalar(select(UserRecord).where(UserRecord.platform_id == "blame-creator")).balance = 1
+        session.scalar(select(RankRecord).where(RankRecord.sort_order == 1)).multiplayer_game_limit = 5
+    assert repository.start_blame_game("blame-creator", 3, now).status == "insufficient_balance"
+    with session_factory.begin() as session:
+        from dzmm_bot.core.schema import RankRecord, UserRecord
+
+        session.scalar(select(UserRecord).where(UserRecord.platform_id == "blame-creator")).balance = 100
+        session.scalar(select(RankRecord).where(RankRecord.sort_order == 1)).multiplayer_game_limit = 0
+    assert repository.start_blame_game("blame-creator", 3, now).status == "daily_limit"
+
+
+def test_blame_successful_signup_consumes_one_daily_start(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameDailyStartRecord
+
+    platform_ids = _prepare_blame_players(
+        repository, session_factory, now, 2, daily_limit=1
+    )
+
+    assert repository.start_blame_game(platform_ids[0], 2, now).status == "signup_started"
+    with session_factory() as session:
+        daily = session.scalar(select(BlameGameDailyStartRecord))
+    assert (daily.play_date, daily.count) == (now.astimezone(BEIJING).date(), 1)
+
+
+def test_blame_full_signup_removes_players_whose_balance_became_insufficient(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import UserRecord
+
+    platform_ids = _prepare_blame_players(repository, session_factory, now, 3)
+    repository.start_blame_game(platform_ids[0], 3, now)
+    assert repository.join_blame_game(platform_ids[1], now).status == "joined"
+    with session_factory.begin() as session:
+        session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == platform_ids[1])
+        ).balance = 0
+
+    result = repository.join_blame_game(platform_ids[2], now)
+    summary = repository.blame_game_summary(now)
+
+    assert result.status == "waiting_for_players"
+    assert result.removed_display_names == (platform_ids[1],)
+    assert summary.state == "signup"
+    assert [player.platform_id for player in summary.players] == [
+        platform_ids[0],
+        platform_ids[2],
+    ]
+    assert repository.find_user(platform_ids[0]).balance == 100
+    assert repository.find_user(platform_ids[2]).balance == 100
+
+
+def test_blame_signup_leave_and_active_join_behavior(repository, session_factory, now):
+    platform_ids = _prepare_blame_players(repository, session_factory, now, 3)
+    repository.start_blame_game(platform_ids[0], 3, now)
+    repository.join_blame_game(platform_ids[1], now)
+
+    assert repository.leave_blame_game(platform_ids[1], now).status == "left_signup"
+    assert repository.join_blame_game(platform_ids[1], now).status == "joined"
+    assert repository.join_blame_game(platform_ids[2], now).status == "started"
+    repository.create_user("late-player", "迟到玩家", now, 100)
+    assert repository.join_blame_game("late-player", now).status == "game_started"
+
+
+def _start_blame_round(repository, session_factory, now, count=3):
+    platform_ids = _prepare_blame_players(repository, session_factory, now, count)
+    repository.start_blame_game(platform_ids[0], count, now)
+    for platform_id in platform_ids[1:]:
+        repository.join_blame_game(platform_id, now)
+    summary = repository.blame_game_summary(now)
+    holder = next(
+        player for player in summary.players if player.seat_number == summary.current_holder_number
+    )
+    targets = [player for player in summary.players if player.platform_id != holder.platform_id]
+    return platform_ids, summary, holder, targets
+
+
+def test_blame_transfer_requires_all_keywords_and_preserves_deadlines_on_failure(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    _, summary, holder, targets = _start_blame_round(repository, session_factory, now)
+    with session_factory() as session:
+        game = session.scalar(select(BlameGameRecord))
+        original_deadlines = (game.explosion_deadline, game.turn_deadline)
+
+    missing = repository.transfer_blame(
+        holder.platform_id, targets[0].seat_number, "只有咖啡", now + timedelta(seconds=1)
+    )
+
+    with session_factory() as session:
+        game = session.scalar(select(BlameGameRecord))
+        current_deadlines = (game.explosion_deadline, game.turn_deadline)
+    assert missing.status == "missing_keywords"
+    assert missing.missing_keywords == ("报表",)
+    assert repository.blame_game_summary(now).current_holder_number == summary.current_holder_number
+    assert current_deadlines == original_deadlines
+
+
+def test_blame_transfer_accepts_keywords_and_rejects_normalized_duplicate(
+    repository, session_factory, now
+):
+    _, _, holder, targets = _start_blame_round(repository, session_factory, now)
+    first = repository.transfer_blame(
+        holder.platform_id,
+        targets[0].seat_number,
+        "咖啡，碰到  报表！",
+        now + timedelta(seconds=1),
+    )
+    next_summary = repository.blame_game_summary(now)
+    next_holder = next(
+        player
+        for player in next_summary.players
+        if player.seat_number == next_summary.current_holder_number
+    )
+    next_target = next(
+        player
+        for player in next_summary.players
+        if player.platform_id not in {next_holder.platform_id, holder.platform_id}
+    )
+
+    duplicate = repository.transfer_blame(
+        next_holder.platform_id,
+        next_target.seat_number,
+        "  咖啡碰到 报表  ",
+        now + timedelta(seconds=2),
+    )
+
+    assert first.status == "transferred"
+    assert first.temperature == "温热"
+    assert duplicate.status == "duplicate_reason"
+
+
+def test_blame_transfer_validates_holder_target_and_three_player_return(
+    repository, session_factory, now
+):
+    platform_ids, summary, holder, targets = _start_blame_round(
+        repository, session_factory, now
+    )
+    nonholder = next(platform_id for platform_id in platform_ids if platform_id != holder.platform_id)
+
+    assert repository.transfer_blame(
+        nonholder, targets[0].seat_number, "咖啡报表", now
+    ).status == "not_holder"
+    assert repository.transfer_blame(
+        holder.platform_id, holder.seat_number, "咖啡报表", now
+    ).status == "self_target"
+    assert repository.transfer_blame(
+        holder.platform_id, 99, "咖啡报表", now
+    ).status == "invalid_target"
+
+    assert repository.transfer_blame(
+        holder.platform_id, targets[0].seat_number, "咖啡报表第一次", now
+    ).status == "transferred"
+    assert repository.transfer_blame(
+        targets[0].platform_id, summary.current_holder_number, "咖啡报表第二次", now
+    ).status == "immediate_return_blocked"
+
+
+def test_two_player_blame_game_allows_immediate_return(repository, session_factory, now):
+    _, summary, holder, targets = _start_blame_round(
+        repository, session_factory, now, count=2
+    )
+
+    assert repository.transfer_blame(
+        holder.platform_id, targets[0].seat_number, "咖啡报表第一次", now
+    ).status == "transferred"
+    assert repository.transfer_blame(
+        targets[0].platform_id, summary.current_holder_number, "咖啡报表第二次", now
+    ).status == "transferred"
+
+
+def test_blame_english_keywords_ignore_case(repository, session_factory, now):
+    platform_ids = _prepare_blame_players(
+        repository,
+        session_factory,
+        now,
+        2,
+        keywords=("deadline", "报表"),
+    )
+    repository.start_blame_game(platform_ids[0], 2, now)
+    repository.join_blame_game(platform_ids[1], now)
+    summary = repository.blame_game_summary(now)
+    holder = next(
+        player for player in summary.players if player.seat_number == summary.current_holder_number
+    )
+    target = next(player for player in summary.players if player.platform_id != holder.platform_id)
+
+    assert repository.transfer_blame(
+        holder.platform_id, target.seat_number, "DEADLINE 已写进报表", now
+    ).status == "transferred"
+
+
+@pytest.mark.parametrize("player_count", range(2, 11))
+def test_blame_explosion_settlement_is_conservative_and_idempotent(
+    repository, session_factory, now, player_count
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    platform_ids, summary, _, _ = _start_blame_round(
+        repository, session_factory, now, count=player_count
+    )
+    loser = next(
+        player for player in summary.players if player.seat_number == summary.current_holder_number
+    )
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.explosion_deadline = now.astimezone(BEIJING)
+        game.turn_deadline = now.astimezone(BEIJING)
+
+    assert repository.run_blame_game_jobs(now) == ["settled"]
+    balances = {
+        platform_id: repository.find_user(platform_id).balance for platform_id in platform_ids
+    }
+    assert balances[loser.platform_id] == 100 - (player_count - 1)
+    assert all(
+        balance == 101
+        for platform_id, balance in balances.items()
+        if platform_id != loser.platform_id
+    )
+    assert sum(balances.values()) == 100 * player_count
+
+    repository.run_blame_game_jobs(now + timedelta(seconds=1))
+    assert {
+        platform_id: repository.find_user(platform_id).balance for platform_id in platform_ids
+    } == balances
+
+
+def test_blame_transfer_received_after_deadline_settles_current_holder(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    _, summary, holder, targets = _start_blame_round(repository, session_factory, now)
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.turn_deadline = now.astimezone(BEIJING)
+
+    result = repository.transfer_blame(
+        holder.platform_id,
+        targets[0].seat_number,
+        "咖啡报表来不及了",
+        now + timedelta(seconds=1),
+    )
+
+    assert result.status == "settled"
+    assert result.loser_display_name == holder.display_name
+    assert repository.blame_game_summary(now).state is None
+
+
+def test_blame_active_leave_settles_leaver_as_loser(repository, session_factory, now):
+    platform_ids, _, holder, _ = _start_blame_round(repository, session_factory, now)
+
+    result = repository.leave_blame_game(platform_ids[-1], now)
+
+    assert result.status == "settled"
+    assert result.loser_display_name == platform_ids[-1]
+    assert repository.find_user(platform_ids[-1]).balance == 98
+    assert repository.find_user(holder.platform_id).balance in {98, 101}
+
+
+def test_blame_participant_end_and_admin_end_refund_all_guarantees(
+    repository, session_factory, now
+):
+    platform_ids, _, _, _ = _start_blame_round(repository, session_factory, now)
+    repository.create_user("outsider", "局外人", now, 100)
+
+    assert repository.end_blame_game("outsider", now).status == "not_participant"
+    assert repository.end_blame_game(platform_ids[0], now).status == "cancelled"
+    assert [repository.find_user(pid).balance for pid in platform_ids] == [100, 100, 100]
+
+    second_repository = type(repository)(session_factory)
+    second_ids = _prepare_blame_players(
+        second_repository,
+        session_factory,
+        now + timedelta(days=1),
+        2,
+        create_incident=False,
+    )
+    second_repository.start_blame_game(second_ids[0], 2, now + timedelta(days=1))
+    second_repository.join_blame_game(second_ids[1], now + timedelta(days=1))
+    assert second_repository.admin_end_blame_game(now + timedelta(days=1)).status == "cancelled"
+    assert [second_repository.find_user(pid).balance for pid in second_ids] == [100, 100]
+
+
+def test_blame_signup_timeout_dissolves_and_temperature_notice_is_sent_once(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord, OutboundRecord
+
+    platform_ids = _prepare_blame_players(repository, session_factory, now, 3)
+    repository.start_blame_game(platform_ids[0], 3, now)
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.signup_deadline = now.astimezone(BEIJING)
+    assert repository.run_blame_game_jobs(now) == ["signup_expired"]
+    assert repository.blame_game_summary(now).state is None
+
+    next_now = now + timedelta(days=1)
+    second_ids = _prepare_blame_players(
+        repository, session_factory, next_now, 2, create_incident=False
+    )
+    repository.start_blame_game(second_ids[0], 2, next_now)
+    repository.join_blame_game(second_ids[1], next_now)
+    with session_factory.begin() as session:
+        game = session.scalar(
+            select(BlameGameRecord).where(BlameGameRecord.active_key == "global")
+        )
+        game.total_duration_seconds = 100
+        game.explosion_deadline = next_now.astimezone(BEIJING) + timedelta(seconds=50)
+        game.turn_deadline = next_now.astimezone(BEIJING) + timedelta(seconds=60)
+    assert repository.run_blame_game_jobs(next_now) == ["temperature_changed"]
+    assert repository.run_blame_game_jobs(next_now) == []
+    with session_factory() as session:
+        notices = list(
+            session.scalars(
+                select(OutboundRecord.text).where(OutboundRecord.text.contains("发烫"))
+            )
+        )
+    assert len(notices) == 1
+
+
+def test_blame_player_mutations_resolve_due_game_before_processing(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    players = _prepare_blame_players(repository, session_factory, now, 3)
+    repository.start_blame_game(players[0], 3, now)
+    with session_factory.begin() as session:
+        session.scalar(select(BlameGameRecord)).signup_deadline = now
+    assert repository.join_blame_game(players[1], now).status == "signup_expired"
+    assert repository.blame_game_summary(now).state is None
+
+    later = now + timedelta(days=1)
+    repository.start_blame_game(players[0], 3, later)
+    repository.join_blame_game(players[1], later)
+    repository.join_blame_game(players[2], later)
+    summary = repository.blame_game_summary(later)
+    holder = next(
+        player for player in summary.players
+        if player.seat_number == summary.current_holder_number
+    )
+    nonholder = next(
+        player for player in summary.players
+        if player.platform_id != holder.platform_id
+    )
+    with session_factory.begin() as session:
+        game = session.scalar(
+            select(BlameGameRecord).where(BlameGameRecord.active_key == "global")
+        )
+        game.turn_deadline = later + timedelta(seconds=2)
+    left = repository.leave_blame_game(
+        nonholder.platform_id, later + timedelta(seconds=2)
+    )
+    assert left.status == "settled"
+    assert left.loser_display_name == holder.display_name
+
+
+def test_blame_end_after_deadline_settles_instead_of_refunding(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    _, _, holder, targets = _start_blame_round(repository, session_factory, now)
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.explosion_deadline = now + timedelta(seconds=1)
+        game.turn_deadline = now + timedelta(seconds=1)
+
+    ended = repository.end_blame_game(
+        targets[0].platform_id, now + timedelta(seconds=1)
+    )
+
+    assert ended.status == "settled"
+    assert ended.loser_display_name == holder.display_name
+    assert repository.find_user(holder.platform_id).balance == 98
+
+
+def test_blame_summary_calculates_current_temperature_without_scheduler(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    _start_blame_round(repository, session_factory, now)
+    with session_factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.total_duration_seconds = 100
+        game.explosion_deadline = now + timedelta(seconds=10)
+
+    assert repository.blame_game_summary(now).temperature == "即将爆炸"
+
+
+def test_blame_reason_normalization_preserves_spaces_left_by_punctuation(
+    repository, session_factory, now
+):
+    _, _, holder, targets = _start_blame_round(
+        repository, session_factory, now, count=2
+    )
+    first = repository.transfer_blame(
+        holder.platform_id,
+        targets[0].seat_number,
+        "咖啡 , 报表",
+        now + timedelta(seconds=1),
+    )
+    second = repository.transfer_blame(
+        targets[0].platform_id,
+        holder.seat_number,
+        "咖啡 报表",
+        now + timedelta(seconds=2),
+    )
+
+    assert first.status == "transferred"
+    assert second.status == "transferred"
+
+
+def test_blame_automatic_messages_use_editable_templates(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import BlameGameRecord
+
+    players = _prepare_blame_players(repository, session_factory, now, 2)
+    repository.start_blame_game(players[0], 2, now)
+    repository.set_reply_template(
+        "/甩锅游戏", "signup_expired", "自定义报名超时：{日期}"
+    )
+    with session_factory.begin() as session:
+        session.scalar(select(BlameGameRecord)).signup_deadline = now
+
+    repository.run_blame_game_jobs(now)
+
+    assert repository.claim_outbound("worker-template", now, 30).text == (
+        f"自定义报名超时：{now.astimezone(BEIJING).date().isoformat()}"
+    )
+
+
+def test_active_blame_game_blocks_other_multiplayer_games_and_skips_random_event(
+    repository, session_factory, now
+):
+    platform_ids = _prepare_blame_players(repository, session_factory, now, 3)
+    repository.start_blame_game(platform_ids[0], 3, now)
+    repository.create_user("memory-player", "记忆玩家", now, 100)
+    undercover_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.create_random_event_scene("茶水间", "报名", ["开场"], 1, 1, [("员工", 1)])
+    repository.set_random_event_settings(["20:00"], "{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+
+    assert repository.start_memory_assessment_duel("memory-player", now).status == (
+        "multiplayer_active"
+    )
+    assert repository.start_undercover_signup(undercover_ids[0], 4, now).status == (
+        "multiplayer_active"
+    )
+    repository.run_random_event_jobs(now)
+    assert repository.list_today_random_event_schedules(now)[0].status == "skipped"
+    assert repository.blame_game_summary(now).state == "signup"
+
+
+def test_existing_multiplayer_game_blocks_blame_signup(repository, session_factory, now):
+    platform_ids = _prepare_blame_players(repository, session_factory, now, 2)
+    repository.create_user("duel-player", "对战玩家", now, 100)
+    assert repository.start_memory_assessment_duel("duel-player", now).status == (
+        "waiting_opponent"
+    )
+
+    assert repository.start_blame_game(platform_ids[0], 2, now).status == (
+        "multiplayer_active"
+    )
 
 
 def test_undercover_requires_direct_chat_then_deals_configured_roles(
@@ -657,7 +1341,7 @@ def test_undercover_active_session_blocks_memory_assessment_duel(
     assert repository.start_memory_assessment_duel("undercover-1", now).status == "multiplayer_active"
 
 
-def test_due_random_event_waits_while_undercover_signup_is_active(
+def test_due_random_event_is_skipped_while_undercover_signup_is_active(
     repository, session_factory, now
 ):
     platform_ids = _prepare_undercover_players(repository, session_factory, now)
@@ -669,8 +1353,9 @@ def test_due_random_event_waits_while_undercover_signup_is_active(
     repository.run_random_event_jobs(now)
 
     schedules = repository.list_today_random_event_schedules(now)
-    assert schedules[0].status == "pending"
+    assert schedules[0].status == "skipped"
     assert repository.active_random_event_state() is None
+    assert repository.undercover_session_summary().state == "signup"
 
 
 def test_undercover_exit_rechecks_winner_and_manual_end_releases_session(
@@ -1095,7 +1780,24 @@ def test_memory_assessment_cannot_start_during_active_random_event(repository, s
     assert repository.start_memory_assessment_duel("u1", now).status == "random_event_active"
 
 
-def test_random_event_waits_while_memory_assessment_duel_is_active(repository):
+def test_due_random_event_is_skipped_while_memory_assessment_single_is_active(
+    repository,
+):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    started = repository.start_memory_assessment_single("u1", now)
+    repository.create_random_event_scene("茶水间", "报名", ["开场"], 1, 1, [("员工", 1)])
+    repository.set_random_event_settings(["10:00"], "可选身份：{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+
+    repository.run_random_event_jobs(now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "skipped"
+    assert repository.active_random_event_state() is None
+    assert repository.answer_memory_assessment("u1", started.answer, now).status == "answer_not_ready"
+
+
+def test_due_random_event_is_skipped_while_memory_assessment_duel_is_active(repository):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_user("u1", "小明", now, 0)
     repository.create_user("u2", "小红", now, 0)
@@ -1107,8 +1809,23 @@ def test_random_event_waits_while_memory_assessment_duel_is_active(repository):
     repository.run_random_event_jobs(now)
     assert waiting.status == "waiting_opponent"
     assert repository.active_random_event_state() is None
-    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.list_today_random_event_schedules(now)[0].status == "skipped"
     assert repository.join_memory_assessment_duel("u2", now).status == "duel_started"
+
+
+def test_due_random_event_is_skipped_while_hide_and_seek_is_active(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    assert repository.start_hide_and_seek("u1", now).status == "started"
+    repository.create_random_event_scene("茶水间", "报名", ["开场"], 1, 1, [("员工", 1)])
+    repository.set_random_event_settings(["10:00"], "可选身份：{可选身份}", 15, 5)
+    repository.schedule_random_events(now)
+
+    repository.run_random_event_jobs(now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "skipped"
+    assert repository.active_random_event_state() is None
+    assert repository.choose_hide_and_seek("u1", 1, now).status in {"won", "found"}
 
 
 def test_due_outbound_recall_marks_memory_assessment_round_ready(repository, now):
@@ -1441,6 +2158,59 @@ def test_random_event_records_participant_details_and_can_trigger(repository):
     assert repository.record_random_event_round("u1", now, "开始收拾") == "participant"
     assert repository.record_random_event_round("observer", now, "（路过）") == "observer_valid"
     assert repository.list_random_event_details(schedule.id) == [("小明", "开始收拾", now)]
+
+
+def test_manual_random_event_rejects_active_game_single_memory(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.start_memory_assessment_single("u1", now)
+    schedule = _prepare_pending_random_event(repository, now)
+
+    with pytest.raises(ValueError, match="当前有游戏进行中"):
+        repository.trigger_random_event(schedule.id, now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.active_random_event_state() is None
+
+
+def test_manual_random_event_rejects_active_game_memory_duel(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.start_memory_assessment_duel("u1", now)
+    schedule = _prepare_pending_random_event(repository, now)
+
+    with pytest.raises(ValueError, match="当前有游戏进行中"):
+        repository.trigger_random_event(schedule.id, now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.active_random_event_state() is None
+
+
+def test_manual_random_event_rejects_active_game_hide_and_seek(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", now, 0)
+    repository.start_hide_and_seek("u1", now)
+    schedule = _prepare_pending_random_event(repository, now)
+
+    with pytest.raises(ValueError, match="当前有游戏进行中"):
+        repository.trigger_random_event(schedule.id, now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.active_random_event_state() is None
+
+
+def test_manual_random_event_rejects_active_game_undercover(
+    repository, session_factory, now
+):
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.start_undercover_signup(platform_ids[0], 4, now)
+    schedule = _prepare_pending_random_event(repository, now)
+
+    with pytest.raises(ValueError, match="当前有游戏进行中"):
+        repository.trigger_random_event(schedule.id, now)
+
+    assert repository.list_today_random_event_schedules(now)[0].status == "pending"
+    assert repository.active_random_event_state() is None
 
 
 def test_scene_rejects_unknown_formal_opening_role(repository):
@@ -2183,7 +2953,10 @@ def migrated_postgres_url():
         {"options": f"-csearch_path={schema}"}
     )
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", test_url.render_as_string(hide_password=False))
+    config.set_main_option(
+        "sqlalchemy.url",
+        test_url.render_as_string(hide_password=False).replace("%", "%%"),
+    )
     command.upgrade(config, "head")
     try:
         yield test_url
@@ -2230,6 +3003,13 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
         "department_requests",
         "department_approvals",
         "undercover_word_sets",
+        "blame_game_settings",
+        "blame_game_duration_rules",
+        "blame_incident_cards",
+        "blame_games",
+        "blame_game_players",
+        "blame_game_transfers",
+        "blame_game_daily_starts",
     } <= set(inspector.get_table_names())
     assert "ux_inbound_messages_platform_message_id" in {
         index["name"] for index in inspector.get_indexes("inbound_messages")
@@ -2262,6 +3042,29 @@ def test_migration_seeds_undercover_word_library(migrated_postgres_url):
             for row in rows
         }
     ) == 900
+
+
+def test_blame_game_migration_seeds_duration_defaults(migrated_postgres_url):
+    engine = create_engine(migrated_postgres_url)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT player_count, minimum_seconds, maximum_seconds "
+                "FROM blame_game_duration_rules ORDER BY player_count"
+            )
+        ).all()
+
+    assert rows == [
+        (2, 45, 75),
+        (3, 60, 90),
+        (4, 75, 120),
+        (5, 90, 135),
+        (6, 90, 150),
+        (7, 105, 165),
+        (8, 120, 180),
+        (9, 135, 210),
+        (10, 150, 240),
+    ]
 
 
 def test_undercover_migration_creates_game_tables_and_defaults(migrated_postgres_url):
@@ -2433,3 +3236,218 @@ def test_postgres_concurrent_claims_and_upserts_are_atomic(
             executor.map(record_heartbeat, (LoginState.READY, LoginState.AUTH_REQUIRED))
         )
     assert len({heartbeat.id for heartbeat in heartbeats}) == 1
+
+
+def test_postgres_random_event_game_creation_is_serialized(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import MemoryAssessmentGameRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    engine = create_engine(migrated_postgres_url)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    setup_repository = CoreRepository(factory)
+    game_repository = CoreRepository(factory)
+    event_repository = CoreRepository(factory)
+    setup_repository.create_user("race-user", "小明", now, 0)
+    _prepare_pending_random_event(setup_repository, now)
+    barrier = Barrier(2)
+
+    def start_game():
+        barrier.wait()
+        return game_repository.start_memory_assessment_single("race-user", now).status
+
+    def start_scheduled_event():
+        barrier.wait()
+        event_repository.run_random_event_jobs(now)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        game_future = executor.submit(start_game)
+        event_future = executor.submit(start_scheduled_event)
+        game_status = game_future.result()
+        event_future.result()
+
+    schedule_status = setup_repository.list_today_random_event_schedules(now)[0].status
+    random_event_active = setup_repository.active_random_event_state() is not None
+    with factory() as session:
+        memory_game_active = bool(
+            session.scalar(
+                select(exists().where(MemoryAssessmentGameRecord.active_key == "global"))
+            )
+        )
+
+    assert (schedule_status, game_status) in {
+        ("skipped", "started"),
+        ("signup", "random_event_active"),
+    }
+    assert not (random_event_active and memory_game_active)
+
+
+def test_postgres_blame_transfers_from_same_holder_are_serialized(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import BlameGameTransferRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    factory = sessionmaker(
+        create_engine(migrated_postgres_url), expire_on_commit=False
+    )
+    setup_repository = CoreRepository(factory)
+    first_repository = CoreRepository(factory)
+    second_repository = CoreRepository(factory)
+    _, _, holder, targets = _start_blame_round(
+        setup_repository, factory, now, count=3
+    )
+    barrier = Barrier(2)
+
+    def transfer(repository, target, reason):
+        barrier.wait()
+        return repository.transfer_blame(
+            holder.platform_id,
+            target.seat_number,
+            reason,
+            now + timedelta(seconds=1),
+        ).status
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            transfer, first_repository, targets[0], "咖啡弄脏了报表"
+        )
+        second = executor.submit(
+            transfer, second_repository, targets[1], "报表沾到了咖啡"
+        )
+        statuses = sorted((first.result(), second.result()))
+
+    with factory() as session:
+        transfer_count = int(
+            session.scalar(
+                select(func.count()).select_from(BlameGameTransferRecord)
+            )
+            or 0
+        )
+    assert statuses == ["not_holder", "transferred"]
+    assert transfer_count == 1
+
+
+def test_postgres_blame_transfer_and_jobs_preserve_single_active_transition(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import (
+        BalanceTransactionRecord,
+        BlameGameRecord,
+        BlameGameTransferRecord,
+    )
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    factory = sessionmaker(
+        create_engine(migrated_postgres_url), expire_on_commit=False
+    )
+    setup_repository = CoreRepository(factory)
+    transfer_repository = CoreRepository(factory)
+    jobs_repository = CoreRepository(factory)
+    _, _, holder, targets = _start_blame_round(
+        setup_repository, factory, now, count=3
+    )
+    received_at = now + timedelta(seconds=1)
+    jobs_at = now + timedelta(seconds=2)
+    with factory.begin() as session:
+        game = session.scalar(select(BlameGameRecord))
+        game.explosion_deadline = jobs_at
+        game.turn_deadline = jobs_at
+    transfer_has_order = Event()
+    allow_transfer = Event()
+
+    def transfer():
+        with transfer_repository.transaction():
+            transfer_repository.lock_gameplay_order()
+            transfer_has_order.set()
+            assert allow_transfer.wait(timeout=10)
+            return transfer_repository.transfer_blame(
+                holder.platform_id,
+                targets[0].seat_number,
+                "咖啡弄脏了报表",
+                received_at,
+            ).status
+
+    def run_jobs():
+        return jobs_repository.run_blame_game_jobs(jobs_at)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        transfer_future = executor.submit(transfer)
+        assert transfer_has_order.wait(timeout=10)
+        jobs_future = executor.submit(run_jobs)
+        allow_transfer.set()
+        transfer_status = transfer_future.result()
+        jobs_future.result()
+
+    with factory() as session:
+        transfer_count = int(
+            session.scalar(
+                select(func.count()).select_from(BlameGameTransferRecord)
+            )
+            or 0
+        )
+        guarantee_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(BalanceTransactionRecord)
+                .where(BalanceTransactionRecord.source == "blame_guarantee")
+            )
+            or 0
+        )
+        win_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(BalanceTransactionRecord)
+                .where(BalanceTransactionRecord.source == "blame_win")
+            )
+            or 0
+        )
+    assert transfer_status == "transferred"
+    assert transfer_count == 1
+    assert guarantee_count == 3
+    assert win_count == 2
+    assert setup_repository.blame_game_summary(jobs_at).state is None
+
+
+def test_postgres_blame_join_and_cancellation_use_consistent_lock_order(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    factory = sessionmaker(
+        create_engine(migrated_postgres_url), expire_on_commit=False
+    )
+    setup_repository = CoreRepository(factory)
+    join_repository = CoreRepository(factory)
+    cancel_repository = CoreRepository(factory)
+    players, _, _, _ = _start_blame_round(
+        setup_repository, factory, now, count=3
+    )
+    barrier = Barrier(2)
+
+    def retry_join():
+        barrier.wait()
+        return join_repository.join_blame_game(players[1], now).status
+
+    def cancel():
+        barrier.wait()
+        return cancel_repository.admin_end_blame_game(now).status
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        join_future = executor.submit(retry_join)
+        cancel_future = executor.submit(cancel)
+        join_status = join_future.result(timeout=10)
+        cancel_status = cancel_future.result(timeout=10)
+
+    assert join_status in {"game_started", "no_game"}
+    assert cancel_status == "cancelled"
+    assert [setup_repository.find_user(player).balance for player in players] == [
+        100,
+        100,
+        100,
+    ]

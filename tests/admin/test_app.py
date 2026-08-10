@@ -162,6 +162,32 @@ class FakeCore:
             "vote_deadline": None,
         }
     )
+    blame_bomb_settings: dict = field(
+        default_factory=lambda: {
+            "enabled": True,
+            "signup_timeout_seconds": 120,
+            "turn_timeout_seconds": 30,
+            "durations": [
+                {
+                    "player_count": player_count,
+                    "minimum_seconds": player_count * 10,
+                    "maximum_seconds": player_count * 20,
+                }
+                for player_count in range(2, 11)
+            ],
+        }
+    )
+    blame_incidents: list[dict] = field(default_factory=list)
+    blame_bomb_session: dict = field(
+        default_factory=lambda: {
+            "state": None,
+            "target_player_count": 0,
+            "players": [],
+            "incident": None,
+            "current_holder": None,
+            "temperature": None,
+        }
+    )
     manual_login_lease: dict | None = None
     ai_assistant_settings_request: dict | None = None
 
@@ -412,6 +438,55 @@ class FakeCore:
 
     def get_undercover_session(self):
         return self.undercover_session
+
+    def get_blame_bomb_settings(self):
+        return self.blame_bomb_settings
+
+    def set_blame_bomb_settings(self, settings):
+        self.blame_bomb_settings = settings
+        return settings
+
+    def list_blame_incidents(self, page, page_size):
+        return _page(self.blame_incidents, page, page_size)
+
+    def create_blame_incident(self, incident):
+        saved = {
+            **incident,
+            "id": f"blame-incident-{len(self.blame_incidents) + 1}",
+            "enabled": True,
+        }
+        self.blame_incidents.append(saved)
+        return saved
+
+    def update_blame_incident(self, incident_id, incident):
+        index = next(
+            index
+            for index, item in enumerate(self.blame_incidents)
+            if item["id"] == incident_id
+        )
+        saved = {**incident, "id": incident_id}
+        self.blame_incidents[index] = saved
+        return saved
+
+    def delete_blame_incident(self, incident_id):
+        self.blame_incidents = [
+            item for item in self.blame_incidents if item["id"] != incident_id
+        ]
+        return {"accepted": True}
+
+    def get_blame_bomb_session(self):
+        return self.blame_bomb_session
+
+    def end_blame_bomb_session(self):
+        self.blame_bomb_session = {
+            **self.blame_bomb_session,
+            "state": None,
+            "players": [],
+            "incident": None,
+            "current_holder": None,
+            "temperature": None,
+        }
+        return {"accepted": True}
 
     def list_hide_and_seek_scenes(self, page, page_size):
         return _page(self.hide_and_seek_scenes, page, page_size)
@@ -995,6 +1070,86 @@ def test_admin_proxies_undercover_settings_and_public_session(client, headers, c
     assert session.status_code == 200
     assert session.json()["state"] is None
     assert "roles" not in session.json()
+
+
+def test_admin_proxies_blame_bomb_configuration_cards_and_session(
+    client, headers, core
+):
+    initial = client.get("/api/game/blame-bomb/settings", headers=headers)
+    updated = client.patch(
+        "/api/game/blame-bomb/settings",
+        headers={
+            **headers,
+            "If-Match": str(initial.json()["version"]),
+            "Idempotency-Key": "blame-settings-1",
+        },
+        json={**core.blame_bomb_settings, "turn_timeout_seconds": 20},
+    )
+    created = client.post(
+        "/api/game/blame-bomb/incidents",
+        headers={
+            **headers,
+            "If-Match": str(updated.json()["version"]),
+            "Idempotency-Key": "blame-incident-1",
+        },
+        json={
+            "name": "咖啡事故",
+            "description": "咖啡泼到了报表",
+            "keywords": ["咖啡", "报表"],
+        },
+    )
+    incident_id = created.json()["id"]
+    changed = client.put(
+        f"/api/game/blame-bomb/incidents/{incident_id}",
+        headers={
+            **headers,
+            "If-Match": str(created.json()["version"]),
+            "Idempotency-Key": "blame-incident-2",
+        },
+        json={
+            "name": "会议事故",
+            "description": "会议材料发错了",
+            "keywords": ["会议", "材料"],
+            "enabled": False,
+        },
+    )
+    cards = client.get("/api/game/blame-bomb/incidents", headers=headers)
+    session = client.get("/api/game/blame-bomb/session", headers=headers)
+    ended = client.post("/api/game/blame-bomb/end", headers=headers)
+    deleted = client.delete(
+        f"/api/game/blame-bomb/incidents/{incident_id}",
+        headers={
+            **headers,
+            "If-Match": str(changed.json()["version"]),
+            "Idempotency-Key": "blame-incident-3",
+        },
+    )
+
+    assert initial.status_code == 200
+    assert updated.json()["turn_timeout_seconds"] == 20
+    assert created.status_code == 201
+    assert changed.json()["enabled"] is False
+    assert cards.json()["items"][0]["name"] == "会议事故"
+    assert session.json()["state"] is None
+    assert ended.json() == {"accepted": True}
+    assert deleted.json()["accepted"] is True
+
+
+def test_admin_exposes_blame_bomb_management_surface(client):
+    page = client.get("/").text
+    script = client.get("/static/admin.js").text
+
+    assert 'data-view="blame-bomb"' in page
+    assert 'id="blame-bomb-settings-card"' in page
+    assert 'id="blame-bomb-session-card"' in page
+    assert 'id="blame-incident-list"' in page
+    assert 'id="edit-blame-bomb-settings"' in page
+    assert 'id="create-blame-incident"' in page
+    assert '"/api/game/blame-bomb/settings"' in script
+    assert '"/api/game/blame-bomb/session"' in script
+    assert '["/甩锅游戏", "/甩锅游戏"]' in script
+    assert "explosion_deadline" not in script
+    assert "turn_deadline" not in script
 
 
 def test_admin_page_exposes_activity_settings_modal(client):

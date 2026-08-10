@@ -66,6 +66,7 @@
                   <button id="nav-hide-and-seek" class="nav-item" data-view="hide-and-seek" type="button">躲猫猫</button>
                   <button id="nav-memory-assessment" class="nav-item" data-view="memory-assessment" type="button">记忆考核</button>
                   <button id="nav-undercover" class="nav-item" data-view="undercover" type="button">谁是卧底</button>
+                  <button id="nav-blame-bomb" class="nav-item" data-view="blame-bomb" type="button">甩锅游戏</button>
                   <button id="nav-ai-assistant" class="nav-item" data-view="ai-assistant" type="button">AI 总监事</button>
                 </div>
                 <div class="nav-group">
@@ -202,6 +203,14 @@
                 <nav class="management-tabs" data-management-tabs="undercover" aria-label="谁是卧底分类"><button class="management-tab active" data-management-tab="session" type="button">当前对局</button><button class="management-tab" data-management-tab="rules" type="button">游戏规则</button></nav>
                 <section class="management-pane" data-management-pane="session"><div class="panel-heading"><div><h2>当前对局</h2><p class="muted">仅展示公开进度；词语、身份与私聊信息不会出现在管理端。</p></div></div><div id="undercover-session-card" class="settings-card" aria-live="polite"></div></section>
                 <section class="management-pane" data-management-pane="rules" hidden><div class="panel-heading"><div><h2>谁是卧底规则</h2><p class="muted">4–8 人报名开局，底牌仅通过机器人可访问的私聊发送；随机事件与记忆考核对战期间不可创建。</p></div><button id="edit-undercover-settings" class="primary" type="button">编辑规则</button></div><div id="undercover-settings-card" class="settings-card" aria-live="polite"></div></section>
+              </section>
+
+              <section id="blame-bomb-view" class="dashboard-view panel" hidden>
+                <p class="eyebrow">群内单轮甩锅游戏</p>
+                <nav class="management-tabs" data-management-tabs="blame-bomb" aria-label="甩锅游戏分类"><button class="management-tab active" data-management-tab="session" type="button">当前对局</button><button class="management-tab" data-management-tab="incidents" type="button">事故卡</button><button class="management-tab" data-management-tab="rules" type="button">游戏规则</button></nav>
+                <section class="management-pane" data-management-pane="session"><div class="panel-heading"><div><h2>当前对局</h2><p class="muted">展示公开状态、固定编号、事故和温度，不显示隐藏引爆时间。</p></div><button id="end-blame-bomb-session" class="danger-button" type="button">强制结束并退款</button></div><div id="blame-bomb-session-card" class="settings-card" aria-live="polite"></div></section>
+                <section class="management-pane" data-management-pane="incidents" hidden><div class="panel-heading"><div><h2>事故卡</h2><p class="muted">每局随机冻结一张已启用事故卡，玩家甩锅话术必须包含全部关键词。</p></div><button id="create-blame-incident" class="primary" type="button">新增事故卡</button></div><div class="list-toolbar"><div class="list-toolbar-controls"><input class="list-search" data-list-filter="blame-incidents" type="search" placeholder="搜索事故卡"></div><label>每页<select class="page-size-select" data-list-page-size="blame-incidents"><option value="5">5</option><option value="10">10</option><option value="15">15</option><option value="20" selected>20</option><option value="50">50</option></select></label></div><div class="list-scroll"><div id="blame-incident-list" class="data-list"></div></div><nav id="blame-incident-pagination" class="pagination" aria-label="事故卡分页"></nav></section>
+                <section class="management-pane" data-management-pane="rules" hidden><div class="panel-heading"><div><h2>甩锅游戏规则</h2><p class="muted">报名、单次操作时限和 2–10 人引爆范围均可配置。</p></div><button id="edit-blame-bomb-settings" class="primary" type="button">编辑规则</button></div><div id="blame-bomb-settings-card" class="settings-card" aria-live="polite"></div></section>
               </section>
 
               <section id="employees-view" class="dashboard-view panel" hidden>
@@ -350,6 +359,27 @@
       <div class="template-modal-backdrop" data-close-random-event-details-modal></div>
       <section class="template-modal-card event-details-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">随机事件</p><h2 id="random-event-details-modal-title">事件详情</h2><p class="muted">仅记录参与玩家的有效发言。</p></div><button class="text-button" data-close-random-event-details-modal type="button">关闭</button></div><div id="random-event-details-list" class="data-list"></div></section>
     </div>
+    <div id="blame-bomb-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="blame-bomb-settings-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-blame-bomb-settings-modal></div>
+      <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">甩锅游戏</p><h2 id="blame-bomb-settings-modal-title">编辑游戏规则</h2><p class="muted">逐人数配置随机引爆秒数范围；隐藏的实际引爆时刻不会展示给管理员或玩家。</p></div><button class="text-button" data-close-blame-bomb-settings-modal type="button">关闭</button></div>
+        <label><input id="blame-bomb-enabled" type="checkbox"> 启用甩锅游戏</label>
+        <div class="event-input-grid"><label>报名时限（秒）<input id="blame-bomb-signup-seconds" type="number" min="1" max="3600" required></label><label>单次操作时限（秒）<input id="blame-bomb-turn-seconds" type="number" min="1" max="3600" required></label></div>
+        <div id="blame-bomb-duration-inputs" class="undercover-role-inputs"></div>
+        <div class="template-modal-actions"><button class="secondary" data-close-blame-bomb-settings-modal type="button">取消</button><button id="save-blame-bomb-settings" class="primary" type="button">保存规则</button></div>
+      </section>
+    </div>
+
+    <div id="blame-incident-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="blame-incident-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-blame-incident-modal></div>
+      <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">甩锅游戏</p><h2 id="blame-incident-modal-title">新增事故卡</h2><p class="muted">关键词每行一个，支持 1–4 个；玩家话术必须全部包含。</p></div><button class="text-button" data-close-blame-incident-modal type="button">关闭</button></div>
+        <label for="blame-incident-name">事故名称</label><input id="blame-incident-name" maxlength="128" required>
+        <label for="blame-incident-description">事故描述</label><textarea id="blame-incident-description" maxlength="2000" rows="4" required></textarea>
+        <label for="blame-incident-keywords">全部关键词（每行一个）</label><textarea id="blame-incident-keywords" maxlength="260" rows="4" required></textarea>
+        <label id="blame-incident-enabled-row"><input id="blame-incident-enabled" type="checkbox"> 启用事故卡</label>
+        <div class="template-modal-actions"><button class="secondary" data-close-blame-incident-modal type="button">取消</button><button id="save-blame-incident" class="primary" type="button">创建事故卡</button></div>
+      </section>
+    </div>
+
     <div id="hide-and-seek-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="hide-and-seek-settings-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-hide-and-seek-settings-modal></div>
       <section class="template-modal-card">

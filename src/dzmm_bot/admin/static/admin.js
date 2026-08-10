@@ -23,6 +23,8 @@ let hideAndSeekSettings = null;
 let hideAndSeekScenePage = 1;
 let memoryAssessmentSettings = null;
 let undercoverSettings = null;
+let blameBombSettings = null;
+let blameIncidentPage = 1;
 let aiAssistantSettings = null;
 let commandDefinitions = [];
 let commandPage = 1;
@@ -56,6 +58,7 @@ const pageContext = {
   "hide-and-seek": {crumb: "游戏运营 / 躲猫猫", title: "躲猫猫运营", description: "管理单人躲猫猫的经济规则与可用躲藏地点。"},
   "memory-assessment": {crumb: "游戏运营 / 记忆考核", title: "记忆考核运营", description: "配置单人挑战与双人对战的难度、奖池和限制。"},
   undercover: {crumb: "游戏运营 / 谁是卧底", title: "谁是卧底运营", description: "查看公开对局进度，并维护多人推理局的基础规则。"},
+  "blame-bomb": {crumb: "游戏运营 / 甩锅游戏", title: "甩锅游戏运营", description: "管理事故卡、逐人数时长规则和当前公开对局。"},
   "ai-assistant": {crumb: "机器人运营 / AI 总监事", title: "AI 总监事", description: "配置群内 AI 人设、系统提示词与各职位每日调用上限。"},
   settings: {crumb: "玩法与资源 / 玩法配置", title: "玩法配置", description: "集中维护经济、打卡、全勤和日活跃度规则。"},
   commands: {crumb: "玩法与资源 / 指令库", title: "指令库", description: "配置群内指令的启用状态与标准回复模板。"},
@@ -132,6 +135,10 @@ function initializePageSizeControls() {
     hideAndSeekScenePage = 1;
     void loadHideAndSeek();
   });
+  renderPageSizeControl("blame-incidents", () => {
+    blameIncidentPage = 1;
+    void loadBlameBomb();
+  });
   renderPageSizeControl("employees", () => {
     employeePage = 1;
     void loadEmployees();
@@ -186,6 +193,9 @@ function initializeListFilters() {
       } else if (listKey === "hide-and-seek-scenes") {
         hideAndSeekScenePage = 1;
         void loadHideAndSeek();
+      } else if (listKey === "blame-incidents") {
+        blameIncidentPage = 1;
+        void loadBlameBomb();
       } else if (listKey === "employees") {
         employeePage = 1;
         void loadEmployees();
@@ -243,6 +253,8 @@ const hideAndSeekSettingsModal = document.querySelector("#hide-and-seek-settings
 const hideAndSeekSceneModal = document.querySelector("#hide-and-seek-scene-modal");
 const memoryAssessmentSettingsModal = document.querySelector("#memory-assessment-settings-modal");
 const undercoverSettingsModal = document.querySelector("#undercover-settings-modal");
+const blameBombSettingsModal = document.querySelector("#blame-bomb-settings-modal");
+const blameIncidentModal = document.querySelector("#blame-incident-modal");
 const aiAssistantSettingsModal = document.querySelector("#ai-assistant-settings-modal");
 const employeeMemoryModal = document.querySelector("#employee-memory-modal");
 const rankModal = document.querySelector("#rank-modal");
@@ -554,6 +566,77 @@ async function openUndercoverSettingsModal() {
   renderUndercoverRoleInputs(settings.roles);
   undercoverSettingsModal.hidden = false;
 }
+
+function blameStateLabel(state) {
+  return ({signup: "报名中", active: "进行中"})[state] || "暂无对局";
+}
+
+function renderBlameBombSettings(settings) {
+  document.querySelector("#blame-bomb-settings-card").innerHTML = `
+    <article><span>游戏状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>停用后不允许创建新对局</small></article>
+    <article><span>报名与操作</span><strong>${settings.signup_timeout_seconds} / ${settings.turn_timeout_seconds} 秒</strong><small>报名时限 / 单次持锅时限</small></article>
+    <article><span>引爆范围</span><strong>2–10 人共 ${settings.durations.length} 档</strong><small>${settings.durations.map((rule) => `${rule.player_count}人 ${rule.minimum_seconds}–${rule.maximum_seconds}秒`).join(" · ")}</small></article>`;
+}
+
+function renderBlameBombSession(session) {
+  const players = session.players.map((player) => `${player.seat_number ? `${player.seat_number}号 ` : ""}${player.display_name}`).join("、");
+  const holder = session.current_holder ? `${session.current_holder.seat_number}号 ${session.current_holder.display_name}` : "—";
+  const incident = session.incident ? `${session.incident.name}：${session.incident.description}` : "尚未抽取事故卡";
+  document.querySelector("#blame-bomb-session-card").innerHTML = `
+    <article><span>对局状态</span><strong>${blameStateLabel(session.state)}</strong><small>${session.state ? `${session.players.length} / ${session.target_player_count} 人` : "玩家可使用 /甩锅游戏 人数 发起"}</small></article>
+    <article><span>参与者</span><strong>${escapeHtml(players || "—")}</strong><small>固定编号在开局时生成</small></article>
+    <article><span>事故</span><strong>${escapeHtml(incident)}</strong><small>${session.incident ? `关键词：${escapeHtml(session.incident.keywords.join("、"))}` : "—"}</small></article>
+    <article><span>当前持锅者</span><strong>${escapeHtml(holder)}</strong><small>温度：${escapeHtml(session.temperature || "—")}</small></article>`;
+  document.querySelector("#end-blame-bomb-session").disabled = !session.state;
+}
+
+function renderBlameIncidents(incidents) {
+  const filtered = filterList("blame-incidents", incidents, (incident) => `${incident.name} ${incident.description} ${incident.keywords.join(" ")}`);
+  document.querySelector("#blame-incident-list").innerHTML = filtered.map((incident) => `
+    <article class="data-row"><div><b>${escapeHtml(incident.name)}</b><small>${statusBadge(incident.enabled ? "已启用" : "已停用", incident.enabled ? "success" : "warning")}</small><small>${escapeHtml(incident.description)}</small><small>关键词：${escapeHtml(incident.keywords.join("、"))}</small></div><div class="command-actions"><button class="secondary" data-blame-incident="${escapeHtml(JSON.stringify(incident))}" data-blame-incident-action="edit" type="button">编辑</button><button class="secondary" data-blame-incident="${escapeHtml(JSON.stringify(incident))}" data-blame-incident-action="toggle" type="button">${incident.enabled ? "停用" : "启用"}</button><button class="danger-button" data-blame-incident="${escapeHtml(JSON.stringify(incident))}" data-blame-incident-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">还没有事故卡，新增并启用至少一张后才能创建游戏。</p>";
+}
+
+async function loadBlameBomb(page = blameIncidentPage) {
+  const [settings, incidents, session] = await Promise.all([
+    requestGame("/api/game/blame-bomb/settings"),
+    requestGame(`/api/game/blame-bomb/incidents?page=${page}&page_size=${pageSizeFor("blame-incidents")}`),
+    requestGame("/api/game/blame-bomb/session"),
+  ]);
+  blameBombSettings = settings;
+  blameIncidentPage = incidents.page;
+  configurationVersion = settings.version;
+  renderBlameBombSettings(settings);
+  renderBlameBombSession(session);
+  renderBlameIncidents(incidents.items);
+  renderPagination(document.querySelector("#blame-incident-pagination"), incidents, "张事故卡", loadBlameBomb);
+}
+
+async function openBlameBombSettingsModal() {
+  const settings = blameBombSettings || await requestGame("/api/game/blame-bomb/settings");
+  blameBombSettings = settings;
+  document.querySelector("#blame-bomb-enabled").checked = settings.enabled;
+  document.querySelector("#blame-bomb-signup-seconds").value = settings.signup_timeout_seconds;
+  document.querySelector("#blame-bomb-turn-seconds").value = settings.turn_timeout_seconds;
+  document.querySelector("#blame-bomb-duration-inputs").innerHTML = settings.durations.map((rule) => `
+    <div class="undercover-role-row" data-player-count="${rule.player_count}"><b>${rule.player_count} 人局</b><label>最短秒数<input data-blame-minimum type="number" min="1" max="3600" value="${rule.minimum_seconds}"></label><label>最长秒数<input data-blame-maximum type="number" min="1" max="3600" value="${rule.maximum_seconds}"></label></div>`).join("");
+  blameBombSettingsModal.hidden = false;
+}
+
+function closeBlameBombSettingsModal() { blameBombSettingsModal.hidden = true; }
+
+function openBlameIncidentModal(incident = null) {
+  blameIncidentModal.dataset.incidentId = incident?.id || "";
+  document.querySelector("#blame-incident-modal-title").textContent = incident ? `编辑事故卡：${incident.name}` : "新增事故卡";
+  document.querySelector("#blame-incident-name").value = incident?.name || "";
+  document.querySelector("#blame-incident-description").value = incident?.description || "";
+  document.querySelector("#blame-incident-keywords").value = incident?.keywords.join("\n") || "";
+  document.querySelector("#blame-incident-enabled").checked = incident?.enabled ?? true;
+  document.querySelector("#blame-incident-enabled-row").hidden = !incident;
+  document.querySelector("#save-blame-incident").textContent = incident ? "保存事故卡" : "创建事故卡";
+  blameIncidentModal.hidden = false;
+}
+
+function closeBlameIncidentModal() { blameIncidentModal.hidden = true; }
 
 async function loadHideAndSeek(page = hideAndSeekScenePage) {
   const [settings, scenes] = await Promise.all([
@@ -1031,6 +1114,7 @@ async function loadGameView(view) {
     if (view === "hide-and-seek") return loadHideAndSeek();
     if (view === "memory-assessment") return loadMemoryAssessment();
     if (view === "undercover") return loadUndercover();
+    if (view === "blame-bomb") return loadBlameBomb();
     if (view === "ai-assistant") return loadAiAssistant();
     if (view === "commands") {
       const commands = await requestGame("/api/game/commands");
@@ -1273,6 +1357,8 @@ document.querySelector("#edit-hide-and-seek-settings").addEventListener("click",
 document.querySelector("#create-hide-and-seek-scene").addEventListener("click", () => openHideAndSeekSceneModal());
 document.querySelector("#edit-memory-assessment-settings").addEventListener("click", () => void openMemoryAssessmentSettingsModal());
 document.querySelector("#edit-undercover-settings").addEventListener("click", () => void openUndercoverSettingsModal());
+document.querySelector("#edit-blame-bomb-settings").addEventListener("click", () => void openBlameBombSettingsModal());
+document.querySelector("#create-blame-incident").addEventListener("click", () => openBlameIncidentModal());
 document.querySelector("#edit-ai-assistant-settings").addEventListener("click", () => void openAiAssistantSettingsModal());
 document.querySelector("#create-department").addEventListener("click", () => openDepartmentModal());
 document.querySelector("#add-today-random-event").addEventListener("click", async (event) => {
@@ -1907,6 +1993,105 @@ undercoverSettingsModal.addEventListener("click", async (event) => {
     setResult(`保存失败（${error.message}）`, "error");
   }
 });
+blameBombSettingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-blame-bomb-settings-modal]")) {
+    closeBlameBombSettingsModal();
+    return;
+  }
+  if (event.target.id !== "save-blame-bomb-settings") return;
+  const durations = [...document.querySelectorAll("#blame-bomb-duration-inputs .undercover-role-row")].map((row) => ({
+    player_count: Number(row.dataset.playerCount),
+    minimum_seconds: Number(row.querySelector("[data-blame-minimum]").value),
+    maximum_seconds: Number(row.querySelector("[data-blame-maximum]").value),
+  }));
+  const settings = {
+    enabled: document.querySelector("#blame-bomb-enabled").checked,
+    signup_timeout_seconds: Number(document.querySelector("#blame-bomb-signup-seconds").value),
+    turn_timeout_seconds: Number(document.querySelector("#blame-bomb-turn-seconds").value),
+    durations,
+  };
+  try {
+    await runMutation(event.target, "保存中…", async () => {
+      blameBombSettings = await requestGame("/api/game/blame-bomb/settings", {
+        method: "PATCH", headers: {"Content-Type": "application/json", ...configurationHeaders()}, body: JSON.stringify(settings),
+      });
+      configurationVersion = blameBombSettings.version;
+      closeBlameBombSettingsModal();
+      await loadBlameBomb();
+    });
+    setResult("甩锅游戏规则已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+blameIncidentModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-blame-incident-modal]")) {
+    closeBlameIncidentModal();
+    return;
+  }
+  if (event.target.id !== "save-blame-incident") return;
+  const incidentId = blameIncidentModal.dataset.incidentId;
+  const keywords = document.querySelector("#blame-incident-keywords").value
+    .split("\n").map((value) => value.trim()).filter(Boolean);
+  const incident = {
+    name: document.querySelector("#blame-incident-name").value.trim(),
+    description: document.querySelector("#blame-incident-description").value.trim(),
+    keywords,
+    ...(incidentId ? {enabled: document.querySelector("#blame-incident-enabled").checked} : {}),
+  };
+  try {
+    await runMutation(event.target, incidentId ? "保存中…" : "创建中…", async () => {
+      const saved = await requestGame(
+        incidentId ? `/api/game/blame-bomb/incidents/${incidentId}` : "/api/game/blame-bomb/incidents",
+        {method: incidentId ? "PUT" : "POST", headers: {"Content-Type": "application/json", ...configurationHeaders()}, body: JSON.stringify(incident)},
+      );
+      configurationVersion = saved.version;
+      closeBlameIncidentModal();
+      await loadBlameBomb();
+    });
+    setResult(incidentId ? "事故卡已保存" : "事故卡已创建", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+document.querySelector("#blame-incident-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-blame-incident-action]");
+  if (!button) return;
+  const incident = JSON.parse(button.dataset.blameIncident);
+  if (button.dataset.blameIncidentAction === "edit") {
+    openBlameIncidentModal(incident);
+    return;
+  }
+  const deletion = button.dataset.blameIncidentAction === "delete";
+  if (deletion && !window.confirm(`确定删除事故卡“${incident.name}”？`)) return;
+  try {
+    await runMutation(button, deletion ? "删除中…" : "保存中…", async () => {
+      const result = await requestGame(`/api/game/blame-bomb/incidents/${incident.id}`, {
+        method: deletion ? "DELETE" : "PUT",
+        ...(deletion
+          ? {headers: configurationHeaders()}
+          : {headers: {"Content-Type": "application/json", ...configurationHeaders()}, body: JSON.stringify({...incident, enabled: !incident.enabled})}),
+      });
+      configurationVersion = result.version;
+      await loadBlameBomb();
+    });
+    setResult(deletion ? "事故卡已删除" : `事故卡已${incident.enabled ? "停用" : "启用"}`, "success");
+  } catch (error) {
+    setResult(`更新失败（${error.message}）`, "error");
+  }
+});
+document.querySelector("#end-blame-bomb-session").addEventListener("click", async (event) => {
+  if (!window.confirm("确定强制结束当前甩锅游戏并退回全部保证金？")) return;
+  try {
+    await runMutation(event.currentTarget, "结束中…", async () => {
+      await requestGame("/api/game/blame-bomb/end", {method: "POST"});
+      await loadBlameBomb();
+    });
+    setResult("甩锅游戏已结束，保证金已退款", "success");
+  } catch (error) {
+    setResult(`结束失败（${error.message}）`, "error");
+  }
+});
 aiAssistantSettingsModal.addEventListener("click", async (event) => {
   if (event.target.closest("[data-close-ai-assistant-settings-modal]")) {
     closeAiAssistantSettingsModal();
@@ -2052,6 +2237,8 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !randomEventAddModal.hidden) closeRandomEventAddModal();
   if (event.key === "Escape" && !hideAndSeekSettingsModal.hidden) closeHideAndSeekSettingsModal();
   if (event.key === "Escape" && !hideAndSeekSceneModal.hidden) closeHideAndSeekSceneModal();
+  if (event.key === "Escape" && !blameBombSettingsModal.hidden) closeBlameBombSettingsModal();
+  if (event.key === "Escape" && !blameIncidentModal.hidden) closeBlameIncidentModal();
   if (event.key === "Escape" && !aiAssistantSettingsModal.hidden) closeAiAssistantSettingsModal();
   if (event.key === "Escape" && !employeeMemoryModal.hidden) closeEmployeeMemoryModal();
 });

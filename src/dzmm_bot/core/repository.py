@@ -871,12 +871,12 @@ _COMMAND_DEFINITIONS = (
     ("/商店", "/商店", "查看当前上架物品"),
     ("/帮助", "/帮助", "查看当前可用指令"),
     ("/当前游戏", "/当前游戏", "查看自己当前参与的游戏和下一步指令"),
-    ("/加入", "/加入；/加入 身份", "加入当前可报名玩法"),
-    ("/退出", "/退出", "退出当前随机事件并结算奖励"),
+    ("/加入", "/加入；/加入 身份", "加入当前可报名玩法或下一轮候选"),
+    ("/退出", "/退出", "退出当前参与的玩法"),
     ("/开始", "/开始", "开始当前已报名的游戏"),
     ("/摸鱼躲猫猫", "/开始摸鱼躲藏；/躲 编号", "发起单人躲猫猫小游戏"),
     ("/记忆考核", "/记忆考核；/记忆考核 对战；/答案 内容", "发起或参与记忆考核"),
-    ("/继续", "/继续", "继续当前单人记忆考核"),
+    ("/继续", "/继续", "继续当前等待下一轮的玩法"),
     ("/收手", "/收手", "结算当前单人记忆考核的奖励"),
     ("/投降", "/投降", "退出当前记忆考核对战"),
     ("/部门", "/部门", "查看可申请部门和说明"),
@@ -903,7 +903,7 @@ _COMMAND_DEFINITIONS = (
     ("/甩锅", "/甩锅 玩家编号 甩锅理由", "按玩家编号和理由转移甩锅炸弹"),
     ("/退出甩锅", "/退出甩锅", "退出当前甩锅游戏"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹", "创建蹦蹦数字炸弹报名局，至少3人后发送 /开始"),
-    ("/报数", "/报数 1-100（仅私聊）", "提交蹦蹦数字炸弹本轮整数"),
+    ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
     ("/跳过", "/跳过 编号 [编号...]", "排除蹦蹦数字炸弹中尚未报数的参与者"),
 )
 
@@ -1034,11 +1034,19 @@ class CoreRepository:
 
     def list_reply_templates(self, command: str) -> list[CommandReplyTemplateRecord]:
         self.ensure_reply_templates()
+        active_scenarios = tuple(
+            definition.scenario
+            for definition in TEMPLATE_DEFINITIONS
+            if definition.command == command
+        )
+        if not active_scenarios:
+            return []
         with self._session() as session:
             return list(
                 session.scalars(
                     select(CommandReplyTemplateRecord)
                     .where(CommandReplyTemplateRecord.command == command)
+                    .where(CommandReplyTemplateRecord.scenario.in_(active_scenarios))
                     .order_by(CommandReplyTemplateRecord.scenario)
                 )
             )

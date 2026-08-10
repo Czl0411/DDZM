@@ -147,7 +147,7 @@ def test_number_bomb_authoritative_context_has_public_rules_without_private_valu
     assert "当前状态：无对局" in context.live_facts_text
     assert "/蹦蹦数字炸弹：" in context.commands_text
     assert "/开始" in context.commands_text
-    assert "/报数 1-100（仅私聊）" in context.commands_text
+    assert "/报数 数字（仅私聊）" in context.commands_text
     assert "私聊" in context.live_facts_text
     assert "chatroom" not in context.live_facts_text
 
@@ -4156,6 +4156,34 @@ def test_template_validation_rejects_a_variable_unavailable_to_its_scenario():
 
     with pytest.raises(ValueError, match="不支持"):
         validate_template("/余额", "shown", "{商店列表}")
+
+
+def test_unified_gameplay_templates_exist_and_declare_every_default_variable():
+    from dzmm_bot.core.reply_templates import TEMPLATE_DEFINITIONS, validate_template
+
+    definitions = {
+        (definition.command, definition.scenario): definition
+        for definition in TEMPLATE_DEFINITIONS
+    }
+    assert {
+        ("/当前游戏", "none"),
+        ("/当前游戏", "conflict"),
+        ("/退出", "memory_waiting_cancelled"),
+        ("/蹦蹦数字炸弹", "direct_chat_required"),
+        ("/蹦蹦数字炸弹", "signup_timeout"),
+        ("/蹦蹦数字炸弹", "unreported_reminder"),
+        ("/开始", "number_bomb_missing_direct_chats"),
+        ("/跳过", "not_enabled"),
+        ("/跳过", "skipped"),
+        ("/跳过", "ended_insufficient"),
+        ("/结束游戏", "admin_forced"),
+    } <= set(definitions)
+    for definition in definitions.values():
+        validate_template(
+            definition.command,
+            definition.scenario,
+            definition.default,
+        )
 
 
 def test_manual_login_lease_is_exclusive_and_expires(repository):

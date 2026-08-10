@@ -358,7 +358,8 @@ def test_help_lists_undercover_commands():
     reply = _latest_reply(factory)
     assert "/谁是卧底 人数：" in reply
     assert "/开始投票：" in reply
-    assert "/退出谁是卧底：" in reply
+    assert "/退出：" in reply
+    assert "/退出谁是卧底：" not in reply
 
 
 def test_blame_group_commands_create_join_transfer_and_end():
@@ -995,6 +996,14 @@ def test_help_game_topic_links_to_each_game_guide():
     assert "/帮助 记忆考核" in reply
     assert "/帮助 谁是卧底" in reply
     assert "/帮助 蹦蹦数字炸弹" in reply
+    for command in (
+        "/蹦蹦数字炸弹", "/加入", "/开始", "/报数 数字",
+        "/跳过 编号", "/继续", "/结束游戏",
+    ):
+        assert command in reply
+    assert "3-10" not in reply
+    assert "3 至 10" not in reply
+    assert "无操作释放" not in reply
 
 
 def test_help_number_bomb_topic_shows_group_and_private_commands():
@@ -1011,12 +1020,15 @@ def test_help_number_bomb_topic_shows_group_and_private_commands():
 
     reply = _latest_reply(factory)
     assert "【蹦蹦数字炸弹】" in reply
-    assert "/蹦蹦数字炸弹 人数" in reply
-    assert "私聊 /报数 1-100" in reply
-    assert "/加入" in reply
-    assert "/退出" in reply
-    assert "/继续" in reply
-    assert "/结束游戏" in reply
+    for command in (
+        "/蹦蹦数字炸弹", "/加入", "/开始", "/报数 数字",
+        "/跳过 编号", "/退出", "/继续", "/结束游戏",
+    ):
+        assert command in reply
+    assert "人数" not in reply
+    assert "3-10" not in reply
+    assert "3 至 10" not in reply
+    assert "无操作释放" not in reply
 
 
 def test_help_hide_and_seek_topic_shows_start_and_followup_syntax():

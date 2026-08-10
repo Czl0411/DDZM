@@ -128,6 +128,36 @@ def upgrade() -> None:
         )
     )
 
+    if sa.inspect(connection).has_table("command_definitions"):
+        command_definitions = sa.table(
+            "command_definitions",
+            sa.column("command", sa.String()),
+            sa.column("syntax", sa.Text()),
+            sa.column("description", sa.Text()),
+        )
+        command_updates = {
+            "/蹦蹦数字炸弹": (
+                "/蹦蹦数字炸弹",
+                "创建蹦蹦数字炸弹报名局，至少3人后发送 /开始",
+            ),
+            "/报数": (
+                "/报数 数字（仅私聊）",
+                "提交蹦蹦数字炸弹本轮 1–100 整数",
+            ),
+            "/加入": (
+                "/加入；/加入 身份",
+                "加入当前可报名玩法或下一轮候选",
+            ),
+            "/退出": ("/退出", "退出当前参与的玩法"),
+            "/继续": ("/继续", "继续当前等待下一轮的玩法"),
+        }
+        for command, (syntax, description) in command_updates.items():
+            connection.execute(
+                command_definitions.update()
+                .where(command_definitions.c.command == command)
+                .values(syntax=syntax, description=description)
+            )
+
 
 def downgrade() -> None:
     op.drop_column("number_bomb_round_players", "skipped_at")

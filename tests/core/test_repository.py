@@ -213,6 +213,47 @@ def test_blame_game_schema_contains_state_and_idempotency_constraints():
     } >= {("user_id", "play_date")}
 
 
+def test_number_bomb_schema_contains_provenance_state_and_idempotency_constraints():
+    from dzmm_bot.core.schema import AIActivityEventRecord, Base, InboundRecord
+
+    expected_tables = {
+        "number_bomb_settings",
+        "number_bomb_games",
+        "number_bomb_members",
+        "number_bomb_rounds",
+        "number_bomb_round_players",
+    }
+
+    assert expected_tables <= set(Base.metadata.tables)
+    assert "number_bomb_daily_starts" not in Base.metadata.tables
+
+    games = Base.metadata.tables["number_bomb_games"]
+    members = Base.metadata.tables["number_bomb_members"]
+    rounds = Base.metadata.tables["number_bomb_rounds"]
+    round_players = Base.metadata.tables["number_bomb_round_players"]
+
+    assert {index.name for index in games.indexes} >= {
+        "ux_number_bomb_one_active"
+    }
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in members.constraints
+    } >= {("game_id", "user_id")}
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in rounds.constraints
+    } >= {("game_id", "round_number", "attempt_number")}
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in round_players.constraints
+    } >= {("round_id", "user_id")}
+
+    assert InboundRecord.__table__.c.source_type.default.arg == "group"
+    assert InboundRecord.__table__.c.source_type.nullable is False
+    assert InboundRecord.__table__.c.chatroom_id.nullable is True
+    assert AIActivityEventRecord.__table__.c.detail.nullable is True
+
+
 def test_stable_impression_schema_separates_legacy_candidates_and_facts():
     from dzmm_bot.core.schema import (
         AIActivityEventRecord,

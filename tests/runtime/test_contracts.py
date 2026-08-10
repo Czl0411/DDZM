@@ -23,6 +23,23 @@ def test_inbound_message_is_immutable():
         message.content = "changed"
 
 
+def test_inbound_message_preserves_group_defaults_and_direct_provenance():
+    now = datetime.now(UTC)
+
+    group = InboundMessage("group-1", "sender-1", "/帮助", now)
+    direct = InboundMessage(
+        "direct-1",
+        "sender-1",
+        "/报数 29",
+        now,
+        source_type="direct",
+        chatroom_id="direct-room-1",
+    )
+
+    assert (group.source_type, group.chatroom_id) == ("group", None)
+    assert (direct.source_type, direct.chatroom_id) == ("direct", "direct-room-1")
+
+
 def test_outbound_message_has_stable_uuid_and_delivery_defaults():
     outbound = OutboundMessage(inbound_message_id="inbound-1", text="reply")
 

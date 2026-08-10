@@ -16,6 +16,8 @@ class InboundMessage:
     sender_platform_id: str
     content: str
     received_at: datetime
+    source_type: str = "group"
+    chatroom_id: str | None = None
 
 
 @dataclass(frozen=True)

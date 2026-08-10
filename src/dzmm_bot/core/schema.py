@@ -74,6 +74,10 @@ class InboundRecord(Base):
     ai_memory_eligible: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
+    source_type: Mapped[str] = mapped_column(
+        String(16), default="group", nullable=False
+    )
+    chatroom_id: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
@@ -419,6 +423,91 @@ class BlameGameDailyStartRecord(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     play_date: Mapped[date] = mapped_column(Date, nullable=False)
     count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class NumberBombSettingsRecord(Base):
+    __tablename__ = "number_bomb_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    inactivity_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class NumberBombGameRecord(Base):
+    __tablename__ = "number_bomb_games"
+    __table_args__ = (
+        Index(
+            "ux_number_bomb_one_active",
+            "active_key",
+            unique=True,
+            sqlite_where=text("active_key IS NOT NULL"),
+            postgresql_where=text("active_key IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    active_key: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_player_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    attempt_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_activity_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finish_reason: Mapped[str | None] = mapped_column(String(64))
+
+
+class NumberBombMemberRecord(Base):
+    __tablename__ = "number_bomb_members"
+    __table_args__ = (UniqueConstraint("game_id", "user_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("number_bomb_games.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    roster_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    queued_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class NumberBombRoundRecord(Base):
+    __tablename__ = "number_bomb_rounds"
+    __table_args__ = (
+        UniqueConstraint("game_id", "round_number", "attempt_number"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("number_bomb_games.id"), nullable=False
+    )
+    round_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    punishment_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    total: Mapped[int | None] = mapped_column(Integer)
+    player_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_numerator: Mapped[int | None] = mapped_column(Integer)
+    target_denominator: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class NumberBombRoundPlayerRecord(Base):
+    __tablename__ = "number_bomb_round_players"
+    __table_args__ = (UniqueConstraint("round_id", "user_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    round_id: Mapped[UUID] = mapped_column(
+        ForeignKey("number_bomb_rounds.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    submitted_number: Mapped[int | None] = mapped_column(Integer)
+    deviation_numerator: Mapped[int | None] = mapped_column(Integer)
+    result: Mapped[str | None] = mapped_column(String(16))
 
 
 class HideAndSeekDailyPlayRecord(Base):
@@ -918,6 +1007,7 @@ class AIActivityEventRecord(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     activity_type: Mapped[str] = mapped_column(String(48), nullable=False)
     result: Mapped[str] = mapped_column(String(32), nullable=False)
+    detail: Mapped[str | None] = mapped_column(String(32))
     occurred_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 

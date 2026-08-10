@@ -19,6 +19,12 @@ class InboundRequest(ApiModel):
     source_type: Literal["group", "direct"] = "group"
     chatroom_id: str | None = Field(default=None, max_length=255)
 
+    @model_validator(mode="after")
+    def validate_direct_room(self):
+        if self.source_type == "direct" and not self.chatroom_id:
+            raise ValueError("direct inbound requires chatroom_id")
+        return self
+
 
 class InboundResponse(ApiModel):
     message_id: UUID

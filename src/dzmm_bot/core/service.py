@@ -22,6 +22,8 @@ class CommandReply:
     text: str
     recall_after_seconds: int | None = None
     memory_round_id: UUID | None = None
+    destination_chatroom_id: str | None = None
+    delivery_kind: str = "group"
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,29 @@ class CoreService:
             stored, inserted = self._repository.accept_inbound(message)
             if not inserted:
                 return ReceiveResult(stored.id, False)
+            if message.source_type == "direct":
+                parts = message.content.strip().split(maxsplit=1)
+                if not parts or parts[0] != "/报数":
+                    return ReceiveResult(stored.id, True)
+                direct_reply = self._command_handler.handle(message)
+                direct_replies = direct_reply if isinstance(direct_reply, list) else [direct_reply]
+                for reply_index, item in enumerate(
+                    reply for reply in direct_replies if reply is not None
+                ):
+                    reply = item if isinstance(item, CommandReply) else CommandReply(item)
+                    if (
+                        reply.destination_chatroom_id is None
+                        and reply.delivery_kind != "group"
+                    ):
+                        raise RuntimeError("私聊指令回复缺少目标房间")
+                    self._repository.enqueue_outbound(
+                        stored.id,
+                        reply.text,
+                        reply_index,
+                        destination_chatroom_id=reply.destination_chatroom_id,
+                        delivery_kind=reply.delivery_kind,
+                    )
+                return ReceiveResult(stored.id, True)
             self._repository.record_activity(
                 message.sender_platform_id, message.received_at, message.content
             )
@@ -126,9 +151,21 @@ class CoreService:
                     reply.recall_after_seconds is None
                     and reply.memory_round_id is None
                 ):
-                    self._repository.enqueue_outbound(
-                        stored.id, reply.text, reply_index
-                    )
+                    if (
+                        reply.destination_chatroom_id is None
+                        and reply.delivery_kind == "group"
+                    ):
+                        self._repository.enqueue_outbound(
+                            stored.id, reply.text, reply_index
+                        )
+                    else:
+                        self._repository.enqueue_outbound(
+                            stored.id,
+                            reply.text,
+                            reply_index,
+                            destination_chatroom_id=reply.destination_chatroom_id,
+                            delivery_kind=reply.delivery_kind,
+                        )
                     continue
                 self._repository.enqueue_outbound(
                     stored.id,
@@ -136,6 +173,8 @@ class CoreService:
                     reply_index,
                     recall_after_seconds=reply.recall_after_seconds,
                     memory_round_id=reply.memory_round_id,
+                    destination_chatroom_id=reply.destination_chatroom_id,
+                    delivery_kind=reply.delivery_kind,
                 )
             return ReceiveResult(stored.id, True)
 

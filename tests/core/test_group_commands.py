@@ -123,6 +123,33 @@ def test_current_game_reports_number_bomb_and_next_commands():
     assert "/开始" in reply
 
 
+def test_number_bomb_skip_command_removes_targets_from_entire_game():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    for index in range(1, 6):
+        repository.create_user(f"skip-command-p{index}", f"跳过玩家{index}", now, 0)
+        repository.upsert_direct_chats(
+            [(f"skip-command-p{index}", f"direct-skip-command-p{index}")], now
+        )
+    repository.start_number_bomb_game("skip-command-p1", now)
+    for index in range(2, 6):
+        repository.join_number_bomb_game(f"skip-command-p{index}", now)
+    repository.start_number_bomb_round("skip-command-p1", now)
+
+    _receive(service, "skip-early", "skip-command-p1", "/跳过 2", now)
+    assert "首次未报数提醒后" in _latest_reply(factory)
+    repository.run_number_bomb_jobs(now + timedelta(seconds=15))
+    _receive(service, "skip-batch", "skip-command-p1", "/跳过 2 4", now)
+
+    reply = _latest_reply(factory)
+    assert "2号 跳过玩家2" in reply
+    assert "4号 跳过玩家4" in reply
+    assert "已从整场移除" in reply
+    assert [(player.roster_order, player.state) for player in repository.number_bomb_game_summary().players] == [
+        (1, "current"), (3, "current"), (5, "current")
+    ]
+
+
 def test_end_game_hits_waiting_memory_duel_instead_of_undercover_fallback():
     service, repository, factory = _service()
     now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)

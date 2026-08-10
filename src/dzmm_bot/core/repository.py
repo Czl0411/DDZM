@@ -1,7 +1,7 @@
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 import re
 from secrets import choice, randbelow
@@ -158,7 +158,7 @@ _DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE = "当前有随机事件发生，监事不
 _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
     {
         "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏",
-        "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降",
+        "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降",
         "/部门", "/加入部门", "/切换部门", "/部门申请列表",
         "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门",
         "/职位", "/晋升", "/晋升申请列表",
@@ -887,6 +887,7 @@ _COMMAND_DEFINITIONS = (
     ("/退出甩锅", "/退出甩锅", "退出当前甩锅游戏"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹", "创建蹦蹦数字炸弹报名局，至少3人后发送 /开始"),
     ("/报数", "/报数 1-100（仅私聊）", "提交蹦蹦数字炸弹本轮整数"),
+    ("/跳过", "/跳过 编号 [编号...]", "排除蹦蹦数字炸弹中尚未报数的参与者"),
 )
 
 
@@ -3393,6 +3394,8 @@ class CoreRepository:
                 )
                 if row is None:
                     return NumberBombGameResult("not_participant", game_id=game.id)
+                if row.skipped_at is not None:
+                    return NumberBombGameResult("not_participant", game_id=game.id)
                 if row.submitted_number is not None:
                     return NumberBombGameResult("already_submitted", game_id=game.id)
                 row.submitted_number = number
@@ -3401,127 +3404,278 @@ class CoreRepository:
                 submitted_count = int(
                     session.scalar(
                         select(func.count(NumberBombRoundPlayerRecord.id)).where(
-                            NumberBombRoundPlayerRecord.round_id == round_record.id,
-                            NumberBombRoundPlayerRecord.submitted_number.is_not(None),
+                        NumberBombRoundPlayerRecord.round_id == round_record.id,
+                        NumberBombRoundPlayerRecord.submitted_number.is_not(None),
+                        NumberBombRoundPlayerRecord.skipped_at.is_(None),
                         )
                     )
                     or 0
                 )
-                if submitted_count < round_record.player_count:
+                active_count = int(
+                    session.scalar(
+                        select(func.count(NumberBombRoundPlayerRecord.id)).where(
+                            NumberBombRoundPlayerRecord.round_id == round_record.id,
+                            NumberBombRoundPlayerRecord.skipped_at.is_(None),
+                        )
+                    )
+                    or 0
+                )
+                if submitted_count < active_count:
                     return NumberBombGameResult(
                         "submitted",
                         game_id=game.id,
-                        player_count=round_record.player_count,
+                        player_count=active_count,
                         round_number=round_record.round_number,
                         punishment_type=round_record.punishment_type,
                         submitted_count=submitted_count,
                     )
 
+                return self._settle_number_bomb_round(
+                    session, game, round_record, now
+                )
+
+    def skip_number_bomb_players(
+        self, platform_id: str, targets: tuple[str, ...], now: datetime
+    ) -> NumberBombGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_number_bomb_game(session)
+                if game is None:
+                    return NumberBombGameResult("no_game")
+                if game.state != "collecting":
+                    return NumberBombGameResult("wrong_state", game_id=game.id)
+                actor = session.scalar(
+                    select(NumberBombMemberRecord)
+                    .join(UserRecord, UserRecord.id == NumberBombMemberRecord.user_id)
+                    .where(
+                        NumberBombMemberRecord.game_id == game.id,
+                        NumberBombMemberRecord.state == "current",
+                        UserRecord.platform_id == platform_id,
+                    )
+                    .with_for_update()
+                )
+                if actor is None:
+                    return NumberBombGameResult("not_participant", game_id=game.id)
+                if not game.skip_enabled:
+                    return NumberBombGameResult("skip_not_enabled", game_id=game.id)
+                round_record = session.scalar(
+                    select(NumberBombRoundRecord)
+                    .where(
+                        NumberBombRoundRecord.game_id == game.id,
+                        NumberBombRoundRecord.state == "collecting",
+                        NumberBombRoundRecord.round_number == game.round_number,
+                        NumberBombRoundRecord.attempt_number == game.attempt_number,
+                    )
+                    .with_for_update()
+                )
+                if round_record is None:
+                    return NumberBombGameResult("wrong_state", game_id=game.id)
                 rows = list(
                     session.execute(
-                        select(NumberBombRoundPlayerRecord, UserRecord)
+                        select(
+                            NumberBombRoundPlayerRecord,
+                            UserRecord,
+                            NumberBombMemberRecord,
+                        )
                         .join(UserRecord, UserRecord.id == NumberBombRoundPlayerRecord.user_id)
-                        .where(NumberBombRoundPlayerRecord.round_id == round_record.id)
+                        .join(
+                            NumberBombMemberRecord,
+                            (NumberBombMemberRecord.game_id == game.id)
+                            & (NumberBombMemberRecord.user_id == UserRecord.id),
+                        )
+                        .where(
+                            NumberBombRoundPlayerRecord.round_id == round_record.id,
+                            NumberBombRoundPlayerRecord.skipped_at.is_(None),
+                            NumberBombMemberRecord.state == "current",
+                        )
                         .order_by(NumberBombRoundPlayerRecord.display_order)
                         .with_for_update()
                     )
                 )
-                calculation = calculate_number_bomb(
-                    tuple(
-                        NumberBombEntry(
-                            user.platform_id,
-                            user.display_name,
-                            player.submitted_number,
-                            player.display_order,
-                        )
-                        for player, user in rows
-                    )
-                )
-                round_record.total = calculation.total
-                round_record.target_numerator = calculation.target_numerator
-                round_record.target_denominator = calculation.target_denominator
-                round_record.finished_at = now
-                standings_by_user = {
-                    standing.entry.platform_id: standing
-                    for standing in calculation.standings
-                }
-                for player, user in rows:
-                    standing = standings_by_user[user.platform_id]
-                    player.deviation_numerator = standing.deviation_numerator
-                    player.result = standing.result
-                public_message = render_number_bomb_result(
-                    round_record.round_number,
-                    round_record.punishment_type,
-                    calculation,
-                )
-                if not calculation.valid:
-                    round_record.state = "invalid"
-                    next_attempt = round_record.attempt_number + 1
-                    retry = NumberBombRoundRecord(
-                        game_id=game.id,
-                        round_number=round_record.round_number,
-                        attempt_number=next_attempt,
-                        punishment_type=round_record.punishment_type,
-                        state="collecting",
-                        player_count=round_record.player_count,
-                        created_at=now,
-                    )
-                    session.add(retry)
-                    session.flush()
-                    session.add_all(
-                        [
-                            NumberBombRoundPlayerRecord(
-                                round_id=retry.id,
-                                user_id=player.user_id,
-                                display_order=player.display_order,
-                            )
-                            for player, _ in rows
-                        ]
-                    )
-                    game.attempt_number = next_attempt
-                    game.last_activity_at = now
-                    return NumberBombGameResult(
-                        "invalid_round",
-                        game_id=game.id,
-                        player_count=round_record.player_count,
-                        round_number=round_record.round_number,
-                        punishment_type=round_record.punishment_type,
-                        submitted_count=submitted_count,
-                        public_message=public_message,
-                        players=self._number_bomb_players(session, game.id),
-                    )
+                resolved: list[tuple[NumberBombRoundPlayerRecord, UserRecord, NumberBombMemberRecord]] = []
+                if targets and all(target.isdigit() for target in targets):
+                    if len(set(targets)) != len(targets):
+                        return NumberBombGameResult("duplicate_target", game_id=game.id)
+                    by_order = {str(member.roster_order): row for row in rows for member in [row[2]]}
+                    if any(target not in by_order for target in targets):
+                        return NumberBombGameResult("invalid_target", game_id=game.id)
+                    resolved = [by_order[target] for target in targets]
+                elif len(targets) == 1:
+                    matches = [row for row in rows if row[1].display_name == targets[0]]
+                    if not matches:
+                        return NumberBombGameResult("invalid_target", game_id=game.id)
+                    if len(matches) > 1:
+                        return NumberBombGameResult("ambiguous_target", game_id=game.id)
+                    resolved = matches
+                else:
+                    return NumberBombGameResult("invalid_target", game_id=game.id)
+                if any(player.submitted_number is not None for player, _, _ in resolved):
+                    return NumberBombGameResult("already_submitted", game_id=game.id)
 
-                round_record.state = "settled"
-                game.state = "waiting_continue"
-                for player, user in rows:
-                    result = player.result
-                    self._record_ai_activity_fact(
+                all_players = {
+                    player.roster_order: player
+                    for player in self._number_bomb_players(session, game.id)
+                }
+                skipped_players = tuple(
+                    all_players[member.roster_order] for _, _, member in resolved
+                )
+                for player, _, member in resolved:
+                    player.skipped_at = now
+                    member.state = "left"
+                remaining = [row for row in rows if row not in resolved]
+                round_record.player_count = len(remaining)
+                game.last_activity_at = now
+                if len(remaining) < 3:
+                    self._finish_number_bomb_game(
                         session,
-                        event_key=(
-                            f"number_bomb:{game.id}:{round_record.round_number}:"
-                            f"{round_record.attempt_number}:{user.id}"
-                        ),
-                        user_id=user.id,
-                        activity_type="number_bomb",
-                        result=(
-                            "win"
-                            if result == "winner"
-                            else "loss"
-                            if result == "punished"
-                            else "ended"
-                        ),
-                        occurred_at=now,
-                        detail=round_record.punishment_type,
+                        game,
+                        "insufficient_players_after_skip",
+                        now,
+                        status="ended_insufficient",
                     )
+                    return NumberBombGameResult(
+                        "ended_insufficient",
+                        game_id=game.id,
+                        player_count=len(remaining),
+                        players=skipped_players,
+                    )
+                if all(player.submitted_number is not None for player, _, _ in remaining):
+                    settled = self._settle_number_bomb_round(
+                        session, game, round_record, now
+                    )
+                    return replace(settled, players=skipped_players)
                 return NumberBombGameResult(
-                    "settled",
+                    "skipped",
                     game_id=game.id,
-                    player_count=round_record.player_count,
+                    player_count=len(remaining),
                     round_number=round_record.round_number,
                     punishment_type=round_record.punishment_type,
-                    submitted_count=submitted_count,
-                    public_message=public_message,
+                    players=skipped_players,
                 )
+
+    def _settle_number_bomb_round(
+        self,
+        session: Session,
+        game: NumberBombGameRecord,
+        round_record: NumberBombRoundRecord,
+        now: datetime,
+    ) -> NumberBombGameResult:
+        rows = list(
+            session.execute(
+                select(NumberBombRoundPlayerRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == NumberBombRoundPlayerRecord.user_id)
+                .where(
+                    NumberBombRoundPlayerRecord.round_id == round_record.id,
+                    NumberBombRoundPlayerRecord.skipped_at.is_(None),
+                )
+                .order_by(NumberBombRoundPlayerRecord.display_order)
+                .with_for_update()
+            )
+        )
+        round_record.player_count = len(rows)
+        calculation = calculate_number_bomb(
+            tuple(
+                NumberBombEntry(
+                    user.platform_id,
+                    user.display_name,
+                    player.submitted_number,
+                    player.display_order,
+                )
+                for player, user in rows
+            )
+        )
+        round_record.total = calculation.total
+        round_record.target_numerator = calculation.target_numerator
+        round_record.target_denominator = calculation.target_denominator
+        round_record.finished_at = now
+        standings_by_user = {
+            standing.entry.platform_id: standing
+            for standing in calculation.standings
+        }
+        for player, user in rows:
+            standing = standings_by_user[user.platform_id]
+            player.deviation_numerator = standing.deviation_numerator
+            player.result = standing.result
+        public_message = render_number_bomb_result(
+            round_record.round_number,
+            round_record.punishment_type,
+            calculation,
+        )
+        if not calculation.valid:
+            round_record.state = "invalid"
+            next_attempt = round_record.attempt_number + 1
+            retry = NumberBombRoundRecord(
+                game_id=game.id,
+                round_number=round_record.round_number,
+                attempt_number=next_attempt,
+                punishment_type=round_record.punishment_type,
+                state="collecting",
+                player_count=len(rows),
+                created_at=now,
+            )
+            session.add(retry)
+            session.flush()
+            session.add_all(
+                [
+                    NumberBombRoundPlayerRecord(
+                        round_id=retry.id,
+                        user_id=player.user_id,
+                        display_order=player.display_order,
+                    )
+                    for player, _ in rows
+                ]
+            )
+            game.attempt_number = next_attempt
+            game.last_activity_at = now
+            game.next_reminder_at = now + timedelta(
+                seconds=self.get_number_bomb_settings().reminder_interval_seconds
+            )
+            game.skip_enabled = False
+            return NumberBombGameResult(
+                "invalid_round",
+                game_id=game.id,
+                player_count=len(rows),
+                round_number=round_record.round_number,
+                punishment_type=round_record.punishment_type,
+                submitted_count=len(rows),
+                public_message=public_message,
+                players=self._number_bomb_players(session, game.id),
+            )
+
+        round_record.state = "settled"
+        game.state = "waiting_continue"
+        game.next_reminder_at = None
+        game.skip_enabled = False
+        for player, user in rows:
+            result = player.result
+            self._record_ai_activity_fact(
+                session,
+                event_key=(
+                    f"number_bomb:{game.id}:{round_record.round_number}:"
+                    f"{round_record.attempt_number}:{user.id}"
+                ),
+                user_id=user.id,
+                activity_type="number_bomb",
+                result=(
+                    "win"
+                    if result == "winner"
+                    else "loss"
+                    if result == "punished"
+                    else "ended"
+                ),
+                occurred_at=now,
+                detail=round_record.punishment_type,
+            )
+        return NumberBombGameResult(
+            "settled",
+            game_id=game.id,
+            player_count=len(rows),
+            round_number=round_record.round_number,
+            punishment_type=round_record.punishment_type,
+            submitted_count=len(rows),
+            public_message=public_message,
+        )
 
     def continue_number_bomb_game(
         self, platform_id: str, now: datetime
@@ -3739,27 +3893,90 @@ class CoreRepository:
 
     def run_number_bomb_jobs(self, now: datetime) -> list[str]:
         now = now.astimezone(BEIJING)
-        settings = self.get_number_bomb_settings()
         with self.transaction():
             with self._session() as session:
                 game = self._active_number_bomb_game(session)
                 if game is None:
                     return []
-                deadline = game.last_activity_at + timedelta(
-                    minutes=settings.inactivity_timeout_minutes
-                )
-                if now < deadline:
+                if game.state == "signup":
+                    if game.signup_deadline is None or now < game.signup_deadline:
+                        return []
+                    self._finish_number_bomb_game(
+                        session, game, "signup_timeout", now
+                    )
+                    return [
+                        self._number_bomb_automatic_message("signup_timeout", now)
+                    ]
+                if (
+                    game.state != "collecting"
+                    or game.next_reminder_at is None
+                    or now < game.next_reminder_at
+                ):
                     return []
-                self._finish_number_bomb_game(
-                    session, game, "idle_timeout", now
+                round_record = session.scalar(
+                    select(NumberBombRoundRecord)
+                    .where(
+                        NumberBombRoundRecord.game_id == game.id,
+                        NumberBombRoundRecord.state == "collecting",
+                        NumberBombRoundRecord.round_number == game.round_number,
+                        NumberBombRoundRecord.attempt_number == game.attempt_number,
+                    )
+                    .with_for_update()
                 )
-                return [self._number_bomb_automatic_message("idle_timeout", now)]
+                if round_record is None:
+                    game.next_reminder_at = None
+                    return []
+                pending = list(
+                    session.execute(
+                        select(
+                            NumberBombRoundPlayerRecord,
+                            UserRecord,
+                            NumberBombMemberRecord,
+                        )
+                        .join(UserRecord, UserRecord.id == NumberBombRoundPlayerRecord.user_id)
+                        .join(
+                            NumberBombMemberRecord,
+                            (NumberBombMemberRecord.game_id == game.id)
+                            & (NumberBombMemberRecord.user_id == UserRecord.id),
+                        )
+                        .where(
+                            NumberBombRoundPlayerRecord.round_id == round_record.id,
+                            NumberBombRoundPlayerRecord.submitted_number.is_(None),
+                            NumberBombRoundPlayerRecord.skipped_at.is_(None),
+                            NumberBombMemberRecord.state == "current",
+                        )
+                        .order_by(NumberBombMemberRecord.roster_order)
+                    )
+                )
+                if not pending:
+                    game.next_reminder_at = None
+                    return []
+                game.skip_enabled = True
+                game.next_reminder_at = now + timedelta(
+                    seconds=self.get_number_bomb_settings().reminder_interval_seconds
+                )
+                player_list = "、".join(
+                    f"{member.roster_order}号 {user.display_name}"
+                    for _, user, member in pending
+                )
+                return [
+                    self._number_bomb_automatic_message(
+                        "unreported_reminder",
+                        now,
+                        {"{玩家列表}": player_list},
+                    )
+                ]
 
-    def _number_bomb_automatic_message(self, scenario: str, now: datetime) -> str:
+    def _number_bomb_automatic_message(
+        self,
+        scenario: str,
+        now: datetime,
+        values: dict[str, object] | None = None,
+    ) -> str:
         definition = template_definition("/蹦蹦数字炸弹", scenario)
         record = self.get_reply_template("/蹦蹦数字炸弹", scenario)
         template = definition.default if record is None else record.template
-        context = {"{日期}": now.date().isoformat()}
+        context = {"{日期}": now.date().isoformat(), **(values or {})}
         try:
             return render_template(definition, template, context)
         except ValueError:

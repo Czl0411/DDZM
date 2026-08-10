@@ -13,7 +13,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数",
+    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
 }
 
 
@@ -66,6 +66,10 @@ class GroupCommandHandler:
             if message.source_type != "direct":
                 return self._reply("/报数", "group_only", received_at)
             return self._number_bomb_submit(message, content, received_at)
+        if command == "/跳过":
+            return self._number_bomb_skip(
+                message.sender_platform_id, content, received_at
+            )
         if command == "/甩锅游戏":
             return self._blame_start(message.sender_platform_id, content, received_at)
         if command == "/甩锅":
@@ -769,6 +773,56 @@ class GroupCommandHandler:
         if result.status == "invalid_round":
             replies.extend(self._number_bomb_private_prompt_replies(result, received_at))
         return replies
+
+    def _number_bomb_skip(
+        self, platform_id: str, content: str, received_at
+    ) -> str | list[CommandReply]:
+        parts = content.split()
+        if len(parts) < 2:
+            return self._reply("/跳过", "usage", received_at)
+        result = self._repository.skip_number_bomb_players(
+            platform_id, tuple(parts[1:]), received_at
+        )
+        if result.status in {"skipped", "settled", "ended_insufficient"}:
+            values = {
+                "{玩家列表}": "、".join(
+                    f"{player.roster_order}号 {player.display_name}"
+                    for player in result.players
+                )
+            }
+            scenario = (
+                "settled"
+                if result.status == "settled"
+                else "ended_insufficient"
+                if result.status == "ended_insufficient"
+                else "skipped"
+            )
+            replies = [
+                CommandReply(self._reply("/跳过", scenario, received_at, values))
+            ]
+            if result.status == "settled":
+                replies.append(
+                    CommandReply(
+                        self._reply(
+                            "/报数",
+                            "result",
+                            received_at,
+                            {"{结果正文}": result.public_message},
+                        )
+                    )
+                )
+            return replies
+        scenario = {
+            "skip_not_enabled": "not_enabled",
+            "not_participant": "not_participant",
+            "duplicate_target": "duplicate_target",
+            "ambiguous_target": "ambiguous_target",
+            "already_submitted": "already_submitted",
+            "invalid_target": "invalid_target",
+            "no_game": "no_game",
+            "wrong_state": "no_game",
+        }.get(result.status, "no_game")
+        return self._reply("/跳过", scenario, received_at)
 
     def _number_bomb_round_started_replies(
         self, command: str, result, received_at

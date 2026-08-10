@@ -561,67 +561,194 @@ def test_number_bomb_invalid_round_restarts_same_round_and_keeps_roster_queue(
     assert event_count == 0
 
 
-@pytest.mark.parametrize("state", ["signup", "collecting", "waiting_continue"])
-def test_number_bomb_timeout_releases_every_active_state_once(
-    repository, session_factory, now, state
+def test_number_bomb_reminder_is_restart_safe_and_opens_skip(
+    repository, session_factory, now
 ):
     from dzmm_bot.core.repository import CoreRepository
 
-    platform_ids = _prepare_number_bomb_players(repository, now, f"timeout-{state}", 3)
+    platform_ids = _prepare_number_bomb_players(repository, now, "reminder", 3)
     repository.start_number_bomb_game(platform_ids[0], now)
-    if state != "signup":
-        repository.join_number_bomb_game(platform_ids[1], now)
-        repository.join_number_bomb_game(platform_ids[2], now)
-        repository.start_number_bomb_round(platform_ids[0], now)
-    if state == "waiting_continue":
-        repository.submit_number_bomb(platform_ids[0], 10, now)
-        repository.submit_number_bomb(platform_ids[1], 50, now)
-        repository.submit_number_bomb(platform_ids[2], 90, now)
+    repository.join_number_bomb_game(platform_ids[1], now)
+    repository.join_number_bomb_game(platform_ids[2], now)
+    repository.start_number_bomb_round(platform_ids[0], now)
 
-    due = now + timedelta(minutes=10)
-    first = repository.run_number_bomb_jobs(due)
-    second = CoreRepository(session_factory).run_number_bomb_jobs(due)
+    assert repository.run_number_bomb_jobs(now + timedelta(seconds=14, milliseconds=999)) == []
+    due = now + timedelta(seconds=15)
+    first = CoreRepository(session_factory).run_number_bomb_jobs(due)
+    second = repository.run_number_bomb_jobs(due)
 
-    assert first == ["蹦蹦数字炸弹长时间无人操作，本场已自动结束。"]
+    assert len(first) == 1
+    assert "1号 玩家1" in first[0]
+    assert "2号 玩家2" in first[0]
+    assert "3号 玩家3" in first[0]
+    assert "/跳过" in first[0]
     assert second == []
-    assert repository.number_bomb_game_summary().state is None
     with repository._session() as session:
         game = session.scalar(select(NumberBombGameRecord))
-        open_round = session.scalar(select(NumberBombRoundRecord).where(
-            NumberBombRoundRecord.game_id == game.id,
-            NumberBombRoundRecord.state == "collecting",
-        ))
-    assert game.finish_reason == "idle_timeout"
-    assert open_round is None
+    assert game.skip_enabled is True
+    assert game.next_reminder_at == now + timedelta(seconds=30)
+    assert len(repository.run_number_bomb_jobs(now + timedelta(seconds=30))) == 1
 
 
-def test_number_bomb_latest_timeout_setting_is_immediately_effective(repository, now):
-    repository.create_user("timeout-setting", "设置超时", now, 0)
-    repository.upsert_direct_chats([("timeout-setting", "direct-timeout-setting")], now)
-    repository.start_number_bomb_game("timeout-setting", now)
-    repository.set_number_bomb_settings(1)
+def test_number_bomb_signup_expires_once_but_started_states_never_idle_expire(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.repository import CoreRepository
 
-    assert repository.run_number_bomb_jobs(now + timedelta(minutes=1))
+    signup_players = _prepare_number_bomb_players(repository, now, "signup-expiry", 1)
+    repository.start_number_bomb_game(signup_players[0], now)
+
+    assert repository.run_number_bomb_jobs(now + timedelta(minutes=2) - timedelta(microseconds=1)) == []
+    assert repository.run_number_bomb_jobs(now + timedelta(minutes=2)) == [
+        "【蹦蹦数字炸弹】报名等待超时，本场已自动取消。"
+    ]
+    assert CoreRepository(session_factory).run_number_bomb_jobs(now + timedelta(hours=1)) == []
+    assert repository.number_bomb_game_summary().state is None
+
+    active_now = now + timedelta(hours=2)
+    active_players = _prepare_number_bomb_players(repository, active_now, "no-idle", 3)
+    repository.start_number_bomb_game(active_players[0], active_now)
+    repository.join_number_bomb_game(active_players[1], active_now)
+    repository.join_number_bomb_game(active_players[2], active_now)
+    repository.start_number_bomb_round(active_players[0], active_now)
+
+    repository.run_number_bomb_jobs(active_now + timedelta(hours=12))
+    assert repository.number_bomb_game_summary().state == "collecting"
+    repository.submit_number_bomb(active_players[0], 10, active_now + timedelta(hours=12))
+    repository.submit_number_bomb(active_players[1], 50, active_now + timedelta(hours=12))
+    repository.submit_number_bomb(active_players[2], 90, active_now + timedelta(hours=12))
+    assert repository.number_bomb_game_summary().state == "waiting_continue"
+    assert repository.run_number_bomb_jobs(active_now + timedelta(days=2)) == []
+    assert repository.number_bomb_game_summary().state == "waiting_continue"
 
 
-def test_number_bomb_timeout_job_uses_the_editable_reply_template(repository, now):
-    from dzmm_bot.core.schema import OutboundRecord
+def test_number_bomb_skip_permanently_removes_batch_targets(repository, now):
+    platform_ids = _prepare_number_bomb_players(repository, now, "skip-batch", 5)
+    repository.start_number_bomb_game(platform_ids[0], now)
+    for platform_id in platform_ids[1:]:
+        repository.join_number_bomb_game(platform_id, now)
+    repository.start_number_bomb_round(platform_ids[0], now)
 
-    repository.create_user("timeout-template", "超时模板", now, 0)
-    repository.upsert_direct_chats([("timeout-template", "direct-timeout-template")], now)
-    repository.start_number_bomb_game("timeout-template", now)
-    repository.set_number_bomb_settings(1)
-    repository.set_reply_template(
-        "/蹦蹦数字炸弹",
-        "idle_timeout",
-        "管理员超时通知：{日期}",
+    assert repository.skip_number_bomb_players(
+        platform_ids[0], ("2",), now
+    ).status == "skip_not_enabled"
+    repository.run_number_bomb_jobs(now + timedelta(seconds=15))
+    result = repository.skip_number_bomb_players(
+        platform_ids[0], ("2", "4"), now + timedelta(seconds=16)
     )
 
-    repository.run_daily_jobs(now + timedelta(minutes=1))
-
+    assert result.status == "skipped"
+    assert [player.roster_order for player in result.players] == [2, 4]
+    assert [(player.roster_order, player.state) for player in repository.number_bomb_game_summary().players] == [
+        (1, "current"), (3, "current"), (5, "current")
+    ]
+    assert repository.submit_number_bomb(platform_ids[1], 20, now).status == "not_participant"
     with repository._session() as session:
-        texts = list(session.scalars(select(OutboundRecord.text)))
-    assert "管理员超时通知：2026-08-04" in texts
+        skipped = list(session.scalars(
+            select(NumberBombRoundPlayerRecord.skipped_at)
+            .where(NumberBombRoundPlayerRecord.skipped_at.is_not(None))
+        ))
+        activity_count = session.scalar(select(func.count(AIActivityEventRecord.event_key)))
+    assert len(skipped) == 2
+    assert activity_count == 0
+
+
+def test_number_bomb_skip_settles_when_remaining_players_have_reported(repository, now):
+    platform_ids = _prepare_number_bomb_players(repository, now, "skip-settle", 4)
+    repository.start_number_bomb_game(platform_ids[0], now)
+    for platform_id in platform_ids[1:]:
+        repository.join_number_bomb_game(platform_id, now)
+    repository.start_number_bomb_round(platform_ids[0], now)
+    repository.submit_number_bomb(platform_ids[0], 10, now)
+    repository.submit_number_bomb(platform_ids[1], 50, now)
+    repository.submit_number_bomb(platform_ids[2], 90, now)
+    repository.run_number_bomb_jobs(now + timedelta(seconds=15))
+
+    result = repository.skip_number_bomb_players(
+        platform_ids[0], ("4",), now + timedelta(seconds=16)
+    )
+
+    assert result.status == "settled"
+    assert result.public_message
+    assert repository.number_bomb_game_summary().state == "waiting_continue"
+
+
+def test_number_bomb_skip_ends_game_below_three_players(repository, now):
+    platform_ids = _prepare_number_bomb_players(repository, now, "skip-end", 3)
+    repository.start_number_bomb_game(platform_ids[0], now)
+    repository.join_number_bomb_game(platform_ids[1], now)
+    repository.join_number_bomb_game(platform_ids[2], now)
+    repository.start_number_bomb_round(platform_ids[0], now)
+    repository.run_number_bomb_jobs(now + timedelta(seconds=15))
+
+    result = repository.skip_number_bomb_players(
+        platform_ids[0], ("2",), now + timedelta(seconds=16)
+    )
+
+    assert result.status == "ended_insufficient"
+    assert repository.number_bomb_game_summary().state is None
+
+
+def test_number_bomb_skip_validates_actor_and_all_targets_before_mutation(repository, now):
+    platform_ids = _prepare_number_bomb_players(repository, now, "skip-valid", 4)
+    repository.create_user("skip-outsider", "路人", now, 0)
+    repository.start_number_bomb_game(platform_ids[0], now)
+    for platform_id in platform_ids[1:]:
+        repository.join_number_bomb_game(platform_id, now)
+    repository.start_number_bomb_round(platform_ids[0], now)
+    repository.submit_number_bomb(platform_ids[1], 20, now)
+    repository.run_number_bomb_jobs(now + timedelta(seconds=15))
+
+    assert repository.skip_number_bomb_players(
+        "skip-outsider", ("3",), now
+    ).status == "not_participant"
+    assert repository.skip_number_bomb_players(
+        platform_ids[0], ("2",), now
+    ).status == "already_submitted"
+    assert repository.skip_number_bomb_players(
+        platform_ids[0], ("3", "999"), now
+    ).status == "invalid_target"
+    assert [player.state for player in repository.number_bomb_game_summary().players] == [
+        "current", "current", "current", "current"
+    ]
+
+
+def test_number_bomb_skip_accepts_unique_name_and_rejects_duplicate_name(
+    repository, now
+):
+    platform_ids = _prepare_number_bomb_players(repository, now, "skip-name", 4)
+    repository.start_number_bomb_game(platform_ids[0], now)
+    for platform_id in platform_ids[1:]:
+        repository.join_number_bomb_game(platform_id, now)
+    repository.start_number_bomb_round(platform_ids[0], now)
+    repository.run_number_bomb_jobs(now + timedelta(seconds=15))
+
+    result = repository.skip_number_bomb_players(
+        platform_ids[0], ("玩家4",), now + timedelta(seconds=16)
+    )
+
+    assert result.status == "skipped"
+    assert [player.roster_order for player in result.players] == [4]
+    repository.end_number_bomb_game(platform_ids[0], now + timedelta(seconds=17))
+
+    duplicate_ids = _prepare_number_bomb_players(repository, now, "skip-duplicate", 4)
+    with repository.transaction():
+        with repository._session() as session:
+            for platform_id in duplicate_ids[1:3]:
+                user = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                user.display_name = "同名玩家"
+    repository.start_number_bomb_game(duplicate_ids[0], now)
+    for platform_id in duplicate_ids[1:]:
+        repository.join_number_bomb_game(platform_id, now)
+    repository.start_number_bomb_round(duplicate_ids[0], now)
+    repository.run_number_bomb_jobs(now + timedelta(seconds=15))
+
+    assert repository.skip_number_bomb_players(
+        duplicate_ids[0], ("同名玩家",), now + timedelta(seconds=16)
+    ).status == "ambiguous_target"
+
 
 
 def test_stable_impression_schema_separates_legacy_candidates_and_facts():

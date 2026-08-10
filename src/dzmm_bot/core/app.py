@@ -15,6 +15,8 @@ from dzmm_bot.ai.impressions import AIImpressionOperation
 from .api_models import (
     AcceptedResponse,
     AIClaimResponse,
+    AIActivityFactResponse,
+    AIPlayerImpressionResponse,
     AIMemoryClaimResponse,
     AIMemoryCompleteRequest,
     AIMemoryFailedRequest,
@@ -33,6 +35,7 @@ from .api_models import (
     CommandDefinitionResponse,
     CommandTemplateResponse,
     CreateDepartmentRequest,
+    CreateAIPlayerImpressionRequest,
     CreateItemRequest,
     DailyJobsRequest,
     DirectChatSyncRequest,
@@ -54,7 +57,7 @@ from .api_models import (
     SetCommandTemplateRequest,
     SetActivitySettingsRequest,
     SetAIAssistantSettingsRequest,
-    SetAIPlayerMemoryRequest,
+    UpdateAIPlayerImpressionRequest,
     SetGameSettingsRequest,
     RandomEventSettingsResponse,
     SetRandomEventSettingsRequest,
@@ -638,41 +641,65 @@ def create_app(
     def ai_player_memory(
         platform_id: str, _: Annotated[None, Depends(authorize)]
     ) -> AIPlayerMemoryResponse:
-        result = repository.get_ai_player_memory(platform_id)
-        if result is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
-        user, memory = result
-        return AIPlayerMemoryResponse(
-            platform_id=user.platform_id,
-            display_name=user.display_name,
-            memory_text=memory.memory_text if memory is not None else "",
-            updated_at=memory.updated_at if memory is not None else None,
-        )
+        return _ai_player_memory_response(repository, platform_id)
 
-    @app.put(
-        "/internal/game/users/{platform_id}/ai-memory",
-        response_model=AIPlayerMemoryResponse,
+    @app.post(
+        "/internal/game/users/{platform_id}/ai-impressions",
+        response_model=AIPlayerImpressionResponse,
+        status_code=status.HTTP_201_CREATED,
     )
-    def set_ai_player_memory(
+    def create_ai_player_impression(
         platform_id: str,
-        request: SetAIPlayerMemoryRequest,
+        request: CreateAIPlayerImpressionRequest,
         _: Annotated[None, Depends(authorize)],
-    ) -> AIPlayerMemoryResponse:
+    ) -> AIPlayerImpressionResponse:
         try:
-            result = repository.set_ai_player_memory(
-                platform_id, request.memory_text, beijing_now()
+            record = repository.create_ai_player_impression(
+                platform_id, request.category, request.content, beijing_now()
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
-        if result is None:
+        if record is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
-        user, memory = result
-        return AIPlayerMemoryResponse(
-            platform_id=user.platform_id,
-            display_name=user.display_name,
-            memory_text=memory.memory_text,
-            updated_at=memory.updated_at,
-        )
+        return _ai_player_impression_response(record)
+
+    @app.put(
+        "/internal/game/users/{platform_id}/ai-impressions/{entry_id}",
+        response_model=AIPlayerImpressionResponse,
+    )
+    def update_ai_player_impression(
+        platform_id: str,
+        entry_id: UUID,
+        request: UpdateAIPlayerImpressionRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AIPlayerImpressionResponse:
+        try:
+            record = repository.update_ai_player_impression(
+                platform_id,
+                entry_id,
+                request.category,
+                request.content,
+                request.pinned,
+                beijing_now(),
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        if record is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "impression not found")
+        return _ai_player_impression_response(record)
+
+    @app.delete(
+        "/internal/game/users/{platform_id}/ai-impressions/{entry_id}",
+        response_model=AcceptedResponse,
+    )
+    def delete_ai_player_impression(
+        platform_id: str,
+        entry_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        if not repository.delete_ai_player_impression(platform_id, entry_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "impression not found")
+        return AcceptedResponse(accepted=True)
 
     @app.delete(
         "/internal/game/users/{platform_id}/ai-memory",
@@ -681,7 +708,7 @@ def create_app(
     def clear_ai_player_memory(
         platform_id: str, _: Annotated[None, Depends(authorize)]
     ) -> AcceptedResponse:
-        if not repository.clear_ai_player_memory(platform_id):
+        if not repository.clear_ai_player_memory(platform_id, beijing_now()):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
         return AcceptedResponse(accepted=True)
 
@@ -1632,6 +1659,50 @@ def _ai_assistant_settings_response(
             )
             for quota in quotas
         ],
+    )
+
+
+def _ai_player_impression_response(record) -> AIPlayerImpressionResponse:
+    return AIPlayerImpressionResponse(
+        id=record.id,
+        category=record.category,
+        content=record.content,
+        source=record.source,
+        pinned=record.pinned,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def _ai_player_memory_response(
+    repository: CoreRepository, platform_id: str
+) -> AIPlayerMemoryResponse:
+    result = repository.get_ai_player_memory(platform_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    user, memory = result
+    impressions = repository.list_ai_player_impressions(platform_id)
+    facts = repository.list_ai_activity_facts(platform_id)
+    updated_candidates = [entry.updated_at for entry in impressions]
+    if memory is not None:
+        updated_candidates.append(memory.updated_at)
+    return AIPlayerMemoryResponse(
+        platform_id=user.platform_id,
+        display_name=user.display_name,
+        impressions=[_ai_player_impression_response(entry) for entry in impressions],
+        activity_facts=[
+            AIActivityFactResponse(
+                activity_type=fact.activity_type,
+                participation_count=fact.participation_count,
+                win_count=fact.win_count,
+                loss_count=fact.loss_count,
+                last_result=fact.last_result,
+                last_result_at=fact.last_result_at,
+            )
+            for fact in facts
+        ],
+        legacy_memory_text=memory.memory_text if memory is not None else "",
+        updated_at=max(updated_candidates) if updated_candidates else None,
     )
 
 

@@ -63,7 +63,13 @@ class AdminCorePort(Protocol):
 
     def get_ai_player_memory(self, platform_id: str) -> dict: ...
 
-    def set_ai_player_memory(self, platform_id: str, memory_text: str) -> dict: ...
+    def create_ai_player_impression(self, platform_id: str, impression: dict) -> dict: ...
+
+    def update_ai_player_impression(
+        self, platform_id: str, entry_id: str, impression: dict
+    ) -> dict: ...
+
+    def delete_ai_player_impression(self, platform_id: str, entry_id: str) -> dict: ...
 
     def clear_ai_player_memory(self, platform_id: str) -> dict: ...
 
@@ -279,10 +285,27 @@ class CoreClient:
     def get_ai_player_memory(self, platform_id: str) -> dict:
         return self._get(f"/internal/game/users/{platform_id}/ai-memory")
 
-    def set_ai_player_memory(self, platform_id: str, memory_text: str) -> dict:
+    def create_ai_player_impression(self, platform_id: str, impression: dict) -> dict:
+        response = self._client.post(
+            f"/internal/game/users/{platform_id}/ai-impressions",
+            json=impression,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def update_ai_player_impression(
+        self, platform_id: str, entry_id: str, impression: dict
+    ) -> dict:
         response = self._client.put(
-            f"/internal/game/users/{platform_id}/ai-memory",
-            json={"memory_text": memory_text},
+            f"/internal/game/users/{platform_id}/ai-impressions/{entry_id}",
+            json=impression,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_ai_player_impression(self, platform_id: str, entry_id: str) -> dict:
+        response = self._client.delete(
+            f"/internal/game/users/{platform_id}/ai-impressions/{entry_id}"
         )
         response.raise_for_status()
         return response.json()

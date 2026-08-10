@@ -364,7 +364,7 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
     memory = app_context.client.get(
         "/internal/game/users/ai-user/ai-memory", headers=headers
     )
-    assert memory.json()["memory_text"] == ""
+    assert memory.json()["legacy_memory_text"] == ""
 
     completed = app_context.client.post(
         f"/internal/ai/{claim.json()['id']}/completed",
@@ -389,6 +389,73 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
 
     assert completed.json() == {"accepted": True}
     assert stale.json() == {"accepted": False}
+
+
+def test_ai_impression_crud_is_categorized_pinned_and_player_scoped(
+    app_context, headers
+):
+    app_context.repository.create_user("memory-player", "记忆玩家", NOW, 0)
+    app_context.repository.create_user("other-player", "其他玩家", NOW, 0)
+    app_context.repository.set_ai_player_memory(
+        "memory-player", "旧的自由文本备份", NOW
+    )
+
+    created = app_context.client.post(
+        "/internal/game/users/memory-player/ai-impressions",
+        headers=headers,
+        json={"category": "expression_style", "content": "偏好先给结论"},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["source"] == "admin"
+    assert created.json()["pinned"] is True
+    entry_id = created.json()["id"]
+    memory = app_context.client.get(
+        "/internal/game/users/memory-player/ai-memory", headers=headers
+    ).json()
+    assert memory["impressions"][0]["content"] == "偏好先给结论"
+    assert memory["legacy_memory_text"] == "旧的自由文本备份"
+    assert memory["activity_facts"] == []
+
+    invalid = app_context.client.post(
+        "/internal/game/users/memory-player/ai-impressions",
+        headers=headers,
+        json={"category": "diagnosis", "content": "焦虑"},
+    )
+    assert invalid.status_code == 422
+
+    wrong_player = app_context.client.put(
+        f"/internal/game/users/other-player/ai-impressions/{entry_id}",
+        headers=headers,
+        json={
+            "category": "expression_style",
+            "content": "偏好分步骤",
+            "pinned": False,
+        },
+    )
+    assert wrong_player.status_code == 404
+
+    updated = app_context.client.put(
+        f"/internal/game/users/memory-player/ai-impressions/{entry_id}",
+        headers=headers,
+        json={
+            "category": "expression_style",
+            "content": "偏好分步骤",
+            "pinned": False,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["pinned"] is False
+
+    cleared = app_context.client.delete(
+        "/internal/game/users/memory-player/ai-memory", headers=headers
+    )
+    assert cleared.json() == {"accepted": True}
+    after_clear = app_context.client.get(
+        "/internal/game/users/memory-player/ai-memory", headers=headers
+    ).json()
+    assert after_clear["impressions"] == []
+    assert after_clear["legacy_memory_text"] == "旧的自由文本备份"
 
 
 def test_ai_assistant_settings_reject_response_limit_over_ten_thousand(client, headers):

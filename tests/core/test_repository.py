@@ -724,6 +724,59 @@ def test_expired_candidates_are_removed_and_full_category_does_not_overflow(
         ) == 3
 
 
+def test_clear_impressions_preserves_legacy_and_skips_all_existing_messages(
+    repository, now
+):
+    from dzmm_bot.ai.impressions import AIImpressionOperation
+    from dzmm_bot.core.schema import (
+        AIImpressionCandidateRecord,
+        AIMemoryJobRecord,
+        AIPlayerImpressionRecord,
+        AIPlayerMemoryRecord,
+    )
+
+    user, _ = repository.create_user("clear-player", "清空玩家", now, 0)
+    repository.set_ai_player_memory(user.platform_id, "保留的旧备份", now)
+    claim = _claim_impression_batch(repository, user, now, "clear-candidate")
+    assert repository.complete_ai_memory_job(
+        user.id,
+        "memory-worker",
+        claim.lease_token,
+        claim.target_message_id,
+        [
+            AIImpressionOperation(
+                action="new_candidate", category="interests", content="喜欢桌游"
+            )
+        ],
+        claim.source_message_count,
+        now,
+    ) is True
+    repository.create_ai_player_impression(
+        user.platform_id, "boundaries", "不讨论隐私", now
+    )
+    latest, _ = repository.accept_inbound(
+        InboundMessage(
+            "clear-latest", user.platform_id, "清空前最后一句", now + timedelta(seconds=1)
+        )
+    )
+    repository.record_ai_memory_message(
+        latest.id, user.platform_id, True, now + timedelta(seconds=1)
+    )
+
+    assert repository.clear_ai_player_memory(
+        user.platform_id, now + timedelta(seconds=2)
+    ) is True
+
+    with repository._session() as session:
+        memory = session.get(AIPlayerMemoryRecord, user.id)
+        assert memory.memory_text == "保留的旧备份"
+        assert memory.last_scanned_message_id == latest.id
+        assert memory.pending_message_count == 0
+        assert session.get(AIMemoryJobRecord, user.id) is None
+        assert session.scalar(select(AIPlayerImpressionRecord)) is None
+        assert session.scalar(select(AIImpressionCandidateRecord)) is None
+
+
 def test_undercover_word_migration_seeds_nine_unique_categories():
     rows = _undercover_word_migration_module()._seed_rows()
 

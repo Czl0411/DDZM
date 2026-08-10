@@ -97,6 +97,7 @@ class FakeCore:
             ],
         }
     )
+    ai_player_memories: dict = field(default_factory=dict)
     random_event_settings: dict = field(
         default_factory=lambda: {
             "schedule_times": ["00:00", "02:00", "10:00", "14:00", "16:00", "20:00"],
@@ -348,6 +349,55 @@ class FakeCore:
             ],
         }
         return self.ai_assistant_settings
+
+    def get_ai_player_memory(self, platform_id):
+        return self.ai_player_memories.setdefault(
+            platform_id,
+            {
+                "platform_id": platform_id,
+                "display_name": "记忆玩家",
+                "impressions": [],
+                "activity_facts": [],
+                "legacy_memory_text": "",
+                "updated_at": None,
+            },
+        )
+
+    def create_ai_player_impression(self, platform_id, impression):
+        memory = self.get_ai_player_memory(platform_id)
+        saved = {
+            "id": f"impression-{len(memory['impressions']) + 1}",
+            **impression,
+            "source": "admin",
+            "pinned": True,
+        }
+        memory["impressions"].append(saved)
+        return saved
+
+    def update_ai_player_impression(self, platform_id, entry_id, impression):
+        memory = self.get_ai_player_memory(platform_id)
+        index = next(
+            index
+            for index, entry in enumerate(memory["impressions"])
+            if entry["id"] == entry_id
+        )
+        memory["impressions"][index] = {
+            **memory["impressions"][index],
+            **impression,
+            "source": "admin",
+        }
+        return memory["impressions"][index]
+
+    def delete_ai_player_impression(self, platform_id, entry_id):
+        memory = self.get_ai_player_memory(platform_id)
+        memory["impressions"] = [
+            entry for entry in memory["impressions"] if entry["id"] != entry_id
+        ]
+        return {"accepted": True}
+
+    def clear_ai_player_memory(self, platform_id):
+        self.get_ai_player_memory(platform_id)["impressions"] = []
+        return {"accepted": True}
 
     def get_activity_settings(self):
         return self.activity_settings
@@ -660,6 +710,50 @@ def test_health_is_public_and_discloses_no_configuration(client):
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_admin_proxies_categorized_ai_impression_crud(client, headers):
+    created = client.post(
+        "/api/game/users/player/ai-impressions",
+        headers={
+            **headers,
+            "Idempotency-Key": "impression-create",
+            "If-Match": "0",
+        },
+        json={"category": "expression_style", "content": "偏好先给结论"},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["pinned"] is True
+    entry_id = created.json()["id"]
+    updated = client.put(
+        f"/api/game/users/player/ai-impressions/{entry_id}",
+        headers={
+            **headers,
+            "Idempotency-Key": "impression-update",
+            "If-Match": str(created.json()["version"]),
+        },
+        json={
+            "category": "expression_style",
+            "content": "偏好分步骤",
+            "pinned": False,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["pinned"] is False
+
+    deleted = client.delete(
+        f"/api/game/users/player/ai-impressions/{entry_id}",
+        headers={
+            **headers,
+            "Idempotency-Key": "impression-delete",
+            "If-Match": str(updated.json()["version"]),
+        },
+    )
+    assert deleted.json()["accepted"] is True
+    assert client.get(
+        "/api/game/users/player/ai-memory", headers=headers
+    ).json()["impressions"] == []
 
 
 def test_regular_admin_authenticates_but_cannot_manage_administrators(

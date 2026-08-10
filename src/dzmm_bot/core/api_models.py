@@ -349,15 +349,53 @@ class SetAIAssistantSettingsRequest(ApiModel):
     candidate_expiry_days: int = Field(ge=1, le=365)
 
 
+AIImpressionCategory = Literal[
+    "expression_style",
+    "group_interaction",
+    "humor_style",
+    "interests",
+    "supervisor_interaction",
+    "boundaries",
+]
+
+
+class AIPlayerImpressionResponse(ApiModel):
+    id: UUID
+    category: AIImpressionCategory
+    content: str
+    source: str
+    pinned: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AIActivityFactResponse(ApiModel):
+    activity_type: str
+    participation_count: int
+    win_count: int
+    loss_count: int
+    last_result: str
+    last_result_at: datetime
+
+
 class AIPlayerMemoryResponse(ApiModel):
     platform_id: str
     display_name: str
-    memory_text: str
+    impressions: list[AIPlayerImpressionResponse]
+    activity_facts: list[AIActivityFactResponse]
+    legacy_memory_text: str
     updated_at: datetime | None
 
 
-class SetAIPlayerMemoryRequest(ApiModel):
-    memory_text: str = Field(max_length=8000)
+class CreateAIPlayerImpressionRequest(ApiModel):
+    category: AIImpressionCategory
+    content: str = Field(min_length=1, max_length=240)
+
+
+class UpdateAIPlayerImpressionRequest(ApiModel):
+    category: AIImpressionCategory
+    content: str = Field(min_length=1, max_length=240)
+    pinned: bool
 
 
 class AIClaimResponse(ApiModel):
@@ -381,16 +419,6 @@ class AIFailedRequest(ApiModel):
     lease_token: UUID
     failure_summary: Literal["timeout", "network", "http_error", "invalid_response"]
     now: AwareDatetime
-
-
-AIImpressionCategory = Literal[
-    "expression_style",
-    "group_interaction",
-    "humor_style",
-    "interests",
-    "supervisor_interaction",
-    "boundaries",
-]
 
 
 class AIImpressionOperationModel(ApiModel):

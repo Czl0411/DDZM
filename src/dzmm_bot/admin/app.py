@@ -69,6 +69,9 @@ def _with_default_ai_memory_settings(settings: dict) -> dict:
         ),
         "history_limit": settings.get("history_limit", 500),
         "max_memory_chars": settings.get("max_memory_chars", 1200),
+        "batch_message_threshold": settings.get("batch_message_threshold", 20),
+        "max_entries_per_category": settings.get("max_entries_per_category", 3),
+        "candidate_expiry_days": settings.get("candidate_expiry_days", 30),
     }
 
 
@@ -631,6 +634,9 @@ def create_app(
             "extraction_prompt",
             "history_limit",
             "max_memory_chars",
+            "batch_message_threshold",
+            "max_entries_per_category",
+            "candidate_expiry_days",
         )
         if not all(key in request for key in required) or not isinstance(request["quotas"], list):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
@@ -653,25 +659,76 @@ def create_app(
     ) -> dict:
         return _relay_core(lambda: core.get_ai_player_memory(platform_id))
 
-    @app.put("/api/game/users/{platform_id}/ai-memory")
-    def set_ai_player_memory(
+    @app.post("/api/game/users/{platform_id}/ai-impressions")
+    def create_ai_player_impression(
         platform_id: str,
         request: dict,
         identity: Annotated[AdminIdentity, Depends(authorize)],
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
         if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     ) -> JSONResponse:
-        memory_text = request.get("memory_text")
-        if not isinstance(memory_text, str):
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid memory")
+        category = request.get("category")
+        content = request.get("content")
+        if not isinstance(category, str) or not isinstance(content, str):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid impression")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(lambda: core.create_ai_player_impression(
+                platform_id, {"category": category, "content": content}
+            )),
+            scope=f"ai-player-impression:{platform_id}:new",
+            status_code=201,
+        )
+
+    @app.put("/api/game/users/{platform_id}/ai-impressions/{entry_id}")
+    def update_ai_player_impression(
+        platform_id: str,
+        entry_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        if (
+            not isinstance(request.get("category"), str)
+            or not isinstance(request.get("content"), str)
+            or not isinstance(request.get("pinned"), bool)
+        ):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid impression")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(lambda: core.update_ai_player_impression(
+                platform_id,
+                entry_id,
+                {
+                    "category": request["category"],
+                    "content": request["content"],
+                    "pinned": request["pinned"],
+                },
+            )),
+            scope=f"ai-player-impression:{platform_id}:{entry_id}",
+        )
+
+    @app.delete("/api/game/users/{platform_id}/ai-impressions/{entry_id}")
+    def delete_ai_player_impression(
+        platform_id: str,
+        entry_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
         return versioned_configuration_response(
             identity,
             idempotency_key,
             if_match,
             lambda: _relay_core(
-                lambda: core.set_ai_player_memory(platform_id, memory_text)
+                lambda: core.delete_ai_player_impression(platform_id, entry_id)
             ),
-            scope=f"ai-player-memory:{platform_id}",
+            scope=f"ai-player-impression:{platform_id}:{entry_id}",
         )
 
     @app.delete("/api/game/users/{platform_id}/ai-memory")

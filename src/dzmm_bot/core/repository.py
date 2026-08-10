@@ -1394,6 +1394,110 @@ class CoreRepository:
                 return None
             return user, session.get(AIPlayerMemoryRecord, user.id)
 
+    def list_ai_player_impressions(
+        self, platform_id: str
+    ) -> tuple[AIPlayerImpressionRecord, ...]:
+        with self._session() as session:
+            user_id = session.scalar(
+                select(UserRecord.id).where(UserRecord.platform_id == platform_id)
+            )
+            if user_id is None:
+                return ()
+            return tuple(
+                session.scalars(
+                    select(AIPlayerImpressionRecord)
+                    .where(AIPlayerImpressionRecord.user_id == user_id)
+                    .order_by(
+                        AIPlayerImpressionRecord.category,
+                        AIPlayerImpressionRecord.created_at,
+                        AIPlayerImpressionRecord.id,
+                    )
+                )
+            )
+
+    def create_ai_player_impression(
+        self,
+        platform_id: str,
+        category: str,
+        content: str,
+        now: datetime,
+    ) -> AIPlayerImpressionRecord | None:
+        category, content = _normalize_impression_fields(category, content)
+        with self._session() as session:
+            user_id = session.scalar(
+                select(UserRecord.id).where(UserRecord.platform_id == platform_id)
+            )
+            if user_id is None:
+                return None
+            record = AIPlayerImpressionRecord(
+                user_id=user_id,
+                category=category,
+                content=content,
+                source="admin",
+                pinned=True,
+                contradiction_batches=0,
+                last_supported_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def update_ai_player_impression(
+        self,
+        platform_id: str,
+        entry_id: UUID | str,
+        category: str,
+        content: str,
+        pinned: bool,
+        now: datetime,
+    ) -> AIPlayerImpressionRecord | None:
+        category, content = _normalize_impression_fields(category, content)
+        with self._session() as session:
+            record = session.scalar(
+                select(AIPlayerImpressionRecord)
+                .join(UserRecord, UserRecord.id == AIPlayerImpressionRecord.user_id)
+                .where(
+                    AIPlayerImpressionRecord.id == UUID(str(entry_id)),
+                    UserRecord.platform_id == platform_id,
+                )
+                .with_for_update()
+            )
+            if record is None:
+                return None
+            record.category = category
+            record.content = content
+            record.source = "admin"
+            record.pinned = pinned
+            record.contradiction_batches = 0
+            record.last_supported_at = now
+            record.updated_at = now
+            session.flush()
+            return record
+
+    def delete_ai_player_impression(
+        self, platform_id: str, entry_id: UUID | str
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(
+                select(AIPlayerImpressionRecord)
+                .join(UserRecord, UserRecord.id == AIPlayerImpressionRecord.user_id)
+                .where(
+                    AIPlayerImpressionRecord.id == UUID(str(entry_id)),
+                    UserRecord.platform_id == platform_id,
+                )
+            )
+            if record is None:
+                return False
+            session.execute(
+                delete(AIImpressionCandidateRecord).where(
+                    AIImpressionCandidateRecord.conflict_entry_id == record.id
+                )
+            )
+            session.delete(record)
+            return True
+
     def list_ai_activity_facts(self, platform_id: str) -> tuple[AIActivityFact, ...]:
         with self._session() as session:
             user_id = session.scalar(
@@ -1505,16 +1609,47 @@ class CoreRepository:
             session.flush()
             return user, record
 
-    def clear_ai_player_memory(self, platform_id: str) -> bool:
+    def clear_ai_player_memory(self, platform_id: str, now: datetime) -> bool:
         with self._session() as session:
             user = session.scalar(
                 select(UserRecord).where(UserRecord.platform_id == platform_id)
             )
             if user is None:
                 return False
-            session.execute(
-                delete(AIPlayerMemoryRecord).where(AIPlayerMemoryRecord.user_id == user.id)
+            latest_message_id = session.scalar(
+                select(InboundRecord.id)
+                .where(InboundRecord.sender_platform_id == platform_id)
+                .order_by(InboundRecord.received_at.desc(), InboundRecord.id.desc())
+                .limit(1)
             )
+            session.execute(
+                delete(AIImpressionCandidateRecord).where(
+                    AIImpressionCandidateRecord.user_id == user.id
+                )
+            )
+            session.execute(
+                delete(AIPlayerImpressionRecord).where(
+                    AIPlayerImpressionRecord.user_id == user.id
+                )
+            )
+            session.execute(
+                delete(AIMemoryJobRecord).where(AIMemoryJobRecord.user_id == user.id)
+            )
+            memory = session.get(AIPlayerMemoryRecord, user.id, with_for_update=True)
+            if memory is None:
+                memory = AIPlayerMemoryRecord(
+                    user_id=user.id,
+                    memory_text="",
+                    last_scanned_message_id=latest_message_id,
+                    pending_message_count=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(memory)
+            else:
+                memory.last_scanned_message_id = latest_message_id
+                memory.pending_message_count = 0
+                memory.updated_at = now
             return True
 
     def get_ai_assistant_configuration(
@@ -8290,14 +8425,18 @@ def _ai_memory_settings(record: AIMemorySettingsRecord) -> AIMemorySettings:
 def _normalized_impression_value(
     operation: AIImpressionOperation,
 ) -> tuple[str, str]:
-    if operation.category not in IMPRESSION_CATEGORIES:
-        raise ValueError("印象分类无效")
     if not isinstance(operation.content, str):
         raise ValueError("印象内容无效")
-    content = " ".join(operation.content.strip().split())
+    return _normalize_impression_fields(operation.category, operation.content)
+
+
+def _normalize_impression_fields(category: str | None, content: str) -> tuple[str, str]:
+    if category not in IMPRESSION_CATEGORIES:
+        raise ValueError("印象分类无效")
+    content = " ".join(content.strip().split())
     if not 1 <= len(content) <= 240:
         raise ValueError("印象内容无效")
-    return operation.category, content
+    return category, content
 
 
 def _build_ai_system_prompt(

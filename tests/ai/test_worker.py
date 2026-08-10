@@ -95,9 +95,7 @@ def test_ai_worker_completes_one_claim_and_leaves_empty_queue_idle():
     assert worker.run_once() is False
 
 
-def test_ai_worker_extracts_memory_only_after_reply_queue_is_empty():
-    from dzmm_bot.ai.worker import AIWorker
-
+def _memory_claim():
     entry = AIImpressionEntry(
         id=uuid4(),
         category="interests",
@@ -111,7 +109,7 @@ def test_ai_worker_extracts_memory_only_after_reply_queue_is_empty():
         support_batches=1,
         conflict_entry_id=None,
     )
-    claim = AIMemoryClaim(
+    return AIMemoryClaim(
         user_id=uuid4(),
         target_message_id=uuid4(),
         lease_token=uuid4(),
@@ -122,31 +120,98 @@ def test_ai_worker_extracts_memory_only_after_reply_queue_is_empty():
         source_messages=("我也喜欢短回复",),
         source_message_count=1,
     )
+
+
+def test_reply_worker_never_claims_memory_when_reply_queue_is_empty():
+    from dzmm_bot.ai.worker import AIWorker
+
+    claim = _memory_claim()
+    core = FakeCore(None, memory_claim=claim)
+
+    assert AIWorker("ai-1", core, object(), clock=lambda: NOW).run_once() is False
+    assert core.memory_claim is claim
+
+
+def test_memory_worker_parses_json_and_completes_structured_operations():
+    from dzmm_bot.ai.memory_worker import AIMemoryWorker
+
+    claim = _memory_claim()
     core = FakeCore(None, memory_claim=claim)
 
     class SuccessClient:
         def complete(self, system_prompt, user_content, **kwargs):
-            assert str(entry.id) in system_prompt
-            assert str(candidate.id) in system_prompt
+            assert str(claim.stable_entries[0].id) in system_prompt
+            assert str(claim.candidates[0].id) in system_prompt
             assert user_content == "我也喜欢短回复"
+            assert kwargs == {"max_chars": 8000, "timeout_seconds": 20}
             return (
                 '{"operations":[{"action":"reinforce_candidate",'
-                f'"candidate_id":"{candidate.id}"}}]}}'
+                f'"candidate_id":"{claim.candidates[0].id}"}}]}}'
             )
 
-    assert AIWorker("ai-1", core, SuccessClient(), clock=lambda: NOW).run_once() is True
+    assert AIMemoryWorker(
+        "memory-1", core, SuccessClient(), clock=lambda: NOW
+    ).run_once() is True
     assert core.memory_completed == [
         (
             claim.user_id,
-            "ai-1",
+            "memory-1",
             claim.lease_token,
             claim.target_message_id,
             (
                 AIImpressionOperation(
-                    action="reinforce_candidate", candidate_id=candidate.id
+                    action="reinforce_candidate",
+                    candidate_id=claim.candidates[0].id,
                 ),
             ),
             1,
             NOW,
         )
     ]
+
+
+def test_memory_worker_maps_invalid_json_and_timeout_to_safe_categories():
+    from dzmm_bot.ai.memory_worker import AIMemoryWorker
+
+    invalid_claim = _memory_claim()
+    invalid_core = FakeCore(None, memory_claim=invalid_claim)
+
+    class InvalidClient:
+        def complete(self, *args, **kwargs):
+            return "不是 JSON"
+
+    assert AIMemoryWorker(
+        "memory-1", invalid_core, InvalidClient(), clock=lambda: NOW
+    ).run_once() is True
+    assert invalid_core.memory_failed == [
+        (
+            invalid_claim.user_id,
+            "memory-1",
+            invalid_claim.lease_token,
+            "invalid_response",
+            NOW,
+        )
+    ]
+
+    timeout_claim = _memory_claim()
+    timeout_core = FakeCore(None, memory_claim=timeout_claim)
+    assert AIMemoryWorker(
+        "memory-1", timeout_core, TimeoutClient(), clock=lambda: NOW
+    ).run_once() is True
+    assert timeout_core.memory_failed == [
+        (
+            timeout_claim.user_id,
+            "memory-1",
+            timeout_claim.lease_token,
+            "timeout",
+            NOW,
+        )
+    ]
+
+
+def test_memory_worker_leaves_an_empty_queue_idle():
+    from dzmm_bot.ai.memory_worker import AIMemoryWorker
+
+    assert AIMemoryWorker(
+        "memory-1", FakeCore(None), object(), clock=lambda: NOW
+    ).run_once() is False

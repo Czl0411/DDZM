@@ -920,6 +920,7 @@ class GroupCommandHandler:
             scenarios = {
                 "not_joined": "not_joined",
                 "disabled": "disabled",
+                "multiplayer_active": "multiplayer_active",
                 "already_active": "already_active",
             }
             return self._reply("/记忆考核", scenarios[result.status], received_at)

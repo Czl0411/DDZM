@@ -120,7 +120,7 @@ def test_live_target_room_text_event_is_read_once(gateway):
     assert adapter.read_new() == []
 
 
-def test_targeted_private_report_is_joined_filtered_and_read_once(gateway):
+def test_private_socket_events_are_read_once_after_active_room_join(gateway):
     adapter, socket, request = gateway
     request.messages_by_room = {"room-1": [], "direct-1": []}
 
@@ -142,21 +142,46 @@ def test_targeted_private_report_is_joined_filtered_and_read_once(gateway):
         {"chatroomId": "direct-2", "message": message("dm-other", "u-2", "/报数 30")},
     )
 
-    assert adapter.read_new(("direct-1",)) == [
-        InboundMessage(
-            "dm-1",
-            "u-1",
-            "/报数 29",
-            datetime(2026, 8, 5, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
-            source_type="direct",
-            chatroom_id="direct-1",
-        )
+    assert [item.platform_message_id for item in adapter.read_new(("direct-1",))] == [
+        "dm-1", "dm-text", "dm-other"
     ]
     assert adapter.read_new(("direct-1",)) == []
     assert socket.calls == [
         ("message:join-room", {"chatroomId": "direct-1"}, 10)
     ]
 
+
+def test_unknown_private_socket_event_is_available_for_mapping(gateway):
+    adapter, socket, _ = gateway
+    adapter.read_new()
+
+    socket.trigger(
+        "message:new",
+        {"chatroomId": "new-direct", "message": message("new-dm", "new-user", "你好")},
+    )
+
+    assert adapter.read_new() == [
+        InboundMessage(
+            "new-dm",
+            "new-user",
+            "你好",
+            datetime(2026, 8, 5, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            source_type="direct",
+            chatroom_id="new-direct",
+        )
+    ]
+
+
+def test_read_new_does_not_poll_history_after_socket_is_connected(gateway):
+    adapter, _, request = gateway
+    now = [NOW]
+    adapter._clock = lambda: now[0]
+    adapter.read_new()
+    request.calls.clear()
+    now[0] += timedelta(seconds=5)
+
+    assert adapter.read_new() == []
+    assert request.calls == []
 
 def test_targeted_private_history_recovers_unseen_report_once(gateway):
     adapter, _, request = gateway
@@ -165,15 +190,14 @@ def test_targeted_private_history_recovers_unseen_report_once(gateway):
         "direct-1": [message("dm-history", "u-1", "/报数 41")],
     }
 
-    recovered = adapter.read_new(("direct-1",))
+    recovered = adapter.reconcile_history(("direct-1",))
 
     assert [item.platform_message_id for item in recovered] == ["dm-history"]
     assert recovered[0].source_type == "direct"
     assert adapter.read_new(("direct-1",)) == []
 
 
-def test_self_and_other_room_events_are_ignored(gateway):
-    """Fails if the bot replies to itself or another room's traffic."""
+def test_self_events_are_ignored_while_unknown_direct_events_are_retained(gateway):
     adapter, socket, _ = gateway
     adapter.read_new()
 
@@ -186,7 +210,7 @@ def test_self_and_other_room_events_are_ignored(gateway):
         {"chatroomId": "room-2", "message": message("m-other", "u-1", "/余额")},
     )
 
-    assert adapter.read_new() == []
+    assert [item.platform_message_id for item in adapter.read_new()] == ["m-other"]
 
 
 def test_self_message_arriving_during_connection_is_ignored(gateway):
@@ -217,7 +241,7 @@ def test_history_reconciles_unseen_text_messages_in_timestamp_order():
         clock=lambda: NOW,
     )
 
-    assert [item.platform_message_id for item in adapter.read_new()] == ["m-1", "m-2"]
+    assert [item.platform_message_id for item in adapter.reconcile_history()] == ["m-1", "m-2"]
 
 
 def test_history_recovers_a_message_when_a_connected_socket_stops_emitting_events():
@@ -237,7 +261,7 @@ def test_history_recovers_a_message_when_a_connected_socket_stops_emitting_event
     request.messages = [message("m-missed", "u-1", "/帮助")]
     now[0] += timedelta(seconds=5)
 
-    assert [item.platform_message_id for item in adapter.read_new()] == ["m-missed"]
+    assert [item.platform_message_id for item in adapter.reconcile_history()] == ["m-missed"]
 
 
 def test_history_recovery_reconnects_a_stale_socket_before_the_next_poll():
@@ -253,10 +277,10 @@ def test_history_recovery_reconnects_a_stale_socket_before_the_next_poll():
         clock=lambda: now[0],
     )
 
-    adapter.read_new()
+    adapter.reconcile_history()
     request.messages = [message("m-missed", "u-1", "/帮助")]
     now[0] += timedelta(seconds=5)
-    adapter.read_new()
+    adapter.reconcile_history()
     adapter.read_new()
 
     assert len(socket.connect_calls) == 2

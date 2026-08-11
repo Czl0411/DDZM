@@ -15,7 +15,6 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class AikdaSocketGateway:
-    _HISTORY_SYNC_INTERVAL = timedelta(seconds=5)
 
     def __init__(
         self,
@@ -43,7 +42,6 @@ class AikdaSocketGateway:
         self._authenticated = False
         self._joined = Event()
         self._reconcile_needed = True
-        self._last_history_sync_at: datetime | None = None
         self._pending: deque[InboundMessage] = deque()
         self._seen_ids: set[str] = set()
         self._pending_lock = Lock()
@@ -54,6 +52,21 @@ class AikdaSocketGateway:
         self, direct_chatroom_ids: tuple[str, ...] = ()
     ) -> list[InboundMessage]:
         self._ensure_connected()
+        self._set_direct_targets(direct_chatroom_ids)
+        return self._drain_pending()
+
+    def reconcile_history(
+        self, direct_chatroom_ids: tuple[str, ...] = ()
+    ) -> list[InboundMessage]:
+        self._ensure_connected()
+        self._set_direct_targets(direct_chatroom_ids)
+        initial_sync = self._reconcile_needed
+        recovered = self._reconcile_history(self._clock())
+        if recovered and not initial_sync:
+            self._invalidate_stale_socket()
+        return self._drain_pending()
+
+    def _set_direct_targets(self, direct_chatroom_ids: tuple[str, ...]) -> None:
         targets = set(direct_chatroom_ids)
         if targets != self._direct_chatroom_ids:
             self._direct_chatroom_ids = targets
@@ -61,12 +74,8 @@ class AikdaSocketGateway:
         for chatroom_id in direct_chatroom_ids:
             if chatroom_id not in self._joined_direct_chatroom_ids:
                 self._join_direct_room(chatroom_id)
-        now = self._clock()
-        initial_sync = self._reconcile_needed
-        if initial_sync or self._history_sync_due(now):
-            recovered = self._reconcile_history(now)
-            if recovered and not initial_sync:
-                self._invalidate_stale_socket()
+
+    def _drain_pending(self) -> list[InboundMessage]:
         with self._pending_lock:
             messages, self._pending = self._pending, deque()
         return sorted(messages, key=lambda message: message.received_at)
@@ -211,12 +220,6 @@ class AikdaSocketGateway:
         self._authenticated = True
         self._reconcile_needed = True
 
-    def _history_sync_due(self, now: datetime) -> bool:
-        return (
-            self._last_history_sync_at is None
-            or now - self._last_history_sync_at >= self._HISTORY_SYNC_INTERVAL
-        )
-
     def _reconcile_history(self, now: datetime) -> bool:
         seen_before = len(self._seen_ids)
         for chatroom_id in (self.chatroom_id, *sorted(self._direct_chatroom_ids)):
@@ -226,7 +229,6 @@ class AikdaSocketGateway:
             for message in payload.get("messages", []):
                 self._accept_message(chatroom_id, message)
         self._reconcile_needed = False
-        self._last_history_sync_at = now
         return len(self._seen_ids) > seen_before
 
     def _invalidate_stale_socket(self) -> None:
@@ -266,15 +268,9 @@ class AikdaSocketGateway:
             or not isinstance(sent_at, str)
         ):
             return
-        if chatroom_id == self.chatroom_id:
-            source_type = "group"
-        elif (
-            chatroom_id in self._direct_chatroom_ids
-            and content["text"].strip().startswith("/报数")
-        ):
-            source_type = "direct"
-        else:
+        if chatroom_id is None:
             return
+        source_type = "group" if chatroom_id == self.chatroom_id else "direct"
         inbound = InboundMessage(
             message_id,
             sent_by,

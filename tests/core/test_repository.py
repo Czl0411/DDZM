@@ -3070,11 +3070,115 @@ def test_undercover_first_vote_starts_voting_after_description(repository, sessi
     result = repository.cast_undercover_vote(platform_ids[0], 2, now)
 
     assert result.status == "vote_recorded"
+    assert result.vote_count == 1
+    assert result.abstention_count == 0
+    assert result.completed_count == 1
+    assert result.eligible_count == 4
+    assert result.actor_display_name == platform_ids[0]
     with session_factory() as session:
         game = session.scalar(select(UndercoverGameRecord))
         assert game is not None
         assert game.state == "voting"
         assert game.current_vote_round == 1
+
+
+def test_undercover_one_other_player_can_mark_a_nonvoter_abstained(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import UndercoverAbstentionRecord
+
+    _, platform_ids = _start_undercover_game(repository, session_factory, now)
+    seats = {
+        player.platform_id: player.seat_number
+        for player in repository.undercover_session_summary().players
+    }
+    repository.start_undercover_vote(platform_ids[0], now)
+
+    skipped = repository.skip_undercover_vote(
+        platform_ids[0], seats[platform_ids[1]], now
+    )
+
+    assert skipped.status == "abstained"
+    assert skipped.actor_seat == seats[platform_ids[1]]
+    assert skipped.actor_display_name == platform_ids[1]
+    assert skipped.vote_count == 0
+    assert skipped.abstention_count == 1
+    assert skipped.completed_count == 1
+    assert skipped.eligible_count == 4
+    assert repository.cast_undercover_vote(
+        platform_ids[1], seats[platform_ids[2]], now
+    ).status == "already_abstained"
+    assert repository.skip_undercover_vote(
+        platform_ids[0], seats[platform_ids[0]], now
+    ).status == "cannot_skip_self"
+    with session_factory() as session:
+        abstentions = list(session.scalars(select(UndercoverAbstentionRecord)))
+    assert len(abstentions) == 1
+    assert abstentions[0].reason == "manual_skip"
+
+
+def test_undercover_vote_timeout_marks_every_unfinished_player_abstained(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import UndercoverAbstentionRecord
+
+    started, platform_ids = _start_undercover_game(repository, session_factory, now)
+    summary = repository.undercover_session_summary()
+    role_by_platform_id = dict(
+        zip(
+            started.player_ids,
+            started.roles,
+            strict=True,
+        )
+    )
+    civilian_target = next(
+        player
+        for player in summary.players
+        if role_by_platform_id[player.platform_id] == "civilian"
+    )
+    repository.start_undercover_vote(platform_ids[0], now)
+    repository.cast_undercover_vote(
+        platform_ids[0], civilian_target.seat_number, now
+    )
+
+    statuses = repository.run_undercover_jobs(now + timedelta(seconds=120))
+
+    assert statuses == ["eliminated"]
+    with session_factory() as session:
+        abstentions = list(
+            session.scalars(
+                select(UndercoverAbstentionRecord).order_by(
+                    UndercoverAbstentionRecord.created_at
+                )
+            )
+        )
+    assert len(abstentions) == 3
+    assert {record.reason for record in abstentions} == {"timeout"}
+
+
+def test_undercover_all_abstained_returns_to_speaking_without_elimination(
+    repository, session_factory, now
+):
+    _, platform_ids = _start_undercover_game(repository, session_factory, now)
+    seats = {
+        player.platform_id: player.seat_number
+        for player in repository.undercover_session_summary().players
+    }
+    repository.start_undercover_vote(platform_ids[0], now)
+
+    for actor_index, target_index in ((0, 1), (0, 2), (0, 3)):
+        result = repository.skip_undercover_vote(
+            platform_ids[actor_index], seats[platform_ids[target_index]], now
+        )
+        assert result.status == "abstained"
+    result = repository.skip_undercover_vote(
+        platform_ids[1], seats[platform_ids[0]], now
+    )
+
+    assert result.status == "vote_expired"
+    assert result.vote_count == 0
+    assert result.abstention_count == 4
+    assert repository.undercover_session_summary().state == "speaking"
 
 
 def test_undercover_card_delivery_failure_restores_signup_without_public_cards(

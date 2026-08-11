@@ -694,6 +694,12 @@ def test_undercover_group_commands_signup_deal_vote_and_settle():
         repository.record_undercover_card_delivery(game.id, platform_id, True, now)
     undercover_seat = next(seat for _, role, seat in players if role == "undercover")
 
+    _receive(service, "undercover-exit-next", platform_ids[0], "/退出", now)
+    exit_reply = _latest_reply(factory)
+    assert "下一轮退出" in exit_reply
+    assert "员工1" in exit_reply
+    assert repository.undercover_session_summary().state == "speaking"
+
     _receive(service, "undercover-vote", platform_ids[0], "/开始投票", now)
     assert "投票开始" in _latest_reply(factory)
     for index, platform_id in enumerate(platform_ids, start=1):

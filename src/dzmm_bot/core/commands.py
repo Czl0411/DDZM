@@ -1224,8 +1224,18 @@ class GroupCommandHandler:
 
     def _undercover_leave(self, platform_id: str, received_at) -> str:
         result = self._repository.leave_undercover(platform_id, received_at)
-        if result.status == "left":
+        if result.status in {"left", "left_signup", "left_waiting_continue"}:
             return self._reply("/退出谁是卧底", "left", received_at)
+        if result.status == "leave_after_round":
+            return self._reply(
+                "/退出谁是卧底",
+                "leave_after_round",
+                received_at,
+                {
+                    "{编号}": result.actor_seat,
+                    "{玩家名称}": result.actor_display_name,
+                },
+            )
         if result.status == "settled":
             return self._reply(
                 "/退出谁是卧底",

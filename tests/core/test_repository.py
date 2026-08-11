@@ -3352,26 +3352,84 @@ def test_due_random_event_is_skipped_while_undercover_signup_is_active(
     assert repository.undercover_session_summary().state == "signup"
 
 
-def test_undercover_exit_rechecks_winner_and_manual_end_releases_session(
+def test_undercover_exit_keeps_player_active_until_round_settlement(
     repository, session_factory, now
 ):
-    result, _ = _start_undercover_game(repository, session_factory, now)
+    from dzmm_bot.core.schema import UndercoverSessionMemberRecord, UserRecord
+
+    result, platform_ids = _start_undercover_game(repository, session_factory, now)
     role_by_platform_id = dict(zip(result.player_ids, result.roles, strict=True))
     undercover_platform_id = next(
         platform_id
         for platform_id, role in role_by_platform_id.items()
         if role == "undercover"
     )
+    leaving_platform_id = next(
+        platform_id
+        for platform_id, role in role_by_platform_id.items()
+        if role == "civilian"
+    )
+    summary = repository.undercover_session_summary()
+    leaving_player = next(
+        player
+        for player in summary.players
+        if player.platform_id == leaving_platform_id
+    )
 
-    result = repository.leave_undercover(undercover_platform_id, now)
+    leave = repository.leave_undercover(leaving_platform_id, now)
 
-    assert result.status == "settled"
-    assert result.winner == "civilian"
+    assert leave.status == "leave_after_round"
+    assert leave.actor_seat == leaving_player.seat_number
+    assert leave.actor_display_name == leaving_player.display_name
+    assert repository.undercover_session_summary().state == "speaking"
+    assert next(
+        player
+        for player in repository.undercover_session_summary().players
+        if player.platform_id == leaving_platform_id
+    ).state == "alive"
+    with session_factory() as session:
+        member = session.scalar(
+            select(UndercoverSessionMemberRecord)
+            .join(UserRecord, UserRecord.id == UndercoverSessionMemberRecord.user_id)
+            .where(UserRecord.platform_id == leaving_platform_id)
+        )
+    assert member.leave_after_round is True
+
+    undercover_seat = next(
+        player.seat_number
+        for player in repository.undercover_session_summary().players
+        if player.platform_id == undercover_platform_id
+    )
+    repository.start_undercover_vote(platform_ids[0], now)
+    for voter in platform_ids:
+        settled = repository.cast_undercover_vote(voter, undercover_seat, now)
+
+    assert settled.status == "settled"
+    assert settled.winner == "civilian"
+    assert leaving_player.display_name in settled.next_round_exit_labels
+    with session_factory() as session:
+        member = session.scalar(
+            select(UndercoverSessionMemberRecord)
+            .join(UserRecord, UserRecord.id == UndercoverSessionMemberRecord.user_id)
+            .where(UserRecord.platform_id == leaving_platform_id)
+        )
+    assert member.state == "left"
     remaining_platform_id = next(
-        platform_id for platform_id in result.player_ids if platform_id != undercover_platform_id
+        platform_id for platform_id in platform_ids if platform_id != leaving_platform_id
     )
     assert repository.end_undercover(remaining_platform_id, now).status == "ended"
     assert repository.undercover_session_summary().state is None
+
+
+def test_undercover_signup_exit_is_immediate(repository, session_factory, now):
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.start_undercover_signup(platform_ids[0], 4, now)
+    repository.join_undercover(platform_ids[1], now)
+
+    result = repository.leave_undercover(platform_ids[1], now)
+
+    assert result.status == "left_signup"
+    assert repository.undercover_session_summary().player_count == 1
 
 
 def test_undercover_signup_member_can_end_the_pending_game(repository, session_factory, now):

@@ -752,6 +752,9 @@ class UndercoverGameResult:
     winner: str | None = None
     eliminated_seat: int | None = None
     tied_seats: tuple[int, ...] = ()
+    actor_seat: int | None = None
+    actor_display_name: str | None = None
+    next_round_exit_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -5068,11 +5071,28 @@ class CoreRepository:
                 )
                 if member is None or member.state == "left":
                     return UndercoverGameResult("cannot_leave", session_id=session_record.id)
-                member.state = "left"
-                member.left_at = now
+                if session_record.state == "signup":
+                    member.state = "left"
+                    member.left_at = now
+                    member.leave_after_round = False
+                    return UndercoverGameResult(
+                        "left_signup", session_id=session_record.id
+                    )
+                if (
+                    session_record.state == "awaiting_continue"
+                    or member.state == "queued"
+                ):
+                    member.state = "left"
+                    member.left_at = now
+                    member.leave_after_round = False
+                    return UndercoverGameResult(
+                        "left_waiting_continue", session_id=session_record.id
+                    )
                 game = self._undercover_latest_game(session, session_record.id)
-                if game is None or game.state == "discarded":
-                    return UndercoverGameResult("left", session_id=session_record.id)
+                if game is None or game.state in ("discarded", "ended", "settled"):
+                    return UndercoverGameResult(
+                        "cannot_leave", session_id=session_record.id
+                    )
                 player = session.scalar(
                     select(UndercoverGamePlayerRecord)
                     .where(
@@ -5082,18 +5102,19 @@ class CoreRepository:
                     .with_for_update()
                 )
                 if player is None:
-                    return UndercoverGameResult("left", session_id=session_record.id, game_id=game.id)
-                player.state = "exited"
-                winner = self._undercover_winner(session, game.id)
-                if winner is None:
-                    return self._undercover_game_result(session, game, "left")
-                game.state = "settled"
-                game.finished_at = now
-                session_record.state = "awaiting_continue"
-                session_record.await_continue_deadline = now + _UNDERCOVER_CONTINUE_TIMEOUT
-                self._record_undercover_facts(session, game, winner, None, now)
-                result = self._undercover_game_result(session, game, "settled")
-                return UndercoverGameResult(**{**result.__dict__, "winner": winner})
+                    return UndercoverGameResult(
+                        "cannot_leave",
+                        session_id=session_record.id,
+                        game_id=game.id,
+                    )
+                member.leave_after_round = True
+                return UndercoverGameResult(
+                    "leave_after_round",
+                    session_id=session_record.id,
+                    game_id=game.id,
+                    actor_seat=player.seat_number,
+                    actor_display_name=user.display_name,
+                )
 
     def _undercover_user(self, session: Session, platform_id: str) -> UserRecord | None:
         return session.scalar(
@@ -5493,14 +5514,40 @@ class CoreRepository:
         session_record.state = "awaiting_continue"
         session_record.await_continue_deadline = now + _UNDERCOVER_CONTINUE_TIMEOUT
         self._record_undercover_facts(session, game, winner, None, now)
+        next_round_exit_labels = self._apply_undercover_next_round_exits(
+            session, session_record.id, now
+        )
         result = self._undercover_game_result(session, game, "settled")
         return UndercoverGameResult(
             **{
                 **result.__dict__,
                 "winner": winner,
                 "eliminated_seat": eliminated.seat_number,
+                "next_round_exit_labels": next_round_exit_labels,
             }
         )
+
+    def _apply_undercover_next_round_exits(
+        self, session: Session, session_id: UUID, now: datetime
+    ) -> tuple[str, ...]:
+        rows = list(
+            session.execute(
+                select(UndercoverSessionMemberRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == UndercoverSessionMemberRecord.user_id)
+                .where(
+                    UndercoverSessionMemberRecord.session_id == session_id,
+                    UndercoverSessionMemberRecord.leave_after_round.is_(True),
+                    UndercoverSessionMemberRecord.state == "joined",
+                )
+                .order_by(UndercoverSessionMemberRecord.joined_at)
+                .with_for_update()
+            )
+        )
+        for member, _ in rows:
+            member.state = "left"
+            member.left_at = now
+            member.leave_after_round = False
+        return tuple(user.display_name for _, user in rows)
 
     def _record_undercover_facts(
         self,

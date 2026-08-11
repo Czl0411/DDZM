@@ -271,11 +271,14 @@ class BrowserWorker:
 
     def _ensure_gateway(self) -> ChatGateway:
         if self._gateway is None:
-            self._gateway = self._session.start_headless()
-            handler = getattr(self._gateway, "set_message_handler", None)
-            if handler is not None:
-                handler(self._queue_inbound)
+            self._gateway = self._configure_gateway(self._session.start_headless())
         return self._gateway
+
+    def _configure_gateway(self, gateway: ChatGateway) -> ChatGateway:
+        handler = getattr(gateway, "set_message_handler", None)
+        if handler is not None:
+            handler(self._queue_inbound)
+        return gateway
 
     def _sync_listener_state(self) -> None:
         desired = self._core.heartbeat(
@@ -309,7 +312,7 @@ class BrowserWorker:
                 self._listening = True
             elif command.command == "restart_browser":
                 self._session.stop()
-                self._gateway = self._session.start_headless()
+                self._gateway = self._configure_gateway(self._session.start_headless())
             elif command.command == "start_auth":
                 self._session.stop()
                 self._gateway = None
@@ -318,7 +321,7 @@ class BrowserWorker:
                 self._listening = False
                 self._manual_auth_confirmed = False
             elif command.command == "finish_auth":
-                self._gateway = self._session.attach_existing()
+                self._gateway = self._configure_gateway(self._session.attach_existing())
                 self._login_state = LoginState.READY
                 self._listening = True
                 self._auth_loss_reported = False

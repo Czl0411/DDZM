@@ -595,6 +595,16 @@ def test_lifecycle_commands_touch_only_the_expected_processes(
     assert (desktop.starts, desktop.stops) == (desktop_starts, desktop_stops)
 
 
+@pytest.mark.parametrize("command", ["restart_browser", "finish_auth"])
+def test_lifecycle_commands_restore_the_realtime_message_handler(context, command):
+    worker, gateway, _, _, core, _ = context
+    core.commands = [WorkerCommand(COMMAND_ID, command, LEASE)]
+
+    worker.run_once()
+
+    assert gateway.message_handler == worker._queue_inbound
+
+
 def test_cancel_auth_closes_desktop_and_restores_the_persisted_browser(context):
     worker, _, session, desktop, core, _ = context
     core.commands = [

@@ -32,6 +32,7 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
         "users",
         before_upgrade,
         Column("id", Uuid, primary_key=True),
+        Column("joined_at", DateTime(timezone=True), nullable=False),
     )
     Table(
         "inbound_messages",
@@ -101,6 +102,7 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
         "red_packets",
         "red_packet_shares",
         "red_packet_daily_starts",
+        "employee_number_counters",
     } <= set(inspector.get_table_names())
     assert {column["name"] for column in inspector.get_columns("inbound_messages")} >= {
         "source_type",
@@ -113,7 +115,7 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
     with engine.connect() as connection:
         assert connection.execute(
             text("SELECT version_num FROM alembic_version")
-        ).scalar_one() == "20260811_36"
+        ).scalar_one() == "20260811_37"
         assert connection.execute(
             text("SELECT inactivity_timeout_minutes FROM number_bomb_settings WHERE id = 1")
         ).scalar_one() == 10

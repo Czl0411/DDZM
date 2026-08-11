@@ -857,10 +857,18 @@ class UserRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     platform_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    employee_number: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
     balance: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     rank_id: Mapped[UUID | None] = mapped_column(ForeignKey("ranks.id"))
     department_id: Mapped[UUID | None] = mapped_column(ForeignKey("departments.id"))
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class EmployeeNumberCounterRecord(Base):
+    __tablename__ = "employee_number_counters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    next_number: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class RankRecord(Base):

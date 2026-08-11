@@ -165,7 +165,7 @@
                 <nav class="management-tabs" data-management-tabs="settings" aria-label="玩法配置分类"><button class="management-tab active" data-management-tab="economy" type="button">经济</button><button class="management-tab" data-management-tab="activity" type="button">活跃度与收益</button><button class="management-tab" data-management-tab="minigames" type="button">小游戏</button></nav>
                 <section class="management-pane" data-management-pane="economy"><div class="panel-heading"><div><h2>经济规则</h2><p class="muted">修改后会立即影响后续入职与打卡，不会改动已有员工余额。</p></div><button id="edit-settings" class="primary" type="button">编辑经济规则</button></div><div id="settings-card" class="settings-card" aria-live="polite"></div></section>
                 <section class="management-pane" data-management-pane="activity" hidden><div class="panel-heading"><div><h2>日活跃度</h2><p class="muted">配置等级门槛、每日奖励与今日收益榜推送时段。</p></div><button id="edit-activity-settings" class="primary" type="button">编辑日活跃度</button></div><div id="activity-settings-card" class="settings-card" aria-live="polite"></div></section>
-                <section class="management-pane" data-management-pane="minigames" hidden><div class="panel-heading"><div><h2>蹦蹦数字炸弹</h2><p class="muted">不限人数，参与者手动 /开始；每轮私聊报数，开局后不因无操作解散。</p></div><button id="edit-number-bomb-settings" class="primary" type="button">编辑小游戏规则</button></div><div id="number-bomb-settings-card" class="settings-card" aria-live="polite"></div></section>
+                <section class="management-pane" data-management-pane="minigames" hidden><div class="panel-heading"><div><h2>蹦蹦数字炸弹</h2><p class="muted">不限人数，参与者手动 /开始；每轮私聊报数，开局后不因无操作解散。</p></div><button id="edit-number-bomb-settings" class="primary" type="button">编辑小游戏规则</button></div><div id="number-bomb-settings-card" class="settings-card" aria-live="polite"></div><hr><div class="panel-heading"><div><h2>随机运气红包</h2><p class="muted">红包独立于游戏和随机事件；过期后自动退还尚未领取的金额。</p></div><button id="edit-red-packet-settings" class="primary" type="button">编辑红包规则</button></div><div id="red-packet-settings-card" class="settings-card" aria-live="polite"></div></section>
               </section>
 
               <section id="ai-assistant-view" class="dashboard-view panel" hidden>
@@ -338,6 +338,14 @@
         <label><input id="number-bomb-enabled" type="checkbox"> 启用蹦蹦数字炸弹</label>
         <div class="event-input-grid"><label>报名超时（分钟）<input id="number-bomb-signup-minutes" type="number" min="1" max="60" required></label><label>未报数提醒（秒）<input id="number-bomb-reminder-seconds" type="number" min="5" max="300" required></label></div>
         <div class="template-modal-actions"><button class="secondary" data-close-number-bomb-settings-modal type="button">取消</button><button id="save-number-bomb-settings" class="primary" type="button">保存设置</button></div>
+      </section>
+    </div>
+    <div id="red-packet-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="red-packet-settings-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-red-packet-settings-modal></div>
+      <section class="template-modal-card">
+        <div class="template-modal-heading"><div><p class="eyebrow">小游戏</p><h2 id="red-packet-settings-modal-title">编辑随机运气红包</h2><p class="muted">过期时间影响新发出的红包；空包概率只用于无需强制空包的金额组合。</p></div><button class="text-button" data-close-red-packet-settings-modal type="button">关闭</button></div>
+        <div class="event-input-grid"><label>过期时间（分钟）<input id="red-packet-expiry-minutes" type="number" min="1" max="60" required></label><label>空包概率（%）<input id="red-packet-empty-probability" type="number" min="0" max="30" required></label></div>
+        <div class="template-modal-actions"><button class="secondary" data-close-red-packet-settings-modal type="button">取消</button><button id="save-red-packet-settings" class="primary" type="button">保存设置</button></div>
       </section>
     </div>
     <div id="random-event-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="random-event-settings-modal-title" hidden>

@@ -11,6 +11,7 @@ let refreshLoading = false;
 let gameSettings = null;
 let activitySettings = null;
 let numberBombSettings = null;
+let redPacketSettings = null;
 let currentGameplay = null;
 let gameplayVersion = null;
 let randomEventSettings = null;
@@ -251,6 +252,9 @@ const numberBombSettingsModal = document.querySelector("#number-bomb-settings-mo
 const numberBombEnabled = document.querySelector("#number-bomb-enabled");
 const numberBombSignupMinutes = document.querySelector("#number-bomb-signup-minutes");
 const numberBombReminderSeconds = document.querySelector("#number-bomb-reminder-seconds");
+const redPacketSettingsModal = document.querySelector("#red-packet-settings-modal");
+const redPacketExpiryMinutes = document.querySelector("#red-packet-expiry-minutes");
+const redPacketEmptyProbability = document.querySelector("#red-packet-empty-probability");
 const forceEndCurrentGame = document.querySelector("#force-end-current-game");
 const randomEventSettingsModal = document.querySelector("#random-event-settings-modal");
 const randomEventSceneModal = document.querySelector("#random-event-scene-modal");
@@ -375,6 +379,10 @@ function closeNumberBombSettingsModal() {
   numberBombSettingsModal.hidden = true;
 }
 
+function closeRedPacketSettingsModal() {
+  redPacketSettingsModal.hidden = true;
+}
+
 function closeRandomEventSettingsModal() { randomEventSettingsModal.hidden = true; }
 function closeRandomEventSceneModal() { randomEventSceneModal.hidden = true; }
 function closeRandomEventTimeModal() {
@@ -417,6 +425,12 @@ function renderNumberBombSettings(settings) {
     <article><span>游戏状态</span><strong>${settings.enabled ? "已启用" : "已停用"}</strong><small>停用只阻止创建新对局</small></article>
     <article><span>报名超时</span><strong>${settings.signup_timeout_minutes} 分钟</strong><small>未开局报名到期自动释放</small></article>
     <article><span>未报数提醒</span><strong>${settings.reminder_interval_seconds} 秒</strong><small>首次提醒后参与者可使用 /跳过</small></article>`;
+}
+
+function renderRedPacketSettings(settings) {
+  document.querySelector("#red-packet-settings-card").innerHTML = `
+    <article><span>红包过期</span><strong>${settings.expiry_minutes} 分钟</strong><small>到期退还尚未领取的金额</small></article>
+    <article><span>空包概率</span><strong>${settings.empty_probability_percent}%</strong><small>强制空包条件不受此概率影响</small></article>`;
 }
 
 function renderCurrentGameplay(gameplay) {
@@ -992,6 +1006,13 @@ async function loadNumberBombSettings() {
   return numberBombSettings;
 }
 
+async function loadRedPacketSettings() {
+  redPacketSettings = await requestGame("/api/game/red-packet/settings");
+  configurationVersion = redPacketSettings.version;
+  renderRedPacketSettings(redPacketSettings);
+  return redPacketSettings;
+}
+
 async function openNumberBombSettingsModal() {
   const settings = numberBombSettings || await loadNumberBombSettings();
   numberBombEnabled.checked = settings.enabled;
@@ -999,6 +1020,14 @@ async function openNumberBombSettingsModal() {
   numberBombReminderSeconds.value = settings.reminder_interval_seconds;
   numberBombSettingsModal.hidden = false;
   numberBombSignupMinutes.focus();
+}
+
+async function openRedPacketSettingsModal() {
+  const settings = redPacketSettings || await loadRedPacketSettings();
+  redPacketExpiryMinutes.value = settings.expiry_minutes;
+  redPacketEmptyProbability.value = settings.empty_probability_percent;
+  redPacketSettingsModal.hidden = false;
+  redPacketExpiryMinutes.focus();
 }
 
 async function openSettingsModal() {
@@ -1274,7 +1303,7 @@ async function loadGameView(view) {
   try {
     if (view === "overview") return refresh();
     if (view === "settings") {
-      await Promise.all([loadSettings(), loadActivitySettings(), loadNumberBombSettings()]);
+      await Promise.all([loadSettings(), loadActivitySettings(), loadNumberBombSettings(), loadRedPacketSettings()]);
       return;
     }
     if (view === "events") return loadRandomEvents();
@@ -1519,6 +1548,7 @@ document.querySelector("#cancel-login").addEventListener("click", async (event) 
 document.querySelector("#edit-settings").addEventListener("click", () => void openSettingsModal());
 document.querySelector("#edit-activity-settings").addEventListener("click", () => void openActivitySettingsModal());
 document.querySelector("#edit-number-bomb-settings").addEventListener("click", () => void openNumberBombSettingsModal());
+document.querySelector("#edit-red-packet-settings").addEventListener("click", () => void openRedPacketSettingsModal());
 document.querySelector("#edit-random-event-settings").addEventListener("click", () => void openRandomEventSettingsModal());
 document.querySelector("#create-random-event-scene").addEventListener("click", () => openRandomEventSceneModal());
 document.querySelector("#edit-hide-and-seek-settings").addEventListener("click", () => void openHideAndSeekSettingsModal());
@@ -1830,6 +1860,39 @@ numberBombSettingsModal.addEventListener("click", async (event) => {
       closeNumberBombSettingsModal();
     });
     setResult("蹦蹦数字炸弹设置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+redPacketSettingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-red-packet-settings-modal]")) {
+    closeRedPacketSettingsModal();
+    return;
+  }
+  if (event.target.id !== "save-red-packet-settings") return;
+  const expiry_minutes = Number(redPacketExpiryMinutes.value);
+  const empty_probability_percent = Number(redPacketEmptyProbability.value);
+  if (!Number.isInteger(expiry_minutes) || expiry_minutes < 1 || expiry_minutes > 60) {
+    setResult("红包过期时间必须为 1–60 分钟", "error");
+    return;
+  }
+  if (!Number.isInteger(empty_probability_percent) || empty_probability_percent < 0 || empty_probability_percent > 30) {
+    setResult("空包概率必须为 0–30%", "error");
+    return;
+  }
+  const button = event.target;
+  try {
+    await runMutation(button, "保存中…", async () => {
+      redPacketSettings = await requestGame("/api/game/red-packet/settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify({expiry_minutes, empty_probability_percent}),
+      });
+      configurationVersion = redPacketSettings.version;
+      renderRedPacketSettings(redPacketSettings);
+      closeRedPacketSettingsModal();
+    });
+    setResult("随机运气红包设置已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
   }

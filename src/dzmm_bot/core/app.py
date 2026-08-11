@@ -53,6 +53,7 @@ from .api_models import (
     OutboundClaimResponse,
     OutboundRecallClaimResponse,
     NumberBombSettingsResponse,
+    RedPacketSettingsResponse,
     GameplayParticipantResponse,
     GameplaySummaryResponse,
     QueueCountsResponse,
@@ -62,6 +63,7 @@ from .api_models import (
     SetCommandTemplateRequest,
     SetActivitySettingsRequest,
     SetNumberBombSettingsRequest,
+    SetRedPacketSettingsRequest,
     SetAIAssistantSettingsRequest,
     SetAIKnowledgeCardRequest,
     UpdateAIPlayerImpressionRequest,
@@ -964,6 +966,36 @@ def create_app(
             enabled=settings.enabled,
             signup_timeout_minutes=settings.signup_timeout_minutes,
             reminder_interval_seconds=settings.reminder_interval_seconds,
+        )
+
+    @app.get(
+        "/internal/game/red-packet/settings",
+        response_model=RedPacketSettingsResponse,
+    )
+    def red_packet_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> RedPacketSettingsResponse:
+        settings = repository.get_red_packet_settings()
+        return RedPacketSettingsResponse(
+            expiry_minutes=settings.expiry_minutes,
+            empty_probability_percent=settings.empty_probability_percent,
+        )
+
+    @app.patch(
+        "/internal/game/red-packet/settings",
+        response_model=RedPacketSettingsResponse,
+    )
+    def set_red_packet_settings(
+        request: SetRedPacketSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> RedPacketSettingsResponse:
+        settings = repository.set_red_packet_settings(
+            request.expiry_minutes,
+            request.empty_probability_percent,
+        )
+        return RedPacketSettingsResponse(
+            expiry_minutes=settings.expiry_minutes,
+            empty_probability_percent=settings.empty_probability_percent,
         )
 
     @app.get(

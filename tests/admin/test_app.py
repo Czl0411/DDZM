@@ -84,6 +84,13 @@ class FakeCore:
             "reminder_interval_seconds": 15,
         }
     )
+    red_packet_settings: dict = field(
+        default_factory=lambda: {
+            "expiry_minutes": 10,
+            "empty_probability_percent": 5,
+        }
+    )
+    red_packet_settings_requests: list[dict] = field(default_factory=list)
     gameplay_current: dict = field(
         default_factory=lambda: {
             "game_type": "number_bomb",
@@ -459,6 +466,14 @@ class FakeCore:
     def set_number_bomb_settings(self, settings):
         self.number_bomb_settings = settings
         return self.number_bomb_settings
+
+    def get_red_packet_settings(self):
+        return self.red_packet_settings
+
+    def set_red_packet_settings(self, settings):
+        self.red_packet_settings_requests.append(settings)
+        self.red_packet_settings = settings
+        return self.red_packet_settings
 
     def get_current_gameplay(self):
         return self.gameplay_current
@@ -2125,6 +2140,78 @@ def test_admin_proxies_versioned_number_bomb_settings(client, headers, core):
         "signup_timeout_minutes": 3,
         "reminder_interval_seconds": 20,
     }
+
+
+def test_admin_proxies_versioned_red_packet_settings_idempotently(
+    client, headers, core
+):
+    assert client.get("/api/game/red-packet/settings").status_code == 401
+    initial = client.get("/api/game/red-packet/settings", headers=headers)
+    write_headers = {
+        **headers,
+        "If-Match": str(initial.json()["version"]),
+        "Idempotency-Key": "red-packet-settings-1",
+    }
+    payload = {"expiry_minutes": 20, "empty_probability_percent": 8}
+    updated = client.patch(
+        "/api/game/red-packet/settings", headers=write_headers, json=payload
+    )
+    replayed = client.patch(
+        "/api/game/red-packet/settings", headers=write_headers, json=payload
+    )
+
+    assert initial.json() == {
+        "expiry_minutes": 10,
+        "empty_probability_percent": 5,
+        "version": 0,
+    }
+    assert updated.json() == {
+        "expiry_minutes": 20,
+        "empty_probability_percent": 8,
+        "version": 1,
+    }
+    assert replayed.json() == updated.json()
+    assert core.red_packet_settings_requests == [payload]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"expiry_minutes": 0, "empty_probability_percent": 5},
+        {"expiry_minutes": 61, "empty_probability_percent": 5},
+        {"expiry_minutes": 10, "empty_probability_percent": -1},
+        {"expiry_minutes": 10, "empty_probability_percent": 31},
+        {"expiry_minutes": 10},
+        {
+            "expiry_minutes": 10,
+            "empty_probability_percent": 5,
+            "unknown": True,
+        },
+    ),
+)
+def test_admin_rejects_invalid_red_packet_settings(client, headers, payload):
+    assert client.patch(
+        "/api/game/red-packet/settings", headers=headers, json=payload
+    ).status_code == 422
+
+
+def test_red_packet_settings_surface_has_controls_and_api_contract():
+    root = Path(__file__).resolve().parents[2]
+    page = (root / "src/dzmm_bot/admin/templates/index.html").read_text()
+    script = (root / "src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert "随机运气红包" in page
+    assert 'id="red-packet-settings-card"' in page
+    assert 'id="edit-red-packet-settings"' in page
+    assert 'id="red-packet-expiry-minutes"' in page
+    assert 'id="red-packet-empty-probability"' in page
+    assert 'id="save-red-packet-settings"' in page
+    assert '"/api/game/red-packet/settings"' in script
+    assert "expiry_minutes < 1 || expiry_minutes > 60" in script
+    assert (
+        "empty_probability_percent < 0 || empty_probability_percent > 30"
+        in script
+    )
 
 
 def test_number_bomb_settings_surface_has_new_controls_and_gameplay_card():

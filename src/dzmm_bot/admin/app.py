@@ -641,6 +641,57 @@ def create_app(
             scope="number-bomb-settings",
         )
 
+    @app.get("/api/game/red-packet/settings")
+    def red_packet_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return {
+            **_relay_core(core.get_red_packet_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/red-packet/settings")
+    def set_red_packet_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[
+            str | None, Header(alias="Idempotency-Key")
+        ] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = {"expiry_minutes", "empty_probability_percent"}
+        if set(request) != required:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings"
+            )
+        expiry_minutes = request["expiry_minutes"]
+        empty_probability_percent = request["empty_probability_percent"]
+        if (
+            isinstance(expiry_minutes, bool)
+            or not isinstance(expiry_minutes, int)
+            or not 1 <= expiry_minutes <= 60
+            or isinstance(empty_probability_percent, bool)
+            or not isinstance(empty_probability_percent, int)
+            or not 0 <= empty_probability_percent <= 30
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings"
+            )
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_red_packet_settings(
+                    {
+                        "expiry_minutes": expiry_minutes,
+                        "empty_probability_percent": empty_probability_percent,
+                    }
+                )
+            ),
+            scope="red-packet-settings",
+        )
+
     @app.get("/api/gameplay/current")
     def current_gameplay(
         _: Annotated[None, Depends(authorize)],

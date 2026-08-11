@@ -563,6 +563,16 @@ class SetNumberBombSettingsRequest(ApiModel):
     reminder_interval_seconds: int = Field(ge=5, le=300)
 
 
+class RedPacketSettingsResponse(ApiModel):
+    expiry_minutes: int
+    empty_probability_percent: int
+
+
+class SetRedPacketSettingsRequest(ApiModel):
+    expiry_minutes: int = Field(ge=1, le=60)
+    empty_probability_percent: int = Field(ge=0, le=30)
+
+
 class GameplayParticipantResponse(ApiModel):
     number: int | None = None
     display_name: str

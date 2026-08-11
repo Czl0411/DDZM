@@ -216,6 +216,78 @@ def repository(session_factory):
     return CoreRepository(session_factory)
 
 
+def test_employee_number_format_uses_four_digit_minimum_without_truncation():
+    from dzmm_bot.core.repository import format_employee_number
+
+    assert format_employee_number(1) == "#0001"
+    assert format_employee_number(23) == "#0023"
+    assert format_employee_number(10000) == "#10000"
+
+
+def test_create_user_allocates_permanent_employee_numbers(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import EmployeeNumberCounterRecord
+
+    first, first_created = repository.create_user("number-1", "甲", now, 10)
+    second, second_created = repository.create_user("number-2", "乙", now, 20)
+    existing, duplicate_created = repository.create_user(
+        "number-1", "改名无效", now, 99
+    )
+    third, third_created = repository.create_user("number-3", "丙", now, 30)
+
+    assert (first_created, second_created, third_created) == (True, True, True)
+    assert duplicate_created is False
+    assert (first.employee_number, second.employee_number, third.employee_number) == (
+        1,
+        2,
+        3,
+    )
+    assert existing.employee_number == 1
+    assert existing.display_name == "甲"
+    assert existing.balance == 10
+    with session_factory() as session:
+        assert session.get(EmployeeNumberCounterRecord, 1).next_number == 4
+
+
+def test_rename_user_changes_only_name_and_allows_duplicates(repository, now):
+    first, _ = repository.create_user("rename-1", "甲", now, 10)
+    repository.create_user("rename-2", "乙", now, 20)
+    original = (
+        first.employee_number,
+        first.balance,
+        first.rank_id,
+        first.department_id,
+        first.joined_at,
+    )
+
+    renamed = repository.rename_user("rename-1", "  乙  ")
+    unchanged = repository.rename_user("rename-1", "乙")
+    stored = repository.find_user("rename-1")
+
+    assert renamed.status == "renamed"
+    assert (renamed.old_name, renamed.new_name) == ("甲", "乙")
+    assert unchanged.status == "unchanged"
+    assert (unchanged.old_name, unchanged.new_name) == ("乙", "乙")
+    assert stored.display_name == "乙"
+    assert (
+        stored.employee_number,
+        stored.balance,
+        stored.rank_id,
+        stored.department_id,
+        stored.joined_at,
+    ) == original
+
+
+def test_rename_user_rejects_invalid_names_and_unknown_employee(repository, now):
+    repository.create_user("rename-invalid", "原名", now, 0)
+
+    assert repository.rename_user("missing", "新名").status == "not_joined"
+    assert repository.rename_user("rename-invalid", "   ").status == "invalid_name"
+    assert repository.rename_user("rename-invalid", "名" * 65).status == "invalid_name"
+    assert repository.find_user("rename-invalid").display_name == "原名"
+
+
 def test_duplicate_platform_message_returns_existing_record(repository, inbound):
     first, inserted = repository.accept_inbound(inbound)
     second, duplicate = repository.accept_inbound(inbound)

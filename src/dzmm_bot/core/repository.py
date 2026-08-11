@@ -74,6 +74,7 @@ from .schema import (
     DailyAIUsageRecord,
     DailyCheckinRecord,
     DirectChatRecord,
+    EmployeeNumberCounterRecord,
     GameSettingsRecord,
     HideAndSeekDailyPlayRecord,
     HideAndSeekGameRecord,
@@ -129,6 +130,10 @@ from .schema import (
     WorkerCommandRecord,
     WorkerInstanceRecord,
 )
+
+
+def format_employee_number(number: int) -> str:
+    return f"#{number:04d}"
 
 
 _DEFAULT_CURRENCY_NAME = "摸鱼币"
@@ -796,6 +801,13 @@ class UserProfile:
     user: UserRecord
     rank: RankRecord
     department: DepartmentRecord
+
+
+@dataclass(frozen=True)
+class RenameEmployeeResult:
+    status: str
+    old_name: str | None = None
+    new_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -9051,6 +9063,27 @@ class CoreRepository:
                 select(UserRecord).where(UserRecord.platform_id == platform_id)
             )
 
+    @staticmethod
+    def _take_employee_number(session: Session) -> int:
+        counter = session.scalar(
+            select(EmployeeNumberCounterRecord)
+            .where(EmployeeNumberCounterRecord.id == 1)
+            .with_for_update()
+        )
+        if counter is None:
+            next_number = int(
+                session.scalar(
+                    select(func.coalesce(func.max(UserRecord.employee_number), 0))
+                )
+                or 0
+            ) + 1
+            counter = EmployeeNumberCounterRecord(id=1, next_number=next_number)
+            session.add(counter)
+            session.flush()
+        employee_number = counter.next_number
+        counter.next_number += 1
+        return employee_number
+
     def create_user(
         self, platform_id: str, display_name: str, joined_at: datetime, initial_balance: int
     ) -> tuple[UserRecord, bool]:
@@ -9065,6 +9098,7 @@ class CoreRepository:
                 record = UserRecord(
                     platform_id=platform_id,
                     display_name=display_name,
+                    employee_number=self._take_employee_number(session),
                     balance=0,
                     rank_id=default_rank.id,
                     department_id=default_department.id,
@@ -9076,6 +9110,34 @@ class CoreRepository:
                     record, initial_balance, "onboarding", joined_at
                 )
                 return record, True
+
+    def rename_user(self, platform_id: str, new_name: str) -> RenameEmployeeResult:
+        normalized_name = new_name.strip()
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return RenameEmployeeResult("not_joined")
+                if not 1 <= len(normalized_name) <= 64:
+                    return RenameEmployeeResult(
+                        "invalid_name", old_name=user.display_name
+                    )
+                if normalized_name == user.display_name:
+                    return RenameEmployeeResult(
+                        "unchanged",
+                        old_name=user.display_name,
+                        new_name=user.display_name,
+                    )
+                old_name = user.display_name
+                user.display_name = normalized_name
+                session.flush()
+                return RenameEmployeeResult(
+                    "renamed", old_name=old_name, new_name=normalized_name
+                )
 
     def get_user_profile(self, platform_id: str) -> UserProfile | None:
         with self._session() as session:

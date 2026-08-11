@@ -3156,6 +3156,52 @@ def test_undercover_vote_timeout_marks_every_unfinished_player_abstained(
     assert {record.reason for record in abstentions} == {"timeout"}
 
 
+def test_undercover_timeout_terminal_settlement_publishes_complete_result(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import OutboundRecord, UndercoverGamePlayerRecord
+
+    started, platform_ids = _start_undercover_game(repository, session_factory, now)
+    role_by_platform_id = dict(zip(started.player_ids, started.roles, strict=True))
+    undercover_platform_id = next(
+        platform_id
+        for platform_id, role in role_by_platform_id.items()
+        if role == "undercover"
+    )
+    undercover_seat = next(
+        player.seat_number
+        for player in repository.undercover_session_summary().players
+        if player.platform_id == undercover_platform_id
+    )
+    repository.start_undercover_vote(platform_ids[0], now)
+    repository.cast_undercover_vote(platform_ids[0], undercover_seat, now)
+
+    statuses = repository.run_undercover_jobs(now + timedelta(seconds=120))
+
+    assert statuses == ["settled"]
+    with session_factory() as session:
+        game_player_count = session.scalar(
+            select(func.count())
+            .select_from(UndercoverGamePlayerRecord)
+            .where(UndercoverGamePlayerRecord.game_id == started.game_id)
+        )
+        texts = list(
+            session.scalars(
+                select(OutboundRecord.text)
+                .where(OutboundRecord.delivery_kind == "group")
+                .order_by(OutboundRecord.created_at, OutboundRecord.id)
+            )
+        )
+    assert game_player_count == 4
+    assert any("投票时间结束" in text and "自动弃票" in text for text in texts)
+    settlement = "\n".join(texts)
+    assert "平民词：咖啡" in settlement
+    assert "卧底词：奶茶" in settlement
+    assert "超时弃票：" in settlement
+    for platform_id in platform_ids:
+        assert platform_id in settlement
+
+
 def test_undercover_all_abstained_returns_to_speaking_without_elimination(
     repository, session_factory, now
 ):
@@ -3179,6 +3225,105 @@ def test_undercover_all_abstained_returns_to_speaking_without_elimination(
     assert result.vote_count == 0
     assert result.abstention_count == 4
     assert repository.undercover_session_summary().state == "speaking"
+
+
+def test_undercover_settlement_reveals_words_roles_and_round_outcomes(
+    repository, session_factory, now
+):
+    started, platform_ids = _start_undercover_game(repository, session_factory, now)
+    role_by_platform_id = dict(zip(started.player_ids, started.roles, strict=True))
+    summary = repository.undercover_session_summary()
+    player_by_platform_id = {
+        player.platform_id: player for player in summary.players
+    }
+    undercover_platform_id = next(
+        platform_id
+        for platform_id, role in role_by_platform_id.items()
+        if role == "undercover"
+    )
+    civilian_platform_ids = [
+        platform_id
+        for platform_id, role in role_by_platform_id.items()
+        if role == "civilian"
+    ]
+    abstaining_platform_id = civilian_platform_ids[0]
+    leaving_platform_id = civilian_platform_ids[1]
+    repository.leave_undercover(leaving_platform_id, now)
+    repository.start_undercover_vote(undercover_platform_id, now)
+    repository.skip_undercover_vote(
+        undercover_platform_id,
+        player_by_platform_id[abstaining_platform_id].seat_number,
+        now,
+    )
+    for voter in platform_ids:
+        if voter == abstaining_platform_id:
+            continue
+        settled = repository.cast_undercover_vote(
+            voter,
+            player_by_platform_id[undercover_platform_id].seat_number,
+            now,
+        )
+
+    assert settled.status == "settled"
+    assert settled.civilian_word == "咖啡"
+    assert settled.undercover_word == "奶茶"
+    assert {
+        (reveal.seat_number, reveal.display_name, reveal.role)
+        for reveal in settled.player_reveals
+    } == {
+        (
+            player_by_platform_id[platform_id].seat_number,
+            platform_id,
+            role,
+        )
+        for platform_id, role in role_by_platform_id.items()
+    }
+    assert settled.manual_abstention_labels == (
+        f"{player_by_platform_id[abstaining_platform_id].seat_number}号 "
+        f"{abstaining_platform_id}",
+    )
+    assert settled.timeout_abstention_labels == ()
+    assert settled.next_round_exit_labels == (leaving_platform_id,)
+
+
+def test_undercover_winner_uses_whiteboard_threshold_frozen_at_dealing(
+    repository, session_factory, now
+):
+    settings = repository.get_undercover_settings()
+    repository.set_undercover_settings(
+        settings.enabled,
+        settings.vote_seconds,
+        4,
+        repository.list_undercover_role_rules(),
+        settings.signup_timeout_minutes,
+    )
+    started, platform_ids = _start_undercover_game(
+        repository, session_factory, now, count=5
+    )
+    repository.set_undercover_settings(
+        settings.enabled,
+        settings.vote_seconds,
+        2,
+        repository.list_undercover_role_rules(),
+        settings.signup_timeout_minutes,
+    )
+    role_by_platform_id = dict(zip(started.player_ids, started.roles, strict=True))
+    undercover_platform_id = next(
+        platform_id
+        for platform_id, role in role_by_platform_id.items()
+        if role == "undercover"
+    )
+    undercover_seat = next(
+        player.seat_number
+        for player in repository.undercover_session_summary().players
+        if player.platform_id == undercover_platform_id
+    )
+    repository.start_undercover_vote(platform_ids[0], now)
+    for voter in platform_ids:
+        settled = repository.cast_undercover_vote(voter, undercover_seat, now)
+
+    assert settled.status == "settled"
+    assert settled.winner == "whiteboard"
 
 
 def test_undercover_card_delivery_failure_restores_signup_without_public_cards(

@@ -743,7 +743,16 @@ def test_undercover_group_commands_signup_deal_vote_and_settle():
             f"/投票 {undercover_seat}",
             now,
         )
-    assert "平民阵营获胜" in _latest_reply(factory)
+    final_reply = _latest_reply(factory)
+    assert "平民阵营获胜" in final_reply
+    assert "平民词：咖啡" in final_reply
+    assert "卧底词：奶茶" in final_reply
+    assert "全部身份：" in final_reply
+    for number in range(1, 5):
+        assert f"员工{number}" in final_reply
+    assert "手动弃票：" in final_reply
+    assert "员工3" in final_reply
+    assert "下一轮退出：员工1" in final_reply
     assert repository.undercover_session_summary().state == "awaiting_continue"
 
 

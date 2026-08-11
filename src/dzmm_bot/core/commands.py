@@ -8,6 +8,7 @@ from .repository import (
     CoreRepository,
     blame_settlement_template_values,
     format_employee_number,
+    undercover_settlement_template_values,
 )
 from .service import CommandReply
 
@@ -1234,9 +1235,10 @@ class GroupCommandHandler:
                 {"{并列玩家}": self._undercover_player_labels(result.tied_seats)},
             )
         if result.status in {"eliminated", "settled"}:
-            values = self._undercover_elimination_values(result)
             if result.status == "settled":
-                values["{胜利阵营}"] = self._undercover_role_name(result.winner)
+                values = undercover_settlement_template_values(result)
+            else:
+                values = self._undercover_elimination_values(result)
             return self._reply("/投票", result.status, received_at, values)
         return self._reply("/投票", "cannot_vote", received_at)
 
@@ -1280,9 +1282,10 @@ class GroupCommandHandler:
                 {"{并列玩家}": self._undercover_player_labels(result.tied_seats)},
             )
         if result.status in {"eliminated", "settled"}:
-            values = self._undercover_elimination_values(result)
             if result.status == "settled":
-                values["{胜利阵营}"] = self._undercover_role_name(result.winner)
+                values = undercover_settlement_template_values(result)
+            else:
+                values = self._undercover_elimination_values(result)
             return self._reply("/投票", result.status, received_at, values)
         return self._reply("/跳过", "undercover_cannot_skip", received_at)
 

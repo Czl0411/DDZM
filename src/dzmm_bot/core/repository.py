@@ -743,6 +743,14 @@ class UndercoverSessionSummary:
 
 
 @dataclass(frozen=True)
+class UndercoverPlayerReveal:
+    seat_number: int
+    display_name: str
+    role: str
+    state: str
+
+
+@dataclass(frozen=True)
 class UndercoverGameResult:
     status: str
     session_id: UUID | None = None
@@ -760,7 +768,44 @@ class UndercoverGameResult:
     completed_count: int = 0
     eligible_count: int = 0
     abstained_labels: tuple[str, ...] = ()
+    civilian_word: str | None = None
+    undercover_word: str | None = None
+    player_reveals: tuple[UndercoverPlayerReveal, ...] = ()
+    manual_abstention_labels: tuple[str, ...] = ()
+    timeout_abstention_labels: tuple[str, ...] = ()
     next_round_exit_labels: tuple[str, ...] = ()
+
+
+def undercover_settlement_template_values(
+    result: UndercoverGameResult,
+) -> dict[str, object]:
+    eliminated = next(
+        (
+            reveal
+            for reveal in result.player_reveals
+            if reveal.seat_number == result.eliminated_seat
+        ),
+        None,
+    )
+    return {
+        "{胜利阵营}": _undercover_role_label(result.winner),
+        "{平民词}": result.civilian_word or "未知",
+        "{卧底词}": result.undercover_word or "未知",
+        "{淘汰情况}": (
+            f"{eliminated.seat_number}号 {eliminated.display_name}"
+            f"（{_undercover_role_label(eliminated.role)}）"
+            if eliminated is not None
+            else "无"
+        ),
+        "{手动弃票}": "、".join(result.manual_abstention_labels) or "无",
+        "{超时弃票}": "、".join(result.timeout_abstention_labels) or "无",
+        "{下一轮退出}": "、".join(result.next_round_exit_labels) or "无",
+        "{全部身份}": "\n".join(
+            f"{reveal.seat_number}号 {reveal.display_name}："
+            f"{_undercover_role_label(reveal.role)}"
+            for reveal in result.player_reveals
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -5114,12 +5159,12 @@ class CoreRepository:
                             base=result,
                             abstained_labels=abstained_labels,
                         )
-                        self._enqueue_undercover_vote_result(session, result)
+                        self._enqueue_undercover_vote_result(session, result, now)
                         results.append(result.status)
         return results
 
     def _enqueue_undercover_vote_result(
-        self, session: Session, result: UndercoverGameResult
+        self, session: Session, result: UndercoverGameResult, now: datetime
     ) -> None:
         if result.abstained_labels:
             labels = "、".join(result.abstained_labels)
@@ -5137,6 +5182,16 @@ class CoreRepository:
             return
         if result.status not in {"eliminated", "settled"} or result.game_id is None:
             return
+        if result.status == "settled":
+            self.enqueue_system_outbound(
+                self._undercover_automatic_message(
+                    "/投票",
+                    "settled",
+                    now,
+                    undercover_settlement_template_values(result),
+                )
+            )
+            return
         row = session.execute(
             select(UserRecord.display_name, UndercoverGamePlayerRecord.role)
             .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
@@ -5148,11 +5203,24 @@ class CoreRepository:
         if row is None:
             return
         message = f"【谁是卧底】{row[0]} 出局，身份：{_undercover_role_label(row[1])}。"
-        if result.status == "settled":
-            message += f"\n{_undercover_role_label(result.winner)}阵营获胜。发送 /继续 可开启下一局。"
-        else:
-            message += "请继续描述。"
+        message += "请继续描述。"
         self.enqueue_system_outbound(message)
+
+    def _undercover_automatic_message(
+        self,
+        command: str,
+        scenario: str,
+        now: datetime,
+        values: dict[str, object] | None = None,
+    ) -> str:
+        definition = template_definition(command, scenario)
+        record = self.get_reply_template(command, scenario)
+        template = definition.default if record is None else record.template
+        context = {"{日期}": now.date().isoformat(), **(values or {})}
+        try:
+            return render_template(definition, template, context)
+        except ValueError:
+            return render_template(definition, definition.default, context)
 
     def end_undercover(self, platform_id: str, now: datetime) -> UndercoverGameResult:
         now = now.astimezone(BEIJING)
@@ -5750,7 +5818,7 @@ class CoreRepository:
             raise RuntimeError("被投票玩家消失")
         eliminated.state = "eliminated"
         game.vote_deadline = None
-        winner = self._undercover_winner(session, game.id)
+        winner = self._undercover_winner(session, game)
         if winner is None:
             game.state = "speaking"
             session_record.state = "speaking"
@@ -5767,13 +5835,20 @@ class CoreRepository:
             session, session_record.id, now
         )
         result = self._undercover_game_result(session, game, "settled")
-        return UndercoverGameResult(
-            **{
-                **result.__dict__,
-                "winner": winner,
-                "eliminated_seat": eliminated.seat_number,
-                "next_round_exit_labels": next_round_exit_labels,
-            }
+        return replace(
+            result,
+            winner=winner,
+            eliminated_seat=eliminated.seat_number,
+            civilian_word=game.civilian_word,
+            undercover_word=game.undercover_word,
+            player_reveals=self._undercover_player_reveals(session, game.id),
+            manual_abstention_labels=self._undercover_abstention_labels(
+                session, game, "manual_skip"
+            ),
+            timeout_abstention_labels=self._undercover_abstention_labels(
+                session, game, "timeout"
+            ),
+            next_round_exit_labels=next_round_exit_labels,
         )
 
     def _apply_undercover_next_round_exits(
@@ -5822,19 +5897,68 @@ class CoreRepository:
                 occurred_at=now,
             )
 
-    def _undercover_winner(self, session: Session, game_id: UUID) -> str | None:
+    def _undercover_player_reveals(
+        self, session: Session, game_id: UUID
+    ) -> tuple[UndercoverPlayerReveal, ...]:
+        return tuple(
+            UndercoverPlayerReveal(
+                seat_number=player.seat_number,
+                display_name=user.display_name,
+                role=player.role,
+                state=player.state,
+            )
+            for player, user in session.execute(
+                select(UndercoverGamePlayerRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
+                .where(UndercoverGamePlayerRecord.game_id == game_id)
+                .order_by(UndercoverGamePlayerRecord.seat_number)
+            )
+        )
+
+    def _undercover_abstention_labels(
+        self, session: Session, game: UndercoverGameRecord, reason: str
+    ) -> tuple[str, ...]:
+        return tuple(
+            f"{seat_number}号 {display_name}"
+            for seat_number, display_name in session.execute(
+                select(
+                    UndercoverGamePlayerRecord.seat_number,
+                    UserRecord.display_name,
+                )
+                .join(
+                    UndercoverAbstentionRecord,
+                    UndercoverAbstentionRecord.player_user_id
+                    == UndercoverGamePlayerRecord.user_id,
+                )
+                .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
+                .where(
+                    UndercoverGamePlayerRecord.game_id == game.id,
+                    UndercoverAbstentionRecord.game_id == game.id,
+                    UndercoverAbstentionRecord.round_number
+                    == game.current_vote_round,
+                    UndercoverAbstentionRecord.reason == reason,
+                )
+                .order_by(UndercoverGamePlayerRecord.seat_number)
+            )
+        )
+
+    def _undercover_winner(
+        self, session: Session, game: UndercoverGameRecord
+    ) -> str | None:
         roles = [
             role
             for role in session.scalars(
                 select(UndercoverGamePlayerRecord.role).where(
-                    UndercoverGamePlayerRecord.game_id == game_id,
+                    UndercoverGamePlayerRecord.game_id == game.id,
                     UndercoverGamePlayerRecord.state == "alive",
                 )
             )
         ]
-        settings = self.get_undercover_settings()
         whiteboard_count = roles.count("whiteboard")
-        if whiteboard_count and len(roles) == settings.whiteboard_win_remaining:
+        if (
+            whiteboard_count
+            and len(roles) == game.whiteboard_win_remaining_snapshot
+        ):
             return "whiteboard"
         if "undercover" not in roles and not whiteboard_count:
             return "civilian"

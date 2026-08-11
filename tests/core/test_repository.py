@@ -3,6 +3,7 @@ import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from random import Random
 from threading import Barrier, Event
 from uuid import uuid4
 
@@ -555,6 +556,322 @@ def test_red_packet_settings_defaults_and_validation(repository):
         repository.set_red_packet_settings(0, 8)
     with pytest.raises(ValueError, match="空包概率"):
         repository.set_red_packet_settings(10, 31)
+
+
+def _red_packet_repository(session_factory, seed=17):
+    from dzmm_bot.core.repository import CoreRepository
+
+    return CoreRepository(session_factory, red_packet_random=Random(seed))
+
+
+def test_red_packet_creation_funds_shares_and_daily_count(session_factory):
+    from dzmm_bot.core.schema import (
+        BalanceTransactionRecord,
+        RedPacketDailyStartRecord,
+        RedPacketRecord,
+        RedPacketShareRecord,
+    )
+
+    repository = _red_packet_repository(session_factory)
+    now = datetime(2026, 8, 11, 12, tzinfo=BEIJING)
+    issuer, _ = repository.create_user("issuer", "发起者", now, 100)
+
+    result = repository.create_red_packet("issuer", 5, 5, now)
+
+    assert result.status == "created"
+    assert result.packet_id is not None
+    assert (result.player_count, result.total_amount) == (5, 5)
+    assert repository.find_user("issuer").balance == 95
+    with session_factory.begin() as session:
+        packet = session.get(RedPacketRecord, result.packet_id)
+        shares = list(
+            session.scalars(
+                select(RedPacketShareRecord)
+                .where(RedPacketShareRecord.packet_id == result.packet_id)
+                .order_by(RedPacketShareRecord.display_order)
+            )
+        )
+        daily = session.scalar(select(RedPacketDailyStartRecord))
+        funding = session.scalar(
+            select(BalanceTransactionRecord).where(
+                BalanceTransactionRecord.source == "red_packet_fund"
+            )
+        )
+    assert packet.active_key == "global"
+    assert packet.state == "open"
+    assert sorted(share.amount for share in shares) == [0, 1, 1, 1, 2]
+    assert (daily.user_id, daily.play_date, daily.count) == (
+        issuer.id,
+        now.date(),
+        1,
+    )
+    assert (funding.user_id, funding.amount) == (issuer.id, -5)
+
+
+def test_red_packet_creation_rejects_without_writes(session_factory):
+    from dzmm_bot.core.schema import (
+        BalanceTransactionRecord,
+        RedPacketDailyStartRecord,
+        RedPacketRecord,
+    )
+
+    repository = _red_packet_repository(session_factory)
+    now = datetime(2026, 8, 11, 12, tzinfo=BEIJING)
+    repository.create_user("poor", "余额不足", now, 1)
+
+    assert repository.create_red_packet("missing", 2, 2, now).status == "not_joined"
+    assert repository.create_red_packet("poor", 1, 2, now).status == "invalid_parameters"
+    assert repository.create_red_packet("poor", 2, 2, now).status == "insufficient_balance"
+    with session_factory.begin() as session:
+        assert session.scalar(select(func.count(RedPacketRecord.id))) == 0
+        assert session.scalar(select(func.count(RedPacketDailyStartRecord.id))) == 0
+        assert session.scalar(
+            select(func.count(BalanceTransactionRecord.id)).where(
+                BalanceTransactionRecord.source.like("red_packet_%")
+            )
+        ) == 0
+
+
+def test_red_packet_active_and_daily_limits_only_count_successes(session_factory):
+    from dzmm_bot.core.schema import RedPacketDailyStartRecord
+
+    repository = _red_packet_repository(session_factory)
+    now = datetime(2026, 8, 11, 8, tzinfo=BEIJING)
+    repository.create_user("issuer", "发起者", now, 20)
+
+    first = repository.create_red_packet("issuer", 2, 2, now)
+    assert first.status == "created"
+    assert repository.create_red_packet("issuer", 2, 2, now).status == "active_packet"
+    repository.expire_red_packets(first.expires_at)
+    for index in range(1, 5):
+        created_at = now + timedelta(minutes=11 * index)
+        created = repository.create_red_packet("issuer", 2, 2, created_at)
+        assert created.status == "created"
+        repository.expire_red_packets(created.expires_at)
+
+    assert (
+        repository.create_red_packet(
+            "issuer", 2, 2, now + timedelta(minutes=56)
+        ).status
+        == "daily_limit"
+    )
+    with session_factory.begin() as session:
+        daily = session.scalar(select(RedPacketDailyStartRecord))
+    assert daily.count == 5
+    assert repository.find_user("issuer").balance == 20
+
+
+def test_red_packet_creation_rolls_back_on_balance_failure(
+    session_factory, monkeypatch
+):
+    from dzmm_bot.core.schema import (
+        BalanceTransactionRecord,
+        RedPacketDailyStartRecord,
+        RedPacketRecord,
+        RedPacketShareRecord,
+    )
+
+    repository = _red_packet_repository(session_factory)
+    now = datetime(2026, 8, 11, 12, tzinfo=BEIJING)
+    repository.create_user("issuer", "发起者", now, 100)
+
+    def fail_balance_change(*args, **kwargs):
+        raise RuntimeError("injected funding failure")
+
+    monkeypatch.setattr(repository, "_apply_balance_change", fail_balance_change)
+    with pytest.raises(RuntimeError, match="injected funding failure"):
+        repository.create_red_packet("issuer", 5, 5, now)
+
+    with session_factory.begin() as session:
+        assert session.scalar(select(func.count(RedPacketRecord.id))) == 0
+        assert session.scalar(select(func.count(RedPacketShareRecord.id))) == 0
+        assert session.scalar(select(func.count(RedPacketDailyStartRecord.id))) == 0
+        assert session.scalar(
+            select(func.count(BalanceTransactionRecord.id)).where(
+                BalanceTransactionRecord.source.like("red_packet_%")
+            )
+        ) == 0
+    assert repository.find_user("issuer").balance == 100
+
+
+def test_red_packet_claim_allows_issuer_and_completes_with_unique_extrema(
+    session_factory,
+):
+    repository = _red_packet_repository(session_factory)
+    now = datetime(2026, 8, 11, 12, tzinfo=BEIJING)
+    repository.create_user("issuer", "发起者", now, 10)
+    repository.create_user("other", "员工", now, 0)
+    assert repository.create_red_packet("issuer", 2, 2, now).status == "created"
+
+    first = repository.claim_red_packet("issuer", now + timedelta(seconds=1))
+    duplicate = repository.claim_red_packet("issuer", now + timedelta(seconds=2))
+    completed = repository.claim_red_packet("other", now + timedelta(seconds=3))
+
+    assert first.status == "claimed"
+    assert duplicate.status == "already_claimed"
+    assert completed.status == "completed"
+    assert [(claim.display_name, claim.amount) for claim in completed.claims] == [
+        ("发起者", first.amount),
+        ("员工", completed.amount),
+    ]
+    amounts = [claim.amount for claim in completed.claims]
+    assert sum(amounts) == 2
+    assert amounts.count(min(amounts)) == 1
+    assert amounts.count(max(amounts)) == 1
+    balances = {
+        user.platform_id: user.balance for user in repository.list_users()
+    }
+    assert balances["issuer"] + balances["other"] == 10
+
+
+def test_red_packet_empty_claim_uses_slot_without_zero_balance_transaction(
+    session_factory,
+):
+    from dzmm_bot.core.schema import BalanceTransactionRecord
+
+    repository = _red_packet_repository(session_factory, seed=1)
+    now = datetime(2026, 8, 11, 12, tzinfo=BEIJING)
+    repository.create_user("issuer", "发起者", now, 10)
+    repository.create_user("other", "员工", now, 0)
+    repository.create_red_packet("issuer", 2, 2, now)
+
+    claims = [
+        repository.claim_red_packet("issuer", now + timedelta(seconds=1)),
+        repository.claim_red_packet("other", now + timedelta(seconds=2)),
+    ]
+
+    assert sorted(claim.amount for claim in claims) == [0, 2]
+    with session_factory.begin() as session:
+        claim_transactions = list(
+            session.scalars(
+                select(BalanceTransactionRecord).where(
+                    BalanceTransactionRecord.source == "red_packet_claim"
+                )
+            )
+        )
+    assert [transaction.amount for transaction in claim_transactions] == [2]
+
+
+def test_red_packet_expiry_refunds_only_unclaimed_amount_once(session_factory):
+    from dzmm_bot.core.schema import BalanceTransactionRecord
+
+    repository = _red_packet_repository(session_factory)
+    repository.set_red_packet_settings(10, 0)
+    now = datetime(2026, 8, 11, 12, tzinfo=BEIJING)
+    repository.create_user("issuer", "发起者", now, 100)
+    repository.create_user("other", "员工", now, 0)
+    created = repository.create_red_packet("issuer", 3, 6, now)
+    claim = repository.claim_red_packet("other", now + timedelta(seconds=1))
+
+    notices = repository.expire_red_packets(created.expires_at)
+
+    assert len(notices) == 1
+    assert f"退回 {6 - claim.amount} 摸鱼币" in notices[0]
+    assert repository.expire_red_packets(created.expires_at + timedelta(minutes=1)) == ()
+    assert repository.find_user("issuer").balance == 100 - claim.amount
+    assert repository.find_user("other").balance == claim.amount
+    with session_factory.begin() as session:
+        refunds = list(
+            session.scalars(
+                select(BalanceTransactionRecord).where(
+                    BalanceTransactionRecord.source == "red_packet_refund"
+                )
+            )
+        )
+    assert [refund.amount for refund in refunds] == [6 - claim.amount]
+
+
+def test_red_packet_daily_jobs_refund_and_notify_once(session_factory):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    repository = _red_packet_repository(session_factory)
+    now = datetime(2026, 8, 11, 12, tzinfo=BEIJING)
+    repository.create_user("issuer", "发起者", now, 10)
+    created = repository.create_red_packet("issuer", 2, 2, now)
+
+    repository.run_daily_jobs(created.expires_at)
+    repository.run_daily_jobs(created.expires_at + timedelta(minutes=1))
+
+    with session_factory.begin() as session:
+        notices = list(
+            session.scalars(
+                select(OutboundRecord).where(
+                    OutboundRecord.text.contains("随机运气红包已过期")
+                )
+            )
+        )
+    assert len(notices) == 1
+    assert repository.find_user("issuer").balance == 10
+
+
+def test_red_packet_daily_limit_resets_on_beijing_date(session_factory):
+    from dzmm_bot.core.schema import RedPacketDailyStartRecord
+
+    repository = _red_packet_repository(session_factory)
+    first_day = datetime(2026, 8, 11, 23, 59, tzinfo=BEIJING)
+    issuer, _ = repository.create_user("issuer", "发起者", first_day, 10)
+    with session_factory.begin() as session:
+        session.add(
+            RedPacketDailyStartRecord(
+                user_id=issuer.id,
+                play_date=first_day.date(),
+                count=5,
+            )
+        )
+
+    assert repository.create_red_packet("issuer", 2, 2, first_day).status == "daily_limit"
+    next_day = first_day + timedelta(minutes=2)
+    assert repository.create_red_packet("issuer", 2, 2, next_day).status == "created"
+
+
+def test_red_packet_database_rejects_second_active_packet(session_factory):
+    from sqlalchemy.exc import IntegrityError
+
+    from dzmm_bot.core.schema import RedPacketRecord
+
+    repository = _red_packet_repository(session_factory)
+    now = datetime(2026, 8, 11, 12, tzinfo=BEIJING)
+    issuer, _ = repository.create_user("issuer", "发起者", now, 10)
+    repository.create_red_packet("issuer", 2, 2, now)
+
+    with pytest.raises(IntegrityError), session_factory.begin() as session:
+        session.add(
+            RedPacketRecord(
+                active_key="global",
+                issuer_user_id=issuer.id,
+                target_count=2,
+                total_amount=2,
+                state="open",
+                has_empty=True,
+                created_at=now,
+                expires_at=now + timedelta(minutes=10),
+                refunded_amount=0,
+            )
+        )
+        session.flush()
+
+
+def test_red_packet_database_rejects_duplicate_claimant(session_factory):
+    from sqlalchemy.exc import IntegrityError
+
+    from dzmm_bot.core.schema import RedPacketShareRecord
+
+    repository = _red_packet_repository(session_factory)
+    now = datetime(2026, 8, 11, 12, tzinfo=BEIJING)
+    issuer, _ = repository.create_user("issuer", "发起者", now, 10)
+    created = repository.create_red_packet("issuer", 2, 2, now)
+    repository.claim_red_packet("issuer", now + timedelta(seconds=1))
+
+    with pytest.raises(IntegrityError), session_factory.begin() as session:
+        unclaimed = session.scalar(
+            select(RedPacketShareRecord).where(
+                RedPacketShareRecord.packet_id == created.packet_id,
+                RedPacketShareRecord.claimant_user_id.is_(None),
+            )
+        )
+        unclaimed.claimant_user_id = issuer.id
+        unclaimed.claimed_at = now + timedelta(seconds=2)
+        session.flush()
 
 
 def _prepare_number_bomb_players(repository, now, prefix, count, balance=0):

@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
+from random import SystemRandom
 import re
 from secrets import choice, randbelow
 import unicodedata
@@ -36,6 +37,7 @@ from .number_bomb import (
     calculate_number_bomb,
     render_number_bomb_result,
 )
+from .red_packet import RandomSource, generate_red_packet_allocation
 from .reply_templates import (
     TEMPLATE_DEFINITIONS,
     render_template,
@@ -135,6 +137,7 @@ _DEFAULT_CHECKIN_REWARD = 5
 _DEFAULT_WEEKLY_ATTENDANCE_REWARD = 5
 _DEFAULT_RED_PACKET_EXPIRY_MINUTES = 10
 _DEFAULT_RED_PACKET_EMPTY_PROBABILITY_PERCENT = 5
+_RED_PACKET_DAILY_LIMIT = 5
 _DEFAULT_ACTIVITY_RULES = (
     (1, 10, 1),
     (2, 25, 2),
@@ -438,6 +441,33 @@ class BlameGameResult:
 class RedPacketSettings:
     expiry_minutes: int
     empty_probability_percent: int
+
+
+@dataclass(frozen=True)
+class RedPacketCreateResult:
+    status: str
+    packet_id: UUID | None = None
+    issuer_display_name: str | None = None
+    player_count: int = 0
+    total_amount: int = 0
+    expires_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class RedPacketClaimSummary:
+    display_name: str
+    amount: int
+    display_order: int
+
+
+@dataclass(frozen=True)
+class RedPacketClaimResult:
+    status: str
+    claimant_display_name: str | None = None
+    amount: int = 0
+    claimed_count: int = 0
+    player_count: int = 0
+    claims: tuple[RedPacketClaimSummary, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -937,9 +967,11 @@ class CoreRepository:
         session_factory: sessionmaker[Session],
         *,
         preserve_long_group_messages: bool = False,
+        red_packet_random: RandomSource | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._preserve_long_group_messages = preserve_long_group_messages
+        self._red_packet_random = red_packet_random or SystemRandom()
         self._active_session: ContextVar[Session | None] = ContextVar(
             f"core_repository_session_{id(self)}", default=None
         )
@@ -2930,6 +2962,272 @@ class CoreRepository:
                 expiry_minutes=record.expiry_minutes,
                 empty_probability_percent=record.empty_probability_percent,
             )
+
+    def create_red_packet(
+        self,
+        platform_id: str,
+        player_count: int,
+        total_amount: int,
+        now: datetime,
+    ) -> RedPacketCreateResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            for message in self.expire_red_packets(now):
+                self.enqueue_system_outbound(message)
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return RedPacketCreateResult("not_joined")
+                self.get_red_packet_settings()
+                settings_record = session.scalar(
+                    select(RedPacketSettingsRecord)
+                    .where(RedPacketSettingsRecord.id == 1)
+                    .with_for_update()
+                )
+                if settings_record is None:
+                    raise RuntimeError("随机运气红包设置消失")
+                settings = RedPacketSettings(
+                    expiry_minutes=settings_record.expiry_minutes,
+                    empty_probability_percent=(
+                        settings_record.empty_probability_percent
+                    ),
+                )
+                try:
+                    allocation = generate_red_packet_allocation(
+                        player_count,
+                        total_amount,
+                        settings.empty_probability_percent,
+                        self._red_packet_random,
+                    )
+                except ValueError:
+                    return RedPacketCreateResult(
+                        "invalid_parameters",
+                        issuer_display_name=user.display_name,
+                    )
+                active = session.scalar(
+                    select(RedPacketRecord)
+                    .where(RedPacketRecord.active_key == "global")
+                    .with_for_update()
+                )
+                if active is not None:
+                    return RedPacketCreateResult(
+                        "active_packet",
+                        issuer_display_name=user.display_name,
+                    )
+                play_date = now.date()
+                daily = session.scalar(
+                    select(RedPacketDailyStartRecord)
+                    .where(
+                        RedPacketDailyStartRecord.user_id == user.id,
+                        RedPacketDailyStartRecord.play_date == play_date,
+                    )
+                    .with_for_update()
+                )
+                if daily is not None and daily.count >= _RED_PACKET_DAILY_LIMIT:
+                    return RedPacketCreateResult(
+                        "daily_limit",
+                        issuer_display_name=user.display_name,
+                    )
+                if user.balance < total_amount:
+                    return RedPacketCreateResult(
+                        "insufficient_balance",
+                        issuer_display_name=user.display_name,
+                    )
+                if daily is None:
+                    daily = RedPacketDailyStartRecord(
+                        user_id=user.id,
+                        play_date=play_date,
+                        count=0,
+                    )
+                    session.add(daily)
+
+                expires_at = now + timedelta(minutes=settings.expiry_minutes)
+                packet = RedPacketRecord(
+                    active_key="global",
+                    issuer_user_id=user.id,
+                    target_count=player_count,
+                    total_amount=total_amount,
+                    state="open",
+                    has_empty=allocation.has_empty,
+                    created_at=now,
+                    expires_at=expires_at,
+                    refunded_amount=0,
+                )
+                session.add(packet)
+                session.flush()
+                session.add_all(
+                    RedPacketShareRecord(
+                        packet_id=packet.id,
+                        display_order=display_order,
+                        amount=amount,
+                    )
+                    for display_order, amount in enumerate(allocation.shares, 1)
+                )
+                self._apply_balance_change(
+                    user, -total_amount, "red_packet_fund", now
+                )
+                daily.count += 1
+                session.flush()
+                return RedPacketCreateResult(
+                    "created",
+                    packet_id=packet.id,
+                    issuer_display_name=user.display_name,
+                    player_count=player_count,
+                    total_amount=total_amount,
+                    expires_at=expires_at,
+                )
+
+    def claim_red_packet(
+        self, platform_id: str, now: datetime
+    ) -> RedPacketClaimResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            for message in self.expire_red_packets(now):
+                self.enqueue_system_outbound(message)
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return RedPacketClaimResult("not_joined")
+                packet = session.scalar(
+                    select(RedPacketRecord)
+                    .where(RedPacketRecord.active_key == "global")
+                    .with_for_update()
+                )
+                if packet is None:
+                    return RedPacketClaimResult("no_active_packet")
+                already_claimed = session.scalar(
+                    select(RedPacketShareRecord.id).where(
+                        RedPacketShareRecord.packet_id == packet.id,
+                        RedPacketShareRecord.claimant_user_id == user.id,
+                    )
+                )
+                if already_claimed is not None:
+                    return RedPacketClaimResult(
+                        "already_claimed",
+                        claimant_display_name=user.display_name,
+                        player_count=packet.target_count,
+                    )
+                share = session.scalar(
+                    select(RedPacketShareRecord)
+                    .where(
+                        RedPacketShareRecord.packet_id == packet.id,
+                        RedPacketShareRecord.claimant_user_id.is_(None),
+                    )
+                    .order_by(RedPacketShareRecord.display_order)
+                    .with_for_update()
+                )
+                if share is None:
+                    return RedPacketClaimResult("no_active_packet")
+                share.claimant_user_id = user.id
+                share.claimed_at = now
+                if share.amount > 0:
+                    self._apply_balance_change(
+                        user, share.amount, "red_packet_claim", now
+                    )
+                session.flush()
+                claimed_count = int(
+                    session.scalar(
+                        select(func.count(RedPacketShareRecord.id)).where(
+                            RedPacketShareRecord.packet_id == packet.id,
+                            RedPacketShareRecord.claimant_user_id.is_not(None),
+                        )
+                    )
+                    or 0
+                )
+                if claimed_count < packet.target_count:
+                    return RedPacketClaimResult(
+                        "claimed",
+                        claimant_display_name=user.display_name,
+                        amount=share.amount,
+                        claimed_count=claimed_count,
+                        player_count=packet.target_count,
+                    )
+
+                packet.state = "completed"
+                packet.active_key = None
+                packet.finished_at = now
+                claim_rows = session.execute(
+                    select(RedPacketShareRecord, UserRecord)
+                    .join(
+                        UserRecord,
+                        UserRecord.id == RedPacketShareRecord.claimant_user_id,
+                    )
+                    .where(RedPacketShareRecord.packet_id == packet.id)
+                    .order_by(RedPacketShareRecord.display_order)
+                ).all()
+                claims = tuple(
+                    RedPacketClaimSummary(
+                        display_name=claimant.display_name,
+                        amount=claimed_share.amount,
+                        display_order=claimed_share.display_order,
+                    )
+                    for claimed_share, claimant in claim_rows
+                )
+                return RedPacketClaimResult(
+                    "completed",
+                    claimant_display_name=user.display_name,
+                    amount=share.amount,
+                    claimed_count=claimed_count,
+                    player_count=packet.target_count,
+                    claims=claims,
+                )
+
+    def expire_red_packets(self, now: datetime) -> tuple[str, ...]:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                packet = session.scalar(
+                    select(RedPacketRecord)
+                    .where(
+                        RedPacketRecord.active_key == "global",
+                        RedPacketRecord.expires_at <= now,
+                    )
+                    .with_for_update()
+                )
+                if packet is None:
+                    return ()
+                unclaimed = list(
+                    session.scalars(
+                        select(RedPacketShareRecord)
+                        .where(
+                            RedPacketShareRecord.packet_id == packet.id,
+                            RedPacketShareRecord.claimant_user_id.is_(None),
+                        )
+                        .with_for_update()
+                    )
+                )
+                refund = sum(share.amount for share in unclaimed)
+                issuer = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.id == packet.issuer_user_id)
+                    .with_for_update()
+                )
+                if issuer is None:
+                    raise RuntimeError("红包发起者不存在")
+                if refund > 0:
+                    self._apply_balance_change(
+                        issuer, refund, "red_packet_refund", now
+                    )
+                packet.state = "expired"
+                packet.active_key = None
+                packet.finished_at = now
+                packet.refunded_amount = refund
+                claimed_count = packet.target_count - len(unclaimed)
+                currency = self.get_game_settings().currency_name
+                return (
+                    "【随机运气红包已过期】"
+                    f"{issuer.display_name}发出的红包已领取 "
+                    f"{claimed_count}/{packet.target_count} 份，"
+                    f"未领取金额已退回 {refund} {currency}。",
+                )
 
     def get_number_bomb_settings(self) -> NumberBombSettings:
         with self._session() as session:
@@ -8432,6 +8730,8 @@ class CoreRepository:
                     self.enqueue_system_outbound(
                         f"【记忆考核对战】作答超时，{game.reward} 摸鱼币奖池已由系统回收。"
                     )
+            for message in self.expire_red_packets(now):
+                self.enqueue_system_outbound(message)
             self._settle_weekly_attendance_rewards(now)
             self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)

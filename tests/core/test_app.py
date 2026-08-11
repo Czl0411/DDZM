@@ -13,6 +13,8 @@ from sqlalchemy.pool import StaticPool
 from dzmm_bot.core.schema import (
     AIActivityEventRecord,
     DirectChatRecord,
+    MemoryAssessmentGameRecord,
+    MemoryAssessmentParticipantRecord,
     NumberBombGameRecord,
     NumberBombMemberRecord,
     NumberBombRoundPlayerRecord,
@@ -270,6 +272,36 @@ def test_gameplay_current_hides_numbers_and_force_end_requires_exact_identity(
         activity_events = list(session.scalars(select(AIActivityEventRecord)))
     assert game.finish_reason == "admin_forced"
     assert outbounds == ["【蹦蹦数字炸弹】管理员已强制结束当前游戏。"]
+    assert activity_events == []
+
+
+def test_admin_can_force_end_single_memory_assessment(app_context, headers):
+    repository = app_context.repository
+    repository.create_user("memory-single-player", "记忆玩家", NOW, 0)
+    created = repository.start_memory_assessment_single("memory-single-player", NOW)
+
+    response = app_context.client.post(
+        f"/internal/gameplay/memory_single/{created.game_id}/force-end",
+        headers=headers,
+    )
+
+    assert response.json() == {"accepted": True}
+    assert (
+        repository.active_gameplay_summary("memory-single-player", NOW).game_type
+        is None
+    )
+    with app_context.session_factory() as session:
+        game = session.get(MemoryAssessmentGameRecord, created.game_id)
+        participant = session.scalar(
+            select(MemoryAssessmentParticipantRecord).where(
+                MemoryAssessmentParticipantRecord.game_id == created.game_id
+            )
+        )
+        outbounds = list(session.scalars(select(OutboundRecord.text)))
+        activity_events = list(session.scalars(select(AIActivityEventRecord)))
+    assert game.state == "cancelled"
+    assert participant.state == "cancelled"
+    assert outbounds == ["【记忆考核】管理员已强制结束当前游戏。"]
     assert activity_events == []
 
 

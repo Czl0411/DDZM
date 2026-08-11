@@ -3234,6 +3234,7 @@ class CoreRepository:
             "blame_bomb": "甩锅游戏",
             "undercover": "谁是卧底",
             "memory_duel": "记忆考核对战",
+            "memory_single": "记忆考核",
             "random_event": "随机事件",
         }
         if game_type not in game_names:
@@ -3272,12 +3273,15 @@ class CoreRepository:
                             active_round.state = "ended"
                             active_round.finished_at = now
                         ended = True
-                elif game_type == "memory_duel":
+                elif game_type in {"memory_duel", "memory_single"}:
+                    expected_mode = (
+                        "duel" if game_type == "memory_duel" else "single"
+                    )
                     game = session.get(MemoryAssessmentGameRecord, game_id, with_for_update=True)
                     if (
                         game is not None
                         and game.active_key == "global"
-                        and game.mode == "duel"
+                        and game.mode == expected_mode
                     ):
                         game.state = "cancelled"
                         game.active_key = None

@@ -97,6 +97,10 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
         "number_bomb_members",
         "number_bomb_rounds",
         "number_bomb_round_players",
+        "red_packet_settings",
+        "red_packets",
+        "red_packet_shares",
+        "red_packet_daily_starts",
     } <= set(inspector.get_table_names())
     assert {column["name"] for column in inspector.get_columns("inbound_messages")} >= {
         "source_type",
@@ -109,7 +113,7 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
     with engine.connect() as connection:
         assert connection.execute(
             text("SELECT version_num FROM alembic_version")
-        ).scalar_one() == "20260811_35"
+        ).scalar_one() == "20260811_36"
         assert connection.execute(
             text("SELECT inactivity_timeout_minutes FROM number_bomb_settings WHERE id = 1")
         ).scalar_one() == 10
@@ -134,6 +138,12 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
         assert connection.execute(
             text("SELECT title FROM ai_knowledge_cards WHERE topic = 'number_bomb'")
         ).scalar_one() == "蹦蹦数字炸弹"
+        assert connection.execute(
+            text(
+                "SELECT expiry_minutes, empty_probability_percent "
+                "FROM red_packet_settings WHERE id = 1"
+            )
+        ).one() == (10, 5)
 
     with engine.begin() as connection:
         connection.execute(

@@ -117,6 +117,10 @@ from .schema import (
     RankRecord,
     PromotionApprovalRecord,
     PromotionRequestRecord,
+    RedPacketDailyStartRecord,
+    RedPacketRecord,
+    RedPacketSettingsRecord,
+    RedPacketShareRecord,
     UserItemRecord,
     UserRecord,
     WeeklyAttendanceSettlementRecord,
@@ -129,6 +133,8 @@ _DEFAULT_CURRENCY_NAME = "摸鱼币"
 _DEFAULT_ONBOARDING_BONUS = 0
 _DEFAULT_CHECKIN_REWARD = 5
 _DEFAULT_WEEKLY_ATTENDANCE_REWARD = 5
+_DEFAULT_RED_PACKET_EXPIRY_MINUTES = 10
+_DEFAULT_RED_PACKET_EMPTY_PROBABILITY_PERCENT = 5
 _DEFAULT_ACTIVITY_RULES = (
     (1, 10, 1),
     (2, 25, 2),
@@ -426,6 +432,12 @@ class BlameGameResult:
     loser_display_name: str | None = None
     winner_display_names: tuple[str, ...] = ()
     settlement_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class RedPacketSettings:
+    expiry_minutes: int
+    empty_probability_percent: int
 
 
 @dataclass(frozen=True)
@@ -2869,6 +2881,54 @@ class CoreRepository:
                     )
                     .order_by(NumberBombRoundPlayerRecord.display_order)
                 )
+            )
+
+    def get_red_packet_settings(self) -> RedPacketSettings:
+        with self._session() as session:
+            record = session.get(RedPacketSettingsRecord, 1)
+            if record is None:
+                record = RedPacketSettingsRecord(
+                    id=1,
+                    expiry_minutes=_DEFAULT_RED_PACKET_EXPIRY_MINUTES,
+                    empty_probability_percent=(
+                        _DEFAULT_RED_PACKET_EMPTY_PROBABILITY_PERCENT
+                    ),
+                )
+                session.add(record)
+                session.flush()
+            return RedPacketSettings(
+                expiry_minutes=record.expiry_minutes,
+                empty_probability_percent=record.empty_probability_percent,
+            )
+
+    def set_red_packet_settings(
+        self,
+        expiry_minutes: int,
+        empty_probability_percent: int,
+    ) -> RedPacketSettings:
+        if (
+            isinstance(expiry_minutes, bool)
+            or not isinstance(expiry_minutes, int)
+            or not 1 <= expiry_minutes <= 60
+        ):
+            raise ValueError("红包过期时间必须为 1 至 60 分钟")
+        if (
+            isinstance(empty_probability_percent, bool)
+            or not isinstance(empty_probability_percent, int)
+            or not 0 <= empty_probability_percent <= 30
+        ):
+            raise ValueError("红包空包概率必须为 0 至 30")
+        self.get_red_packet_settings()
+        with self._session() as session:
+            record = session.get(RedPacketSettingsRecord, 1)
+            if record is None:
+                raise RuntimeError("随机运气红包设置消失")
+            record.expiry_minutes = expiry_minutes
+            record.empty_probability_percent = empty_probability_percent
+            session.flush()
+            return RedPacketSettings(
+                expiry_minutes=record.expiry_minutes,
+                empty_probability_percent=record.empty_probability_percent,
             )
 
     def get_number_bomb_settings(self) -> NumberBombSettings:

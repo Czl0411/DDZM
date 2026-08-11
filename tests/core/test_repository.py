@@ -513,6 +513,50 @@ def test_number_bomb_schema_contains_provenance_state_and_idempotency_constraint
     assert "skipped_at" in round_players.c
 
 
+def test_red_packet_schema_contains_active_and_idempotency_constraints():
+    from dzmm_bot.core.schema import Base
+
+    expected_tables = {
+        "red_packet_settings",
+        "red_packets",
+        "red_packet_shares",
+        "red_packet_daily_starts",
+    }
+
+    assert expected_tables <= set(Base.metadata.tables)
+    packets = Base.metadata.tables["red_packets"]
+    shares = Base.metadata.tables["red_packet_shares"]
+    daily_starts = Base.metadata.tables["red_packet_daily_starts"]
+    assert {index.name for index in packets.indexes} >= {
+        "ux_red_packet_one_active"
+    }
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in shares.constraints
+    } >= {
+        ("packet_id", "display_order"),
+        ("packet_id", "claimant_user_id"),
+    }
+    assert {
+        tuple(column.name for column in constraint.columns)
+        for constraint in daily_starts.constraints
+    } >= {("user_id", "play_date")}
+
+
+def test_red_packet_settings_defaults_and_validation(repository):
+    from dzmm_bot.core.repository import RedPacketSettings
+
+    assert repository.get_red_packet_settings() == RedPacketSettings(
+        expiry_minutes=10,
+        empty_probability_percent=5,
+    )
+    assert repository.set_red_packet_settings(20, 8) == RedPacketSettings(20, 8)
+    with pytest.raises(ValueError, match="过期时间"):
+        repository.set_red_packet_settings(0, 8)
+    with pytest.raises(ValueError, match="空包概率"):
+        repository.set_red_packet_settings(10, 31)
+
+
 def _prepare_number_bomb_players(repository, now, prefix, count, balance=0):
     platform_ids = [f"{prefix}-p{index}" for index in range(1, count + 1)]
     for index, platform_id in enumerate(platform_ids, 1):

@@ -428,6 +428,70 @@ class BlameGameDailyStartRecord(Base):
     count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
+class RedPacketSettingsRecord(Base):
+    __tablename__ = "red_packet_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    expiry_minutes: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    empty_probability_percent: Mapped[int] = mapped_column(
+        Integer, default=5, nullable=False
+    )
+
+
+class RedPacketRecord(Base):
+    __tablename__ = "red_packets"
+    __table_args__ = (
+        Index(
+            "ux_red_packet_one_active",
+            "active_key",
+            unique=True,
+            sqlite_where=text("active_key IS NOT NULL"),
+            postgresql_where=text("active_key IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    active_key: Mapped[str | None] = mapped_column(String(32))
+    issuer_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    target_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    has_empty: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    refunded_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class RedPacketShareRecord(Base):
+    __tablename__ = "red_packet_shares"
+    __table_args__ = (
+        UniqueConstraint("packet_id", "display_order"),
+        UniqueConstraint("packet_id", "claimant_user_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    packet_id: Mapped[UUID] = mapped_column(
+        ForeignKey("red_packets.id"), nullable=False
+    )
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    claimant_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    claimed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class RedPacketDailyStartRecord(Base):
+    __tablename__ = "red_packet_daily_starts"
+    __table_args__ = (UniqueConstraint("user_id", "play_date"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    play_date: Mapped[date] = mapped_column(Date, nullable=False)
+    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
 class NumberBombSettingsRecord(Base):
     __tablename__ = "number_bomb_settings"
 

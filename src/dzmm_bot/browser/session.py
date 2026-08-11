@@ -20,9 +20,11 @@ class ChatGateway(Protocol):
         self, direct_chatroom_ids: tuple[str, ...] = ()
     ) -> list[InboundMessage]: ...
 
-    def send(self, text: str) -> str: ...
+    def send(self, text: str, *, message_id: str | None = None) -> str: ...
 
-    def send_to(self, chatroom_id: str, text: str) -> str: ...
+    def send_to(
+        self, chatroom_id: str, text: str, *, message_id: str | None = None
+    ) -> str: ...
 
     def discover_direct_chats(self) -> list[DirectChatRoom]: ...
 
@@ -193,14 +195,16 @@ class _PlaywrightGateway:
     ) -> list[InboundMessage]:
         return self.read_new(direct_chatroom_ids)
 
-    def send(self, text: str) -> str:
+    def send(self, text: str, *, message_id: str | None = None) -> str:
         page = self._active_page()
         editor = page.locator("textarea, [contenteditable='true']").last
         editor.fill(text)
         editor.press("Enter")
         return f"dzmm:{int(time() * 1000)}"
 
-    def send_to(self, chatroom_id: str, text: str) -> str:
+    def send_to(
+        self, chatroom_id: str, text: str, *, message_id: str | None = None
+    ) -> str:
         raise NotImplementedError("direct messages require the Aikda socket gateway")
 
     def discover_direct_chats(self) -> list[DirectChatRoom]:

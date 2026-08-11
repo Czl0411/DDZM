@@ -5,6 +5,7 @@ from time import monotonic, sleep
 from uuid import UUID
 
 import pytest
+from socketio.exceptions import TimeoutError as SocketTimeoutError
 
 from dzmm_bot.browser.core_client import OutboundClaim, OutboundRecallClaim, WorkerCommand
 from dzmm_bot.browser.worker import BrowserWorker
@@ -30,6 +31,8 @@ class FakeGateway:
     read_targets: list[tuple[str, ...]] = field(default_factory=list)
     message_handler: object | None = None
     send_delay_seconds: float = 0
+    sent_message_ids: list[str | None] = field(default_factory=list)
+    send_errors: list[Exception] = field(default_factory=list)
 
     def read_new(self, direct_chatroom_ids=()):
         self.read_targets.append(direct_chatroom_ids)
@@ -37,7 +40,10 @@ class FakeGateway:
             raise self.read_error
         return list(self.messages)
 
-    def send(self, text):
+    def send(self, text, *, message_id=None):
+        self.sent_message_ids.append(message_id)
+        if self.send_errors:
+            raise self.send_errors.pop(0)
         if self.send_error:
             raise self.send_error
         if self.send_delay_seconds:
@@ -45,7 +51,10 @@ class FakeGateway:
         self.sent.append(text)
         return f"sent-{len(self.sent)}"
 
-    def send_to(self, chatroom_id, text):
+    def send_to(self, chatroom_id, text, *, message_id=None):
+        self.sent_message_ids.append(message_id)
+        if self.send_errors:
+            raise self.send_errors.pop(0)
         if self.send_error:
             raise self.send_error
         self.sent_to.append((chatroom_id, text))
@@ -129,6 +138,10 @@ class FakeCore:
     listening_desired: bool = True
     direct_rooms_to_read: tuple[str, ...] = ()
     submitted_event: Event = field(default_factory=Event)
+    confirmed_event: Event = field(default_factory=Event)
+    failed_event: Event = field(default_factory=Event)
+    released: list[tuple] = field(default_factory=list)
+    released_event: Event = field(default_factory=Event)
 
     def submit_inbound(self, message):
         self.submitted_ids.append(message.platform_message_id)
@@ -141,9 +154,15 @@ class FakeCore:
         self.confirmed.append(
             (message_id, worker_id, lease_token, platform_sent_id, now)
         )
+        self.confirmed_event.set()
 
     def mark_outbound_failed(self, message_id, worker_id, lease_token, now):
         self.failed.append((message_id, worker_id, lease_token, now))
+        self.failed_event.set()
+
+    def release_outbound(self, message_id, worker_id, lease_token, now):
+        self.released.append((message_id, worker_id, lease_token, now))
+        self.released_event.set()
 
     def claim_outbound_recall(self, worker_id, now, lease_seconds):
         return self.pending_recalls.pop(0) if self.pending_recalls else None
@@ -344,6 +363,7 @@ def test_duplicate_content_rejection_is_marked_failed_without_resetting_browser(
 
     worker.run_once()
 
+    assert core.failed_event.wait(timeout=1)
     assert core.confirmed == []
     assert core.failed == [(OUTBOUND_ID, "worker-a", LEASE, NOW)]
     assert worker.login_state is LoginState.READY
@@ -356,9 +376,28 @@ def test_sent_confirmation_includes_current_fencing_values(context):
 
     worker.run_once()
 
+    assert core.confirmed_event.wait(timeout=1)
     assert core.confirmed == [
         (OUTBOUND_ID, "worker-a", LEASE, "sent-1", NOW)
     ]
+
+
+def test_worker_retries_socket_timeout_with_the_same_platform_message_id(context):
+    worker, gateway, _, _, core, _ = context
+    outbound = OutboundClaim(OUTBOUND_ID, "in-1", "reply", LEASE)
+    core.pending = [outbound]
+    gateway.send_errors = [SocketTimeoutError()]
+
+    worker.run_once()
+
+    assert core.released_event.wait(timeout=1)
+    assert core.released == [(OUTBOUND_ID, "worker-a", LEASE, NOW)]
+
+    core.pending = [outbound]
+    worker.run_once()
+
+    assert core.confirmed_event.wait(timeout=1)
+    assert gateway.sent_message_ids == [str(OUTBOUND_ID), str(OUTBOUND_ID)]
 
 
 def test_worker_drains_at_most_twenty_outbounds_in_order(context):

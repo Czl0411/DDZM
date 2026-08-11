@@ -12,6 +12,7 @@ from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage
 
 
 _LOGGER = logging.getLogger(__name__)
+_SEND_ACK_TIMEOUT_SECONDS = 3
 
 
 class AikdaSocketGateway:
@@ -95,16 +96,18 @@ class AikdaSocketGateway:
             raise RuntimeError(error)
         self._joined_direct_chatroom_ids.add(chatroom_id)
 
-    def send(self, text: str) -> str:
-        return self.send_to(self.chatroom_id, text)
+    def send(self, text: str, *, message_id: str | None = None) -> str:
+        return self.send_to(self.chatroom_id, text, message_id=message_id)
 
-    def send_to(self, chatroom_id: str, text: str) -> str:
+    def send_to(
+        self, chatroom_id: str, text: str, *, message_id: str | None = None
+    ) -> str:
         self._ensure_connected()
         if not chatroom_id:
             raise ValueError("chatroom_id must be nonempty")
         if not text.strip():
             raise ValueError("text must be nonempty")
-        message_id = str(uuid4())
+        message_id = message_id or str(uuid4())
         message = {
             "message_id": message_id,
             "sent_by": self._bot_id,
@@ -117,7 +120,7 @@ class AikdaSocketGateway:
         acknowledgement = self._socket.call(
             "message:send",
             {"chatroomId": chatroom_id, "message": message},
-            timeout=10,
+            timeout=_SEND_ACK_TIMEOUT_SECONDS,
         )
         if not acknowledgement or acknowledgement.get("success") is not True:
             error = acknowledgement.get("error", "message acknowledgement failed") if acknowledgement else "message acknowledgement failed"

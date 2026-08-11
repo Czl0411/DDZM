@@ -7,6 +7,8 @@ from threading import Lock
 from time import monotonic as default_monotonic, sleep as default_sleep
 from typing import Protocol
 
+from socketio.exceptions import TimeoutError as SocketTimeoutError
+
 from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
 from dzmm_bot.runtime.outbound import requires_bot_group_sender
 
@@ -215,6 +217,18 @@ class BrowserWorker:
     def _send_one_outbound(self, gateway: ChatGateway, outbound) -> bool:
         try:
             platform_sent_id = self._send_outbound(gateway, outbound)
+        except SocketTimeoutError:
+            _LOGGER.warning("outbound acknowledgement timed out: %s", outbound.id)
+            gateway.close()
+            self._core.release_outbound(
+                outbound.id,
+                self._worker_id,
+                outbound.lease_token,
+                self._clock(),
+            )
+            with self._outbound_failed_lock:
+                self._outbound_failed = True
+            return False
         except Exception as error:
             if "请勿发送重复内容" in str(error):
                 _LOGGER.warning("outbound content rejected as duplicate: %s", outbound.id)
@@ -240,6 +254,7 @@ class BrowserWorker:
         return True
 
     def _send_outbound(self, gateway: ChatGateway, outbound) -> str:
+        platform_message_id = str(outbound.id)
         if (
             self._bot_sender is not None
             and self._bot_chatroom_id is not None
@@ -250,8 +265,12 @@ class BrowserWorker:
         ):
             return self._bot_sender.send_to(self._bot_chatroom_id, outbound.text)
         if outbound.destination_chatroom_id is not None:
-            return gateway.send_to(outbound.destination_chatroom_id, outbound.text)
-        return gateway.send(outbound.text)
+            return gateway.send_to(
+                outbound.destination_chatroom_id,
+                outbound.text,
+                message_id=platform_message_id,
+            )
+        return gateway.send(outbound.text, message_id=platform_message_id)
 
     def _sync_direct_chats(self, gateway: ChatGateway, now: datetime) -> None:
         if (

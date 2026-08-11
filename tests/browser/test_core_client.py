@@ -110,6 +110,41 @@ def test_core_client_syncs_discovered_direct_chatrooms():
     }
 
 
+def test_core_client_releases_a_timed_out_outbound_for_immediate_retry():
+    from dzmm_bot.browser.core_client import CoreClient
+    from uuid import UUID
+
+    observed = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["path"] = request.url.path
+        observed["payload"] = json.loads(request.content)
+        return httpx.Response(200, json={"accepted": True})
+
+    client = CoreClient(
+        "http://core.test",
+        "token",
+        client=httpx.Client(
+            base_url="http://core.test",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    message_id = UUID("00000000-0000-0000-0000-000000000001")
+    lease_token = UUID("00000000-0000-0000-0000-000000000002")
+    now = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+
+    client.release_outbound(message_id, "worker-a", lease_token, now)
+
+    assert observed == {
+        "path": f"/internal/outbound/{message_id}/retry",
+        "payload": {
+            "worker_id": "worker-a",
+            "lease_token": str(lease_token),
+            "now": now.isoformat(),
+        },
+    }
+
+
 def test_core_client_serializes_provenance_and_fetches_direct_inbound_rooms():
     from dzmm_bot.browser.core_client import CoreClient
 

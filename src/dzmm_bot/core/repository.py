@@ -10389,6 +10389,33 @@ class CoreRepository:
                             )
             return True
 
+    def release_outbound(
+        self,
+        message_id: UUID | str,
+        worker_id: str,
+        lease_token: UUID | str,
+        now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(
+                select(OutboundRecord)
+                .where(
+                    OutboundRecord.id == UUID(str(message_id)),
+                    OutboundRecord.status == "leased",
+                    OutboundRecord.lease_worker_id == worker_id,
+                    OutboundRecord.lease_token == UUID(str(lease_token)),
+                    OutboundRecord.lease_expires_at > now,
+                )
+                .with_for_update()
+            )
+            if record is None:
+                return False
+            record.status = "pending"
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            return True
+
     def claim_outbound_recall(
         self, worker_id: str, now: datetime, lease_seconds: int
     ) -> OutboundRecord | None:

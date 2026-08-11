@@ -266,6 +266,22 @@ def create_app(
         return AcceptedResponse(accepted=accepted)
 
     @app.post(
+        "/internal/outbound/{message_id}/retry", response_model=AcceptedResponse
+    )
+    def release_outbound(
+        message_id: UUID,
+        request: FailedRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        accepted = repository.release_outbound(
+            message_id,
+            request.worker_id,
+            request.lease_token,
+            request.now,
+        )
+        return AcceptedResponse(accepted=accepted)
+
+    @app.post(
         "/internal/outbound/recall/claim",
         response_model=OutboundRecallClaimResponse | None,
     )

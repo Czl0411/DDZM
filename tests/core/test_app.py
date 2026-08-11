@@ -1171,6 +1171,7 @@ def test_database_backed_identifiers_reject_more_than_255_characters(
         ("post", "/internal/outbound/claim"),
         ("post", "/internal/outbound/00000000-0000-0000-0000-000000000000/sent"),
         ("post", "/internal/outbound/00000000-0000-0000-0000-000000000000/failed"),
+        ("post", "/internal/outbound/00000000-0000-0000-0000-000000000000/retry"),
         ("post", "/internal/heartbeat"),
         ("get", "/internal/login-state"),
         ("get", "/internal/status"),
@@ -1304,6 +1305,38 @@ def test_outbound_failed_releases_the_current_lease(app_context, headers, payloa
     assert response.json() == {"accepted": True}
     with app_context.session_factory() as session:
         assert session.get(OutboundRecord, outbound.id).status == "failed"
+
+
+def test_outbound_retry_releases_the_current_lease_for_immediate_reclaim(
+    app_context, headers, payload
+):
+    inbound = app_context.client.post(
+        "/internal/inbound", headers=headers, json=payload
+    ).json()
+    outbound = app_context.repository.enqueue_outbound(inbound["message_id"], "reply")
+    claim = app_context.client.post(
+        "/internal/outbound/claim",
+        headers=headers,
+        json={"worker_id": "worker-a", "now": NOW.isoformat(), "lease_seconds": 30},
+    ).json()
+
+    response = app_context.client.post(
+        f"/internal/outbound/{outbound.id}/retry",
+        headers=headers,
+        json={
+            "worker_id": "worker-a",
+            "lease_token": claim["lease_token"],
+            "now": NOW.isoformat(),
+        },
+    )
+    retried = app_context.client.post(
+        "/internal/outbound/claim",
+        headers=headers,
+        json={"worker_id": "worker-b", "now": NOW.isoformat(), "lease_seconds": 30},
+    ).json()
+
+    assert response.json() == {"accepted": True}
+    assert retried["id"] == str(outbound.id)
 
 
 def test_heartbeat_updates_login_state_and_health_age(app_context, headers):

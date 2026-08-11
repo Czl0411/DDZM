@@ -322,9 +322,19 @@ def test_send_requires_successful_ack(gateway):
                     "content": {"type": "text", "text": "余额：5 摸鱼币"},
                 },
             },
-            10,
+            3,
         )
     ]
+
+
+def test_send_preserves_caller_message_id_and_uses_short_ack_timeout(gateway):
+    adapter, socket, _ = gateway
+
+    platform_message_id = adapter.send("余额：5 摸鱼币", message_id="outbound-1")
+
+    assert platform_message_id == "outbound-1"
+    assert socket.calls[1][1]["message"]["message_id"] == "outbound-1"
+    assert socket.calls[1][2] == 3
 
 
 def test_send_joins_destination_before_sending_and_preserves_newlines(gateway):
@@ -418,7 +428,7 @@ def test_send_to_uses_the_supplied_direct_chatroom(gateway):
                     "content": {"type": "text", "text": "你的身份：平民。词语：咖啡"},
                 },
             },
-            10,
+            3,
         )
     ]
 

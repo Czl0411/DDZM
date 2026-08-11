@@ -1124,6 +1124,34 @@ def test_number_bomb_requires_direct_chat_for_creation_join_and_start(repository
     ]
 
 
+def test_number_bomb_start_locks_only_members_when_checking_direct_chats(
+    repository, session_factory, now
+):
+    from sqlalchemy import event
+    from sqlalchemy.dialects import postgresql
+
+    platform_ids = _prepare_number_bomb_players(repository, now, "lock-scope", 3)
+    repository.start_number_bomb_game(platform_ids[0], now)
+    repository.join_number_bomb_game(platform_ids[1], now)
+    repository.join_number_bomb_game(platform_ids[2], now)
+    statements = []
+
+    def capture_direct_chat_lock(execute_state):
+        statement = str(execute_state.statement.compile(dialect=postgresql.dialect()))
+        if "LEFT OUTER JOIN direct_chats" in statement and "FOR UPDATE" in statement:
+            statements.append(statement)
+
+    event.listen(session_factory.class_, "do_orm_execute", capture_direct_chat_lock)
+    try:
+        result = repository.start_number_bomb_round(platform_ids[0], now)
+    finally:
+        event.remove(session_factory.class_, "do_orm_execute", capture_direct_chat_lock)
+
+    assert result.status == "started"
+    assert len(statements) == 1
+    assert "FOR UPDATE OF number_bomb_members" in statements[0]
+
+
 def test_number_bomb_signup_leave_and_last_member_release(repository, now):
     repository.create_user("number-alone", "独行玩家", now, 7)
     repository.upsert_direct_chats([("number-alone", "direct-number-alone")], now)

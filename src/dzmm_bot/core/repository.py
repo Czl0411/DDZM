@@ -3890,7 +3890,7 @@ class CoreRepository:
                             NumberBombMemberRecord.state == "current",
                         )
                         .order_by(NumberBombMemberRecord.roster_order)
-                        .with_for_update()
+                        .with_for_update(of=NumberBombMemberRecord)
                     )
                 )
                 if len(members) < 3:

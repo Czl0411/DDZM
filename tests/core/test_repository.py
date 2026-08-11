@@ -3326,6 +3326,90 @@ def test_undercover_winner_uses_whiteboard_threshold_frozen_at_dealing(
     assert settled.winner == "whiteboard"
 
 
+def test_undercover_current_game_commands_follow_state_and_actor_role(
+    repository, session_factory, now
+):
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.create_user("undercover-outsider", "旁观者", now, 0)
+    repository.upsert_direct_chats(
+        [("undercover-outsider", "direct-undercover-outsider")], now
+    )
+    repository.start_undercover_signup(platform_ids[0], 4, now)
+
+    assert repository.active_gameplay_summary(
+        platform_ids[0], now
+    ).available_commands == ("/退出", "/结束游戏")
+    assert repository.active_gameplay_summary(
+        "undercover-outsider", now
+    ).available_commands == ("/加入",)
+
+    for platform_id in platform_ids[1:]:
+        dealing = repository.join_undercover(platform_id, now)
+    assert repository.active_gameplay_summary(
+        platform_ids[0], now
+    ).available_commands == (
+        "/退出",
+        "/开始投票",
+        "/投票 编号",
+        "/结束游戏",
+    )
+    for platform_id in platform_ids:
+        repository.record_undercover_card_delivery(
+            dealing.game_id, platform_id, True, now
+        )
+
+    assert repository.active_gameplay_summary(
+        platform_ids[0], now
+    ).available_commands == (
+        "/退出",
+        "/开始投票",
+        "/投票 编号",
+        "/结束游戏",
+    )
+    assert repository.active_gameplay_summary(
+        "undercover-outsider", now
+    ).available_commands == ("/加入",)
+    assert repository.join_undercover("undercover-outsider", now).status == "queued"
+    assert repository.active_gameplay_summary(
+        "undercover-outsider", now
+    ).available_commands == ("/退出",)
+
+    started = repository.start_undercover_vote(platform_ids[0], now)
+    assert started.status == "voting"
+    assert repository.active_gameplay_summary(
+        platform_ids[0], now
+    ).available_commands == (
+        "/投票 编号",
+        "/跳过 编号",
+        "/退出",
+        "/结束游戏",
+    )
+    role_by_platform_id = dict(zip(started.player_ids, started.roles, strict=True))
+    undercover_platform_id = next(
+        platform_id
+        for platform_id, role in role_by_platform_id.items()
+        if role == "undercover"
+    )
+    undercover_seat = next(
+        player.seat_number
+        for player in repository.undercover_session_summary().players
+        if player.platform_id == undercover_platform_id
+    )
+    for platform_id in platform_ids:
+        repository.cast_undercover_vote(platform_id, undercover_seat, now)
+
+    assert repository.active_gameplay_summary(
+        platform_ids[0], now
+    ).available_commands == ("/退出", "/继续", "/结束游戏")
+    repository.create_user("undercover-late", "迟到者", now, 0)
+    repository.upsert_direct_chats(
+        [("undercover-late", "direct-undercover-late")], now
+    )
+    assert repository.active_gameplay_summary(
+        "undercover-late", now
+    ).available_commands == ("/加入",)
+
+
 def test_undercover_card_delivery_failure_restores_signup_without_public_cards(
     repository, session_factory, now
 ):

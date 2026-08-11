@@ -280,6 +280,15 @@ def test_number_bomb_skip_command_removes_targets_from_entire_game():
     ]
 
 
+def test_skip_without_a_matching_game_reports_unavailable():
+    service, _, factory = _service()
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+
+    _receive(service, "skip-no-game", "outsider", "/跳过 2", now)
+
+    assert _latest_reply(factory) == "当前没有可执行跳过的游戏。"
+
+
 def test_end_game_hits_waiting_memory_duel_instead_of_undercover_fallback():
     service, repository, factory = _service()
     now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)

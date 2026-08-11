@@ -80,9 +80,13 @@ class GroupCommandHandler:
                 return self._undercover_skip(
                     message.sender_platform_id, content, received_at
                 )
-            return self._number_bomb_skip(
-                message.sender_platform_id, content, received_at
-            )
+            if summary.game_type == "number_bomb":
+                return self._number_bomb_skip(
+                    message.sender_platform_id, content, received_at
+                )
+            if summary.game_type == "conflict":
+                return self._reply("/当前游戏", "conflict", received_at)
+            return self._reply("/跳过", "no_current_game", received_at)
         if command == "/甩锅游戏":
             return self._blame_start(message.sender_platform_id, content, received_at)
         if command == "/甩锅":
@@ -1187,12 +1191,17 @@ class GroupCommandHandler:
         if result.status != "voting":
             return self._reply("/开始投票", "cannot_start", received_at)
         summary = self._repository.undercover_session_summary()
+        vote_seconds = (
+            max(int((summary.vote_deadline - received_at).total_seconds()), 1)
+            if summary.vote_deadline is not None
+            else self._repository.get_undercover_settings().vote_seconds
+        )
         return self._reply(
             "/开始投票",
             "started",
             received_at,
             {
-                "{投票秒数}": self._repository.get_undercover_settings().vote_seconds,
+                "{投票秒数}": vote_seconds,
                 "{存活玩家}": "、".join(
                     f"{player.seat_number}号 {player.display_name}"
                     for player in summary.players

@@ -41,6 +41,8 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
         Column("command", String(32), nullable=False),
         Column("scenario", String(64), nullable=False),
         Column("template", Text, nullable=False),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("updated_at", DateTime(timezone=True), nullable=False),
     )
     Table(
         "inbound_messages",

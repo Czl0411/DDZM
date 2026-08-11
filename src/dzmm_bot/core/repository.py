@@ -3505,11 +3505,25 @@ class CoreRepository:
                 if role == "candidate":
                     commands = ("/退出",)
                 elif role == "nonparticipant":
-                    commands = ("/加入",) if undercover.state == "signup" else ()
+                    commands = ("/加入",)
+                elif undercover.state == "signup":
+                    commands = ("/退出", "/结束游戏")
                 elif undercover.state == "awaiting_continue":
                     commands = ("/退出", "/继续", "/结束游戏")
+                elif undercover.state == "voting":
+                    commands = (
+                        "/投票 编号",
+                        "/跳过 编号",
+                        "/退出",
+                        "/结束游戏",
+                    )
                 else:
-                    commands = ("/退出", "/结束游戏")
+                    commands = (
+                        "/退出",
+                        "/开始投票",
+                        "/投票 编号",
+                        "/结束游戏",
+                    )
                 active.append(
                     ActiveGameplaySummary(
                         "undercover",
@@ -5169,7 +5183,12 @@ class CoreRepository:
         if result.abstained_labels:
             labels = "、".join(result.abstained_labels)
             self.enqueue_system_outbound(
-                f"【谁是卧底】投票时间结束。{labels} 未投票，本轮自动弃票。"
+                self._undercover_automatic_message(
+                    "/投票",
+                    "timeout_abstention",
+                    now,
+                    {"{弃票玩家列表}": labels},
+                )
             )
         if result.status == "vote_expired":
             self.enqueue_system_outbound("【谁是卧底】本轮无人投票，继续自由发言。")
@@ -5534,7 +5553,9 @@ class CoreRepository:
                 member.leave_after_round = False
             self._cancel_undercover_card_outbounds(session, game.id)
             self.enqueue_system_outbound(
-                "【谁是卧底】身份私聊发放失败，已返回报名阶段，请稍后重新报名。"
+                self._undercover_automatic_message(
+                    "/谁是卧底", "delivery_failed", now
+                )
             )
             return UndercoverGameResult(
                 "delivery_failed", session_id=session_record.id, game_id=game.id

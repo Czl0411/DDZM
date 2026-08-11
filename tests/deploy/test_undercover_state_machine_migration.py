@@ -64,6 +64,16 @@ def test_undercover_state_machine_migration_backfills_and_downgrades(
         Column("is_original", Boolean, nullable=False),
         Column("joined_at", DateTime(timezone=True), nullable=False),
     )
+    templates = Table(
+        "command_reply_templates",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("command", String(32), nullable=False),
+        Column("scenario", String(64), nullable=False),
+        Column("template", String, nullable=False),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("updated_at", DateTime(timezone=True), nullable=False),
+    )
     metadata.create_all(engine)
     now = datetime(2026, 8, 11, tzinfo=UTC)
     with engine.begin() as connection:
@@ -87,6 +97,27 @@ def test_undercover_state_machine_migration_backfills_and_downgrades(
                 "is_original": True,
                 "joined_at": now,
             },
+        )
+        connection.execute(
+            templates.insert(),
+            [
+                {
+                    "id": UUID(int=5),
+                    "command": "/投票",
+                    "scenario": "recorded",
+                    "template": "投票已记录，等待其他存活玩家投票。",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                {
+                    "id": UUID(int=6),
+                    "command": "/投票",
+                    "scenario": "settled",
+                    "template": "管理员自定义结算文案",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            ],
         )
     command.stamp(config, "20260811_37")
 
@@ -115,6 +146,37 @@ def test_undercover_state_machine_migration_backfills_and_downgrades(
         assert connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one() == "20260811_38"
+        assert connection.execute(
+            text(
+                "SELECT template FROM command_reply_templates "
+                "WHERE command = '/投票' AND scenario = 'recorded'"
+            )
+        ).scalar_one() == (
+            "【谁是卧底】{编号}号 {玩家名称} 已投票"
+            "（{已完成人数}/{存活人数}）。"
+        )
+        assert connection.execute(
+            text(
+                "SELECT template FROM command_reply_templates "
+                "WHERE command = '/投票' AND scenario = 'settled'"
+            )
+        ).scalar_one() == "管理员自定义结算文案"
+        assert connection.execute(
+            text(
+                "SELECT template FROM command_reply_templates "
+                "WHERE command = '/跳过' "
+                "AND scenario = 'undercover_abstained'"
+            )
+        ).scalar_one().startswith("【谁是卧底】{编号}号")
+        connection.execute(
+            text(
+                "UPDATE command_reply_templates "
+                "SET template = '管理员自定义弃票文案' "
+                "WHERE command = '/跳过' "
+                "AND scenario = 'undercover_abstained'"
+            )
+        )
+        connection.commit()
 
     command.downgrade(config, "20260811_37")
 
@@ -127,3 +189,23 @@ def test_undercover_state_machine_migration_backfills_and_downgrades(
         column["name"]
         for column in inspector.get_columns("undercover_session_members")
     }
+    with engine.connect() as connection:
+        assert connection.execute(
+            text(
+                "SELECT template FROM command_reply_templates "
+                "WHERE command = '/投票' AND scenario = 'recorded'"
+            )
+        ).scalar_one() == "投票已记录，等待其他存活玩家投票。"
+        assert connection.execute(
+            text(
+                "SELECT template FROM command_reply_templates "
+                "WHERE command = '/投票' AND scenario = 'settled'"
+            )
+        ).scalar_one() == "管理员自定义结算文案"
+        assert connection.execute(
+            text(
+                "SELECT template FROM command_reply_templates "
+                "WHERE command = '/跳过' "
+                "AND scenario = 'undercover_abstained'"
+            )
+        ).scalar_one() == "管理员自定义弃票文案"

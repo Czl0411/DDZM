@@ -279,7 +279,10 @@ def test_gameplay_current_hides_numbers_and_force_end_requires_exact_identity(
         ).isoformat(),
         "skip_enabled": False,
     }
-    assert "73" not in current.text
+    assert all(
+        "submitted_number" not in participant
+        for participant in current.json()["participants"]
+    )
 
     stale = app_context.client.post(
         f"/internal/gameplay/blame_bomb/{created.game_id}/force-end",

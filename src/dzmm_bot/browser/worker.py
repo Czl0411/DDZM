@@ -1,14 +1,16 @@
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import logging
+from threading import Lock
 from time import monotonic as default_monotonic, sleep as default_sleep
 from typing import Protocol
 
-from dzmm_bot.runtime.contracts import LoginState
+from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
 from dzmm_bot.runtime.outbound import requires_bot_group_sender
 
-from .core_client import CorePort, WorkerCommand
+from .core_client import CorePort, OutboundClaim, WorkerCommand
 from .session import BrowserSession, ChatGateway
 
 
@@ -60,6 +62,17 @@ class BrowserWorker:
         self._auth_backoff = 1
         self._manual_auth_confirmed = False
         self._last_direct_chat_sync_at: datetime | None = None
+        self._inbound_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="dzmm-inbound"
+        )
+        self._outbound_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="dzmm-outbound"
+        )
+        self._outbound_future: Future[None] | None = None
+        self._paused_messages: list[InboundMessage] = []
+        self._paused_messages_lock = Lock()
+        self._outbound_failed = False
+        self._outbound_failed_lock = Lock()
 
     @property
     def login_state(self) -> LoginState:
@@ -71,6 +84,8 @@ class BrowserWorker:
 
     def run_once(self) -> None:
         now = self._clock()
+        if self._consume_outbound_failure():
+            self._recover_browser_session()
         command = self._core.claim_command(
             self._worker_id, now, self._lease_seconds
         )
@@ -93,6 +108,7 @@ class BrowserWorker:
                     self._recover_browser_session()
 
         self._sync_listener_state()
+        self._flush_paused_messages()
 
         if self._login_state is LoginState.AUTH_REQUIRED:
             self._core.run_daily_jobs(now)
@@ -121,7 +137,7 @@ class BrowserWorker:
             for message in messages:
                 if message.platform_message_id in self._seen_message_ids:
                     continue
-                self._core.submit_inbound(message)
+                self._queue_inbound(message)
                 self._seen_message_ids.add(message.platform_message_id)
 
         self._core.run_daily_jobs(now)
@@ -142,9 +158,47 @@ class BrowserWorker:
                     self._clock(),
                 )
 
-        self._drain_outbound(gateway, self._monotonic())
+        self._start_outbound_if_idle(gateway)
 
-    def _drain_outbound(self, gateway: ChatGateway, started_at: float) -> None:
+    def _queue_inbound(self, message: InboundMessage) -> None:
+        if not self._listening:
+            with self._paused_messages_lock:
+                self._paused_messages.append(message)
+            return
+        self._inbound_executor.submit(self._dispatch_inbound, message)
+
+    def _flush_paused_messages(self) -> None:
+        if not self._listening:
+            return
+        with self._paused_messages_lock:
+            messages, self._paused_messages = self._paused_messages, []
+        for message in messages:
+            self._inbound_executor.submit(self._dispatch_inbound, message)
+
+    def _dispatch_inbound(self, message: InboundMessage) -> None:
+        if message.source_type == "direct" and message.chatroom_id is not None:
+            self._core.sync_direct_chats(
+                [DirectChatRoom(message.sender_platform_id, message.chatroom_id)],
+                self._clock(),
+            )
+        self._core.submit_inbound(message)
+
+    def _start_outbound_if_idle(self, gateway: ChatGateway) -> None:
+        if self._outbound_future is not None and not self._outbound_future.done():
+            return
+        if self._outbound_future is not None:
+            self._outbound_future.result()
+        self._outbound_future = self._outbound_executor.submit(
+            self._drain_outbound, gateway
+        )
+
+    def _consume_outbound_failure(self) -> bool:
+        with self._outbound_failed_lock:
+            failed, self._outbound_failed = self._outbound_failed, False
+        return failed
+
+    def _drain_outbound(self, gateway: ChatGateway) -> None:
+        started_at = self._monotonic()
         sent_count = 0
         while sent_count < _OUTBOUND_BATCH_SIZE:
             if self._monotonic() - started_at >= _OUTBOUND_BATCH_BUDGET_SECONDS:
@@ -172,8 +226,9 @@ class BrowserWorker:
                 )
                 return False
             _LOGGER.exception("outbound send failed: %s", outbound.id)
-            self._recover_browser_session()
-            self._sync_listener_state()
+            gateway.close()
+            with self._outbound_failed_lock:
+                self._outbound_failed = True
             return False
         self._core.confirm_sent(
             outbound.id,
@@ -206,6 +261,7 @@ class BrowserWorker:
             return
         try:
             self._core.sync_direct_chats(gateway.discover_direct_chats(), now)
+            gateway.reconcile_history(self._core.direct_inbound_chatroom_ids())
         except NotImplementedError:
             return
         except Exception:
@@ -216,6 +272,9 @@ class BrowserWorker:
     def _ensure_gateway(self) -> ChatGateway:
         if self._gateway is None:
             self._gateway = self._session.start_headless()
+            handler = getattr(self._gateway, "set_message_handler", None)
+            if handler is not None:
+                handler(self._queue_inbound)
         return self._gateway
 
     def _sync_listener_state(self) -> None:

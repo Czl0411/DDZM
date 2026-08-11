@@ -1,6 +1,6 @@
 from collections import deque
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 import logging
 from threading import Event, Lock
 from typing import Any
@@ -45,8 +45,14 @@ class AikdaSocketGateway:
         self._pending: deque[InboundMessage] = deque()
         self._seen_ids: set[str] = set()
         self._pending_lock = Lock()
+        self._message_handler: Callable[[InboundMessage], None] | None = None
         self._direct_chatroom_ids: set[str] = set()
         self._joined_direct_chatroom_ids: set[str] = set()
+
+    def set_message_handler(
+        self, handler: Callable[[InboundMessage], None]
+    ) -> None:
+        self._message_handler = handler
 
     def read_new(
         self, direct_chatroom_ids: tuple[str, ...] = ()
@@ -283,7 +289,11 @@ class AikdaSocketGateway:
             if message_id in self._seen_ids:
                 return
             self._seen_ids.add(message_id)
-            self._pending.append(inbound)
+            handler = self._message_handler
+            if handler is None:
+                self._pending.append(inbound)
+        if handler is not None:
+            handler(inbound)
 
 
 def _socket_client():

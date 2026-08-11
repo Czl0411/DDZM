@@ -16,6 +16,10 @@ class ChatGateway(Protocol):
         self, direct_chatroom_ids: tuple[str, ...] = ()
     ) -> list[InboundMessage]: ...
 
+    def reconcile_history(
+        self, direct_chatroom_ids: tuple[str, ...] = ()
+    ) -> list[InboundMessage]: ...
+
     def send(self, text: str) -> str: ...
 
     def send_to(self, chatroom_id: str, text: str) -> str: ...
@@ -183,6 +187,11 @@ class _PlaywrightGateway:
             )
             for message in DzmmMessageSource(page).read_new()
         ]
+
+    def reconcile_history(
+        self, direct_chatroom_ids: tuple[str, ...] = ()
+    ) -> list[InboundMessage]:
+        return self.read_new(direct_chatroom_ids)
 
     def send(self, text: str) -> str:
         page = self._active_page()

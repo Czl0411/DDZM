@@ -172,6 +172,21 @@ def test_unknown_private_socket_event_is_available_for_mapping(gateway):
     ]
 
 
+def test_socket_handler_receives_unknown_private_event_without_waiting_for_read(gateway):
+    adapter, socket, _ = gateway
+    received = []
+    adapter.set_message_handler(received.append)
+    adapter.read_new()
+
+    socket.trigger(
+        "message:new",
+        {"chatroomId": "new-direct", "message": message("new-dm", "new-user", "你好")},
+    )
+
+    assert [item.platform_message_id for item in received] == ["new-dm"]
+    assert adapter.read_new() == []
+
+
 def test_read_new_does_not_poll_history_after_socket_is_connected(gateway):
     adapter, _, request = gateway
     now = [NOW]

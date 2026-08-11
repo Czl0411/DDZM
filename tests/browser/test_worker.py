@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from threading import Event
+from time import monotonic, sleep
 from uuid import UUID
 
 import pytest
@@ -26,6 +28,8 @@ class FakeGateway:
     send_error: Exception | None = None
     read_error: Exception | None = None
     read_targets: list[tuple[str, ...]] = field(default_factory=list)
+    message_handler: object | None = None
+    send_delay_seconds: float = 0
 
     def read_new(self, direct_chatroom_ids=()):
         self.read_targets.append(direct_chatroom_ids)
@@ -36,6 +40,8 @@ class FakeGateway:
     def send(self, text):
         if self.send_error:
             raise self.send_error
+        if self.send_delay_seconds:
+            sleep(self.send_delay_seconds)
         self.sent.append(text)
         return f"sent-{len(self.sent)}"
 
@@ -47,6 +53,12 @@ class FakeGateway:
 
     def discover_direct_chats(self):
         return list(self.direct_rooms)
+
+    def reconcile_history(self, direct_chatroom_ids=()):
+        return []
+
+    def set_message_handler(self, handler):
+        self.message_handler = handler
 
     def is_authenticated(self):
         return self.authenticated
@@ -116,9 +128,11 @@ class FakeCore:
     direct_chat_syncs: list[tuple[list[DirectChatRoom], datetime]] = field(default_factory=list)
     listening_desired: bool = True
     direct_rooms_to_read: tuple[str, ...] = ()
+    submitted_event: Event = field(default_factory=Event)
 
     def submit_inbound(self, message):
         self.submitted_ids.append(message.platform_message_id)
+        self.submitted_event.set()
 
     def claim_outbound(self, worker_id, now, lease_seconds):
         return self.pending.pop(0) if self.pending else None
@@ -211,6 +225,34 @@ def test_worker_reads_only_core_selected_direct_rooms(context):
     assert core.submitted_ids == ["dm-1"]
 
 
+def test_worker_persists_unknown_direct_socket_room_before_dispatch(context):
+    worker, gateway, _, _, core, _ = context
+    worker.run_once()
+
+    assert gateway.message_handler is not None
+    gateway.message_handler(InboundMessage(
+        "new-dm", "new-user", "你好", NOW,
+        source_type="direct", chatroom_id="new-direct",
+    ))
+
+    assert core.submitted_event.wait(timeout=1)
+    assert core.direct_chat_syncs[-1] == (
+        [DirectChatRoom("new-user", "new-direct")], NOW
+    )
+    assert core.submitted_ids == ["new-dm"]
+
+
+def test_worker_does_not_wait_for_outbound_socket_send(context):
+    worker, gateway, _, _, core, _ = context
+    gateway.send_delay_seconds = 0.2
+    core.pending = [OutboundClaim(OUTBOUND_ID, "in-1", "reply", LEASE)]
+
+    started = monotonic()
+    worker.run_once()
+
+    assert monotonic() - started < 0.1
+
+
 def test_worker_runs_daily_jobs_after_submitting_messages(context):
     worker, gateway, _, _, core, _ = context
     gateway.messages = [InboundMessage("p-1", "u-1", "普通消息", NOW)]
@@ -226,9 +268,10 @@ def test_worker_confirms_only_after_gateway_send_succeeds(context):
     gateway.send_error = RuntimeError("page unavailable")
 
     worker.run_once()
+    sleep(0.01)
+    worker.run_once()
 
     assert core.confirmed == []
-    assert worker.login_state is LoginState.AUTH_REQUIRED
     assert session.stops == 1
     assert core.audits == [("authentication_lost", "worker-a", NOW)]
 

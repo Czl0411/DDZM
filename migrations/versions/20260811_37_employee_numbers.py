@@ -56,6 +56,48 @@ def upgrade() -> None:
     )
     op.bulk_insert(counters, [{"id": 1, "next_number": next_number}])
 
+    reply_templates = sa.table(
+        "command_reply_templates",
+        sa.column("command", sa.String()),
+        sa.column("scenario", sa.String()),
+        sa.column("template", sa.Text()),
+    )
+    connection.execute(
+        reply_templates.update()
+        .where(
+            reply_templates.c.command == "/入职",
+            reply_templates.c.scenario == "joined",
+            reply_templates.c.template
+            == "{昵称}，欢迎入职摸鱼公司。当前余额：{余额} {货币}。",
+        )
+        .values(
+            template=(
+                "{昵称}，欢迎入职摸鱼公司。你的工号：{工号}。"
+                "当前余额：{余额} {货币}。"
+            )
+        )
+    )
+    connection.execute(
+        reply_templates.update()
+        .where(
+            reply_templates.c.command == "/我",
+            reply_templates.c.scenario == "shown",
+            reply_templates.c.template
+            == (
+                "{昵称}\n职位：{职位}（{职级}）\n部门：{部门}\n"
+                "当前余额：{余额} {货币}。\n今日活跃度：{活跃等级}。\n"
+                "今日收益：{今日收益} {货币}。\n连续打卡：{连续打卡天数} 天。"
+            ),
+        )
+        .values(
+            template=(
+                "{昵称}\n工号：{工号}\n职位：{职位}（{职级}）\n部门：{部门}\n"
+                "当前余额：{余额} {货币}。\n今日活跃度：{活跃等级}。\n"
+                "今日收益：{今日收益} {货币}。\n连续打卡：{连续打卡天数} 天。"
+            )
+        )
+    )
+
 
 def downgrade() -> None:
     op.drop_table("employee_number_counters")

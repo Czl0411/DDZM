@@ -7,13 +7,14 @@ from .repository import (
     BlameGameResult,
     CoreRepository,
     blame_settlement_template_values,
+    format_employee_number,
 )
 from .service import CommandReply
 
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
+    "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
 }
 
 
@@ -124,6 +125,8 @@ class GroupCommandHandler:
             return self._check_in(message.sender_platform_id, received_at)
         if command == "/余额":
             return self._balance(message.sender_platform_id, received_at)
+        if command == "/修改名称":
+            return self._rename(message.sender_platform_id, content, received_at)
         if command == "/发奖金":
             return self._grant_bonus(
                 message.sender_platform_id, content, received_at
@@ -355,7 +358,11 @@ class GroupCommandHandler:
             "/入职",
             "joined",
             received_at,
-            {"{昵称}": employee.display_name, "{余额}": employee.balance},
+            {
+                "{昵称}": employee.display_name,
+                "{工号}": format_employee_number(employee.employee_number),
+                "{余额}": employee.balance,
+            },
         )
 
     def _check_in(self, platform_id: str, received_at) -> str:
@@ -415,6 +422,20 @@ class GroupCommandHandler:
             return self._reply("/发奖金", scenario, received_at, values)
         return self._reply("/发奖金", result.status, received_at)
 
+    def _rename(self, platform_id: str, content: str, received_at) -> str:
+        new_name = content[len("/修改名称"):].strip()
+        if not new_name:
+            return self._reply("/修改名称", "usage", received_at)
+        result = self._repository.rename_user(platform_id, new_name)
+        if result.status == "renamed":
+            return self._reply(
+                "/修改名称",
+                "renamed",
+                received_at,
+                {"{旧名称}": result.old_name, "{新名称}": result.new_name},
+            )
+        return self._reply("/修改名称", result.status, received_at)
+
     def _me(self, platform_id: str, received_at) -> str:
         profile = self._repository.get_user_profile(platform_id)
         if profile is None:
@@ -429,6 +450,7 @@ class GroupCommandHandler:
             received_at,
             {
                 "{昵称}": employee.display_name,
+                "{工号}": format_employee_number(employee.employee_number),
                 "{余额}": employee.balance,
                 "{活跃等级}": f"LV{activity.level}",
                 "{今日收益}": self._repository.today_income(employee.id, received_at),
@@ -1578,6 +1600,7 @@ class GroupCommandHandler:
                     ("/入职", "/入职 名字：登记成为员工"),
                     ("/打卡", f"/打卡：每日领取 {settings.checkin_reward} {settings.currency_name}"),
                     ("/余额", "/余额：查看当前余额"),
+                    ("/修改名称", "/修改名称 新名称：修改自己的员工名称"),
                     ("/发奖金", "/发奖金 员工名 金额；/发奖金 全部 金额：仅核心董事会发放"),
                     ("/发红包", "/发红包 人数 总金额：发出随机运气红包"),
                     ("/抢红包", "/抢红包：领取当前红包"),

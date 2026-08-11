@@ -153,9 +153,61 @@ def test_join_registers_employee_with_zero_balance_and_beijing_timestamp():
         employee = session.scalar(select(UserRecord))
         assert employee.platform_id == "platform-xiaoming"
         assert employee.display_name == "小明"
+        assert employee.employee_number == 1
         assert employee.balance == 0
         assert employee.joined_at == received_at.astimezone(BEIJING)
-    assert _latest_reply(factory) == "小明，欢迎入职摸鱼公司。当前余额：0 摸鱼币。"
+    assert _latest_reply(factory) == (
+        "小明，欢迎入职摸鱼公司。你的工号：#0001。"
+        "当前余额：0 摸鱼币。"
+    )
+
+    me = _receive(service, "message-me", "platform-xiaoming", "/我", received_at)
+    assert "工号：#0001" in _replies_for(factory, me.message_id)[0]
+    balance = _receive(
+        service, "message-balance", "platform-xiaoming", "/余额", received_at
+    )
+    assert "#0001" not in _replies_for(factory, balance.message_id)[0]
+
+
+def test_rename_command_allows_duplicate_names_and_preserves_employee_number():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    repository.create_user("rename-1", "甲", now, 10)
+    repository.create_user("rename-2", "乙", now, 20)
+
+    renamed = _receive(service, "rename-success", "rename-1", "/修改名称 乙", now)
+
+    assert _replies_for(factory, renamed.message_id) == ["名称已修改：甲 → 乙。"]
+    employee = repository.find_user("rename-1")
+    assert employee.display_name == "乙"
+    assert employee.employee_number == 1
+    assert employee.balance == 10
+
+
+def test_rename_command_reports_usage_validation_membership_and_no_change():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    repository.create_user("rename-errors", "原名", now, 0)
+
+    cases = (
+        ("rename-usage", "rename-errors", "/修改名称", "请用 /修改名称 新名称 修改自己的名称。"),
+        (
+            "rename-long",
+            "rename-errors",
+            f"/修改名称 {'名' * 65}",
+            "名称长度必须为 1–64 个字符。",
+        ),
+        ("rename-missing", "missing", "/修改名称 新名", "请先用 /入职 名字 加入摸鱼公司。"),
+        ("rename-same", "rename-errors", "/修改名称 原名", "名称没有变化。"),
+    )
+    for message_id, sender, content, expected in cases:
+        result = _receive(service, message_id, sender, content, now)
+        assert _replies_for(factory, result.message_id) == [expected]
+
+    help_result = _receive(
+        service, "rename-help", "rename-errors", "/帮助 基础", now
+    )
+    assert "/修改名称 新名称" in _replies_for(factory, help_result.message_id)[0]
 
 
 def test_number_bomb_group_commands_start_join_and_reject_group_reports():
@@ -533,7 +585,9 @@ def test_updated_economy_applies_to_future_join_and_checkin_only():
     received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
 
     _receive(service, "join", "platform-xiaoming", "/入职 小明", received_at)
-    assert _latest_reply(factory) == "小明，欢迎入职摸鱼公司。当前余额：3 工分。"
+    assert _latest_reply(factory) == (
+        "小明，欢迎入职摸鱼公司。你的工号：#0001。当前余额：3 工分。"
+    )
 
     _receive(service, "checkin", "platform-xiaoming", "/打卡", received_at)
     assert _latest_reply(factory) == "打卡成功，领取 7 工分。当前余额：10 工分。"

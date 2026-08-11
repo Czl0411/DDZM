@@ -35,6 +35,14 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
         Column("joined_at", DateTime(timezone=True), nullable=False),
     )
     Table(
+        "command_reply_templates",
+        before_upgrade,
+        Column("id", Uuid, primary_key=True),
+        Column("command", String(32), nullable=False),
+        Column("scenario", String(64), nullable=False),
+        Column("template", Text, nullable=False),
+    )
+    Table(
         "inbound_messages",
         before_upgrade,
         Column("id", Uuid, primary_key=True),

@@ -4,7 +4,7 @@ from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, Uuid, create_engine, inspect, text
+from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, Text, Uuid, create_engine, inspect, text
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +26,14 @@ def test_employee_number_migration_backfills_by_joined_at_then_uuid(
         Column("display_name", String(64), nullable=False),
         Column("balance", Integer, nullable=False),
         Column("joined_at", DateTime(timezone=True), nullable=False),
+    )
+    reply_templates = Table(
+        "command_reply_templates",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("command", String(32), nullable=False),
+        Column("scenario", String(64), nullable=False),
+        Column("template", Text, nullable=False),
     )
     metadata.create_all(engine)
     early = datetime(2026, 8, 1, tzinfo=UTC)
@@ -57,6 +65,23 @@ def test_employee_number_migration_backfills_by_joined_at_then_uuid(
                 },
             ],
         )
+        connection.execute(
+            reply_templates.insert(),
+            [
+                {
+                    "id": UUID(int=11),
+                    "command": "/入职",
+                    "scenario": "joined",
+                    "template": "{昵称}，欢迎入职摸鱼公司。当前余额：{余额} {货币}。",
+                },
+                {
+                    "id": UUID(int=12),
+                    "command": "/我",
+                    "scenario": "shown",
+                    "template": "管理员自定义个人资料：{昵称}",
+                },
+            ],
+        )
     command.stamp(config, "20260811_36")
 
     command.upgrade(config, "head")
@@ -83,3 +108,17 @@ def test_employee_number_migration_backfills_by_joined_at_then_uuid(
         assert connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one() == "20260811_37"
+        templates = dict(
+            connection.execute(
+                text(
+                    "SELECT command, template FROM command_reply_templates "
+                    "WHERE (command = '/入职' AND scenario = 'joined') "
+                    "OR (command = '/我' AND scenario = 'shown')"
+                )
+            ).all()
+        )
+        assert templates["/入职"] == (
+            "{昵称}，欢迎入职摸鱼公司。你的工号：{工号}。"
+            "当前余额：{余额} {货币}。"
+        )
+        assert templates["/我"] == "管理员自定义个人资料：{昵称}"

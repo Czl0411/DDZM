@@ -80,6 +80,14 @@ def test_command_registry_exposes_exact_enabled_syntax(repository):
     assert commands["/发奖金"] == "/发奖金 员工名 金额；/发奖金 全部 金额"
     assert commands["/发红包"] == "/发红包 人数 总金额"
     assert commands["/抢红包"] == "/抢红包"
+    assert commands["/修改名称"] == "/修改名称 新名称"
+
+
+def test_rename_reply_templates_are_managed(repository):
+    assert {
+        template.scenario
+        for template in repository.list_reply_templates("/修改名称")
+    } == {"usage", "not_joined", "invalid_name", "unchanged", "renamed"}
 
 
 def test_board_bonus_reply_templates_are_managed(repository):

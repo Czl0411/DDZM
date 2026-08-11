@@ -162,6 +162,45 @@ def test_direct_number_bomb_reports_are_isolated_and_destination_aware(session_f
     assert "第 1 轮 - 真心话" in replies[1].text
 
 
+@pytest.mark.parametrize("content", ["/发红包 2 2", "/抢红包"])
+def test_red_packet_commands_in_direct_chat_only_redirect_to_group(
+    session_factory, content
+):
+    from dzmm_bot.core.commands import GroupCommandHandler
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import OutboundRecord
+    from dzmm_bot.core.service import CoreService
+
+    repository = CoreRepository(session_factory)
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    repository.create_user("direct-packet", "私聊玩家", now, 10)
+    service = CoreService(repository, GroupCommandHandler(repository))
+
+    result = service.receive_inbound(
+        InboundMessage(
+            f"direct-{content}",
+            "direct-packet",
+            content,
+            now,
+            source_type="direct",
+            chatroom_id="direct-packet-room",
+        )
+    )
+
+    with session_factory() as session:
+        reply = session.scalar(
+            select(OutboundRecord).where(
+                OutboundRecord.inbound_message_id == result.message_id
+            )
+        )
+    assert "请回到群里" in reply.text
+    assert (reply.destination_chatroom_id, reply.delivery_kind) == (
+        "direct-packet-room",
+        "direct",
+    )
+    assert repository.find_user("direct-packet").balance == 10
+
+
 def test_commands_and_parenthesized_messages_are_not_memory_eligible(session_factory):
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import InboundRecord
@@ -328,6 +367,42 @@ def test_service_uses_random_event_block_message_for_unwrapped_observer(session_
         inbound = session.get(InboundRecord, result.message_id)
     assert warning.text == "当前有随机事件发生，监事不会处理。"
     assert inbound.ai_memory_eligible is False
+
+
+def test_red_packet_commands_bypass_active_random_event_gate(session_factory):
+    from random import Random
+
+    from dzmm_bot.core.commands import GroupCommandHandler
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import BEIJING, OutboundRecord
+    from dzmm_bot.core.service import CoreService
+
+    now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
+    repository = CoreRepository(session_factory, red_packet_random=Random(1))
+    repository.create_random_event_scene(
+        "茶水间", "快点加入吧。", ["正式开始。"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(["10:00"], "{可选身份}", 15, 5)
+    repository.create_user("event-packet", "事件玩家", now, 10)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("event-packet", "员工", now) == "started"
+    service = CoreService(repository, GroupCommandHandler(repository))
+
+    result = service.receive_inbound(
+        InboundMessage(
+            "event-red-packet", "event-packet", "/发红包 2 2", now
+        )
+    )
+
+    with session_factory() as session:
+        reply = session.scalar(
+            select(OutboundRecord).where(
+                OutboundRecord.inbound_message_id == result.message_id
+            )
+        )
+    assert reply.text.startswith("【随机运气红包】事件玩家发出")
+    assert repository.find_user("event-packet").balance == 8
 
 
 @pytest.mark.parametrize("content", ["（围观一下）", "(围观一下)"])

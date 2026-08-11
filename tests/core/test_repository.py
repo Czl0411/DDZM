@@ -78,6 +78,8 @@ def test_command_registry_exposes_exact_enabled_syntax(repository):
     assert commands["/谁是卧底"] == "/谁是卧底 人数"
     assert commands["/甩锅"] == "/甩锅 玩家编号 甩锅理由"
     assert commands["/发奖金"] == "/发奖金 员工名 金额；/发奖金 全部 金额"
+    assert commands["/发红包"] == "/发红包 人数 总金额"
+    assert commands["/抢红包"] == "/抢红包"
 
 
 def test_board_bonus_reply_templates_are_managed(repository):
@@ -93,6 +95,34 @@ def test_board_bonus_reply_templates_are_managed(repository):
         "ambiguous_target",
         "single_granted",
         "all_granted",
+    }
+
+
+def test_lucky_red_packet_reply_templates_are_managed(repository):
+    assert {
+        template.scenario
+        for template in repository.list_reply_templates("/发红包")
+    } == {
+        "usage",
+        "group_only",
+        "not_joined",
+        "invalid_parameters",
+        "insufficient_balance",
+        "daily_limit",
+        "active_packet",
+        "created",
+        "expired",
+    }
+    assert {
+        template.scenario
+        for template in repository.list_reply_templates("/抢红包")
+    } == {
+        "group_only",
+        "not_joined",
+        "no_active_packet",
+        "already_claimed",
+        "claimed",
+        "completed",
     }
 
 
@@ -4745,6 +4775,8 @@ def test_unified_gameplay_templates_exist_and_declare_every_default_variable():
         ("/跳过", "skipped"),
         ("/跳过", "ended_insufficient"),
         ("/结束游戏", "admin_forced"),
+        ("/发红包", "expired"),
+        ("/抢红包", "completed"),
     } <= set(definitions)
     for definition in definitions.values():
         validate_template(

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from random import Random
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -11,7 +12,7 @@ from dzmm_bot.runtime.contracts import InboundMessage
 BEIJING = ZoneInfo("Asia/Shanghai")
 
 
-def _service():
+def _service(*, red_packet_random=None):
     from dzmm_bot.core.commands import GroupCommandHandler
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import Base
@@ -20,7 +21,7 @@ def _service():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
-    repository = CoreRepository(factory)
+    repository = CoreRepository(factory, red_packet_random=red_packet_random)
     return CoreService(repository, GroupCommandHandler(repository)), repository, factory
 
 
@@ -61,6 +62,83 @@ def _replies_for(factory, inbound_id):
                 .order_by(OutboundRecord.reply_index)
             )
         )
+
+
+def test_lucky_red_packet_commands_create_claim_complete_and_are_idempotent():
+    service, repository, factory = _service(red_packet_random=Random(1))
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    repository.create_user("packet-issuer", "发包人", now, 10)
+    repository.create_user("packet-other", "抢包人", now, 0)
+
+    _receive(service, "packet-create", "packet-issuer", "/发红包 2 2", now)
+    assert _latest_reply(factory) == (
+        "【随机运气红包】发包人发出 2 份共 2 摸鱼币的红包，"
+        "10 分钟内发送 /抢红包。"
+    )
+
+    first = _receive(
+        service, "packet-claim-1", "packet-issuer", "/抢红包", now
+    )
+    duplicate = _receive(
+        service, "packet-claim-1", "packet-issuer", "/抢红包", now
+    )
+    assert first.inserted is True
+    assert duplicate.inserted is False
+    assert len(_replies_for(factory, first.message_id)) == 1
+
+    second = _receive(
+        service, "packet-claim-2", "packet-other", "/抢红包", now
+    )
+    replies = _replies_for(factory, second.message_id)
+    assert len(replies) == 2
+    assert "抢包人抢到" in replies[0]
+    assert "剩余 0/2 份" in replies[0]
+    assert "手气最佳" in replies[1]
+    assert "手气最差" in replies[1]
+    assert "空包" in replies[1]
+    assert sum(user.balance for user in repository.list_users()) == 10
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        "/发红包",
+        "/发红包 ２ 2",
+        "/发红包 2 2.0",
+        "/发红包 1 2",
+        "/发红包 51 51",
+        "/发红包 3 2",
+        "/发红包 2 100000",
+    ),
+)
+def test_lucky_red_packet_rejects_invalid_creation_syntax(content):
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    repository.create_user("packet-invalid", "参数玩家", now, 100000)
+
+    _receive(service, f"invalid-{content}", "packet-invalid", content, now)
+
+    reply = _latest_reply(factory)
+    assert reply in {
+        "请用 /发红包 人数 总金额 创建红包。",
+        "红包人数必须是 2–50，总金额必须是人数至 99999 的半角整数。",
+    }
+    assert repository.find_user("packet-invalid").balance == 100000
+
+
+def test_lucky_red_packet_reports_business_rejections_and_help():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    repository.create_user("packet-poor", "穷玩家", now, 1)
+
+    _receive(service, "packet-poor-create", "packet-poor", "/发红包 2 2", now)
+    assert _latest_reply(factory) == "余额不足，无法发出这个红包。"
+    _receive(service, "packet-no-active", "packet-poor", "/抢红包", now)
+    assert _latest_reply(factory) == "当前没有可以领取的红包。"
+    _receive(service, "packet-help", "packet-poor", "/帮助 基础", now)
+    reply = _latest_reply(factory)
+    assert "/发红包 人数 总金额" in reply
+    assert "/抢红包" in reply
 
 
 def test_join_registers_employee_with_zero_balance_and_beijing_timestamp():

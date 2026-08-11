@@ -8,6 +8,10 @@ from .ai_mentions import BOT_MENTION_PREFIX, normalize_ai_mention
 from .repository import CoreRepository
 
 
+_DIRECT_COMMANDS = {"/报数", "/发红包", "/抢红包"}
+_RANDOM_EVENT_INDEPENDENT_COMMANDS = {"/发红包", "/抢红包"}
+
+
 class CommandHandler(Protocol):
     def handle(self, message: InboundMessage) -> str | list[str] | None: ...
 
@@ -51,7 +55,7 @@ class CoreService:
                 return ReceiveResult(stored.id, False)
             if message.source_type == "direct":
                 parts = message.content.strip().split(maxsplit=1)
-                if not parts or parts[0] != "/报数":
+                if not parts or parts[0] not in _DIRECT_COMMANDS:
                     return ReceiveResult(stored.id, True)
                 direct_reply = self._command_handler.handle(message)
                 direct_replies = direct_reply if isinstance(direct_reply, list) else [direct_reply]
@@ -78,6 +82,10 @@ class CoreService:
             event_message_status = self._repository.record_random_event_round(
                 message.sender_platform_id, message.received_at, message.content
             )
+            independent_command = bool(
+                command_parts
+                and command_parts[0] in _RANDOM_EVENT_INDEPENDENT_COMMANDS
+            )
             replies: list[CommandReply] = []
             event_state = self._repository.active_random_event_state()
             profile = (
@@ -87,7 +95,10 @@ class CoreService:
             )
             board_force_end = profile is not None and profile.rank.is_board
             if event_state is not None:
-                if event_message_status in {"participant", "observer_valid"}:
+                if (
+                    not independent_command
+                    and event_message_status in {"participant", "observer_valid"}
+                ):
                     self._repository.record_ai_memory_message(
                         stored.id,
                         message.sender_platform_id,
@@ -98,6 +109,7 @@ class CoreService:
                 settings = self._repository.get_random_event_settings()
                 if (
                     not board_force_end
+                    and not independent_command
                     and not _allows_random_event_command(
                         message.content, event_state, settings
                     )

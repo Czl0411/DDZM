@@ -13,7 +13,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/发奖金", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
+    "/入职", "/我的物品", "/打卡", "/余额", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
 }
 
 
@@ -45,6 +45,10 @@ class GroupCommandHandler:
         if not self._repository.is_command_enabled(command):
             return None
         received_at = message.received_at.astimezone(_BEIJING)
+        if command == "/发红包":
+            return self._red_packet_create(message, content, received_at)
+        if command == "/抢红包":
+            return self._red_packet_claim(message, received_at)
         if command == "/当前游戏":
             return self._current_game(message.sender_platform_id, received_at)
         if command == "/入职":
@@ -210,6 +214,87 @@ class GroupCommandHandler:
         if command == "/投降":
             return self._memory_assessment_surrender(message.sender_platform_id, received_at)
         return self._help(content, received_at)
+
+    def _red_packet_create(self, message, content: str, received_at):
+        if message.source_type != "group":
+            return CommandReply(
+                self._reply("/发红包", "group_only", received_at),
+                destination_chatroom_id=message.chatroom_id,
+                delivery_kind="direct",
+            )
+        parts = content.split()
+        if len(parts) != 3:
+            return self._reply("/发红包", "usage", received_at)
+        if any(not part.isascii() or not part.isdigit() for part in parts[1:]):
+            return self._reply("/发红包", "invalid_parameters", received_at)
+        result = self._repository.create_red_packet(
+            message.sender_platform_id,
+            int(parts[1]),
+            int(parts[2]),
+            received_at,
+        )
+        if result.status != "created":
+            return self._reply("/发红包", result.status, received_at)
+        settings = self._repository.get_red_packet_settings()
+        return self._reply(
+            "/发红包",
+            "created",
+            received_at,
+            {
+                "{发起者}": result.issuer_display_name,
+                "{人数}": result.player_count,
+                "{总金额}": result.total_amount,
+                "{过期分钟}": settings.expiry_minutes,
+            },
+        )
+
+    def _red_packet_claim(self, message, received_at):
+        if message.source_type != "group":
+            return CommandReply(
+                self._reply("/抢红包", "group_only", received_at),
+                destination_chatroom_id=message.chatroom_id,
+                delivery_kind="direct",
+            )
+        result = self._repository.claim_red_packet(
+            message.sender_platform_id, received_at
+        )
+        if result.status not in {"claimed", "completed"}:
+            return self._reply("/抢红包", result.status, received_at)
+        claimed = self._reply(
+            "/抢红包",
+            "claimed",
+            received_at,
+            {
+                "{领取者}": result.claimant_display_name,
+                "{领取金额}": self._red_packet_amount(result.amount),
+                "{剩余份数}": result.player_count - result.claimed_count,
+                "{人数}": result.player_count,
+            },
+        )
+        if result.status == "claimed":
+            return claimed
+        best = max(result.claims, key=lambda item: item.amount)
+        worst = min(result.claims, key=lambda item: item.amount)
+        lines = "\n".join(
+            f"{index}. {item.display_name}：{self._red_packet_amount(item.amount)}"
+            for index, item in enumerate(result.claims, 1)
+        )
+        completed = self._reply(
+            "/抢红包",
+            "completed",
+            received_at,
+            {
+                "{领取结果}": lines,
+                "{手气最佳}": f"{best.display_name}（{self._red_packet_amount(best.amount)}）",
+                "{手气最差}": f"{worst.display_name}（{self._red_packet_amount(worst.amount)}）",
+            },
+        )
+        return [claimed, completed]
+
+    def _red_packet_amount(self, amount: int) -> str:
+        if amount == 0:
+            return "空包"
+        return f"{amount} {self._repository.get_game_settings().currency_name}"
 
     def _current_game(self, platform_id: str, received_at) -> str:
         summary = self._repository.active_gameplay_summary(platform_id, received_at)
@@ -1494,6 +1579,8 @@ class GroupCommandHandler:
                     ("/打卡", f"/打卡：每日领取 {settings.checkin_reward} {settings.currency_name}"),
                     ("/余额", "/余额：查看当前余额"),
                     ("/发奖金", "/发奖金 员工名 金额；/发奖金 全部 金额：仅核心董事会发放"),
+                    ("/发红包", "/发红包 人数 总金额：发出随机运气红包"),
+                    ("/抢红包", "/抢红包：领取当前红包"),
                     ("/我", "/我：查看个人资料、收益与活跃度"),
                     ("/我的物品", "/我的物品：查看持有物品"),
                     ("/商店", "/商店：查看可购买物品"),

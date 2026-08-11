@@ -920,6 +920,8 @@ _COMMAND_DEFINITIONS = (
     ("/打卡", "/打卡", "每日领取配置的打卡奖励"),
     ("/余额", "/余额", "查看当前摸鱼币余额"),
     ("/发奖金", "/发奖金 员工名 金额；/发奖金 全部 金额", "核心董事会向单个或全部员工发放系统奖金"),
+    ("/发红包", "/发红包 人数 总金额", "使用自己的摸鱼币发出随机运气红包"),
+    ("/抢红包", "/抢红包", "领取当前随机运气红包"),
     ("/我", "/我；/me", "查看余额、今日活跃度和今日收益"),
     ("/商店", "/商店", "查看当前上架物品"),
     ("/帮助", "/帮助", "查看当前可用指令"),
@@ -3222,11 +3224,27 @@ class CoreRepository:
                 packet.refunded_amount = refund
                 claimed_count = packet.target_count - len(unclaimed)
                 currency = self.get_game_settings().currency_name
+                definition = template_definition("/发红包", "expired")
+                template_record = self.get_reply_template("/发红包", "expired")
+                template = (
+                    template_record.template
+                    if template_record is not None
+                    else definition.default
+                )
+                context = {
+                    "{发起者}": issuer.display_name,
+                    "{已领份数}": claimed_count,
+                    "{人数}": packet.target_count,
+                    "{退款金额}": refund,
+                    "{货币}": currency,
+                    "{日期}": now.date().isoformat(),
+                }
+                try:
+                    message = render_template(definition, template, context)
+                except ValueError:
+                    message = render_template(definition, definition.default, context)
                 return (
-                    "【随机运气红包已过期】"
-                    f"{issuer.display_name}发出的红包已领取 "
-                    f"{claimed_count}/{packet.target_count} 份，"
-                    f"未领取金额已退回 {refund} {currency}。",
+                    message,
                 )
 
     def get_number_bomb_settings(self) -> NumberBombSettings:

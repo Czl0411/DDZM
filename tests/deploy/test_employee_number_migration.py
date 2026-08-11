@@ -90,7 +90,7 @@ def test_employee_number_migration_backfills_by_joined_at_then_uuid(
         )
     command.stamp(config, "20260811_36")
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260811_37")
 
     columns = {column["name"]: column for column in inspect(engine).get_columns("users")}
     assert columns["employee_number"]["nullable"] is False

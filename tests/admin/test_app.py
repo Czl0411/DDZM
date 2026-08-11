@@ -1054,6 +1054,7 @@ def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):
         {
             "platform_id": f"user-{index}",
             "display_name": f"员工{index}",
+            "employee_number": index + 1,
             "balance": 5,
             "joined_at": "2026-08-05T09:00:00+08:00",
         }
@@ -1075,6 +1076,7 @@ def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):
 
     assert employees.json()["page"] == 2
     assert employees.json()["items"][0]["display_name"] == "员工20"
+    assert employees.json()["items"][0]["employee_number"] == 21
     assert items.json()["page_size"] == 20
     assert items.json()["items"][0]["name"] == "午休券20"
 
@@ -1143,6 +1145,8 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert 'id="department-request-list"' in page
     assert "runMutation" in script
     assert "renderPagination" in script
+    assert "formatEmployeeNumber" in script
+    assert "employee.employee_number" in script
     assert "/api/game/users?page=${page}&page_size=${pageSizeFor(\"employees\")}" in script
     assert "/api/game/items?page=${page}&page_size=${pageSizeFor(\"shop\")}" in script
     assert '"保存中…"' in script

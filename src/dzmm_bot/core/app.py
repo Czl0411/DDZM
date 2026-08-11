@@ -1757,6 +1757,7 @@ def _user_response(profile) -> UserResponse:
     return UserResponse(
         platform_id=profile.user.platform_id,
         display_name=profile.user.display_name,
+        employee_number=profile.user.employee_number,
         balance=profile.user.balance,
         joined_at=profile.user.joined_at,
         rank_name=profile.rank.name,

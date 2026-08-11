@@ -156,6 +156,7 @@ class SetCommandTemplateRequest(ApiModel):
 class UserResponse(ApiModel):
     platform_id: str
     display_name: str
+    employee_number: int
     balance: int
     joined_at: datetime
     rank_name: str

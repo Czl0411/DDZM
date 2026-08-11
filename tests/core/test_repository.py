@@ -76,6 +76,23 @@ def test_command_registry_exposes_exact_enabled_syntax(repository):
     assert commands["/记忆考核"] == "/记忆考核；/记忆考核 对战；/答案 内容"
     assert commands["/谁是卧底"] == "/谁是卧底 人数"
     assert commands["/甩锅"] == "/甩锅 玩家编号 甩锅理由"
+    assert commands["/发奖金"] == "/发奖金 员工名 金额；/发奖金 全部 金额"
+
+
+def test_board_bonus_reply_templates_are_managed(repository):
+    assert {
+        template.scenario
+        for template in repository.list_reply_templates("/发奖金")
+    } == {
+        "usage",
+        "not_joined",
+        "not_authorized",
+        "invalid_amount",
+        "target_not_found",
+        "ambiguous_target",
+        "single_granted",
+        "all_granted",
+    }
 
 
 def test_department_authoritative_context_uses_live_data_and_exact_commands(

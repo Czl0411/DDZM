@@ -267,6 +267,136 @@ def test_board_member_force_end_is_not_blocked_by_random_event_rules():
     assert _latest_reply(factory) == "【随机事件】管理员已强制结束当前游戏。"
 
 
+def test_board_bonus_command_grants_single_and_all_employees():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
+    board, _ = repository.create_user("board", "董事", now, 0)
+    repository.create_user("recipient", "苏  白", now, 0)
+    repository.create_user("other", "其他员工", now, 0)
+    with factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        assert board_rank is not None
+        session.get(UserRecord, board.id).rank_id = board_rank.id
+
+    _receive(service, "single-bonus", "board", "/发奖金 苏  白 10", now)
+
+    assert _latest_reply(factory) == "【奖金】董事向苏  白发放 10 摸鱼币。"
+    assert repository.find_user("recipient").balance == 10
+
+    _receive(service, "all-bonus", "board", "/发奖金 全部 7", now)
+
+    assert _latest_reply(factory) == "【奖金】董事向全体 3 名员工每人发放 7 摸鱼币。"
+    assert {user.platform_id: user.balance for user in repository.list_users()} == {
+        "board": 7,
+        "recipient": 17,
+        "other": 7,
+    }
+
+
+def test_board_bonus_all_target_precedes_name_lookup_and_is_idempotent():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
+    board, _ = repository.create_user("board", "董事", now, 0)
+    repository.create_user("reserved-name", "全部", now, 0)
+    with factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        assert board_rank is not None
+        session.get(UserRecord, board.id).rank_id = board_rank.id
+
+    first = _receive(service, "same-bonus", "board", "/发奖金 全部 7", now)
+    duplicate = _receive(service, "same-bonus", "board", "/发奖金 全部 7", now)
+
+    assert first.inserted is True
+    assert duplicate.inserted is False
+    assert _latest_reply(factory) == "【奖金】董事向全体 2 名员工每人发放 7 摸鱼币。"
+    assert {user.platform_id: user.balance for user in repository.list_users()} == {
+        "board": 7,
+        "reserved-name": 7,
+    }
+
+
+def test_board_bonus_command_rejects_nonboard_missing_and_ambiguous_targets():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
+    board, _ = repository.create_user("board", "董事", now, 0)
+    manager, _ = repository.create_user("manager", "负责人", now, 0)
+    repository.create_user("duplicate-1", "同名", now, 0)
+    repository.create_user("duplicate-2", "同名", now, 0)
+    with factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        manager_rank = session.scalar(
+            select(RankRecord).where(
+                RankRecord.has_group_management.is_(True),
+                RankRecord.is_board.is_(False),
+            )
+        )
+        assert board_rank is not None
+        assert manager_rank is not None
+        session.get(UserRecord, board.id).rank_id = board_rank.id
+        session.get(UserRecord, manager.id).rank_id = manager_rank.id
+
+    _receive(service, "unauthorized-bonus", "manager", "/发奖金 同名 10", now)
+    assert _latest_reply(factory) == "只有核心董事会成员可以发放奖金。"
+    _receive(service, "missing-bonus", "board", "/发奖金 不存在 10", now)
+    assert _latest_reply(factory) == "未找到该员工，请检查员工名。"
+    _receive(service, "ambiguous-bonus", "board", "/发奖金 同名 10", now)
+    assert _latest_reply(factory) == "存在多名同名员工，请使用唯一员工名后重试。"
+    assert all(user.balance == 0 for user in repository.list_users())
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("/发奖金", "请用 /发奖金 员工名 金额 或 /发奖金 全部 金额。"),
+        ("/发奖金 苏白", "请用 /发奖金 员工名 金额 或 /发奖金 全部 金额。"),
+        ("/发奖金 苏白 0", "奖金金额必须是 1–99999 的整数。"),
+        ("/发奖金 苏白 -1", "奖金金额必须是 1–99999 的整数。"),
+        ("/发奖金 苏白 1.5", "奖金金额必须是 1–99999 的整数。"),
+        ("/发奖金 苏白 １００", "奖金金额必须是 1–99999 的整数。"),
+        ("/发奖金 苏白 100000", "奖金金额必须是 1–99999 的整数。"),
+    ],
+)
+def test_board_bonus_command_rejects_invalid_syntax_and_amounts(content, expected):
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
+    board, _ = repository.create_user("board", "董事", now, 0)
+    repository.create_user("recipient", "苏白", now, 0)
+    with factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        assert board_rank is not None
+        session.get(UserRecord, board.id).rank_id = board_rank.id
+
+    _receive(service, f"invalid-bonus-{content}", "board", content, now)
+
+    assert _latest_reply(factory) == expected
+    assert all(user.balance == 0 for user in repository.list_users())
+
+
+def test_help_basic_lists_board_bonus_command():
+    service, _, factory = _service()
+    now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
+
+    _receive(service, "bonus-help", "viewer", "/帮助 基础", now)
+
+    assert "/发奖金 员工名 金额；/发奖金 全部 金额：仅核心董事会发放" in _latest_reply(factory)
+
+
 def test_checkin_awards_five_once_per_beijing_date_and_uses_beijing_dates():
     from dzmm_bot.core.schema import DailyCheckinRecord, UserRecord
 

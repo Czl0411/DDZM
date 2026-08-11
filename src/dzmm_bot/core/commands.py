@@ -13,7 +13,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
+    "/入职", "/我的物品", "/打卡", "/余额", "/发奖金", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
 }
 
 
@@ -120,6 +120,10 @@ class GroupCommandHandler:
             return self._check_in(message.sender_platform_id, received_at)
         if command == "/余额":
             return self._balance(message.sender_platform_id, received_at)
+        if command == "/发奖金":
+            return self._grant_bonus(
+                message.sender_platform_id, content, received_at
+            )
         if command == "/我":
             return self._me(message.sender_platform_id, received_at)
         if command == "/我的物品":
@@ -299,6 +303,32 @@ class GroupCommandHandler:
             received_at,
             {"{昵称}": employee.display_name, "{余额}": employee.balance},
         )
+
+    def _grant_bonus(self, platform_id: str, content: str, received_at) -> str:
+        payload = content[len("/发奖金"):].strip()
+        parts = payload.rsplit(maxsplit=1)
+        if len(parts) != 2:
+            return self._reply("/发奖金", "usage", received_at)
+        target, amount_text = parts
+        target = target.strip()
+        if not target:
+            return self._reply("/发奖金", "usage", received_at)
+        if not amount_text.isascii() or not amount_text.isdigit():
+            return self._reply("/发奖金", "invalid_amount", received_at)
+
+        result = self._repository.grant_board_bonus(
+            platform_id, target, int(amount_text), received_at
+        )
+        if result.status == "granted":
+            values = {
+                "{发放者}": result.issuer_display_name,
+                "{金额}": result.amount,
+                "{人数}": result.recipient_count,
+                "{收款人}": result.recipient_display_name,
+            }
+            scenario = "all_granted" if target == "全部" else "single_granted"
+            return self._reply("/发奖金", scenario, received_at, values)
+        return self._reply("/发奖金", result.status, received_at)
 
     def _me(self, platform_id: str, received_at) -> str:
         profile = self._repository.get_user_profile(platform_id)
@@ -1463,6 +1493,7 @@ class GroupCommandHandler:
                     ("/入职", "/入职 名字：登记成为员工"),
                     ("/打卡", f"/打卡：每日领取 {settings.checkin_reward} {settings.currency_name}"),
                     ("/余额", "/余额：查看当前余额"),
+                    ("/发奖金", "/发奖金 员工名 金额；/发奖金 全部 金额：仅核心董事会发放"),
                     ("/我", "/我：查看个人资料、收益与活跃度"),
                     ("/我的物品", "/我的物品：查看持有物品"),
                     ("/商店", "/商店：查看可购买物品"),

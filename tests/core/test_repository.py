@@ -3080,7 +3080,13 @@ def test_undercover_first_vote_starts_voting_after_description(repository, sessi
 def test_undercover_card_delivery_failure_restores_signup_without_public_cards(
     repository, session_factory, now
 ):
-    from dzmm_bot.core.schema import OutboundRecord
+    from dzmm_bot.core.schema import (
+        OutboundRecord,
+        UndercoverGamePlayerRecord,
+        UndercoverGameRecord,
+        UndercoverSessionMemberRecord,
+        UserRecord,
+    )
 
     platform_ids = _prepare_undercover_players(repository, session_factory, now)
     repository.start_undercover_signup(platform_ids[0], 4, now)
@@ -3092,17 +3098,103 @@ def test_undercover_card_delivery_failure_restores_signup_without_public_cards(
     assert repository.mark_outbound_failed(card.id, "worker-a", card.lease_token, now)
 
     assert repository.undercover_session_summary().state == "signup"
+    assert repository.undercover_session_summary().player_count == 3
     with session_factory() as session:
         pending_cards = list(
             session.scalars(
                 select(OutboundRecord).where(OutboundRecord.delivery_kind == "undercover_card")
             )
         )
+        failed_player = session.scalar(
+            select(UndercoverGamePlayerRecord).where(
+                UndercoverGamePlayerRecord.card_outbound_message_id == card.id
+            )
+        )
+        failed_member = session.scalar(
+            select(UndercoverSessionMemberRecord).where(
+                UndercoverSessionMemberRecord.user_id == failed_player.user_id
+            )
+        )
+        failed_platform_id = session.get(
+            UserRecord, failed_player.user_id
+        ).platform_id
+        discarded_game = session.get(UndercoverGameRecord, result.game_id)
     assert {record.status for record in pending_cards} == {"failed"}
+    assert failed_member.state == "delivery_failed"
+    assert discarded_game.state == "discarded"
     notice = repository.claim_outbound("worker-group", now, 30)
     assert notice is not None
     assert notice.destination_chatroom_id is None
     assert "私聊发放失败" in notice.text
+
+    restarted = repository.join_undercover(failed_platform_id, now)
+
+    assert restarted.status == "dealing"
+    assert restarted.player_count == 4
+    assert restarted.game_id != result.game_id
+
+
+def test_undercover_end_during_dealing_cancels_all_identity_cards(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.start_undercover_signup(platform_ids[0], 4, now)
+    for platform_id in platform_ids[1:]:
+        result = repository.join_undercover(platform_id, now)
+    claimed = repository.claim_outbound("worker-card", now, 30)
+    assert claimed is not None
+    assert claimed.delivery_kind == "undercover_card"
+
+    assert repository.end_undercover(platform_ids[0], now).status == "ended"
+
+    with session_factory() as session:
+        cards = list(
+            session.scalars(
+                select(OutboundRecord).where(
+                    OutboundRecord.delivery_kind == "undercover_card"
+                )
+            )
+        )
+    assert {card.status for card in cards} == {"failed"}
+    assert repository.confirm_sent(
+        claimed.id,
+        "worker-card",
+        claimed.lease_token,
+        "late-platform-id",
+        now,
+    ) is False
+    assert repository.claim_outbound("worker-after-end", now, 30) is None
+
+
+def test_admin_force_end_undercover_during_dealing_cancels_identity_cards(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    platform_ids = _prepare_undercover_players(repository, session_factory, now)
+    repository.start_undercover_signup(platform_ids[0], 4, now)
+    for platform_id in platform_ids[1:]:
+        result = repository.join_undercover(platform_id, now)
+
+    assert repository.force_end_gameplay(
+        "undercover", result.session_id, now
+    ) is True
+
+    with session_factory() as session:
+        statuses = set(
+            session.scalars(
+                select(OutboundRecord.status).where(
+                    OutboundRecord.delivery_kind == "undercover_card"
+                )
+            )
+        )
+    assert statuses == {"failed"}
+    notification = repository.claim_outbound("worker-after-admin-end", now, 30)
+    assert notification is not None
+    assert notification.delivery_kind == "group"
+    assert repository.claim_outbound("worker-after-notice", now, 30) is None
 
 
 def test_undercover_tied_vote_requires_a_new_vote_round(repository, session_factory, now):

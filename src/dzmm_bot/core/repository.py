@@ -3671,6 +3671,10 @@ class CoreRepository:
                             .with_for_update()
                         )
                         if active_round is not None:
+                            if active_round.state == "dealing":
+                                self._cancel_undercover_card_outbounds(
+                                    session, active_round.id
+                                )
                             active_round.state = "ended"
                             active_round.finished_at = now
                         ended = True
@@ -4649,6 +4653,27 @@ class CoreRepository:
                     .with_for_update()
                 )
                 if member is not None:
+                    if (
+                        session_record.state == "signup"
+                        and member.state == "delivery_failed"
+                    ):
+                        member.state = "joined"
+                        member.joined_at = now
+                        member.left_at = None
+                        member.leave_after_round = False
+                        session.flush()
+                        members = self._undercover_joined_members(
+                            session, session_record.id
+                        )
+                        if len(members) == session_record.target_player_count:
+                            return self._start_undercover_game(
+                                session, session_record, members, now
+                            )
+                        return UndercoverGameResult(
+                            "rejoined_signup",
+                            session_id=session_record.id,
+                            player_count=len(members),
+                        )
                     return UndercoverGameResult(
                         "cannot_rejoin" if member.state == "left" else "already_joined",
                         session_id=session_record.id,
@@ -4665,7 +4690,7 @@ class CoreRepository:
                     )
                     session.flush()
                     members = self._undercover_joined_members(session, session_record.id)
-                    if len(members) < session_record.target_player_count:
+                    if len(members) != session_record.target_player_count:
                         return UndercoverGameResult(
                             "joined_signup",
                             session_id=session_record.id,
@@ -4803,7 +4828,7 @@ class CoreRepository:
                 return UndercoverSessionSummary(None)
             game = self._undercover_latest_game(session, session_record.id)
             players: list[UndercoverSessionPlayer] = []
-            if game is not None:
+            if game is not None and game.state != "discarded":
                 players = [
                     UndercoverSessionPlayer(
                         platform_id=platform_id,
@@ -4835,7 +4860,7 @@ class CoreRepository:
                 or 0
             )
             player_count = len(players)
-            if game is None:
+            if game is None or game.state == "discarded":
                 player_count = int(
                     session.scalar(
                         select(func.count())
@@ -5015,6 +5040,8 @@ class CoreRepository:
                     return UndercoverGameResult("cannot_end")
                 if player.state not in ("alive", "eliminated"):
                     return UndercoverGameResult("cannot_end", game_id=game.id)
+                if game.state == "dealing":
+                    self._cancel_undercover_card_outbounds(session, game.id)
                 game.state = "ended"
                 game.finished_at = now
                 session_record.state = "closed"
@@ -5268,28 +5295,18 @@ class CoreRepository:
             session_record.signup_deadline = now + timedelta(
                 minutes=self.get_undercover_settings().signup_timeout_minutes
             )
-            pending_card_ids = list(
-                session.scalars(
-                    select(UndercoverGamePlayerRecord.card_outbound_message_id).where(
-                        UndercoverGamePlayerRecord.game_id == game.id,
-                        UndercoverGamePlayerRecord.card_outbound_message_id.is_not(None),
-                    )
+            member = session.scalar(
+                select(UndercoverSessionMemberRecord)
+                .where(
+                    UndercoverSessionMemberRecord.session_id == session_record.id,
+                    UndercoverSessionMemberRecord.user_id == player.user_id,
                 )
+                .with_for_update()
             )
-            if pending_card_ids:
-                session.execute(
-                    update(OutboundRecord)
-                    .where(
-                        OutboundRecord.id.in_(pending_card_ids),
-                        OutboundRecord.status.in_(("pending", "leased")),
-                    )
-                    .values(
-                        status="failed",
-                        lease_worker_id=None,
-                        lease_token=None,
-                        lease_expires_at=None,
-                    )
-                )
+            if member is not None:
+                member.state = "delivery_failed"
+                member.leave_after_round = False
+            self._cancel_undercover_card_outbounds(session, game.id)
             self.enqueue_system_outbound(
                 "【谁是卧底】身份私聊发放失败，已返回报名阶段，请稍后重新报名。"
             )
@@ -5326,6 +5343,33 @@ class CoreRepository:
             "描述结束后，任意存活玩家发送 /开始投票 或 /投票 序号 开启投票。"
         )
         return self._undercover_game_result(session, game, "speaking")
+
+    def _cancel_undercover_card_outbounds(
+        self, session: Session, game_id: UUID
+    ) -> None:
+        card_ids = list(
+            session.scalars(
+                select(UndercoverGamePlayerRecord.card_outbound_message_id).where(
+                    UndercoverGamePlayerRecord.game_id == game_id,
+                    UndercoverGamePlayerRecord.card_outbound_message_id.is_not(None),
+                )
+            )
+        )
+        if not card_ids:
+            return
+        session.execute(
+            update(OutboundRecord)
+            .where(
+                OutboundRecord.id.in_(card_ids),
+                OutboundRecord.status.in_(("pending", "leased")),
+            )
+            .values(
+                status="failed",
+                lease_worker_id=None,
+                lease_token=None,
+                lease_expires_at=None,
+            )
+        )
 
     def _undercover_active_player(
         self, session: Session, platform_id: str

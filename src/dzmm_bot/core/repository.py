@@ -5165,6 +5165,9 @@ class CoreRepository:
         )
         if word_set is None:
             raise RuntimeError("谁是卧底词库为空")
+        settings = session.get(UndercoverSettingsRecord, 1)
+        if settings is None:
+            raise RuntimeError("谁是卧底设置缺失")
         round_number = int(
             session.scalar(
                 select(func.coalesce(func.max(UndercoverGameRecord.round_number), 0)).where(
@@ -5180,6 +5183,8 @@ class CoreRepository:
             current_vote_round=0,
             civilian_word=word_set.civilian_word,
             undercover_word=word_set.undercover_word,
+            vote_seconds_snapshot=settings.vote_seconds,
+            whiteboard_win_remaining_snapshot=settings.whiteboard_win_remaining,
             created_at=now,
         )
         session.add(game)

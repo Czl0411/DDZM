@@ -90,11 +90,37 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
         "undercover_settings",
         before_upgrade,
         Column("id", Integer, primary_key=True),
+        Column("vote_seconds", Integer, nullable=False, default=120),
+        Column("whiteboard_win_remaining", Integer, nullable=False, default=3),
+    )
+    Table(
+        "undercover_sessions",
+        before_upgrade,
+        Column("id", Uuid, primary_key=True),
+    )
+    Table(
+        "undercover_games",
+        before_upgrade,
+        Column("id", Uuid, primary_key=True),
+        Column("session_id", Uuid, nullable=False),
+    )
+    Table(
+        "undercover_session_members",
+        before_upgrade,
+        Column("id", Uuid, primary_key=True),
+        Column("session_id", Uuid, nullable=False),
+        Column("user_id", Uuid, nullable=False),
     )
     before_upgrade.create_all(engine)
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO memory_assessment_settings (id) VALUES (1)"))
-        connection.execute(text("INSERT INTO undercover_settings (id) VALUES (1)"))
+        connection.execute(
+            text(
+                "INSERT INTO undercover_settings "
+                "(id, vote_seconds, whiteboard_win_remaining) "
+                "VALUES (1, 120, 3)"
+            )
+        )
     command.stamp(config, "20260810_33")
 
     command.upgrade(config, "head")
@@ -123,7 +149,7 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
     with engine.connect() as connection:
         assert connection.execute(
             text("SELECT version_num FROM alembic_version")
-        ).scalar_one() == "20260811_37"
+        ).scalar_one() == "20260811_38"
         assert connection.execute(
             text("SELECT inactivity_timeout_minutes FROM number_bomb_settings WHERE id = 1")
         ).scalar_one() == 10

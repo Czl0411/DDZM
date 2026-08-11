@@ -2166,6 +2166,7 @@ def test_undercover_schema_declares_game_persistence_contract():
         "undercover_games",
         "undercover_game_players",
         "undercover_votes",
+        "undercover_abstentions",
     } <= set(tables)
     assert {"player_count"} == {
         column.name
@@ -2175,6 +2176,16 @@ def test_undercover_schema_declares_game_persistence_contract():
         {"game_id", "round_number", "voter_user_id"}
         == {column.name for column in constraint.columns}
         for constraint in tables["undercover_votes"].constraints
+    )
+    assert {
+        "vote_seconds_snapshot",
+        "whiteboard_win_remaining_snapshot",
+    } <= set(tables["undercover_games"].columns.keys())
+    assert "leave_after_round" in tables["undercover_session_members"].columns.keys()
+    assert any(
+        {"game_id", "round_number", "player_user_id"}
+        == {column.name for column in constraint.columns}
+        for constraint in tables["undercover_abstentions"].constraints
     )
 
 

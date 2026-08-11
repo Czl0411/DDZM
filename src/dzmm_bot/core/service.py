@@ -80,6 +80,12 @@ class CoreService:
             )
             replies: list[CommandReply] = []
             event_state = self._repository.active_random_event_state()
+            profile = (
+                self._repository.get_user_profile(message.sender_platform_id)
+                if message.content.strip() == "/结束游戏"
+                else None
+            )
+            board_force_end = profile is not None and profile.rank.is_board
             if event_state is not None:
                 if event_message_status in {"participant", "observer_valid"}:
                     self._repository.record_ai_memory_message(
@@ -90,7 +96,12 @@ class CoreService:
                     )
                     return ReceiveResult(stored.id, True)
                 settings = self._repository.get_random_event_settings()
-                if not _allows_random_event_command(message.content, event_state, settings):
+                if (
+                    not board_force_end
+                    and not _allows_random_event_command(
+                        message.content, event_state, settings
+                    )
+                ):
                     self._repository.record_ai_memory_message(
                         stored.id,
                         message.sender_platform_id,

@@ -44,7 +44,7 @@ assert activity_events == []
 
 - [ ] **Step 2: Run the focused test and verify RED**
 
-Run: `.venv/bin/pytest tests/core/test_app.py::test_admin_can_force_end_single_memory_assessment -q`
+Run: `PYTHONPATH=src .venv/bin/pytest tests/core/test_app.py::test_admin_can_force_end_single_memory_assessment -q`
 
 Expected: FAIL because `memory_single` is not present in the force-end game type mapping.
 
@@ -73,7 +73,7 @@ elif game_type in {"memory_duel", "memory_single"}:
 
 - [ ] **Step 4: Run the focused API test and nearby force-end tests**
 
-Run: `.venv/bin/pytest tests/core/test_app.py -k 'force_end or gameplay_current' -q`
+Run: `PYTHONPATH=src .venv/bin/pytest tests/core/test_app.py -k 'force_end or gameplay_current' -q`
 
 Expected: PASS.
 
@@ -89,6 +89,7 @@ git commit -m "fix: force end single memory assessments"
 **Files:**
 - Modify: `tests/core/test_group_commands.py`
 - Modify: `src/dzmm_bot/core/commands.py`
+- Modify: `src/dzmm_bot/core/service.py`
 
 **Interfaces:**
 - Consumes: `CoreRepository.get_user_profile(platform_id)` and `profile.rank.is_board`.
@@ -107,13 +108,15 @@ assert _latest_reply(factory) == "【记忆考核】管理员已强制结束当�
 Add a companion test for an ordinary nonparticipant:
 
 ```python
-assert _latest_reply(factory) == "当前没有你可以结束的游戏。"
+assert "已命中当前记忆考核" in _latest_reply(factory)
 assert repository.active_gameplay_summary("ordinary", now).game_type == "memory_single"
 ```
 
+Add a random-event test proving that the board force-end command bypasses the random-event allowed-command filter and clears the event with the same administrator notification.
+
 - [ ] **Step 2: Run the focused command tests and verify RED**
 
-Run: `.venv/bin/pytest tests/core/test_group_commands.py -k 'board_force_end or nonparticipant_cannot_force_end' -q`
+Run: `PYTHONPATH=src .venv/bin/pytest tests/core/test_group_commands.py -k 'board_member_can_force_end or nonboard_group_manager_cannot_force_end or board_member_force_end_is_not_blocked' -q`
 
 Expected: the board test FAILS because `/结束游戏` currently follows nonparticipant player routing.
 
@@ -135,16 +138,18 @@ if (
 
 Returning `None` is required because the repository already queues the single administrator notification.
 
+In `CoreService.receive_inbound()`, allow an exact `/结束游戏` from an `is_board=true` sender to pass the random-event command filter; all other blocked commands retain the configured behavior.
+
 - [ ] **Step 4: Run focused routing and service tests**
 
-Run: `.venv/bin/pytest tests/core/test_group_commands.py -k 'end_game or force_end or current_game' -q`
+Run: `PYTHONPATH=src .venv/bin/pytest tests/core/test_group_commands.py -k 'end_game or force_end or current_game' -q`
 
 Expected: PASS, including existing participant behavior.
 
 - [ ] **Step 5: Commit Task 2**
 
 ```bash
-git add tests/core/test_group_commands.py src/dzmm_bot/core/commands.py
+git add tests/core/test_group_commands.py src/dzmm_bot/core/commands.py src/dzmm_bot/core/service.py docs/superpowers/plans/2026-08-11-board-force-end-memory-single.md
 git commit -m "fix: let board members force end active games"
 ```
 
@@ -158,13 +163,13 @@ git commit -m "fix: let board members force end active games"
 
 - [ ] **Step 1: Run syntax and focused verification**
 
-Run: `git diff --check && .venv/bin/pytest tests/core/test_app.py tests/core/test_group_commands.py -q`
+Run: `git diff --check && PYTHONPATH=src .venv/bin/pytest tests/core/test_app.py tests/core/test_group_commands.py -q`
 
 Expected: PASS.
 
 - [ ] **Step 2: Run the complete suite**
 
-Run: `.venv/bin/pytest -q`
+Run: `PYTHONPATH=src .venv/bin/pytest -q`
 
 Expected: all mandatory tests pass; only documented optional tests may skip.
 

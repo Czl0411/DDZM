@@ -88,6 +88,19 @@ class GroupCommandHandler:
             summary = self._repository.active_gameplay_summary(
                 message.sender_platform_id, received_at
             )
+            profile = self._repository.get_user_profile(
+                message.sender_platform_id
+            )
+            if (
+                profile is not None
+                and profile.rank.is_board
+                and summary.game_type not in {None, "conflict"}
+                and summary.game_id is not None
+                and self._repository.force_end_gameplay(
+                    summary.game_type, summary.game_id, received_at
+                )
+            ):
+                return None
             if summary.game_type == "number_bomb":
                 return self._number_bomb_end(message.sender_platform_id, received_at)
             if summary.game_type == "blame_bomb":

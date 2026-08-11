@@ -177,6 +177,96 @@ def test_generic_exit_cancels_waiting_memory_duel_immediately():
     assert repository.find_user("memory-exit-host").balance == 20
 
 
+def test_board_member_can_force_end_another_players_memory_assessment():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 1, 0, tzinfo=UTC)
+    repository.create_user("memory-player", "记忆玩家", now, 0)
+    repository.create_user("board", "董事", now, 0)
+    with factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        board = session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "board")
+        )
+        assert board_rank is not None
+        assert board is not None
+        board.rank_id = board_rank.id
+    repository.start_memory_assessment_single("memory-player", now)
+
+    _receive(service, "board-force-end", "board", "/结束游戏", now)
+
+    assert repository.active_gameplay_summary("board", now).game_type is None
+    assert _latest_reply(factory) == "【记忆考核】管理员已强制结束当前游戏。"
+
+
+def test_nonboard_group_manager_cannot_force_end_another_players_game():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 1, 0, tzinfo=UTC)
+    repository.create_user("memory-player", "记忆玩家", now, 0)
+    repository.create_user("manager", "负责人", now, 0)
+    with factory.begin() as session:
+        manager_rank = session.scalar(
+            select(RankRecord).where(
+                RankRecord.has_group_management.is_(True),
+                RankRecord.is_board.is_(False),
+            )
+        )
+        manager = session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "manager")
+        )
+        assert manager_rank is not None
+        assert manager is not None
+        manager.rank_id = manager_rank.id
+    repository.start_memory_assessment_single("memory-player", now)
+
+    _receive(service, "manager-force-end", "manager", "/结束游戏", now)
+
+    assert _latest_reply(factory) == (
+        "已命中当前记忆考核；对战开始后请发送 /退出 执行投降，"
+        "等待对手阶段可直接取消。"
+    )
+    assert (
+        repository.active_gameplay_summary("manager", now).game_type
+        == "memory_single"
+    )
+
+
+def test_board_member_force_end_is_not_blocked_by_random_event_rules():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
+    repository.create_user("board", "董事", now, 0)
+    with factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        board = session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "board")
+        )
+        assert board_rank is not None
+        assert board is not None
+        board.rank_id = board_rank.id
+    repository.create_random_event_scene(
+        "会议室", "临时会议开始。", ["正式开始。"], 4, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "可选身份：{可选身份}", 15, 5
+    )
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+
+    _receive(service, "board-force-end-event", "board", "/结束游戏", now)
+
+    assert repository.active_gameplay_summary("board", now).game_type is None
+    assert _latest_reply(factory) == "【随机事件】管理员已强制结束当前游戏。"
+
+
 def test_checkin_awards_five_once_per_beijing_date_and_uses_beijing_dates():
     from dzmm_bot.core.schema import DailyCheckinRecord, UserRecord
 

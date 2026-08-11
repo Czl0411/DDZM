@@ -482,8 +482,15 @@ def test_board_bonus_command_rejects_nonboard_missing_and_ambiguous_targets():
     _receive(service, "missing-bonus", "board", "/发奖金 不存在 10", now)
     assert _latest_reply(factory) == "未找到该员工，请检查员工名。"
     _receive(service, "ambiguous-bonus", "board", "/发奖金 同名 10", now)
-    assert _latest_reply(factory) == "存在多名同名员工，请使用唯一员工名后重试。"
+    assert _latest_reply(factory) == (
+        "存在多名同名员工：同名 #0003、同名 #0004。请使用工号后重试。"
+    )
     assert all(user.balance == 0 for user in repository.list_users())
+
+    _receive(service, "numbered-bonus", "board", "/发奖金 #0003 10", now)
+    assert _latest_reply(factory) == "【奖金】董事向同名发放 10 摸鱼币。"
+    assert repository.find_user("duplicate-1").balance == 10
+    assert repository.find_user("duplicate-2").balance == 0
 
 
 @pytest.mark.parametrize(

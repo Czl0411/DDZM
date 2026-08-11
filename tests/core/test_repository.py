@@ -351,6 +351,37 @@ def test_board_bonus_grants_single_employee_and_records_audit(
     }
 
 
+def test_board_bonus_resolves_employee_numbers_and_lists_duplicate_candidates(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    board, _ = repository.create_user("number-board", "董事", now, 0)
+    first, _ = repository.create_user("number-target-1", "同名", now, 0)
+    second, _ = repository.create_user("number-target-2", "同名", now, 0)
+    with session_factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        assert board_rank is not None
+        session.get(UserRecord, board.id).rank_id = board_rank.id
+
+    padded = repository.grant_board_bonus("number-board", "#0002", 5, now)
+    compact = repository.grant_board_bonus("number-board", "#3", 7, now)
+    ambiguous = repository.grant_board_bonus("number-board", "同名", 9, now)
+    missing = repository.grant_board_bonus("number-board", "#9999", 9, now)
+
+    assert padded.status == "granted"
+    assert padded.recipient_display_name == "同名"
+    assert compact.status == "granted"
+    assert compact.recipient_display_name == "同名"
+    assert ambiguous.status == "ambiguous_target"
+    assert ambiguous.candidate_labels == ("同名 #0002", "同名 #0003")
+    assert missing.status == "target_not_found"
+    assert repository.find_user(first.platform_id).balance == 5
+    assert repository.find_user(second.platform_id).balance == 7
+
+
 def test_board_bonus_grants_every_employee_before_name_lookup(
     repository, session_factory, now
 ):

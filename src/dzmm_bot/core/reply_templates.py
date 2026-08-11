@@ -30,7 +30,7 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/发奖金", "not_authorized", "无发放权限", "只有核心董事会成员可以发放奖金。", ("{日期}",)),
     TemplateDefinition("/发奖金", "invalid_amount", "金额无效", "奖金金额必须是 1–99999 的整数。", ("{日期}",)),
     TemplateDefinition("/发奖金", "target_not_found", "员工不存在", "未找到该员工，请检查员工名。", ("{日期}",)),
-    TemplateDefinition("/发奖金", "ambiguous_target", "员工重名", "存在多名同名员工，请使用唯一员工名后重试。", ("{日期}",)),
+    TemplateDefinition("/发奖金", "ambiguous_target", "员工重名", "存在多名同名员工：{候选员工}。请使用工号后重试。", ("{候选员工}", "{日期}")),
     TemplateDefinition("/发奖金", "single_granted", "单人奖金已发放", "【奖金】{发放者}向{收款人}发放 {金额} {货币}。", ("{发放者}", "{收款人}", "{金额}", "{货币}", "{日期}")),
     TemplateDefinition("/发奖金", "all_granted", "全员奖金已发放", "【奖金】{发放者}向全体 {人数} 名员工每人发放 {金额} {货币}。", ("{发放者}", "{人数}", "{金额}", "{货币}", "{日期}")),
     TemplateDefinition("/发红包", "usage", "指令格式", "请用 /发红包 人数 总金额 创建红包。", ("{日期}",)),

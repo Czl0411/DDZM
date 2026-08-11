@@ -420,6 +420,13 @@ class GroupCommandHandler:
             }
             scenario = "all_granted" if target == "全部" else "single_granted"
             return self._reply("/发奖金", scenario, received_at, values)
+        if result.status == "ambiguous_target":
+            return self._reply(
+                "/发奖金",
+                "ambiguous_target",
+                received_at,
+                {"{候选员工}": "、".join(result.candidate_labels)},
+            )
         return self._reply("/发奖金", result.status, received_at)
 
     def _rename(self, platform_id: str, content: str, received_at) -> str:

@@ -80,6 +80,18 @@ def upgrade() -> None:
     connection.execute(
         reply_templates.update()
         .where(
+            reply_templates.c.command == "/发奖金",
+            reply_templates.c.scenario == "ambiguous_target",
+            reply_templates.c.template
+            == "存在多名同名员工，请使用唯一员工名后重试。",
+        )
+        .values(
+            template="存在多名同名员工：{候选员工}。请使用工号后重试。"
+        )
+    )
+    connection.execute(
+        reply_templates.update()
+        .where(
             reply_templates.c.command == "/我",
             reply_templates.c.scenario == "shown",
             reply_templates.c.template

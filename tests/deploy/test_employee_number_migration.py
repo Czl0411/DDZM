@@ -80,6 +80,12 @@ def test_employee_number_migration_backfills_by_joined_at_then_uuid(
                     "scenario": "shown",
                     "template": "管理员自定义个人资料：{昵称}",
                 },
+                {
+                    "id": UUID(int=13),
+                    "command": "/发奖金",
+                    "scenario": "ambiguous_target",
+                    "template": "存在多名同名员工，请使用唯一员工名后重试。",
+                },
             ],
         )
     command.stamp(config, "20260811_36")
@@ -113,7 +119,8 @@ def test_employee_number_migration_backfills_by_joined_at_then_uuid(
                 text(
                     "SELECT command, template FROM command_reply_templates "
                     "WHERE (command = '/入职' AND scenario = 'joined') "
-                    "OR (command = '/我' AND scenario = 'shown')"
+                    "OR (command = '/我' AND scenario = 'shown') "
+                    "OR (command = '/发奖金' AND scenario = 'ambiguous_target')"
                 )
             ).all()
         )
@@ -122,3 +129,6 @@ def test_employee_number_migration_backfills_by_joined_at_then_uuid(
             "当前余额：{余额} {货币}。"
         )
         assert templates["/我"] == "管理员自定义个人资料：{昵称}"
+        assert templates["/发奖金"] == (
+            "存在多名同名员工：{候选员工}。请使用工号后重试。"
+        )

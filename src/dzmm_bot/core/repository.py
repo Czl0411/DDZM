@@ -817,6 +817,7 @@ class BoardBonusResult:
     recipient_display_name: str | None = None
     amount: int = 0
     recipient_count: int = 0
+    candidate_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -8672,14 +8673,29 @@ class CoreRepository:
                     )
                 else:
                     scope = "single"
-                    recipients = list(
-                        session.scalars(
-                            select(UserRecord)
-                            .where(UserRecord.display_name == normalized_target)
-                            .order_by(UserRecord.id)
-                            .with_for_update()
-                        )
+                    employee_number_match = re.fullmatch(
+                        r"#([0-9]+)", normalized_target
                     )
+                    if employee_number_match is not None:
+                        recipients = list(
+                            session.scalars(
+                                select(UserRecord)
+                                .where(
+                                    UserRecord.employee_number
+                                    == int(employee_number_match.group(1))
+                                )
+                                .with_for_update()
+                            )
+                        )
+                    else:
+                        recipients = list(
+                            session.scalars(
+                                select(UserRecord)
+                                .where(UserRecord.display_name == normalized_target)
+                                .order_by(UserRecord.employee_number)
+                                .with_for_update()
+                            )
+                        )
                     if not recipients:
                         return BoardBonusResult(
                             "target_not_found",
@@ -8689,6 +8705,11 @@ class CoreRepository:
                         return BoardBonusResult(
                             "ambiguous_target",
                             issuer_display_name=issuer.display_name,
+                            candidate_labels=tuple(
+                                f"{recipient.display_name} "
+                                f"{format_employee_number(recipient.employee_number)}"
+                                for recipient in recipients
+                            ),
                         )
                 for recipient in recipients:
                     self._apply_balance_change(

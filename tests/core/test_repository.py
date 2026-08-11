@@ -177,6 +177,196 @@ def test_duplicate_platform_message_returns_existing_record(repository, inbound)
     assert second.id == first.id
 
 
+def test_board_bonus_grants_single_employee_and_records_audit(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import (
+        AuditEventRecord,
+        BalanceTransactionRecord,
+        RankRecord,
+        UserRecord,
+    )
+
+    board, _ = repository.create_user("board", "董事", now, 0)
+    recipient, _ = repository.create_user("recipient", "苏白", now, 0)
+    with session_factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        assert board_rank is not None
+        session.get(UserRecord, board.id).rank_id = board_rank.id
+
+    result = repository.grant_board_bonus("board", "苏白", 10, now)
+
+    assert result.status == "granted"
+    assert result.issuer_display_name == "董事"
+    assert result.recipient_display_name == "苏白"
+    assert result.amount == 10
+    assert result.recipient_count == 1
+    assert repository.find_user("recipient").balance == 10
+    with session_factory() as session:
+        transactions = list(session.scalars(select(BalanceTransactionRecord)))
+        audit = session.scalar(select(AuditEventRecord))
+    assert [(row.user_id, row.amount, row.source) for row in transactions] == [
+        (recipient.id, 10, "board_bonus")
+    ]
+    assert audit.event_type == "board_bonus"
+    assert audit.actor == "board"
+    assert audit.payload == {
+        "issuer_display_name": "董事",
+        "scope": "single",
+        "amount": 10,
+        "recipient_count": 1,
+        "total_amount": 10,
+        "recipient_platform_id": "recipient",
+        "recipient_display_name": "苏白",
+    }
+
+
+def test_board_bonus_grants_every_employee_before_name_lookup(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import (
+        AuditEventRecord,
+        BalanceTransactionRecord,
+        RankRecord,
+        UserRecord,
+    )
+
+    board, _ = repository.create_user("board", "董事", now, 0)
+    repository.create_user("reserved-name", "全部", now, 0)
+    repository.create_user("employee", "员工", now, 0)
+    with session_factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        assert board_rank is not None
+        session.get(UserRecord, board.id).rank_id = board_rank.id
+
+    result = repository.grant_board_bonus("board", "全部", 7, now)
+
+    assert result.status == "granted"
+    assert result.recipient_count == 3
+    assert {user.platform_id: user.balance for user in repository.list_users()} == {
+        "board": 7,
+        "reserved-name": 7,
+        "employee": 7,
+    }
+    with session_factory() as session:
+        transactions = list(
+            session.scalars(
+                select(BalanceTransactionRecord).order_by(
+                    BalanceTransactionRecord.user_id
+                )
+            )
+        )
+        audits = list(session.scalars(select(AuditEventRecord)))
+    assert [(row.amount, row.source) for row in transactions] == [
+        (7, "board_bonus"),
+        (7, "board_bonus"),
+        (7, "board_bonus"),
+    ]
+    assert len(audits) == 1
+    assert audits[0].payload == {
+        "issuer_display_name": "董事",
+        "scope": "all",
+        "amount": 7,
+        "recipient_count": 3,
+        "total_amount": 21,
+    }
+
+
+def test_board_bonus_rejects_unauthorized_ambiguous_missing_and_invalid_grants(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import (
+        AuditEventRecord,
+        BalanceTransactionRecord,
+        RankRecord,
+        UserRecord,
+    )
+
+    board, _ = repository.create_user("board", "董事", now, 0)
+    manager, _ = repository.create_user("manager", "负责人", now, 0)
+    repository.create_user("duplicate-1", "同名", now, 0)
+    repository.create_user("duplicate-2", "同名", now, 0)
+    with session_factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        manager_rank = session.scalar(
+            select(RankRecord).where(
+                RankRecord.has_group_management.is_(True),
+                RankRecord.is_board.is_(False),
+            )
+        )
+        assert board_rank is not None
+        assert manager_rank is not None
+        session.get(UserRecord, board.id).rank_id = board_rank.id
+        session.get(UserRecord, manager.id).rank_id = manager_rank.id
+
+    assert repository.grant_board_bonus("missing", "同名", 10, now).status == (
+        "not_joined"
+    )
+    assert repository.grant_board_bonus("manager", "同名", 10, now).status == (
+        "not_authorized"
+    )
+    assert repository.grant_board_bonus("board", "不存在", 10, now).status == (
+        "target_not_found"
+    )
+    assert repository.grant_board_bonus("board", "同名", 10, now).status == (
+        "ambiguous_target"
+    )
+    for amount in (0, -1, 100000):
+        assert repository.grant_board_bonus("board", "全部", amount, now).status == (
+            "invalid_amount"
+        )
+
+    assert all(user.balance == 0 for user in repository.list_users())
+    with session_factory() as session:
+        assert session.scalar(select(func.count(BalanceTransactionRecord.id))) == 0
+        assert session.scalar(select(func.count(AuditEventRecord.id))) == 0
+
+
+def test_board_bonus_all_recipient_failure_rolls_back_every_change(
+    repository, session_factory, now, monkeypatch
+):
+    from dzmm_bot.core.schema import (
+        AuditEventRecord,
+        BalanceTransactionRecord,
+        RankRecord,
+        UserRecord,
+    )
+
+    board, _ = repository.create_user("board", "董事", now, 0)
+    repository.create_user("employee", "员工", now, 0)
+    with session_factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        assert board_rank is not None
+        session.get(UserRecord, board.id).rank_id = board_rank.id
+    original = repository._apply_balance_change
+    calls = 0
+
+    def fail_on_second_recipient(user, amount, source, occurred_at):
+        nonlocal calls
+        calls += 1
+        original(user, amount, source, occurred_at)
+        if calls == 2:
+            raise RuntimeError("injected bonus failure")
+
+    monkeypatch.setattr(repository, "_apply_balance_change", fail_on_second_recipient)
+
+    with pytest.raises(RuntimeError, match="injected bonus failure"):
+        repository.grant_board_bonus("board", "全部", 10, now)
+
+    assert all(user.balance == 0 for user in repository.list_users())
+    with session_factory() as session:
+        assert session.scalar(select(func.count(BalanceTransactionRecord.id))) == 0
+        assert session.scalar(select(func.count(AuditEventRecord.id))) == 0
+
+
 def test_random_event_settings_default_to_fixed_daily_times(repository):
     settings = repository.get_random_event_settings()
 

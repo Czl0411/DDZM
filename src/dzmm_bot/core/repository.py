@@ -56,6 +56,7 @@ from .schema import (
     AIRequestRecord,
     ActivityLevelRuleRecord,
     ActivityRewardSettlementRecord,
+    AuditEventRecord,
     BalanceTransactionRecord,
     BEIJING,
     BlameGameDailyStartRecord,
@@ -753,6 +754,15 @@ class UserProfile:
     user: UserRecord
     rank: RankRecord
     department: DepartmentRecord
+
+
+@dataclass(frozen=True)
+class BoardBonusResult:
+    status: str
+    issuer_display_name: str | None = None
+    recipient_display_name: str | None = None
+    amount: int = 0
+    recipient_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -8232,6 +8242,99 @@ class CoreRepository:
                 if user is None:
                     raise ValueError("员工不存在")
                 self._apply_balance_change(user, amount, source, occurred_at)
+
+    def grant_board_bonus(
+        self,
+        issuer_platform_id: str,
+        target: str,
+        amount: int,
+        occurred_at: datetime,
+    ) -> BoardBonusResult:
+        normalized_target = target.strip()
+        with self.transaction():
+            with self._session() as session:
+                issuer_row = session.execute(
+                    select(UserRecord, RankRecord)
+                    .join(RankRecord, UserRecord.rank_id == RankRecord.id)
+                    .where(UserRecord.platform_id == issuer_platform_id)
+                ).first()
+                if issuer_row is None:
+                    return BoardBonusResult("not_joined")
+                issuer, issuer_rank = issuer_row
+                if not issuer_rank.is_board:
+                    return BoardBonusResult(
+                        "not_authorized",
+                        issuer_display_name=issuer.display_name,
+                    )
+                if amount < 1 or amount > 99999:
+                    return BoardBonusResult(
+                        "invalid_amount",
+                        issuer_display_name=issuer.display_name,
+                    )
+                if normalized_target == "全部":
+                    scope = "all"
+                    recipients = list(
+                        session.scalars(
+                            select(UserRecord)
+                            .order_by(UserRecord.id)
+                            .with_for_update()
+                        )
+                    )
+                else:
+                    scope = "single"
+                    recipients = list(
+                        session.scalars(
+                            select(UserRecord)
+                            .where(UserRecord.display_name == normalized_target)
+                            .order_by(UserRecord.id)
+                            .with_for_update()
+                        )
+                    )
+                    if not recipients:
+                        return BoardBonusResult(
+                            "target_not_found",
+                            issuer_display_name=issuer.display_name,
+                        )
+                    if len(recipients) > 1:
+                        return BoardBonusResult(
+                            "ambiguous_target",
+                            issuer_display_name=issuer.display_name,
+                        )
+                for recipient in recipients:
+                    self._apply_balance_change(
+                        recipient, amount, "board_bonus", occurred_at
+                    )
+                payload = {
+                    "issuer_display_name": issuer.display_name,
+                    "scope": scope,
+                    "amount": amount,
+                    "recipient_count": len(recipients),
+                    "total_amount": amount * len(recipients),
+                }
+                if scope == "single":
+                    payload.update(
+                        {
+                            "recipient_platform_id": recipients[0].platform_id,
+                            "recipient_display_name": recipients[0].display_name,
+                        }
+                    )
+                session.add(
+                    AuditEventRecord(
+                        event_type="board_bonus",
+                        actor=issuer.platform_id,
+                        payload=payload,
+                        created_at=occurred_at,
+                    )
+                )
+                return BoardBonusResult(
+                    "granted",
+                    issuer_display_name=issuer.display_name,
+                    recipient_display_name=(
+                        recipients[0].display_name if scope == "single" else None
+                    ),
+                    amount=amount,
+                    recipient_count=len(recipients),
+                )
 
     def today_income(self, user_id: UUID, now: datetime) -> int:
         start = now.astimezone(BEIJING).replace(

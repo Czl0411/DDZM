@@ -50,3 +50,6 @@ def test_render_impression_prompt_names_ids_and_prohibited_inferences():
     assert "心理诊断" in prompt
     assert "单批内容只能支持候选" in prompt
     assert "仅输出 JSON，不输出 Markdown" in prompt
+    assert "reinforce_candidate 只能包含 action、candidate_id" in prompt
+    assert "weaken_entry 只能包含 action、entry_id" in prompt
+    assert "不得使用 id 字段代替 candidate_id 或 entry_id" in prompt

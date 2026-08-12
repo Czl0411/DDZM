@@ -123,7 +123,7 @@ def render_impression_prompt(
             f"允许分类：{categories}",
             f"已有稳定印象：\n{stable_text}",
             f"已有候选印象：\n{candidate_text}",
-            "允许 action：new_candidate、reinforce_candidate、weaken_entry、replace_entry、keep。引用已有项目时必须使用上方精确 ID。",
+            "字段契约（不得增减或改名）：keep 只能包含 action；new_candidate 只能包含 action、category、content；reinforce_candidate 只能包含 action、candidate_id；weaken_entry 只能包含 action、entry_id；replace_entry 只能包含 action、entry_id、category、content。引用已有项目时必须使用上方精确 ID，不得使用 id 字段代替 candidate_id 或 entry_id。",
             f"输出格式示例：{contract}",
         )
     )

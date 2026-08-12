@@ -2,6 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from dzmm_bot.ai.core_client import (
+    AIConversationMessage,
     AIImpressionCandidate,
     AIImpressionEntry,
     AIMemoryClaim,
@@ -58,6 +59,7 @@ def test_ai_worker_reports_timeout_without_provider_details():
         id=uuid4(),
         lease_token=uuid4(),
         system_prompt="system",
+        history_messages=(),
         user_content="user",
         max_response_chars=20,
         timeout_seconds=10,
@@ -78,6 +80,7 @@ def test_ai_worker_completes_one_claim_and_leaves_empty_queue_idle():
         id=uuid4(),
         lease_token=uuid4(),
         system_prompt="system",
+        history_messages=(),
         user_content="user",
         max_response_chars=5,
         timeout_seconds=10,
@@ -93,6 +96,46 @@ def test_ai_worker_completes_one_claim_and_leaves_empty_queue_idle():
     assert worker.run_once() is True
     assert core.completed == [(claim.id, "ai-1", claim.lease_token, "12345", NOW)]
     assert worker.run_once() is False
+
+
+def test_ai_worker_forwards_conversation_history_to_provider():
+    from dzmm_bot.ai.worker import AIWorker
+
+    history = (
+        AIConversationMessage("user", "第一问"),
+        AIConversationMessage("assistant", "第一答"),
+    )
+    claim = ClaimedAIRequest(
+        id=uuid4(),
+        lease_token=uuid4(),
+        system_prompt="system",
+        history_messages=history,
+        user_content="继续",
+        max_response_chars=20,
+        timeout_seconds=10,
+    )
+    core = FakeCore(claim)
+    captured = {}
+
+    class CapturingClient:
+        def complete(self, system_prompt, user_content, **kwargs):
+            captured.update(
+                system_prompt=system_prompt,
+                user_content=user_content,
+                **kwargs,
+            )
+            return "收到"
+
+    assert AIWorker(
+        "ai-1", core, CapturingClient(), clock=lambda: NOW
+    ).run_once() is True
+    assert captured == {
+        "system_prompt": "system",
+        "user_content": "继续",
+        "history_messages": history,
+        "max_chars": 20,
+        "timeout_seconds": 10,
+    }
 
 
 def _memory_claim():

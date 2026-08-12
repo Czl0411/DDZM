@@ -32,6 +32,7 @@ class AIWorker:
             text = self._client.complete(
                 claim.system_prompt,
                 claim.user_content,
+                history_messages=claim.history_messages,
                 max_chars=claim.max_response_chars,
                 timeout_seconds=claim.timeout_seconds,
             )[: claim.max_response_chars]

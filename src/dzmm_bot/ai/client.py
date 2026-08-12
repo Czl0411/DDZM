@@ -29,6 +29,7 @@ class DeepSeekChatClient:
         system_prompt: str,
         user_content: str,
         *,
+        history_messages=(),
         max_chars: int,
         timeout_seconds: int,
     ) -> str:
@@ -39,6 +40,10 @@ class DeepSeekChatClient:
                     "model": self._model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
+                        *(
+                            {"role": message.role, "content": message.content}
+                            for message in history_messages
+                        ),
                         {"role": "user", "content": user_content},
                     ],
                     "thinking": {"type": "enabled"},

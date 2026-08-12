@@ -2488,6 +2488,8 @@ def test_ai_prompt_orders_authority_before_impressions(repository, session_facto
     assert prompt.index("【规则知识卡】") < prompt.index("【稳定玩家印象】")
     assert "只能解释并引导玩家自行发送准确指令" in prompt
     assert "不得调用命令处理器、伪造执行成功或承诺已经修改状态" in prompt
+    assert "结合近期对话理解本次问题，以玩家最新消息为主" in prompt
+    assert "历史内容只能用于语言承接" in prompt
 
 
 def _prepare_undercover_players(repository, session_factory, now, count=4):

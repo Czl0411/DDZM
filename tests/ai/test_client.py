@@ -6,6 +6,7 @@ import pytest
 
 def test_deepseek_client_sends_official_thinking_request():
     from dzmm_bot.ai.client import DeepSeekChatClient
+    from dzmm_bot.ai.core_client import AIConversationMessage
 
     requests: list[httpx.Request] = []
 
@@ -38,13 +39,24 @@ def test_deepseek_client_sends_official_thinking_request():
         ),
     )
 
-    assert client.complete("system", "user", max_chars=20, timeout_seconds=10) == "收到"
+    assert client.complete(
+        "system",
+        "user",
+        history_messages=(
+            AIConversationMessage("user", "第一问"),
+            AIConversationMessage("assistant", "第一答"),
+        ),
+        max_chars=20,
+        timeout_seconds=10,
+    ) == "收到"
     assert requests[0].url.path == "/chat/completions"
     assert requests[0].headers["Authorization"] == "Bearer secret"
     assert json.loads(requests[0].content) == {
         "model": "deepseek-v4-flash",
         "messages": [
             {"role": "system", "content": "system"},
+            {"role": "user", "content": "第一问"},
+            {"role": "assistant", "content": "第一答"},
             {"role": "user", "content": "user"},
         ],
         "thinking": {"type": "enabled"},
@@ -67,6 +79,12 @@ def test_deepseek_client_rejects_an_empty_model_response():
     )
 
     with pytest.raises(DeepSeekCallError, match="invalid_response") as captured:
-        client.complete("system", "user", max_chars=20, timeout_seconds=10)
+        client.complete(
+            "system",
+            "user",
+            history_messages=(),
+            max_chars=20,
+            timeout_seconds=10,
+        )
 
     assert captured.value.category == "invalid_response"

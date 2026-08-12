@@ -81,6 +81,16 @@ def test_command_registry_exposes_exact_enabled_syntax(repository):
     assert commands["/发红包"] == "/发红包 人数 总金额"
     assert commands["/抢红包"] == "/抢红包"
     assert commands["/修改名称"] == "/修改名称 新名称"
+    assert commands["/部门人数"] == "/部门人数"
+    assert commands["/我的部门人数"] == "/我的部门人数"
+
+
+@pytest.mark.parametrize("command", ("/部门人数", "/我的部门人数"))
+def test_department_headcount_reply_templates_are_managed(repository, command):
+    assert {
+        template.scenario
+        for template in repository.list_reply_templates(command)
+    } == {"shown", "not_joined"}
 
 
 def test_rename_reply_templates_are_managed(repository):
@@ -4001,6 +4011,100 @@ def test_new_employee_has_default_rank_and_department(repository, now):
     assert profile.rank.name == "实习生"
     assert profile.rank.level_label == "LV1"
     assert profile.department.name == "未分配部门"
+
+
+def test_department_headcounts_include_nonempty_default_disabled_and_unknown_rank(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
+
+    for platform_id in ("default-1", "default-2", "tech-1", "tech-2", "unknown"):
+        repository.create_user(platform_id, "同名", now, 0)
+    with session_factory.begin() as session:
+        default = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.is_default.is_(True))
+        )
+        tech = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
+        )
+        academy = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "学院")
+        )
+        rank_one = session.scalar(
+            select(RankRecord).where(RankRecord.sort_order == 1)
+        )
+        rank_two = session.scalar(
+            select(RankRecord).where(RankRecord.sort_order == 2)
+        )
+        assert default is not None
+        assert tech is not None
+        assert academy is not None
+        assert rank_one is not None
+        assert rank_two is not None
+        tech.enabled = False
+        session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "default-2")
+        ).rank_id = rank_two.id
+        for platform_id, rank in (("tech-1", rank_two), ("tech-2", rank_one)):
+            employee = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            employee.department_id = tech.id
+            employee.rank_id = rank.id
+        unknown = session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "unknown")
+        )
+        unknown.department_id = academy.id
+        unknown.rank_id = None
+
+    headcounts = repository.list_department_headcounts()
+
+    assert [item.department_name for item in headcounts] == [
+        "未分配部门",
+        "学院",
+        "核心技术部",
+    ]
+    assert [
+        (
+            item.department_name,
+            item.total_count,
+            [(rank.rank_name, rank.count) for rank in item.ranks],
+        )
+        for item in headcounts
+    ] == [
+        ("未分配部门", 2, [("实习生", 1), ("正式员工", 1)]),
+        ("学院", 1, [("未知职位", 1)]),
+        ("核心技术部", 2, [("实习生", 1), ("正式员工", 1)]),
+    ]
+
+
+def test_user_department_headcount_returns_only_current_department(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import DepartmentRecord, UserRecord
+
+    repository.create_user("mine", "我", now, 0)
+    repository.create_user("colleague", "同事", now, 0)
+    repository.create_user("outside", "外部", now, 0)
+    with session_factory.begin() as session:
+        tech = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
+        )
+        assert tech is not None
+        for platform_id in ("mine", "colleague"):
+            session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            ).department_id = tech.id
+
+    headcount = repository.get_user_department_headcount("mine")
+
+    assert headcount is not None
+    assert headcount.department_name == "核心技术部"
+    assert headcount.total_count == 2
+    assert [(rank.rank_name, rank.count) for rank in headcount.ranks] == [
+        ("实习生", 2)
+    ]
+    assert repository.get_user_department_headcount("missing") is None
 
 
 def test_department_application_changes_department_only_after_eligible_approval(

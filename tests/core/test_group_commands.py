@@ -933,6 +933,87 @@ def test_department_commands_apply_only_after_target_department_approval():
     assert "核心技术部" in _latest_reply(factory)
 
 
+def test_department_headcount_commands_show_totals_and_rank_counts_only():
+    from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    for platform_id, name in (
+        ("mine", "查询人"),
+        ("default", "未分配同事"),
+        ("tech-1", "技术甲"),
+        ("tech-2", "技术乙"),
+    ):
+        repository.create_user(platform_id, name, now, 0)
+    with factory.begin() as session:
+        tech = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
+        )
+        rank_two = session.scalar(
+            select(RankRecord).where(RankRecord.sort_order == 2)
+        )
+        assert tech is not None
+        assert rank_two is not None
+        for platform_id in ("mine", "tech-1", "tech-2"):
+            session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            ).department_id = tech.id
+        session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "tech-2")
+        ).rank_id = rank_two.id
+
+    all_result = _receive(service, "all-counts", "mine", "/部门人数", now)
+    all_reply = _replies_for(factory, all_result.message_id)[0]
+    assert all_reply == (
+        "【部门人数统计】\n"
+        "未分配部门：共 1 人\n实习生：1 人\n\n"
+        "核心技术部：共 3 人\n实习生：2 人\n正式员工：1 人"
+    )
+    assert "查询人" not in all_reply
+    assert "技术甲" not in all_reply
+
+    mine_result = _receive(
+        service, "mine-counts", "mine", "/我的部门人数", now
+    )
+    assert _replies_for(factory, mine_result.message_id) == [
+        "【我的部门人数统计】\n"
+        "核心技术部：共 3 人\n实习生：2 人\n正式员工：1 人"
+    ]
+
+
+@pytest.mark.parametrize("command", ("/部门人数", "/我的部门人数"))
+def test_department_headcount_commands_require_employment(command):
+    service, _, factory = _service()
+    now = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+
+    result = _receive(service, f"outsider-{command}", "outsider", command, now)
+
+    assert _replies_for(factory, result.message_id) == [
+        "请先用 /入职 名字 加入摸鱼公司。"
+    ]
+
+
+def test_department_headcount_command_honors_template_disable_and_help():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    repository.create_user("employee", "员工", now, 0)
+    repository.set_reply_template("/部门人数", "shown", "统计如下：\n{部门统计}")
+
+    customized = _receive(service, "custom-counts", "employee", "/部门人数", now)
+    assert _replies_for(factory, customized.message_id)[0].startswith(
+        "统计如下：\n未分配部门：共 1 人"
+    )
+
+    help_result = _receive(service, "department-help", "employee", "/帮助 部门", now)
+    help_reply = _replies_for(factory, help_result.message_id)[0]
+    assert "/部门人数：查看全部非空部门人数与职位分布" in help_reply
+    assert "/我的部门人数：查看自己部门人数与职位分布" in help_reply
+
+    repository.set_command_enabled("/部门人数", False)
+    disabled = _receive(service, "disabled-counts", "employee", "/部门人数", now)
+    assert _replies_for(factory, disabled.message_id) == []
+
+
 def test_board_members_can_directly_change_departments_and_review_all_requests():
     from dzmm_bot.core.schema import RankRecord, UserRecord
 

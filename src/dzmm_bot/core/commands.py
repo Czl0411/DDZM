@@ -15,7 +15,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
+    "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
 }
 
 
@@ -151,6 +151,14 @@ class GroupCommandHandler:
             return self._shop(received_at)
         if command == "/部门":
             return self._departments(received_at)
+        if command == "/部门人数":
+            return self._department_headcounts(
+                message.sender_platform_id, command, received_at
+            )
+        if command == "/我的部门人数":
+            return self._department_headcounts(
+                message.sender_platform_id, command, received_at
+            )
         if command == "/加入部门":
             return self._join_department(message.sender_platform_id, content, received_at)
         if command == "/切换部门":
@@ -554,6 +562,30 @@ class GroupCommandHandler:
         ]
         return self._reply(
             "/部门", "shown", received_at, {"{部门列表}": "\n".join(lines)}
+        )
+
+    def _department_headcounts(
+        self, platform_id: str, command: str, received_at
+    ) -> str:
+        profile = self._repository.get_user_profile(platform_id)
+        if profile is None:
+            return self._reply(command, "not_joined", received_at)
+        if command == "/我的部门人数":
+            headcount = self._repository.get_user_department_headcount(platform_id)
+            headcounts = () if headcount is None else (headcount,)
+        else:
+            headcounts = self._repository.list_department_headcounts()
+        blocks = [
+            "\n".join(
+                (
+                    f"{item.department_name}：共 {item.total_count} 人",
+                    *(f"{rank.rank_name}：{rank.count} 人" for rank in item.ranks),
+                )
+            )
+            for item in headcounts
+        ]
+        return self._reply(
+            command, "shown", received_at, {"{部门统计}": "\n\n".join(blocks)}
         )
 
     def _department_request_list(self, platform_id: str, received_at) -> str:
@@ -1767,6 +1799,8 @@ class GroupCommandHandler:
                 "【部门与审批】",
                 (
                     ("/部门", "/部门：查看部门列表与说明"),
+                    ("/部门人数", "/部门人数：查看全部非空部门人数与职位分布"),
+                    ("/我的部门人数", "/我的部门人数：查看自己部门人数与职位分布"),
                     ("/加入部门", "/加入部门 名称：申请加入部门"),
                     ("/切换部门", "/切换部门 名称：申请切换部门"),
                     ("/部门申请列表", "/部门申请列表：查看可处理的申请"),

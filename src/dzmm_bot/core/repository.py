@@ -175,7 +175,7 @@ _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
     {
         "/入职", "/我的物品", "/打卡", "/余额", "/我", "/商店", "/帮助", "/当前游戏",
         "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降",
-        "/部门", "/加入部门", "/切换部门", "/部门申请列表",
+        "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表",
         "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门",
         "/职位", "/晋升", "/晋升申请列表",
         "/同意", "/全部同意", "/拒绝", "/全部拒绝",
@@ -865,6 +865,21 @@ class UserProfile:
 
 
 @dataclass(frozen=True)
+class DepartmentRankHeadcount:
+    rank_name: str
+    count: int
+    sort_order: int | None
+
+
+@dataclass(frozen=True)
+class DepartmentHeadcount:
+    department_id: UUID
+    department_name: str
+    total_count: int
+    ranks: tuple[DepartmentRankHeadcount, ...]
+
+
+@dataclass(frozen=True)
 class RenameEmployeeResult:
     status: str
     old_name: str | None = None
@@ -1010,6 +1025,8 @@ _COMMAND_DEFINITIONS = (
     ("/收手", "/收手", "结算当前单人记忆考核的奖励"),
     ("/投降", "/投降", "退出当前记忆考核对战"),
     ("/部门", "/部门", "查看可申请部门和说明"),
+    ("/部门人数", "/部门人数", "查看全部非空部门人数与职位分布"),
+    ("/我的部门人数", "/我的部门人数", "查看自己部门人数与职位分布"),
     ("/加入部门", "/加入部门 部门名", "申请加入一个部门"),
     ("/切换部门", "/切换部门 部门名", "申请切换至一个已开放部门"),
     ("/部门申请列表", "/部门申请列表", "查看可处理的部门申请"),
@@ -9747,6 +9764,88 @@ class CoreRepository:
                     )
                 )
             )
+
+    def list_department_headcounts(self) -> tuple[DepartmentHeadcount, ...]:
+        with self._session() as session:
+            self._ensure_organization_defaults(session)
+            return self._department_headcounts(session)
+
+    def get_user_department_headcount(
+        self, platform_id: str
+    ) -> DepartmentHeadcount | None:
+        with self._session() as session:
+            self._ensure_organization_defaults(session)
+            department_id = session.scalar(
+                select(UserRecord.department_id).where(
+                    UserRecord.platform_id == platform_id
+                )
+            )
+            if department_id is None:
+                return None
+            headcounts = self._department_headcounts(session, department_id)
+            return headcounts[0] if headcounts else None
+
+    @staticmethod
+    def _department_headcounts(
+        session: Session, department_id: UUID | None = None
+    ) -> tuple[DepartmentHeadcount, ...]:
+        statement = (
+            select(
+                DepartmentRecord.id,
+                DepartmentRecord.name,
+                DepartmentRecord.is_default,
+                RankRecord.name,
+                RankRecord.sort_order,
+                func.count(UserRecord.id),
+            )
+            .join(UserRecord, UserRecord.department_id == DepartmentRecord.id)
+            .outerjoin(RankRecord, UserRecord.rank_id == RankRecord.id)
+            .group_by(
+                DepartmentRecord.id,
+                DepartmentRecord.name,
+                DepartmentRecord.is_default,
+                RankRecord.name,
+                RankRecord.sort_order,
+            )
+        )
+        if department_id is not None:
+            statement = statement.where(DepartmentRecord.id == department_id)
+        rows = session.execute(statement).all()
+        grouped: dict[
+            tuple[UUID, str, bool], list[DepartmentRankHeadcount]
+        ] = {}
+        for current_department_id, department_name, is_default, rank_name, sort_order, count in rows:
+            grouped.setdefault(
+                (current_department_id, department_name, is_default), []
+            ).append(
+                DepartmentRankHeadcount(
+                    rank_name=rank_name or "未知职位",
+                    count=int(count),
+                    sort_order=sort_order,
+                )
+            )
+        results: list[DepartmentHeadcount] = []
+        for (current_department_id, department_name, _), ranks in sorted(
+            grouped.items(), key=lambda item: (not item[0][2], item[0][1])
+        ):
+            ordered_ranks = tuple(
+                sorted(
+                    ranks,
+                    key=lambda rank: (
+                        rank.sort_order is None,
+                        rank.sort_order if rank.sort_order is not None else 0,
+                    ),
+                )
+            )
+            results.append(
+                DepartmentHeadcount(
+                    department_id=current_department_id,
+                    department_name=department_name,
+                    total_count=sum(rank.count for rank in ordered_ranks),
+                    ranks=ordered_ranks,
+                )
+            )
+        return tuple(results)
 
     def update_rank(
         self,

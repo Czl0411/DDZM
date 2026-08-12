@@ -64,6 +64,10 @@ class FakeCore:
             "reset_time_label": "北京时间 00:00",
         }
     )
+    profile_settings: dict = field(
+        default_factory=lambda: {"edit_cost": 10, "shared_labor": 5, "version": 0}
+    )
+    personal_profiles: dict[str, str] = field(default_factory=dict)
     activity_settings: dict = field(
         default_factory=lambda: {
             "rules": [
@@ -360,6 +364,40 @@ class FakeCore:
     def set_game_settings(self, settings):
         self.game_settings = {**settings, "reset_time_label": "北京时间 00:00"}
         return self.game_settings
+
+    def get_profile_settings(self):
+        return self.profile_settings
+
+    def set_profile_settings(self, settings):
+        if settings["version"] != self.profile_settings["version"]:
+            raise httpx.HTTPStatusError(
+                "conflict",
+                request=httpx.Request("PATCH", "http://core/profile-settings"),
+                response=httpx.Response(409, json={"detail": "conflict"}),
+            )
+        self.profile_settings = {
+            "edit_cost": settings["edit_cost"],
+            "shared_labor": settings["shared_labor"],
+            "version": settings["version"] + 1,
+        }
+        return self.profile_settings
+
+    def get_personal_profile(self, platform_id):
+        if platform_id == "missing":
+            raise httpx.HTTPStatusError(
+                "not found",
+                request=httpx.Request("GET", "http://core/profile"),
+                response=httpx.Response(404, json={"detail": "not found"}),
+            )
+        return {
+            "platform_id": platform_id,
+            "display_name": "档案员工",
+            "profile_text": self.personal_profiles.get(platform_id, ""),
+        }
+
+    def set_personal_profile(self, platform_id, profile_text):
+        self.personal_profiles[platform_id] = profile_text
+        return self.get_personal_profile(platform_id)
 
     def get_ai_assistant_settings(self):
         return self.ai_assistant_settings
@@ -1191,6 +1229,62 @@ def test_admin_proxies_game_settings(client, headers, core):
     assert updated.json()["version"] == 1
     assert core.game_settings["checkin_reward"] == 7
     assert core.game_settings["weekly_attendance_reward"] == 9
+
+
+def test_admin_proxies_profile_settings_and_employee_profile(client, headers, core):
+    initial = client.get("/api/game/profile-settings", headers=headers)
+    updated = client.patch(
+        "/api/game/profile-settings",
+        headers={**headers, "Idempotency-Key": "profile-settings-1"},
+        json={"edit_cost": 12, "shared_labor": 8, "version": 0},
+    )
+    shown = client.get("/api/game/users/profile-user/profile", headers=headers)
+    saved = client.put(
+        "/api/game/users/profile-user/profile",
+        headers=headers,
+        json={"profile_text": "管理员填写"},
+    )
+    cleared = client.put(
+        "/api/game/users/profile-user/profile",
+        headers=headers,
+        json={"profile_text": ""},
+    )
+
+    assert initial.json() == {"edit_cost": 10, "shared_labor": 5, "version": 0}
+    assert updated.json() == {"edit_cost": 12, "shared_labor": 8, "version": 1}
+    assert shown.json()["profile_text"] == ""
+    assert saved.json()["profile_text"] == "管理员填写"
+    assert cleared.json()["profile_text"] == ""
+    assert core.personal_profiles["profile-user"] == ""
+
+
+def test_admin_rejects_invalid_personal_profile_payloads(client, headers):
+    assert client.patch(
+        "/api/game/profile-settings",
+        headers=headers,
+        json={"edit_cost": -1, "shared_labor": 5, "version": 0},
+    ).status_code == 422
+    assert client.put(
+        "/api/game/users/profile-user/profile",
+        headers=headers,
+        json={"profile_text": "字" * 801},
+    ).status_code == 422
+
+
+def test_admin_exposes_personal_profile_controls(client):
+    page = client.get("/").text
+    script = client.get("/static/admin.js").text
+
+    assert 'id="profile-settings-card"' in page
+    assert 'id="edit-profile-settings"' in page
+    assert 'id="profile-settings-edit-cost"' in page
+    assert 'id="profile-settings-shared-labor"' in page
+    assert 'id="employee-profile-text"' in page
+    assert 'maxlength="800"' in page
+    assert 'data-personal-profile=' in script
+    assert '"/api/game/profile-settings"' in script
+    assert '`/api/game/users/${platformId}/profile`' in script
+    assert 'Idempotency-Key' in script
 
 
 def test_admin_rejects_stale_configuration_write(client, headers):

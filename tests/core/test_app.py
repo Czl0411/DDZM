@@ -840,7 +840,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-            "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
+            "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
             }
     command_records = {record["command"]: record for record in commands.json()}
     for command in ("/部门人数", "/我的部门人数"):
@@ -848,6 +848,13 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
             "shown",
             "not_joined",
         }
+    assert {template["scenario"] for template in command_records["/编辑档案"]["templates"]} == {
+        "usage", "not_joined", "too_long", "unchanged",
+        "insufficient_balance", "insufficient_labor", "updated",
+    }
+    assert {template["scenario"] for template in command_records["/我的档案"]["templates"]} == {
+        "not_joined", "empty", "shown",
+    }
     assert disabled.json()["enabled"] is False
     assert employees.json() == {
         "items": [],
@@ -1117,6 +1124,67 @@ def test_game_command_template_rejects_an_unsupported_variable(client, headers):
     )
 
     assert response.status_code == 422
+
+
+def test_personal_profile_settings_and_admin_profile_endpoints(app_context, headers):
+    app_context.repository.create_user("profile-api", "档案员工", NOW, 30)
+
+    initial = app_context.client.get(
+        "/internal/game/profile-settings", headers=headers
+    )
+    updated = app_context.client.patch(
+        "/internal/game/profile-settings",
+        headers=headers,
+        json={"edit_cost": 12, "shared_labor": 8, "version": 0},
+    )
+    shown = app_context.client.get(
+        "/internal/game/users/profile-api/profile", headers=headers
+    )
+    saved = app_context.client.put(
+        "/internal/game/users/profile-api/profile",
+        headers=headers,
+        json={"profile_text": "管理员填写"},
+    )
+    cleared = app_context.client.put(
+        "/internal/game/users/profile-api/profile",
+        headers=headers,
+        json={"profile_text": ""},
+    )
+
+    assert initial.json() == {"edit_cost": 10, "shared_labor": 5, "version": 0}
+    assert updated.json() == {"edit_cost": 12, "shared_labor": 8, "version": 1}
+    assert shown.json()["profile_text"] == ""
+    assert saved.json()["profile_text"] == "管理员填写"
+    assert cleared.json()["profile_text"] == ""
+    assert app_context.repository.find_user("profile-api").balance == 30
+    assert app_context.repository.get_profile_settings().shared_labor == 8
+
+
+def test_personal_profile_admin_endpoints_validate_conflicts_and_limits(app_context, headers):
+    app_context.repository.create_user("profile-api", "档案员工", NOW, 30)
+    first = app_context.client.patch(
+        "/internal/game/profile-settings",
+        headers=headers,
+        json={"edit_cost": 0, "shared_labor": 99999, "version": 0},
+    )
+    stale = app_context.client.patch(
+        "/internal/game/profile-settings",
+        headers=headers,
+        json={"edit_cost": 1, "shared_labor": 1, "version": 0},
+    )
+    too_long = app_context.client.put(
+        "/internal/game/users/profile-api/profile",
+        headers=headers,
+        json={"profile_text": "字" * 801},
+    )
+    missing = app_context.client.get(
+        "/internal/game/users/missing/profile", headers=headers
+    )
+
+    assert first.status_code == 200
+    assert stale.status_code == 409
+    assert too_long.status_code == 422
+    assert missing.status_code == 404
 
 
 def test_core_server_factory_enforces_local_settings_port(app_context):

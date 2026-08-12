@@ -125,7 +125,7 @@ def test_number_bomb_migration_extends_runtime_schema(tmp_path, monkeypatch):
         )
     command.stamp(config, "20260810_33")
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260811_38")
 
     inspector = inspect(engine)
     assert {

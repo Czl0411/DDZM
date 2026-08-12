@@ -3,6 +3,9 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
 
+NUMBER_BOMB_MULTIPLIER_TENTHS = (8, 9, 10, 11, 12)
+
+
 @dataclass(frozen=True)
 class NumberBombEntry:
     platform_id: str
@@ -22,6 +25,7 @@ class NumberBombStanding:
 class NumberBombCalculation:
     total: int
     player_count: int
+    multiplier_tenths: int
     target_numerator: int
     target_denominator: int
     standings: tuple[NumberBombStanding, ...]
@@ -30,13 +34,20 @@ class NumberBombCalculation:
 
 def calculate_number_bomb(
     entries: Sequence[NumberBombEntry],
+    multiplier_tenths: int,
 ) -> NumberBombCalculation:
     player_count = len(entries)
     if player_count == 0:
         raise ValueError("at least one entry is required")
+    if (
+        isinstance(multiplier_tenths, bool)
+        or not isinstance(multiplier_tenths, int)
+        or multiplier_tenths not in NUMBER_BOMB_MULTIPLIER_TENTHS
+    ):
+        raise ValueError("蹦蹦数字炸弹倍率必须是 0.8 至 1.2 的允许值")
     total = sum(entry.number for entry in entries)
-    target_numerator = 4 * total
-    target_denominator = 5 * player_count
+    target_numerator = multiplier_tenths * total
+    target_denominator = 10 * player_count
     deviations = tuple(
         (
             entry,
@@ -71,6 +82,7 @@ def calculate_number_bomb(
     return NumberBombCalculation(
         total=total,
         player_count=player_count,
+        multiplier_tenths=multiplier_tenths,
         target_numerator=target_numerator,
         target_denominator=target_denominator,
         standings=standings,
@@ -95,8 +107,10 @@ def render_number_bomb_result(
         f"总和：{calculation.total}",
         f"人数：{calculation.player_count}",
         f"平均值：{_decimal(calculation.total, calculation.player_count)}",
+        f"本轮随机倍率：×{_multiplier(calculation.multiplier_tenths)}",
         (
-            "最终数 F："
+            "最终数 F：平均值 × "
+            f"{_multiplier(calculation.multiplier_tenths)} = "
             f"{_decimal(calculation.target_numerator, calculation.target_denominator)}"
         ),
         "2. 偏离值排序（从大到小）",
@@ -146,3 +160,7 @@ def _result_names(calculation: NumberBombCalculation, result: str) -> str:
 def _decimal(numerator: int, denominator: int) -> str:
     value = Decimal(numerator) / Decimal(denominator)
     return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _multiplier(multiplier_tenths: int) -> str:
+    return f"{multiplier_tenths // 10}.{multiplier_tenths % 10}"

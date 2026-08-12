@@ -12,7 +12,7 @@ from dzmm_bot.runtime.contracts import InboundMessage
 BEIJING = ZoneInfo("Asia/Shanghai")
 
 
-def _service(*, red_packet_random=None):
+def _service(*, red_packet_random=None, number_bomb_random=None):
     from dzmm_bot.core.commands import GroupCommandHandler
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import Base
@@ -21,7 +21,11 @@ def _service(*, red_packet_random=None):
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
-    repository = CoreRepository(factory, red_packet_random=red_packet_random)
+    repository = CoreRepository(
+        factory,
+        red_packet_random=red_packet_random,
+        number_bomb_random=number_bomb_random,
+    )
     return CoreService(repository, GroupCommandHandler(repository)), repository, factory
 
 
@@ -210,8 +214,67 @@ def test_rename_command_reports_usage_validation_membership_and_no_change():
     assert "/修改名称 新名称" in _replies_for(factory, help_result.message_id)[0]
 
 
-def test_number_bomb_group_commands_start_join_and_reject_group_reports():
+def test_personal_profile_commands_edit_and_show_only_profile_text():
     service, repository, factory = _service()
+    now = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    repository.create_user("profile-player", "档案玩家", now, 20)
+
+    _receive(service, "profile-edit", "profile-player", "/编辑档案 喜欢桌游\n住在上海", now)
+    assert _latest_reply(factory) == "个人档案已更新。"
+    _receive(service, "profile-show", "profile-player", "/我的档案", now)
+    assert _latest_reply(factory) == "喜欢桌游\n住在上海"
+    assert repository.find_user("profile-player").balance == 10
+    assert repository.get_profile_settings().shared_labor == 4
+
+    help_result = _receive(
+        service, "profile-help", "profile-player", "/帮助 基础", now
+    )
+    help_reply = _replies_for(factory, help_result.message_id)[0]
+    assert "/编辑档案 档案内容" in help_reply
+    assert "/我的档案" in help_reply
+
+
+def test_personal_profile_commands_validate_membership_length_and_empty_state():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    repository.create_user("profile-player", "档案玩家", now, 20)
+
+    cases = (
+        ("profile-missing", "missing", "/编辑档案 内容", "请先用 /入职 名字 加入摸鱼公司。"),
+        ("profile-usage", "profile-player", "/编辑档案", "请用 /编辑档案 档案内容 更新个人档案。"),
+        ("profile-long", "profile-player", f"/编辑档案 {'字' * 801}", "个人档案不能超过 800 个字符。"),
+        ("profile-empty", "profile-player", "/我的档案", "你还没有填写个人档案，请发送 /编辑档案 档案内容"),
+    )
+    for message_id, sender, content, expected in cases:
+        _receive(service, message_id, sender, content, now)
+        assert _latest_reply(factory) == expected
+
+    _receive(service, "profile-max", "profile-player", f"/编辑档案 {'字' * 800}", now)
+    assert _latest_reply(factory) == "个人档案已更新。"
+
+
+def test_personal_profile_unchanged_and_resource_failures_do_not_partially_charge():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    repository.create_user("profile-player", "档案玩家", now, 10)
+
+    _receive(service, "profile-first", "profile-player", "/编辑档案 第一版", now)
+    _receive(service, "profile-same", "profile-player", "/编辑档案 第一版", now)
+    assert _latest_reply(factory) == "档案内容没有变化。"
+    assert repository.get_profile_settings().shared_labor == 4
+
+    _receive(service, "profile-poor", "profile-player", "/编辑档案 第二版", now)
+    assert _latest_reply(factory) == "余额不足，编辑档案需要 10 摸鱼币。"
+    assert repository.get_profile_settings().shared_labor == 4
+
+    repository.set_profile_settings(0, 0, expected_version=0)
+    _receive(service, "profile-no-labor", "profile-player", "/编辑档案 第二版", now)
+    assert _latest_reply(factory) == "当前公共人力不足，暂时无法编辑档案。"
+    assert repository.get_personal_profile("profile-player") == "第一版"
+
+
+def test_number_bomb_group_commands_start_join_and_reject_group_reports():
+    service, repository, factory = _service(number_bomb_random=Random(5))
     now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
     for index in range(1, 4):
         _receive(service, f"join-{index}", f"bomb-p{index}", f"/入职 炸弹{index}", now)
@@ -233,6 +296,12 @@ def test_number_bomb_group_commands_start_join_and_reject_group_reports():
     assert "第 1 轮 - 真心话" in started
     assert "参与者：炸弹1、炸弹2、炸弹3" in started
     assert started.count("请按这个格式报数给我 /报数 数字") == 3
+    assert "倍率" not in started
+    assert "×1.2" not in started
+
+    reminder = repository.run_number_bomb_jobs(now + timedelta(seconds=15))[0]
+    assert "倍率" not in reminder
+    assert "×1.2" not in reminder
 
     _receive(service, "group-report", "bomb-p1", "/报数 29", now)
     assert _latest_reply(factory) == "请私聊总监事发送 /报数 1-100，群内报数不会生效。"

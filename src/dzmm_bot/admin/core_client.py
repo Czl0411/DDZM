@@ -57,6 +57,14 @@ class AdminCorePort(Protocol):
 
     def set_game_settings(self, settings: dict) -> dict: ...
 
+    def get_profile_settings(self) -> dict: ...
+
+    def set_profile_settings(self, settings: dict) -> dict: ...
+
+    def get_personal_profile(self, platform_id: str) -> dict: ...
+
+    def set_personal_profile(self, platform_id: str, profile_text: str) -> dict: ...
+
     def get_ai_assistant_settings(self) -> dict: ...
 
     def set_ai_assistant_settings(self, settings: dict) -> dict: ...
@@ -289,6 +297,27 @@ class CoreClient:
 
     def set_game_settings(self, settings: dict) -> dict:
         response = self._client.patch("/internal/game/settings", json=settings)
+        response.raise_for_status()
+        return response.json()
+
+    def get_profile_settings(self) -> dict:
+        return self._get("/internal/game/profile-settings")
+
+    def set_profile_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/profile-settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_personal_profile(self, platform_id: str) -> dict:
+        return self._get(f"/internal/game/users/{platform_id}/profile")
+
+    def set_personal_profile(self, platform_id: str, profile_text: str) -> dict:
+        response = self._client.put(
+            f"/internal/game/users/{platform_id}/profile",
+            json={"profile_text": profile_text},
+        )
         response.raise_for_status()
         return response.json()
 

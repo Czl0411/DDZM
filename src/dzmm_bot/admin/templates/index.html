@@ -163,7 +163,7 @@
               <section id="settings-view" class="dashboard-view panel" hidden>
                 <p class="eyebrow">玩法配置</p>
                 <nav class="management-tabs" data-management-tabs="settings" aria-label="玩法配置分类"><button class="management-tab active" data-management-tab="economy" type="button">经济</button><button class="management-tab" data-management-tab="activity" type="button">活跃度与收益</button><button class="management-tab" data-management-tab="minigames" type="button">小游戏</button></nav>
-                <section class="management-pane" data-management-pane="economy"><div class="panel-heading"><div><h2>经济规则</h2><p class="muted">修改后会立即影响后续入职与打卡，不会改动已有员工余额。</p></div><button id="edit-settings" class="primary" type="button">编辑经济规则</button></div><div id="settings-card" class="settings-card" aria-live="polite"></div></section>
+                <section class="management-pane" data-management-pane="economy"><div class="panel-heading"><div><h2>经济规则</h2><p class="muted">修改后会立即影响后续入职与打卡，不会改动已有员工余额。</p></div><button id="edit-settings" class="primary" type="button">编辑经济规则</button></div><div id="settings-card" class="settings-card" aria-live="polite"></div><hr><div class="panel-heading"><div><h2>个人档案</h2><p class="muted">玩家编辑档案会消耗个人货币和全公司共享的人力。</p></div><button id="edit-profile-settings" class="primary" type="button">编辑档案设置</button></div><div id="profile-settings-card" class="settings-card" aria-live="polite"></div></section>
                 <section class="management-pane" data-management-pane="activity" hidden><div class="panel-heading"><div><h2>日活跃度</h2><p class="muted">配置等级门槛、每日奖励与今日收益榜推送时段。</p></div><button id="edit-activity-settings" class="primary" type="button">编辑日活跃度</button></div><div id="activity-settings-card" class="settings-card" aria-live="polite"></div></section>
                 <section class="management-pane" data-management-pane="minigames" hidden><div class="panel-heading"><div><h2>蹦蹦数字炸弹</h2><p class="muted">不限人数，参与者手动 /开始；每轮私聊报数，开局后不因无操作解散。</p></div><button id="edit-number-bomb-settings" class="primary" type="button">编辑小游戏规则</button></div><div id="number-bomb-settings-card" class="settings-card" aria-live="polite"></div><hr><div class="panel-heading"><div><h2>随机运气红包</h2><p class="muted">红包独立于游戏和随机事件；过期后自动退还尚未领取的金额。</p></div><button id="edit-red-packet-settings" class="primary" type="button">编辑红包规则</button></div><div id="red-packet-settings-card" class="settings-card" aria-live="polite"></div></section>
               </section>
@@ -331,6 +331,14 @@
         </div>
       </section>
     </div>
+    <div id="profile-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="profile-settings-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-profile-settings-modal></div>
+      <section class="template-modal-card">
+        <div class="template-modal-heading"><div><p class="eyebrow">玩法与资源</p><h2 id="profile-settings-modal-title">编辑档案设置</h2><p class="muted">保存会直接覆盖当前费用和公共人力。</p></div><button class="text-button" data-close-profile-settings-modal type="button">关闭</button></div>
+        <div class="event-input-grid"><label>每次编辑费用<input id="profile-settings-edit-cost" type="number" min="0" max="99999" required></label><label>当前公共人力<input id="profile-settings-shared-labor" type="number" min="0" max="99999" required></label></div>
+        <div class="template-modal-actions"><button class="secondary" data-close-profile-settings-modal type="button">取消</button><button id="save-profile-settings" class="primary" type="button">保存设置</button></div>
+      </section>
+    </div>
     <div id="number-bomb-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="number-bomb-settings-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-number-bomb-settings-modal></div>
       <section class="template-modal-card">
@@ -469,6 +477,13 @@
         <details><summary>旧版自由文本备份（只读）</summary><pre id="employee-memory-legacy-text" class="legacy-memory-text"></pre></details>
         <p id="employee-memory-updated-at" class="muted"></p>
         <div class="template-modal-actions"><button id="clear-employee-memory" class="danger-button" type="button">清空印象</button><button class="secondary" data-close-employee-memory-modal type="button">关闭</button></div>
+      </section>
+    </div>
+    <div id="employee-profile-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="employee-profile-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-employee-profile-modal></div>
+      <section class="template-modal-card employee-profile-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">员工档案</p><h2 id="employee-profile-modal-title">编辑个人档案</h2><p class="muted">管理员编辑或清空不扣员工余额，也不消耗公共人力。</p></div><button class="text-button" data-close-employee-profile-modal type="button">关闭</button></div>
+        <label>个人档案<textarea id="employee-profile-text" rows="10" maxlength="800" placeholder="尚未填写"></textarea></label>
+        <div class="template-modal-actions"><button class="secondary" data-close-employee-profile-modal type="button">取消</button><button id="save-employee-profile" class="primary" type="button">保存档案</button></div>
       </section>
     </div>
     <div id="ai-knowledge-card-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="ai-knowledge-card-modal-title" hidden>

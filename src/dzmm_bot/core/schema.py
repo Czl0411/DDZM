@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -119,6 +120,15 @@ class GameSettingsRecord(Base):
     onboarding_bonus: Mapped[int] = mapped_column(Integer, nullable=False)
     checkin_reward: Mapped[int] = mapped_column(Integer, nullable=False)
     weekly_attendance_reward: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ProfileSettingsRecord(Base):
+    __tablename__ = "profile_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    edit_cost: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    shared_labor: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class ActivityLevelRuleRecord(Base):
@@ -582,6 +592,10 @@ class NumberBombRoundRecord(Base):
     __tablename__ = "number_bomb_rounds"
     __table_args__ = (
         UniqueConstraint("game_id", "round_number", "attempt_number"),
+        CheckConstraint(
+            "multiplier_tenths IN (8, 9, 10, 11, 12)",
+            name="ck_number_bomb_round_multiplier_tenths",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -591,6 +605,9 @@ class NumberBombRoundRecord(Base):
     round_number: Mapped[int] = mapped_column(Integer, nullable=False)
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     punishment_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    multiplier_tenths: Mapped[int] = mapped_column(
+        Integer, default=8, nullable=False
+    )
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     total: Mapped[int | None] = mapped_column(Integer)
     player_count: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -887,6 +904,9 @@ class UserRecord(Base):
     display_name: Mapped[str] = mapped_column(String(64), nullable=False)
     employee_number: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
     balance: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    profile_text: Mapped[str] = mapped_column(
+        Text, default="", server_default="", nullable=False
+    )
     rank_id: Mapped[UUID | None] = mapped_column(ForeignKey("ranks.id"))
     department_id: Mapped[UUID | None] = mapped_column(ForeignKey("departments.id"))
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)

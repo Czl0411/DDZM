@@ -121,7 +121,7 @@ def test_undercover_state_machine_migration_backfills_and_downgrades(
         )
     command.stamp(config, "20260811_37")
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260811_38")
 
     inspector = inspect(engine)
     assert "undercover_abstentions" in inspector.get_table_names()

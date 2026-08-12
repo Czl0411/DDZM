@@ -44,6 +44,8 @@ from .api_models import (
     DirectInboundRoomsResponse,
     FailedRequest,
     GameSettingsResponse,
+    PersonalProfileResponse,
+    ProfileSettingsResponse,
     HealthResponse,
     HeartbeatRequest,
     HeartbeatResponse,
@@ -69,6 +71,8 @@ from .api_models import (
     SetAIKnowledgeCardRequest,
     UpdateAIPlayerImpressionRequest,
     SetGameSettingsRequest,
+    SetPersonalProfileRequest,
+    SetProfileSettingsRequest,
     RandomEventSettingsResponse,
     SetRandomEventSettingsRequest,
     RandomEventSceneResponse,
@@ -630,6 +634,87 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _game_settings_response(record)
+
+    @app.get(
+        "/internal/game/profile-settings", response_model=ProfileSettingsResponse
+    )
+    def profile_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> ProfileSettingsResponse:
+        settings = repository.get_profile_settings()
+        return ProfileSettingsResponse(
+            edit_cost=settings.edit_cost,
+            shared_labor=settings.shared_labor,
+            version=settings.version,
+        )
+
+    @app.patch(
+        "/internal/game/profile-settings", response_model=ProfileSettingsResponse
+    )
+    def set_profile_settings(
+        request: SetProfileSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> ProfileSettingsResponse:
+        try:
+            settings = repository.set_profile_settings(
+                request.edit_cost,
+                request.shared_labor,
+                expected_version=request.version,
+            )
+        except ValueError as error:
+            code = (
+                status.HTTP_409_CONFLICT
+                if "其他管理员" in str(error)
+                else status.HTTP_422_UNPROCESSABLE_CONTENT
+            )
+            raise HTTPException(code, str(error))
+        return ProfileSettingsResponse(
+            edit_cost=settings.edit_cost,
+            shared_labor=settings.shared_labor,
+            version=settings.version,
+        )
+
+    @app.get(
+        "/internal/game/users/{platform_id}/profile",
+        response_model=PersonalProfileResponse,
+    )
+    def personal_profile(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> PersonalProfileResponse:
+        user = repository.find_user(platform_id)
+        if user is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        return PersonalProfileResponse(
+            platform_id=user.platform_id,
+            display_name=user.display_name,
+            profile_text=user.profile_text,
+        )
+
+    @app.put(
+        "/internal/game/users/{platform_id}/profile",
+        response_model=PersonalProfileResponse,
+    )
+    def set_personal_profile(
+        platform_id: str,
+        request: SetPersonalProfileRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> PersonalProfileResponse:
+        try:
+            saved = repository.set_personal_profile_by_admin(
+                platform_id, request.profile_text
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        if not saved:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        user = repository.find_user(platform_id)
+        if user is None:
+            raise RuntimeError("saved profile user disappeared")
+        return PersonalProfileResponse(
+            platform_id=user.platform_id,
+            display_name=user.display_name,
+            profile_text=user.profile_text,
+        )
 
     @app.get(
         "/internal/game/ai-assistant/settings",

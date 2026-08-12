@@ -109,3 +109,15 @@ def test_number_bomb_random_multiplier_migration_backfills_and_downgrades(
         assert connection.execute(
             text("SELECT content FROM ai_knowledge_cards")
         ).scalar_one() == OLD_CONTENT
+
+    custom_content = "管理员自定义蹦蹦数字炸弹说明"
+    with engine.begin() as connection:
+        connection.execute(
+            text("UPDATE ai_knowledge_cards SET content = :content"),
+            {"content": custom_content},
+        )
+    command.upgrade(config, "20260812_40")
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT content FROM ai_knowledge_cards")
+        ).scalar_one() == custom_content

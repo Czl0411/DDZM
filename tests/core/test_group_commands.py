@@ -12,7 +12,7 @@ from dzmm_bot.runtime.contracts import InboundMessage
 BEIJING = ZoneInfo("Asia/Shanghai")
 
 
-def _service(*, red_packet_random=None):
+def _service(*, red_packet_random=None, number_bomb_random=None):
     from dzmm_bot.core.commands import GroupCommandHandler
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import Base
@@ -21,7 +21,11 @@ def _service(*, red_packet_random=None):
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
-    repository = CoreRepository(factory, red_packet_random=red_packet_random)
+    repository = CoreRepository(
+        factory,
+        red_packet_random=red_packet_random,
+        number_bomb_random=number_bomb_random,
+    )
     return CoreService(repository, GroupCommandHandler(repository)), repository, factory
 
 
@@ -270,7 +274,7 @@ def test_personal_profile_unchanged_and_resource_failures_do_not_partially_charg
 
 
 def test_number_bomb_group_commands_start_join_and_reject_group_reports():
-    service, repository, factory = _service()
+    service, repository, factory = _service(number_bomb_random=Random(5))
     now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
     for index in range(1, 4):
         _receive(service, f"join-{index}", f"bomb-p{index}", f"/入职 炸弹{index}", now)
@@ -292,6 +296,12 @@ def test_number_bomb_group_commands_start_join_and_reject_group_reports():
     assert "第 1 轮 - 真心话" in started
     assert "参与者：炸弹1、炸弹2、炸弹3" in started
     assert started.count("请按这个格式报数给我 /报数 数字") == 3
+    assert "倍率" not in started
+    assert "×1.2" not in started
+
+    reminder = repository.run_number_bomb_jobs(now + timedelta(seconds=15))[0]
+    assert "倍率" not in reminder
+    assert "×1.2" not in reminder
 
     _receive(service, "group-report", "bomb-p1", "/报数 29", now)
     assert _latest_reply(factory) == "请私聊总监事发送 /报数 1-100，群内报数不会生效。"

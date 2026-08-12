@@ -7,6 +7,12 @@ from sqlalchemy.orm import sessionmaker
 from dzmm_bot.runtime.contracts import InboundMessage
 
 
+class _FixedNumberBombRandom:
+    def choice(self, values):
+        assert 12 in values
+        return 12
+
+
 @pytest.fixture
 def session_factory():
     from dzmm_bot.core.schema import Base
@@ -115,7 +121,9 @@ def test_direct_number_bomb_reports_are_isolated_and_destination_aware(session_f
     from dzmm_bot.core.service import CoreService
 
     repository = CoreRepository(
-        session_factory, preserve_long_group_messages=True
+        session_factory,
+        preserve_long_group_messages=True,
+        number_bomb_random=_FixedNumberBombRandom(),
     )
     now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
     for index in range(1, 4):
@@ -160,6 +168,8 @@ def test_direct_number_bomb_reports_are_isolated_and_destination_aware(session_f
         None, "group",
     )
     assert "第 1 轮 - 真心话" in replies[1].text
+    assert "本轮随机倍率：×1.2" in replies[1].text
+    assert "最终数 F：平均值 × 1.2 = 60.00" in replies[1].text
 
 
 @pytest.mark.parametrize("content", ["/发红包 2 2", "/抢红包"])

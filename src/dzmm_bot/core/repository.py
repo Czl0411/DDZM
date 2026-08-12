@@ -658,10 +658,17 @@ class AIRankQuota:
 
 
 @dataclass(frozen=True)
+class AIConversationMessage:
+    role: str
+    content: str
+
+
+@dataclass(frozen=True)
 class ClaimedAIRequest:
     id: UUID
     lease_token: UUID
     system_prompt: str
+    history_messages: tuple[AIConversationMessage, ...]
     user_content: str
     max_response_chars: int
     timeout_seconds: int
@@ -2669,6 +2676,9 @@ class CoreRepository:
             )
             game_settings = session.get(GameSettingsRecord, 1)
             user_content = normalize_ai_mention(inbound.content)
+            history_messages = self._ai_conversation_history(
+                session, record, inbound
+            )
             active_token = self._active_session.set(session)
             try:
                 authoritative_context = self.build_ai_authoritative_context(
@@ -2702,10 +2712,61 @@ class CoreRepository:
                     authoritative_context=authoritative_context,
                     player_impressions=_format_player_impressions(impressions),
                 ),
+                history_messages=history_messages,
                 user_content=user_content,
                 max_response_chars=settings.max_response_chars,
                 timeout_seconds=settings.timeout_seconds,
             )
+
+    @staticmethod
+    def _ai_conversation_history(
+        session: Session,
+        current_request: AIRequestRecord,
+        current_inbound: InboundRecord,
+    ) -> tuple[AIConversationMessage, ...]:
+        if current_inbound.source_type != "group":
+            return ()
+        rows = list(
+            session.execute(
+                select(AIRequestRecord, InboundRecord)
+                .join(
+                    InboundRecord,
+                    InboundRecord.id == AIRequestRecord.inbound_message_id,
+                )
+                .where(
+                    AIRequestRecord.id != current_request.id,
+                    AIRequestRecord.user_id == current_request.user_id,
+                    AIRequestRecord.status == "completed",
+                    AIRequestRecord.result_text.is_not(None),
+                    func.length(func.trim(AIRequestRecord.result_text)) > 0,
+                    InboundRecord.source_type == "group",
+                    InboundRecord.chatroom_id == current_inbound.chatroom_id,
+                    InboundRecord.received_at < current_inbound.received_at,
+                )
+                .order_by(InboundRecord.received_at.desc(), AIRequestRecord.id.desc())
+                .limit(15)
+            )
+        )
+        recent_rows: list[tuple[AIRequestRecord, InboundRecord]] = []
+        next_received_at = current_inbound.received_at
+        for historical_request, historical_inbound in rows:
+            if next_received_at - historical_inbound.received_at > timedelta(minutes=20):
+                break
+            recent_rows.append((historical_request, historical_inbound))
+            next_received_at = historical_inbound.received_at
+        messages: list[AIConversationMessage] = []
+        for historical_request, historical_inbound in reversed(recent_rows):
+            messages.extend(
+                (
+                    AIConversationMessage(
+                        "user", normalize_ai_mention(historical_inbound.content)
+                    ),
+                    AIConversationMessage(
+                        "assistant", historical_request.result_text.strip()
+                    ),
+                )
+            )
+        return tuple(messages)
 
     def complete_ai_request(
         self,

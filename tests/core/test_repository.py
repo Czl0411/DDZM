@@ -2257,6 +2257,178 @@ def test_completed_ai_request_enqueues_one_existing_outbound_message(
         assert session.scalar(select(OutboundRecord.text)) == "收到"
 
 
+def _insert_completed_ai_turn(
+    repository,
+    session_factory,
+    *,
+    user,
+    platform_message_id,
+    question,
+    answer,
+    received_at,
+    chatroom_id,
+    status="completed",
+):
+    from dzmm_bot.core.schema import AIRequestRecord
+
+    inbound, _ = repository.accept_inbound(
+        InboundMessage(
+            platform_message_id,
+            user.platform_id,
+            f"@总监事 {question}",
+            received_at,
+            chatroom_id=chatroom_id,
+        )
+    )
+    with session_factory.begin() as session:
+        session.add(
+            AIRequestRecord(
+                inbound_message_id=inbound.id,
+                user_id=user.id,
+                status=status,
+                result_text=answer,
+                created_at=received_at,
+                completed_at=received_at if status == "completed" else None,
+            )
+        )
+
+
+def test_ai_claim_includes_latest_fifteen_completed_turns_in_order(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    user, _ = repository.create_user("history-player", "连续追问者", now, 0)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    for sequence in range(1, 17):
+        received_at = now + timedelta(seconds=sequence)
+        _insert_completed_ai_turn(
+            repository,
+            session_factory,
+            user=user,
+            platform_message_id=f"history-{sequence}",
+            question=f"问题 {sequence}",
+            answer=f"回答 {sequence}",
+            received_at=received_at,
+            chatroom_id="room-a",
+        )
+    current_at = now + timedelta(seconds=17)
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "history-current",
+            user.platform_id,
+            "@总监事 那然后呢",
+            current_at,
+            chatroom_id="room-a",
+        )
+    )
+    assert repository.try_enqueue_ai_request(
+        current.id, user.platform_id, current.content, current_at
+    ).state == "queued"
+
+    claim = repository.claim_ai_request("ai-worker", current_at, 90)
+
+    assert claim is not None
+    assert [(item.role, item.content) for item in claim.history_messages] == [
+        pair
+        for sequence in range(2, 17)
+        for pair in (("user", f"问题 {sequence}"), ("assistant", f"回答 {sequence}"))
+    ]
+
+
+def test_ai_claim_excludes_cross_session_and_unsuccessful_history(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    user, _ = repository.create_user("isolated-player", "隔离玩家", now, 0)
+    other, _ = repository.create_user("other-player", "其他玩家", now, 0)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    cases = (
+        (user, "valid", "同群有效问题", "同群有效回答", now - timedelta(minutes=1), "room-a", "completed"),
+        (other, "other-player", "其他玩家问题", "其他玩家回答", now - timedelta(minutes=1), "room-a", "completed"),
+        (user, "other-room", "其他群问题", "其他群回答", now - timedelta(minutes=1), "room-b", "completed"),
+        (user, "expired", "过期问题", "过期回答", now - timedelta(minutes=22), "room-a", "completed"),
+        (user, "failed", "失败问题", None, now - timedelta(seconds=40), "room-a", "failed"),
+        (user, "pending", "待处理问题", None, now - timedelta(seconds=30), "room-a", "pending"),
+        (user, "blank", "空回答问题", "   ", now - timedelta(seconds=20), "room-a", "completed"),
+    )
+    for owner, message_id, question, answer, received_at, room, status in cases:
+        _insert_completed_ai_turn(
+            repository,
+            session_factory,
+            user=owner,
+            platform_message_id=message_id,
+            question=question,
+            answer=answer,
+            received_at=received_at,
+            chatroom_id=room,
+            status=status,
+        )
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "isolated-current",
+            user.platform_id,
+            "@总监事 继续",
+            now,
+            chatroom_id="room-a",
+        )
+    )
+    assert repository.try_enqueue_ai_request(
+        current.id, user.platform_id, current.content, now
+    ).state == "queued"
+
+    claim = repository.claim_ai_request("ai-worker", now, 90)
+
+    assert claim is not None
+    assert [(item.role, item.content) for item in claim.history_messages] == [
+        ("user", "同群有效问题"),
+        ("assistant", "同群有效回答"),
+    ]
+
+
+def test_ai_claim_does_not_attach_group_history_to_direct_messages(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    user, _ = repository.create_user("direct-player", "私聊玩家", now, 0)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    _insert_completed_ai_turn(
+        repository,
+        session_factory,
+        user=user,
+        platform_message_id="direct-history",
+        question="群聊问题",
+        answer="群聊回答",
+        received_at=now - timedelta(minutes=1),
+        chatroom_id=None,
+    )
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "direct-current",
+            user.platform_id,
+            "@总监事 私聊问题",
+            now,
+            source_type="direct",
+        )
+    )
+    assert repository.try_enqueue_ai_request(
+        current.id, user.platform_id, current.content, now
+    ).state == "queued"
+
+    claim = repository.claim_ai_request("ai-worker", now, 90)
+
+    assert claim is not None
+    assert claim.history_messages == ()
+
+
 def test_ai_prompt_uses_stable_and_pinned_impressions_but_not_legacy_memory(
     repository, session_factory, now
 ):

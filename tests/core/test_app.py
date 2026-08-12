@@ -1119,6 +1119,67 @@ def test_game_command_template_rejects_an_unsupported_variable(client, headers):
     assert response.status_code == 422
 
 
+def test_personal_profile_settings_and_admin_profile_endpoints(app_context, headers):
+    app_context.repository.create_user("profile-api", "档案员工", NOW, 30)
+
+    initial = app_context.client.get(
+        "/internal/game/profile-settings", headers=headers
+    )
+    updated = app_context.client.patch(
+        "/internal/game/profile-settings",
+        headers=headers,
+        json={"edit_cost": 12, "shared_labor": 8, "version": 0},
+    )
+    shown = app_context.client.get(
+        "/internal/game/users/profile-api/profile", headers=headers
+    )
+    saved = app_context.client.put(
+        "/internal/game/users/profile-api/profile",
+        headers=headers,
+        json={"profile_text": "管理员填写"},
+    )
+    cleared = app_context.client.put(
+        "/internal/game/users/profile-api/profile",
+        headers=headers,
+        json={"profile_text": ""},
+    )
+
+    assert initial.json() == {"edit_cost": 10, "shared_labor": 5, "version": 0}
+    assert updated.json() == {"edit_cost": 12, "shared_labor": 8, "version": 1}
+    assert shown.json()["profile_text"] == ""
+    assert saved.json()["profile_text"] == "管理员填写"
+    assert cleared.json()["profile_text"] == ""
+    assert app_context.repository.find_user("profile-api").balance == 30
+    assert app_context.repository.get_profile_settings().shared_labor == 8
+
+
+def test_personal_profile_admin_endpoints_validate_conflicts_and_limits(app_context, headers):
+    app_context.repository.create_user("profile-api", "档案员工", NOW, 30)
+    first = app_context.client.patch(
+        "/internal/game/profile-settings",
+        headers=headers,
+        json={"edit_cost": 0, "shared_labor": 99999, "version": 0},
+    )
+    stale = app_context.client.patch(
+        "/internal/game/profile-settings",
+        headers=headers,
+        json={"edit_cost": 1, "shared_labor": 1, "version": 0},
+    )
+    too_long = app_context.client.put(
+        "/internal/game/users/profile-api/profile",
+        headers=headers,
+        json={"profile_text": "字" * 801},
+    )
+    missing = app_context.client.get(
+        "/internal/game/users/missing/profile", headers=headers
+    )
+
+    assert first.status_code == 200
+    assert stale.status_code == 409
+    assert too_long.status_code == 422
+    assert missing.status_code == 404
+
+
 def test_core_server_factory_enforces_local_settings_port(app_context):
     from dzmm_bot.core.app import create_server
     from dzmm_bot.runtime.settings import Settings

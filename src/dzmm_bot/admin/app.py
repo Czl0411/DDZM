@@ -602,6 +602,66 @@ def create_app(
             scope="game-settings",
         )
 
+    @app.get("/api/game/profile-settings")
+    def profile_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return _relay_core(core.get_profile_settings)
+
+    @app.patch("/api/game/profile-settings")
+    def set_profile_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[
+            str | None, Header(alias="Idempotency-Key")
+        ] = None,
+    ) -> JSONResponse:
+        if set(request) != {"edit_cost", "shared_labor", "version"}:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid profile settings"
+            )
+        if any(
+            isinstance(request[key], bool) or not isinstance(request[key], int)
+            for key in request
+        ) or not (
+            0 <= request["edit_cost"] <= 99999
+            and 0 <= request["shared_labor"] <= 99999
+            and request["version"] >= 0
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid profile settings"
+            )
+        return idempotent_response(
+            identity,
+            idempotency_key,
+            lambda: (200, _relay_core(lambda: core.set_profile_settings(request))),
+            scope="profile-settings",
+        )
+
+    @app.get("/api/game/users/{platform_id}/profile")
+    def personal_profile(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        return _relay_core(lambda: core.get_personal_profile(platform_id))
+
+    @app.put("/api/game/users/{platform_id}/profile")
+    def set_personal_profile(
+        platform_id: str,
+        request: dict,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        if (
+            set(request) != {"profile_text"}
+            or not isinstance(request["profile_text"], str)
+            or len(request["profile_text"].strip()) > 800
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid personal profile"
+            )
+        return _relay_core(
+            lambda: core.set_personal_profile(
+                platform_id, request["profile_text"]
+            )
+        )
+
     @app.get("/api/game/number-bomb/settings")
     def number_bomb_settings(
         _: Annotated[None, Depends(authorize)],

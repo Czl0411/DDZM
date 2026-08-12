@@ -312,6 +312,26 @@ class SetGameSettingsRequest(ApiModel):
     weekly_attendance_reward: int = Field(ge=0, le=999)
 
 
+class ProfileSettingsResponse(ApiModel):
+    edit_cost: int = Field(ge=0, le=99999)
+    shared_labor: int = Field(ge=0, le=99999)
+    version: int = Field(ge=0)
+
+
+class SetProfileSettingsRequest(ProfileSettingsResponse):
+    pass
+
+
+class PersonalProfileResponse(ApiModel):
+    platform_id: str
+    display_name: str
+    profile_text: str = Field(max_length=800)
+
+
+class SetPersonalProfileRequest(ApiModel):
+    profile_text: str = Field(max_length=800)
+
+
 class AIRankQuotaResponse(ApiModel):
     rank_id: UUID
     rank_name: str

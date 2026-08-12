@@ -9,6 +9,7 @@ let currentListeningDesired = null;
 let consoleLoading = false;
 let refreshLoading = false;
 let gameSettings = null;
+let profileSettings = null;
 let activitySettings = null;
 let numberBombSettings = null;
 let redPacketSettings = null;
@@ -241,6 +242,7 @@ const templateModalScenario = document.querySelector("#template-modal-scenario")
 const templateModalInput = document.querySelector("#template-modal-input");
 const templateModalVariables = document.querySelector("#template-modal-variables");
 const settingsModal = document.querySelector("#settings-modal");
+const profileSettingsModal = document.querySelector("#profile-settings-modal");
 const settingsCurrencyName = document.querySelector("#settings-currency-name");
 const settingsOnboardingBonus = document.querySelector("#settings-onboarding-bonus");
 const settingsCheckinReward = document.querySelector("#settings-checkin-reward");
@@ -272,6 +274,7 @@ const blameBombSettingsModal = document.querySelector("#blame-bomb-settings-moda
 const blameIncidentModal = document.querySelector("#blame-incident-modal");
 const aiAssistantSettingsModal = document.querySelector("#ai-assistant-settings-modal");
 const employeeMemoryModal = document.querySelector("#employee-memory-modal");
+const employeeProfileModal = document.querySelector("#employee-profile-modal");
 const aiKnowledgeCardModal = document.querySelector("#ai-knowledge-card-modal");
 const rankModal = document.querySelector("#rank-modal");
 const departmentModal = document.querySelector("#department-modal");
@@ -370,6 +373,11 @@ function closeTemplateModal() {
 function closeSettingsModal() {
   settingsModal.hidden = true;
 }
+function closeProfileSettingsModal() { profileSettingsModal.hidden = true; }
+function closeEmployeeProfileModal() {
+  employeeProfileModal.hidden = true;
+  delete employeeProfileModal.dataset.platformId;
+}
 
 function closeActivitySettingsModal() {
   activitySettingsModal.hidden = true;
@@ -411,6 +419,12 @@ function renderSettings(settings) {
     <article><span>入职初始余额</span><strong>${settings.onboarding_bonus}</strong><small>仅影响之后新入职的员工</small></article>
     <article><span>每日打卡奖励</span><strong>${settings.checkin_reward}</strong><small>${escapeHtml(settings.reset_time_label)} 重置</small></article>
     <article><span>每周全勤奖</span><strong>${settings.weekly_attendance_reward}</strong><small>上周全勤于周一自动入账</small></article>`;
+}
+
+function renderProfileSettings(settings) {
+  document.querySelector("#profile-settings-card").innerHTML = `
+    <article><span>每次编辑费用</span><strong>${settings.edit_cost}</strong><small>从编辑者个人余额扣除</small></article>
+    <article><span>当前公共人力</span><strong>${settings.shared_labor}</strong><small>每次成功编辑消耗 1 点</small></article>`;
 }
 
 function renderActivitySettings(settings) {
@@ -992,6 +1006,27 @@ async function loadSettings() {
   return gameSettings;
 }
 
+async function loadProfileSettings() {
+  profileSettings = await requestGame("/api/game/profile-settings");
+  renderProfileSettings(profileSettings);
+  return profileSettings;
+}
+
+async function openProfileSettingsModal() {
+  const settings = profileSettings || await loadProfileSettings();
+  document.querySelector("#profile-settings-edit-cost").value = settings.edit_cost;
+  document.querySelector("#profile-settings-shared-labor").value = settings.shared_labor;
+  profileSettingsModal.hidden = false;
+}
+
+async function openEmployeeProfileModal(platformId, displayName) {
+  const profile = await requestGame(`/api/game/users/${platformId}/profile`);
+  employeeProfileModal.dataset.platformId = platformId;
+  document.querySelector("#employee-profile-modal-title").textContent = `编辑档案：${displayName}`;
+  document.querySelector("#employee-profile-text").value = profile.profile_text;
+  employeeProfileModal.hidden = false;
+}
+
 async function loadActivitySettings() {
   activitySettings = await requestGame("/api/game/activity-settings");
   configurationVersion = activitySettings.version;
@@ -1148,7 +1183,7 @@ async function loadEmployees(page = employeePage) {
   employeePage = employees.page;
   const filtered = filterList("employees", employees.items, (employee) => `${employee.display_name} ${formatEmployeeNumber(employee.employee_number)} ${employee.employee_number} ${employee.rank_name || ""} ${employee.department_name || ""}`);
   document.querySelector("#employee-list").innerHTML = filtered.map((employee) => `
-    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>工号：${formatEmployeeNumber(employee.employee_number)} · ${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong><button class="secondary" data-ai-memory="${escapeHtml(employee.platform_id)}" data-ai-memory-name="${escapeHtml(employee.display_name)}" type="button">AI 记忆</button>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
+    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>工号：${formatEmployeeNumber(employee.employee_number)} · ${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong><button class="secondary" data-personal-profile="${escapeHtml(employee.platform_id)}" data-personal-profile-name="${escapeHtml(employee.display_name)}" type="button">档案</button><button class="secondary" data-ai-memory="${escapeHtml(employee.platform_id)}" data-ai-memory-name="${escapeHtml(employee.display_name)}" type="button">AI 记忆</button>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
   renderPagination(document.querySelector("#employee-pagination"), employees, "位员工", loadEmployees);
 }
 
@@ -1307,7 +1342,7 @@ async function loadGameView(view) {
   try {
     if (view === "overview") return refresh();
     if (view === "settings") {
-      await Promise.all([loadSettings(), loadActivitySettings(), loadNumberBombSettings(), loadRedPacketSettings()]);
+      await Promise.all([loadSettings(), loadProfileSettings(), loadActivitySettings(), loadNumberBombSettings(), loadRedPacketSettings()]);
       return;
     }
     if (view === "events") return loadRandomEvents();
@@ -1550,6 +1585,7 @@ document.querySelector("#cancel-login").addEventListener("click", async (event) 
   }
 });
 document.querySelector("#edit-settings").addEventListener("click", () => void openSettingsModal());
+document.querySelector("#edit-profile-settings").addEventListener("click", () => void openProfileSettingsModal());
 document.querySelector("#edit-activity-settings").addEventListener("click", () => void openActivitySettingsModal());
 document.querySelector("#edit-number-bomb-settings").addEventListener("click", () => void openNumberBombSettingsModal());
 document.querySelector("#edit-red-packet-settings").addEventListener("click", () => void openRedPacketSettingsModal());
@@ -1585,6 +1621,18 @@ for (const button of document.querySelectorAll(".nav-item")) {
   button.addEventListener("click", () => void loadGameView(button.dataset.view));
 }
 document.querySelector("#employee-list").addEventListener("click", async (event) => {
+  const profileButton = event.target.closest("button[data-personal-profile]");
+  if (profileButton) {
+    try {
+      await openEmployeeProfileModal(
+        profileButton.dataset.personalProfile,
+        profileButton.dataset.personalProfileName,
+      );
+    } catch (error) {
+      setResult(`读取员工档案失败（${error.message}）`, "error");
+    }
+    return;
+  }
   const memoryButton = event.target.closest("button[data-ai-memory]");
   if (memoryButton) {
     try {
@@ -1784,6 +1832,52 @@ settingsModal.addEventListener("click", async (event) => {
       closeSettingsModal();
     });
     setResult("经济规则已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+profileSettingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-profile-settings-modal]")) {
+    closeProfileSettingsModal();
+    return;
+  }
+  if (event.target.id !== "save-profile-settings") return;
+  try {
+    await runMutation(event.target, "保存中…", async () => {
+      profileSettings = await requestGame("/api/game/profile-settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          edit_cost: Number(document.querySelector("#profile-settings-edit-cost").value),
+          shared_labor: Number(document.querySelector("#profile-settings-shared-labor").value),
+          version: profileSettings.version,
+        }),
+      });
+      renderProfileSettings(profileSettings);
+      closeProfileSettingsModal();
+    });
+    setResult("档案设置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}），请刷新后重试`, "error");
+  }
+});
+employeeProfileModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-employee-profile-modal]")) {
+    closeEmployeeProfileModal();
+    return;
+  }
+  if (event.target.id !== "save-employee-profile") return;
+  const platformId = employeeProfileModal.dataset.platformId;
+  try {
+    await runMutation(event.target, "保存中…", async () => {
+      await requestGame(`/api/game/users/${platformId}/profile`, {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({profile_text: document.querySelector("#employee-profile-text").value}),
+      });
+      closeEmployeeProfileModal();
+    });
+    setResult("员工档案已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
   }
@@ -2638,6 +2732,8 @@ document.querySelector("#hide-and-seek-scene-list").addEventListener("click", as
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !templateModal.hidden) closeTemplateModal();
   if (event.key === "Escape" && !settingsModal.hidden) closeSettingsModal();
+  if (event.key === "Escape" && !profileSettingsModal.hidden) closeProfileSettingsModal();
+  if (event.key === "Escape" && !employeeProfileModal.hidden) closeEmployeeProfileModal();
   if (event.key === "Escape" && !randomEventDetailsModal.hidden) randomEventDetailsModal.hidden = true;
   if (event.key === "Escape" && !activitySettingsModal.hidden) closeActivitySettingsModal();
   if (event.key === "Escape" && !numberBombSettingsModal.hidden) closeNumberBombSettingsModal();

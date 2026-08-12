@@ -9,7 +9,7 @@ from secrets import choice, randbelow
 import unicodedata
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, exists, func, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, aliased, sessionmaker
@@ -2741,7 +2741,13 @@ class CoreRepository:
                     func.length(func.trim(AIRequestRecord.result_text)) > 0,
                     InboundRecord.source_type == "group",
                     InboundRecord.chatroom_id == current_inbound.chatroom_id,
-                    InboundRecord.received_at < current_inbound.received_at,
+                    or_(
+                        InboundRecord.received_at < current_inbound.received_at,
+                        and_(
+                            InboundRecord.received_at == current_inbound.received_at,
+                            AIRequestRecord.created_at < current_request.created_at,
+                        ),
+                    ),
                 )
                 .order_by(InboundRecord.received_at.desc(), AIRequestRecord.id.desc())
                 .limit(15)

@@ -2268,6 +2268,7 @@ def _insert_completed_ai_turn(
     received_at,
     chatroom_id,
     status="completed",
+    request_created_at=None,
 ):
     from dzmm_bot.core.schema import AIRequestRecord
 
@@ -2287,7 +2288,7 @@ def _insert_completed_ai_turn(
                 user_id=user.id,
                 status=status,
                 result_text=answer,
-                created_at=received_at,
+                created_at=request_created_at or received_at,
                 completed_at=received_at if status == "completed" else None,
             )
         )
@@ -2427,6 +2428,48 @@ def test_ai_claim_does_not_attach_group_history_to_direct_messages(
 
     assert claim is not None
     assert claim.history_messages == ()
+
+
+def test_ai_claim_includes_completed_turn_with_same_inbound_timestamp(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    user, _ = repository.create_user("rapid-player", "快速追问者", now, 0)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    _insert_completed_ai_turn(
+        repository,
+        session_factory,
+        user=user,
+        platform_message_id="rapid-history",
+        question="第一问",
+        answer="第一答",
+        received_at=now,
+        request_created_at=now - timedelta(microseconds=1),
+        chatroom_id="room-rapid",
+    )
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "rapid-current",
+            user.platform_id,
+            "@总监事 继续",
+            now,
+            chatroom_id="room-rapid",
+        )
+    )
+    assert repository.try_enqueue_ai_request(
+        current.id, user.platform_id, current.content, now
+    ).state == "queued"
+
+    claim = repository.claim_ai_request("ai-worker", now, 90)
+
+    assert claim is not None
+    assert [(item.role, item.content) for item in claim.history_messages] == [
+        ("user", "第一问"),
+        ("assistant", "第一答"),
+    ]
 
 
 def test_ai_prompt_uses_stable_and_pinned_impressions_but_not_legacy_memory(

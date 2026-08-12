@@ -81,6 +81,16 @@ def test_command_registry_exposes_exact_enabled_syntax(repository):
     assert commands["/发红包"] == "/发红包 人数 总金额"
     assert commands["/抢红包"] == "/抢红包"
     assert commands["/修改名称"] == "/修改名称 新名称"
+    assert commands["/部门人数"] == "/部门人数"
+    assert commands["/我的部门人数"] == "/我的部门人数"
+
+
+@pytest.mark.parametrize("command", ("/部门人数", "/我的部门人数"))
+def test_department_headcount_reply_templates_are_managed(repository, command):
+    assert {
+        template.scenario
+        for template in repository.list_reply_templates(command)
+    } == {"shown", "not_joined"}
 
 
 def test_rename_reply_templates_are_managed(repository):

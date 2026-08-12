@@ -234,6 +234,54 @@ def repository(session_factory):
     return CoreRepository(session_factory)
 
 
+def test_personal_profile_defaults_and_atomic_edit(repository, now):
+    repository.create_user("profile-player", "档案玩家", now, 30)
+
+    settings = repository.get_profile_settings()
+    assert (settings.edit_cost, settings.shared_labor, settings.version) == (10, 5, 0)
+    result = repository.edit_own_profile("profile-player", "喜欢桌游")
+
+    assert (result.status, result.profile_text, result.cost) == (
+        "updated", "喜欢桌游", 10,
+    )
+    assert repository.find_user("profile-player").balance == 20
+    assert repository.get_profile_settings().shared_labor == 4
+    assert repository.get_personal_profile("profile-player") == "喜欢桌游"
+
+
+def test_personal_profile_rejects_unchanged_and_missing_resources(repository, now):
+    repository.create_user("profile-player", "档案玩家", now, 10)
+    assert repository.edit_own_profile("missing", "内容").status == "not_joined"
+    assert repository.edit_own_profile("profile-player", "第一版").status == "updated"
+    assert repository.edit_own_profile("profile-player", "第一版").status == "unchanged"
+    assert repository.edit_own_profile("profile-player", "第二版").status == "insufficient_balance"
+    assert repository.get_profile_settings().shared_labor == 4
+    assert repository.get_personal_profile("profile-player") == "第一版"
+
+    repository.set_profile_settings(0, 0, expected_version=0)
+    assert repository.edit_own_profile("profile-player", "第二版").status == "insufficient_labor"
+    assert repository.get_personal_profile("profile-player") == "第一版"
+
+
+def test_profile_settings_are_versioned_and_admin_profile_writes_are_free(repository, now):
+    repository.create_user("profile-player", "档案玩家", now, 30)
+    updated = repository.set_profile_settings(7, 9, expected_version=0)
+    assert (updated.edit_cost, updated.shared_labor, updated.version) == (7, 9, 1)
+    with pytest.raises(ValueError, match="配置已被其他管理员修改"):
+        repository.set_profile_settings(8, 10, expected_version=0)
+    for invalid in (-1, 100000):
+        with pytest.raises(ValueError):
+            repository.set_profile_settings(invalid, 1, expected_version=1)
+        with pytest.raises(ValueError):
+            repository.set_profile_settings(1, invalid, expected_version=1)
+
+    assert repository.set_personal_profile_by_admin("profile-player", "管理员填写") is True
+    assert repository.set_personal_profile_by_admin("profile-player", "") is True
+    assert repository.set_personal_profile_by_admin("missing", "内容") is False
+    assert repository.find_user("profile-player").balance == 30
+    assert repository.get_profile_settings().shared_labor == 9
+
+
 def test_employee_number_format_uses_four_digit_minimum_without_truncation():
     from dzmm_bot.core.repository import format_employee_number
 

@@ -121,6 +121,15 @@ class GameSettingsRecord(Base):
     weekly_attendance_reward: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class ProfileSettingsRecord(Base):
+    __tablename__ = "profile_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    edit_cost: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    shared_labor: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class ActivityLevelRuleRecord(Base):
     __tablename__ = "activity_level_rules"
 
@@ -887,6 +896,9 @@ class UserRecord(Base):
     display_name: Mapped[str] = mapped_column(String(64), nullable=False)
     employee_number: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
     balance: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    profile_text: Mapped[str] = mapped_column(
+        Text, default="", server_default="", nullable=False
+    )
     rank_id: Mapped[UUID | None] = mapped_column(ForeignKey("ranks.id"))
     department_id: Mapped[UUID | None] = mapped_column(ForeignKey("departments.id"))
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)

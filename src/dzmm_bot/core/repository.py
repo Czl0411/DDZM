@@ -121,6 +121,7 @@ from .schema import (
     RankRecord,
     PromotionApprovalRecord,
     PromotionRequestRecord,
+    ProfileSettingsRecord,
     RedPacketDailyStartRecord,
     RedPacketRecord,
     RedPacketSettingsRecord,
@@ -341,6 +342,20 @@ class ActivityLevelRule:
 class ActivitySettings:
     rules: list[ActivityLevelRule]
     report_times: list[str]
+
+
+@dataclass(frozen=True)
+class ProfileSettings:
+    edit_cost: int
+    shared_labor: int
+    version: int
+
+
+@dataclass(frozen=True)
+class ProfileEditResult:
+    status: str
+    profile_text: str = ""
+    cost: int = 0
 
 
 @dataclass(frozen=True)
@@ -9652,6 +9667,118 @@ class CoreRepository:
             record.weekly_attendance_reward = weekly_attendance_reward
             session.flush()
             return record
+
+    @staticmethod
+    def _profile_settings(session: Session) -> ProfileSettingsRecord:
+        record = session.get(ProfileSettingsRecord, 1)
+        if record is None:
+            record = ProfileSettingsRecord(
+                id=1, edit_cost=10, shared_labor=5, version=0
+            )
+            session.add(record)
+            session.flush()
+        return record
+
+    def get_profile_settings(self) -> ProfileSettings:
+        with self._session() as session:
+            record = self._profile_settings(session)
+            return ProfileSettings(
+                edit_cost=record.edit_cost,
+                shared_labor=record.shared_labor,
+                version=record.version,
+            )
+
+    def set_profile_settings(
+        self, edit_cost: int, shared_labor: int, *, expected_version: int
+    ) -> ProfileSettings:
+        if not 0 <= edit_cost <= 99999:
+            raise ValueError("档案编辑费用需在 0 至 99999 之间")
+        if not 0 <= shared_labor <= 99999:
+            raise ValueError("公共人力需在 0 至 99999 之间")
+        with self._session() as session:
+            record = self._profile_settings(session)
+            if record.version != expected_version:
+                raise ValueError("配置已被其他管理员修改")
+            record.edit_cost = edit_cost
+            record.shared_labor = shared_labor
+            record.version += 1
+            session.flush()
+            return ProfileSettings(
+                edit_cost=record.edit_cost,
+                shared_labor=record.shared_labor,
+                version=record.version,
+            )
+
+    def get_personal_profile(self, platform_id: str) -> str | None:
+        with self._session() as session:
+            return session.scalar(
+                select(UserRecord.profile_text).where(
+                    UserRecord.platform_id == platform_id
+                )
+            )
+
+    def edit_own_profile(
+        self, platform_id: str, profile_text: str
+    ) -> ProfileEditResult:
+        normalized = profile_text.strip()
+        if not normalized or len(normalized) > 800:
+            raise ValueError("个人档案需为 1 至 800 个字符")
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return ProfileEditResult("not_joined")
+                if user.profile_text == normalized:
+                    return ProfileEditResult(
+                        "unchanged", profile_text=user.profile_text
+                    )
+                settings = session.scalar(
+                    select(ProfileSettingsRecord)
+                    .where(ProfileSettingsRecord.id == 1)
+                    .with_for_update()
+                )
+                if settings is None:
+                    settings = self._profile_settings(session)
+                if user.balance < settings.edit_cost:
+                    return ProfileEditResult("insufficient_balance")
+                if settings.shared_labor < 1:
+                    return ProfileEditResult("insufficient_labor")
+                self._apply_balance_change(
+                    user,
+                    -settings.edit_cost,
+                    "profile_edit",
+                    datetime.now(BEIJING),
+                )
+                settings.shared_labor -= 1
+                user.profile_text = normalized
+                session.flush()
+                return ProfileEditResult(
+                    "updated",
+                    profile_text=normalized,
+                    cost=settings.edit_cost,
+                )
+
+    def set_personal_profile_by_admin(
+        self, platform_id: str, profile_text: str
+    ) -> bool:
+        normalized = profile_text.strip()
+        if len(normalized) > 800:
+            raise ValueError("个人档案不能超过 800 个字符")
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord)
+                .where(UserRecord.platform_id == platform_id)
+                .with_for_update()
+            )
+            if user is None:
+                return False
+            user.profile_text = normalized
+            session.flush()
+            return True
 
     def find_user(self, platform_id: str) -> UserRecord | None:
         with self._session() as session:

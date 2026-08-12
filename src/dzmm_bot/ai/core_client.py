@@ -9,10 +9,17 @@ from .impressions import AIImpressionOperation
 
 
 @dataclass(frozen=True)
+class AIConversationMessage:
+    role: str
+    content: str
+
+
+@dataclass(frozen=True)
 class AIClaim:
     id: UUID
     lease_token: UUID
     system_prompt: str
+    history_messages: tuple[AIConversationMessage, ...]
     user_content: str
     max_response_chars: int
     timeout_seconds: int
@@ -123,6 +130,13 @@ class AICoreClient:
             id=UUID(data["id"]),
             lease_token=UUID(data["lease_token"]),
             system_prompt=data["system_prompt"],
+            history_messages=tuple(
+                AIConversationMessage(
+                    role=item["role"],
+                    content=item["content"],
+                )
+                for item in data.get("history_messages", [])
+            ),
             user_content=data["user_content"],
             max_response_chars=data["max_response_chars"],
             timeout_seconds=data["timeout_seconds"],

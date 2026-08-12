@@ -566,6 +566,7 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
             "sender_platform_id": "ai-user",
             "content": "@总监事 今天适合摸鱼吗？",
             "received_at": NOW.isoformat(),
+            "chatroom_id": "room-ai",
         },
     )
     claim = app_context.client.post(
@@ -580,6 +581,7 @@ def test_ai_assistant_settings_and_lease_api_are_secret_free_and_fenced(
     assert queued.status_code == 200
     assert claim.status_code == 200
     assert claim.json()["user_content"] == "今天适合摸鱼吗？"
+    assert claim.json()["history_messages"] == []
     assert claim.json()["max_response_chars"] == 10000
     assert "key" not in claim.text.lower()
 

@@ -15,6 +15,7 @@ from dzmm_bot.ai.impressions import AIImpressionOperation
 from .api_models import (
     AcceptedResponse,
     AIClaimResponse,
+    AIConversationMessageResponse,
     AIKnowledgeCardResponse,
     AIActivityFactResponse,
     AIPlayerImpressionResponse,
@@ -821,6 +822,13 @@ def create_app(
             id=record.id,
             lease_token=record.lease_token,
             system_prompt=record.system_prompt,
+            history_messages=[
+                AIConversationMessageResponse(
+                    role=message.role,
+                    content=message.content,
+                )
+                for message in record.history_messages
+            ],
             user_content=record.user_content,
             max_response_chars=record.max_response_chars,
             timeout_seconds=record.timeout_seconds,

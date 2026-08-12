@@ -436,10 +436,16 @@ class UpdateAIPlayerImpressionRequest(ApiModel):
     pinned: bool
 
 
+class AIConversationMessageResponse(ApiModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class AIClaimResponse(ApiModel):
     id: UUID
     lease_token: UUID
     system_prompt: str
+    history_messages: list[AIConversationMessageResponse]
     user_content: str
     max_response_chars: int = Field(ge=1, le=10000)
     timeout_seconds: int = Field(ge=1, le=60)

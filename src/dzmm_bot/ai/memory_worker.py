@@ -57,14 +57,15 @@ class AIMemoryWorker:
             operations = parse_impression_operations(response)
             candidate_ids = {candidate.id for candidate in claim.candidates}
             entry_ids = {entry.id for entry in claim.stable_entries}
-            if any(
-                operation.candidate_id is not None
-                and operation.candidate_id not in candidate_ids
-                or operation.entry_id is not None
-                and operation.entry_id not in entry_ids
+            operations = tuple(
+                operation
                 for operation in operations
-            ):
-                raise ValueError("印象引用不属于当前任务")
+                if (
+                    operation.candidate_id is None
+                    or operation.candidate_id in candidate_ids
+                )
+                and (operation.entry_id is None or operation.entry_id in entry_ids)
+            )
         except DeepSeekCallError as error:
             self._core.fail_ai_memory_job(
                 claim.user_id,

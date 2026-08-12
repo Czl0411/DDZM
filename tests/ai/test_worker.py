@@ -252,7 +252,7 @@ def test_memory_worker_maps_invalid_json_and_timeout_to_safe_categories():
     ]
 
 
-def test_memory_worker_rejects_references_outside_the_claim():
+def test_memory_worker_discards_references_outside_the_claim():
     from dzmm_bot.ai.memory_worker import AIMemoryWorker
 
     claim = _memory_claim()
@@ -268,16 +268,18 @@ def test_memory_worker_rejects_references_outside_the_claim():
     assert AIMemoryWorker(
         "memory-1", core, StaleReferenceClient(), clock=lambda: NOW
     ).run_once() is True
-    assert core.memory_completed == []
-    assert core.memory_failed == [
+    assert core.memory_completed == [
         (
             claim.user_id,
             "memory-1",
             claim.lease_token,
-            "invalid_response",
+            claim.target_message_id,
+            (),
+            claim.source_message_count,
             NOW,
         )
     ]
+    assert core.memory_failed == []
 
 
 def test_memory_worker_leaves_an_empty_queue_idle():

@@ -83,6 +83,22 @@ def test_command_registry_exposes_exact_enabled_syntax(repository):
     assert commands["/修改名称"] == "/修改名称 新名称"
     assert commands["/部门人数"] == "/部门人数"
     assert commands["/我的部门人数"] == "/我的部门人数"
+    assert commands["/编辑档案"] == "/编辑档案 档案内容"
+    assert commands["/我的档案"] == "/我的档案"
+
+
+def test_personal_profile_reply_templates_are_managed(repository):
+    assert {
+        template.scenario
+        for template in repository.list_reply_templates("/编辑档案")
+    } == {
+        "usage", "not_joined", "too_long", "unchanged",
+        "insufficient_balance", "insufficient_labor", "updated",
+    }
+    assert {
+        template.scenario
+        for template in repository.list_reply_templates("/我的档案")
+    } == {"not_joined", "empty", "shown"}
 
 
 @pytest.mark.parametrize("command", ("/部门人数", "/我的部门人数"))

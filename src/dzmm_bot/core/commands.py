@@ -15,7 +15,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
+    "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
 }
 
 
@@ -139,6 +139,12 @@ class GroupCommandHandler:
             return self._balance(message.sender_platform_id, received_at)
         if command == "/修改名称":
             return self._rename(message.sender_platform_id, content, received_at)
+        if command == "/编辑档案":
+            return self._edit_profile(
+                message.sender_platform_id, content, received_at
+            )
+        if command == "/我的档案":
+            return self._my_profile(message.sender_platform_id, received_at)
         if command == "/发奖金":
             return self._grant_bonus(
                 message.sender_platform_id, content, received_at
@@ -488,6 +494,37 @@ class GroupCommandHandler:
                 "{职级}": profile.rank.level_label,
                 "{部门}": profile.department.name,
             },
+        )
+
+    def _edit_profile(self, platform_id: str, content: str, received_at) -> str:
+        profile_text = content[len("/编辑档案"):].strip()
+        if not profile_text:
+            return self._reply("/编辑档案", "usage", received_at)
+        if len(profile_text) > 800:
+            return self._reply("/编辑档案", "too_long", received_at)
+        result = self._repository.edit_own_profile(platform_id, profile_text)
+        if result.status == "insufficient_balance":
+            settings = self._repository.get_profile_settings()
+            game_settings = self._repository.get_game_settings()
+            return self._reply(
+                "/编辑档案",
+                result.status,
+                received_at,
+                {
+                    "{编辑费用}": settings.edit_cost,
+                    "{货币}": game_settings.currency_name,
+                },
+            )
+        return self._reply("/编辑档案", result.status, received_at)
+
+    def _my_profile(self, platform_id: str, received_at) -> str:
+        profile_text = self._repository.get_personal_profile(platform_id)
+        if profile_text is None:
+            return self._reply("/我的档案", "not_joined", received_at)
+        if not profile_text:
+            return self._reply("/我的档案", "empty", received_at)
+        return self._reply(
+            "/我的档案", "shown", received_at, {"{档案内容}": profile_text}
         )
 
     def _join_department(self, platform_id: str, content: str, received_at) -> str:

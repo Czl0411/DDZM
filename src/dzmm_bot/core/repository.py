@@ -33,6 +33,7 @@ from .ai_knowledge import (
 
 from .ai_mentions import normalize_ai_mention
 from .number_bomb import (
+    NUMBER_BOMB_MULTIPLIER_TENTHS,
     NumberBombEntry,
     calculate_number_bomb,
     render_number_bomb_result,
@@ -1079,10 +1080,12 @@ class CoreRepository:
         *,
         preserve_long_group_messages: bool = False,
         red_packet_random: RandomSource | None = None,
+        number_bomb_random: RandomSource | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._preserve_long_group_messages = preserve_long_group_messages
         self._red_packet_random = red_packet_random or SystemRandom()
+        self._number_bomb_random = number_bomb_random or SystemRandom()
         self._active_session: ContextVar[Session | None] = ContextVar(
             f"core_repository_session_{id(self)}", default=None
         )
@@ -4352,7 +4355,8 @@ class CoreRepository:
                     player.display_order,
                 )
                 for player, user in rows
-            )
+            ),
+            round_record.multiplier_tenths,
         )
         round_record.total = calculation.total
         round_record.target_numerator = calculation.target_numerator
@@ -4379,6 +4383,7 @@ class CoreRepository:
                 round_number=round_record.round_number,
                 attempt_number=next_attempt,
                 punishment_type=round_record.punishment_type,
+                multiplier_tenths=round_record.multiplier_tenths,
                 state="collecting",
                 player_count=len(rows),
                 created_at=now,
@@ -4574,6 +4579,7 @@ class CoreRepository:
         round_number: int,
         attempt_number: int,
         now: datetime,
+        multiplier_tenths: int | None = None,
     ) -> NumberBombGameResult:
         members = list(
             session.scalars(
@@ -4587,11 +4593,16 @@ class CoreRepository:
             )
         )
         punishment_type = "dare" if round_number % 3 == 0 else "truth"
+        if multiplier_tenths is None:
+            multiplier_tenths = self._number_bomb_random.choice(
+                NUMBER_BOMB_MULTIPLIER_TENTHS
+            )
         round_record = NumberBombRoundRecord(
             game_id=game.id,
             round_number=round_number,
             attempt_number=attempt_number,
             punishment_type=punishment_type,
+            multiplier_tenths=multiplier_tenths,
             state="collecting",
             player_count=len(members),
             created_at=now,

@@ -99,6 +99,7 @@ from .schema import (
     OutboundRecord,
     UndercoverGamePlayerRecord,
     UndercoverGameRecord,
+    UndercoverAbstentionRecord,
     UndercoverRoleRuleRecord,
     UndercoverSessionMemberRecord,
     UndercoverSessionRecord,
@@ -749,6 +750,14 @@ class UndercoverSessionSummary:
 
 
 @dataclass(frozen=True)
+class UndercoverPlayerReveal:
+    seat_number: int
+    display_name: str
+    role: str
+    state: str
+
+
+@dataclass(frozen=True)
 class UndercoverGameResult:
     status: str
     session_id: UUID | None = None
@@ -759,6 +768,51 @@ class UndercoverGameResult:
     winner: str | None = None
     eliminated_seat: int | None = None
     tied_seats: tuple[int, ...] = ()
+    actor_seat: int | None = None
+    actor_display_name: str | None = None
+    vote_count: int = 0
+    abstention_count: int = 0
+    completed_count: int = 0
+    eligible_count: int = 0
+    abstained_labels: tuple[str, ...] = ()
+    civilian_word: str | None = None
+    undercover_word: str | None = None
+    player_reveals: tuple[UndercoverPlayerReveal, ...] = ()
+    manual_abstention_labels: tuple[str, ...] = ()
+    timeout_abstention_labels: tuple[str, ...] = ()
+    next_round_exit_labels: tuple[str, ...] = ()
+
+
+def undercover_settlement_template_values(
+    result: UndercoverGameResult,
+) -> dict[str, object]:
+    eliminated = next(
+        (
+            reveal
+            for reveal in result.player_reveals
+            if reveal.seat_number == result.eliminated_seat
+        ),
+        None,
+    )
+    return {
+        "{胜利阵营}": _undercover_role_label(result.winner),
+        "{平民词}": result.civilian_word or "未知",
+        "{卧底词}": result.undercover_word or "未知",
+        "{淘汰情况}": (
+            f"{eliminated.seat_number}号 {eliminated.display_name}"
+            f"（{_undercover_role_label(eliminated.role)}）"
+            if eliminated is not None
+            else "无"
+        ),
+        "{手动弃票}": "、".join(result.manual_abstention_labels) or "无",
+        "{超时弃票}": "、".join(result.timeout_abstention_labels) or "无",
+        "{下一轮退出}": "、".join(result.next_round_exit_labels) or "无",
+        "{全部身份}": "\n".join(
+            f"{reveal.seat_number}号 {reveal.display_name}："
+            f"{_undercover_role_label(reveal.role)}"
+            for reveal in result.player_reveals
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -3518,11 +3572,25 @@ class CoreRepository:
                 if role == "candidate":
                     commands = ("/退出",)
                 elif role == "nonparticipant":
-                    commands = ("/加入",) if undercover.state == "signup" else ()
+                    commands = ("/加入",)
+                elif undercover.state == "signup":
+                    commands = ("/退出", "/结束游戏")
                 elif undercover.state == "awaiting_continue":
                     commands = ("/退出", "/继续", "/结束游戏")
+                elif undercover.state == "voting":
+                    commands = (
+                        "/投票 编号",
+                        "/跳过 编号",
+                        "/退出",
+                        "/结束游戏",
+                    )
                 else:
-                    commands = ("/退出", "/结束游戏")
+                    commands = (
+                        "/退出",
+                        "/开始投票",
+                        "/投票 编号",
+                        "/结束游戏",
+                    )
                 active.append(
                     ActiveGameplaySummary(
                         "undercover",
@@ -3738,6 +3806,10 @@ class CoreRepository:
                             .with_for_update()
                         )
                         if active_round is not None:
+                            if active_round.state == "dealing":
+                                self._cancel_undercover_card_outbounds(
+                                    session, active_round.id
+                                )
                             active_round.state = "ended"
                             active_round.finished_at = now
                         ended = True
@@ -4716,6 +4788,27 @@ class CoreRepository:
                     .with_for_update()
                 )
                 if member is not None:
+                    if (
+                        session_record.state == "signup"
+                        and member.state == "delivery_failed"
+                    ):
+                        member.state = "joined"
+                        member.joined_at = now
+                        member.left_at = None
+                        member.leave_after_round = False
+                        session.flush()
+                        members = self._undercover_joined_members(
+                            session, session_record.id
+                        )
+                        if len(members) == session_record.target_player_count:
+                            return self._start_undercover_game(
+                                session, session_record, members, now
+                            )
+                        return UndercoverGameResult(
+                            "rejoined_signup",
+                            session_id=session_record.id,
+                            player_count=len(members),
+                        )
                     return UndercoverGameResult(
                         "cannot_rejoin" if member.state == "left" else "already_joined",
                         session_id=session_record.id,
@@ -4732,7 +4825,7 @@ class CoreRepository:
                     )
                     session.flush()
                     members = self._undercover_joined_members(session, session_record.id)
-                    if len(members) < session_record.target_player_count:
+                    if len(members) != session_record.target_player_count:
                         return UndercoverGameResult(
                             "joined_signup",
                             session_id=session_record.id,
@@ -4795,7 +4888,9 @@ class CoreRepository:
                     return UndercoverGameResult("cannot_start_vote", game_id=game.id)
                 game.current_vote_round += 1
                 game.state = "voting"
-                game.vote_deadline = now + timedelta(seconds=self.get_undercover_settings().vote_seconds)
+                game.vote_deadline = now + timedelta(
+                    seconds=game.vote_seconds_snapshot
+                )
                 session_record.state = "voting"
                 return self._undercover_game_result(session, game, "voting")
 
@@ -4812,7 +4907,7 @@ class CoreRepository:
                     game.current_vote_round += 1
                     game.state = "voting"
                     game.vote_deadline = now + timedelta(
-                        seconds=self.get_undercover_settings().vote_seconds
+                        seconds=game.vote_seconds_snapshot
                     )
                     session_record.state = "voting"
                 if game.state != "voting" or voter.state != "alive":
@@ -4828,6 +4923,18 @@ class CoreRepository:
                 )
                 if target is None:
                     return UndercoverGameResult("invalid_vote_target", game_id=game.id)
+                abstention = session.scalar(
+                    select(UndercoverAbstentionRecord.id).where(
+                        UndercoverAbstentionRecord.game_id == game.id,
+                        UndercoverAbstentionRecord.round_number
+                        == game.current_vote_round,
+                        UndercoverAbstentionRecord.player_user_id == voter.user_id,
+                    )
+                )
+                if abstention is not None:
+                    return self._undercover_vote_result(
+                        session, game, "already_abstained"
+                    )
                 duplicate = session.scalar(
                     select(UndercoverVoteRecord.id).where(
                         UndercoverVoteRecord.game_id == game.id,
@@ -4859,9 +4966,111 @@ class CoreRepository:
                     or 0
                 )
                 alive_count = self._undercover_living_count(session, game.id)
-                if votes < alive_count:
-                    return self._undercover_game_result(session, game, "vote_recorded")
-                return self._settle_undercover_vote(session, session_record, game, now)
+                abstentions = self._undercover_abstention_count(session, game)
+                actor = session.get(UserRecord, voter.user_id)
+                if votes + abstentions < alive_count:
+                    return self._undercover_vote_result(
+                        session,
+                        game,
+                        "vote_recorded",
+                        actor_seat=voter.seat_number,
+                        actor_display_name=actor.display_name if actor is not None else None,
+                    )
+                result = self._settle_undercover_vote(session, session_record, game, now)
+                return self._undercover_vote_result(
+                    session,
+                    game,
+                    result.status,
+                    base=result,
+                    actor_seat=voter.seat_number,
+                    actor_display_name=actor.display_name if actor is not None else None,
+                )
+
+    def skip_undercover_vote(
+        self, platform_id: str, target_seat: int, now: datetime
+    ) -> UndercoverGameResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                session_record, game, actor = self._undercover_active_player(
+                    session, platform_id
+                )
+                if session_record is None or game is None or actor is None:
+                    return UndercoverGameResult("cannot_skip_vote")
+                if game.state != "voting" or actor.state != "alive":
+                    return UndercoverGameResult("cannot_skip_vote", game_id=game.id)
+                target = session.scalar(
+                    select(UndercoverGamePlayerRecord)
+                    .where(
+                        UndercoverGamePlayerRecord.game_id == game.id,
+                        UndercoverGamePlayerRecord.seat_number == target_seat,
+                        UndercoverGamePlayerRecord.state == "alive",
+                    )
+                    .with_for_update()
+                )
+                if target is None:
+                    return UndercoverGameResult("invalid_skip_target", game_id=game.id)
+                if target.user_id == actor.user_id:
+                    return UndercoverGameResult("cannot_skip_self", game_id=game.id)
+                existing_vote = session.scalar(
+                    select(UndercoverVoteRecord.id).where(
+                        UndercoverVoteRecord.game_id == game.id,
+                        UndercoverVoteRecord.round_number == game.current_vote_round,
+                        UndercoverVoteRecord.voter_user_id == target.user_id,
+                    )
+                )
+                if existing_vote is not None:
+                    return self._undercover_vote_result(
+                        session, game, "already_voted"
+                    )
+                existing_abstention = session.scalar(
+                    select(UndercoverAbstentionRecord.id).where(
+                        UndercoverAbstentionRecord.game_id == game.id,
+                        UndercoverAbstentionRecord.round_number
+                        == game.current_vote_round,
+                        UndercoverAbstentionRecord.player_user_id == target.user_id,
+                    )
+                )
+                if existing_abstention is not None:
+                    return self._undercover_vote_result(
+                        session, game, "already_abstained"
+                    )
+                session.add(
+                    UndercoverAbstentionRecord(
+                        game_id=game.id,
+                        round_number=game.current_vote_round,
+                        player_user_id=target.user_id,
+                        reason="manual_skip",
+                        requested_by_user_id=actor.user_id,
+                        created_at=now,
+                    )
+                )
+                session.flush()
+                target_user = session.get(UserRecord, target.user_id)
+                votes, abstentions, alive_count = self._undercover_vote_progress(
+                    session, game
+                )
+                if votes + abstentions < alive_count:
+                    return self._undercover_vote_result(
+                        session,
+                        game,
+                        "abstained",
+                        actor_seat=target.seat_number,
+                        actor_display_name=(
+                            target_user.display_name if target_user is not None else None
+                        ),
+                    )
+                result = self._settle_undercover_vote(session, session_record, game, now)
+                return self._undercover_vote_result(
+                    session,
+                    game,
+                    result.status,
+                    base=result,
+                    actor_seat=target.seat_number,
+                    actor_display_name=(
+                        target_user.display_name if target_user is not None else None
+                    ),
+                )
 
     def undercover_session_summary(self) -> UndercoverSessionSummary:
         with self._session() as session:
@@ -4870,7 +5079,7 @@ class CoreRepository:
                 return UndercoverSessionSummary(None)
             game = self._undercover_latest_game(session, session_record.id)
             players: list[UndercoverSessionPlayer] = []
-            if game is not None:
+            if game is not None and game.state != "discarded":
                 players = [
                     UndercoverSessionPlayer(
                         platform_id=platform_id,
@@ -4902,7 +5111,7 @@ class CoreRepository:
                 or 0
             )
             player_count = len(players)
-            if game is None:
+            if game is None or game.state == "discarded":
                 player_count = int(
                     session.scalar(
                         select(func.count())
@@ -5018,16 +5227,36 @@ class CoreRepository:
                         and game.vote_deadline is not None
                         and game.vote_deadline <= now
                     ):
+                        abstained_labels = self._record_undercover_timeout_abstentions(
+                            session, game, now
+                        )
                         result = self._settle_undercover_vote(
                             session, session_record, game, now
                         )
-                        self._enqueue_undercover_vote_result(session, result)
+                        result = self._undercover_vote_result(
+                            session,
+                            game,
+                            result.status,
+                            base=result,
+                            abstained_labels=abstained_labels,
+                        )
+                        self._enqueue_undercover_vote_result(session, result, now)
                         results.append(result.status)
         return results
 
     def _enqueue_undercover_vote_result(
-        self, session: Session, result: UndercoverGameResult
+        self, session: Session, result: UndercoverGameResult, now: datetime
     ) -> None:
+        if result.abstained_labels:
+            labels = "、".join(result.abstained_labels)
+            self.enqueue_system_outbound(
+                self._undercover_automatic_message(
+                    "/投票",
+                    "timeout_abstention",
+                    now,
+                    {"{弃票玩家列表}": labels},
+                )
+            )
         if result.status == "vote_expired":
             self.enqueue_system_outbound("【谁是卧底】本轮无人投票，继续自由发言。")
             return
@@ -5038,6 +5267,16 @@ class CoreRepository:
             )
             return
         if result.status not in {"eliminated", "settled"} or result.game_id is None:
+            return
+        if result.status == "settled":
+            self.enqueue_system_outbound(
+                self._undercover_automatic_message(
+                    "/投票",
+                    "settled",
+                    now,
+                    undercover_settlement_template_values(result),
+                )
+            )
             return
         row = session.execute(
             select(UserRecord.display_name, UndercoverGamePlayerRecord.role)
@@ -5050,11 +5289,24 @@ class CoreRepository:
         if row is None:
             return
         message = f"【谁是卧底】{row[0]} 出局，身份：{_undercover_role_label(row[1])}。"
-        if result.status == "settled":
-            message += f"\n{_undercover_role_label(result.winner)}阵营获胜。发送 /继续 可开启下一局。"
-        else:
-            message += "请继续描述。"
+        message += "请继续描述。"
         self.enqueue_system_outbound(message)
+
+    def _undercover_automatic_message(
+        self,
+        command: str,
+        scenario: str,
+        now: datetime,
+        values: dict[str, object] | None = None,
+    ) -> str:
+        definition = template_definition(command, scenario)
+        record = self.get_reply_template(command, scenario)
+        template = definition.default if record is None else record.template
+        context = {"{日期}": now.date().isoformat(), **(values or {})}
+        try:
+            return render_template(definition, template, context)
+        except ValueError:
+            return render_template(definition, definition.default, context)
 
     def end_undercover(self, platform_id: str, now: datetime) -> UndercoverGameResult:
         now = now.astimezone(BEIJING)
@@ -5082,6 +5334,8 @@ class CoreRepository:
                     return UndercoverGameResult("cannot_end")
                 if player.state not in ("alive", "eliminated"):
                     return UndercoverGameResult("cannot_end", game_id=game.id)
+                if game.state == "dealing":
+                    self._cancel_undercover_card_outbounds(session, game.id)
                 game.state = "ended"
                 game.finished_at = now
                 session_record.state = "closed"
@@ -5108,11 +5362,28 @@ class CoreRepository:
                 )
                 if member is None or member.state == "left":
                     return UndercoverGameResult("cannot_leave", session_id=session_record.id)
-                member.state = "left"
-                member.left_at = now
+                if session_record.state == "signup":
+                    member.state = "left"
+                    member.left_at = now
+                    member.leave_after_round = False
+                    return UndercoverGameResult(
+                        "left_signup", session_id=session_record.id
+                    )
+                if (
+                    session_record.state == "awaiting_continue"
+                    or member.state == "queued"
+                ):
+                    member.state = "left"
+                    member.left_at = now
+                    member.leave_after_round = False
+                    return UndercoverGameResult(
+                        "left_waiting_continue", session_id=session_record.id
+                    )
                 game = self._undercover_latest_game(session, session_record.id)
-                if game is None or game.state == "discarded":
-                    return UndercoverGameResult("left", session_id=session_record.id)
+                if game is None or game.state in ("discarded", "ended", "settled"):
+                    return UndercoverGameResult(
+                        "cannot_leave", session_id=session_record.id
+                    )
                 player = session.scalar(
                     select(UndercoverGamePlayerRecord)
                     .where(
@@ -5122,18 +5393,19 @@ class CoreRepository:
                     .with_for_update()
                 )
                 if player is None:
-                    return UndercoverGameResult("left", session_id=session_record.id, game_id=game.id)
-                player.state = "exited"
-                winner = self._undercover_winner(session, game.id)
-                if winner is None:
-                    return self._undercover_game_result(session, game, "left")
-                game.state = "settled"
-                game.finished_at = now
-                session_record.state = "awaiting_continue"
-                session_record.await_continue_deadline = now + _UNDERCOVER_CONTINUE_TIMEOUT
-                self._record_undercover_facts(session, game, winner, None, now)
-                result = self._undercover_game_result(session, game, "settled")
-                return UndercoverGameResult(**{**result.__dict__, "winner": winner})
+                    return UndercoverGameResult(
+                        "cannot_leave",
+                        session_id=session_record.id,
+                        game_id=game.id,
+                    )
+                member.leave_after_round = True
+                return UndercoverGameResult(
+                    "leave_after_round",
+                    session_id=session_record.id,
+                    game_id=game.id,
+                    actor_seat=player.seat_number,
+                    actor_display_name=user.display_name,
+                )
 
     def _undercover_user(self, session: Session, platform_id: str) -> UserRecord | None:
         return session.scalar(
@@ -5232,6 +5504,9 @@ class CoreRepository:
         )
         if word_set is None:
             raise RuntimeError("谁是卧底词库为空")
+        settings = session.get(UndercoverSettingsRecord, 1)
+        if settings is None:
+            raise RuntimeError("谁是卧底设置缺失")
         round_number = int(
             session.scalar(
                 select(func.coalesce(func.max(UndercoverGameRecord.round_number), 0)).where(
@@ -5247,6 +5522,8 @@ class CoreRepository:
             current_vote_round=0,
             civilian_word=word_set.civilian_word,
             undercover_word=word_set.undercover_word,
+            vote_seconds_snapshot=settings.vote_seconds,
+            whiteboard_win_remaining_snapshot=settings.whiteboard_win_remaining,
             created_at=now,
         )
         session.add(game)
@@ -5330,30 +5607,22 @@ class CoreRepository:
             session_record.signup_deadline = now + timedelta(
                 minutes=self.get_undercover_settings().signup_timeout_minutes
             )
-            pending_card_ids = list(
-                session.scalars(
-                    select(UndercoverGamePlayerRecord.card_outbound_message_id).where(
-                        UndercoverGamePlayerRecord.game_id == game.id,
-                        UndercoverGamePlayerRecord.card_outbound_message_id.is_not(None),
-                    )
+            member = session.scalar(
+                select(UndercoverSessionMemberRecord)
+                .where(
+                    UndercoverSessionMemberRecord.session_id == session_record.id,
+                    UndercoverSessionMemberRecord.user_id == player.user_id,
                 )
+                .with_for_update()
             )
-            if pending_card_ids:
-                session.execute(
-                    update(OutboundRecord)
-                    .where(
-                        OutboundRecord.id.in_(pending_card_ids),
-                        OutboundRecord.status.in_(("pending", "leased")),
-                    )
-                    .values(
-                        status="failed",
-                        lease_worker_id=None,
-                        lease_token=None,
-                        lease_expires_at=None,
-                    )
-                )
+            if member is not None:
+                member.state = "delivery_failed"
+                member.leave_after_round = False
+            self._cancel_undercover_card_outbounds(session, game.id)
             self.enqueue_system_outbound(
-                "【谁是卧底】身份私聊发放失败，已返回报名阶段，请稍后重新报名。"
+                self._undercover_automatic_message(
+                    "/谁是卧底", "delivery_failed", now
+                )
             )
             return UndercoverGameResult(
                 "delivery_failed", session_id=session_record.id, game_id=game.id
@@ -5388,6 +5657,33 @@ class CoreRepository:
             "描述结束后，任意存活玩家发送 /开始投票 或 /投票 序号 开启投票。"
         )
         return self._undercover_game_result(session, game, "speaking")
+
+    def _cancel_undercover_card_outbounds(
+        self, session: Session, game_id: UUID
+    ) -> None:
+        card_ids = list(
+            session.scalars(
+                select(UndercoverGamePlayerRecord.card_outbound_message_id).where(
+                    UndercoverGamePlayerRecord.game_id == game_id,
+                    UndercoverGamePlayerRecord.card_outbound_message_id.is_not(None),
+                )
+            )
+        )
+        if not card_ids:
+            return
+        session.execute(
+            update(OutboundRecord)
+            .where(
+                OutboundRecord.id.in_(card_ids),
+                OutboundRecord.status.in_(("pending", "leased")),
+            )
+            .values(
+                status="failed",
+                lease_worker_id=None,
+                lease_token=None,
+                lease_expires_at=None,
+            )
+        )
 
     def _undercover_active_player(
         self, session: Session, platform_id: str
@@ -5425,6 +5721,118 @@ class CoreRepository:
             )
             or 0
         )
+
+    def _undercover_abstention_count(
+        self, session: Session, game: UndercoverGameRecord
+    ) -> int:
+        return int(
+            session.scalar(
+                select(func.count())
+                .select_from(UndercoverAbstentionRecord)
+                .where(
+                    UndercoverAbstentionRecord.game_id == game.id,
+                    UndercoverAbstentionRecord.round_number
+                    == game.current_vote_round,
+                )
+            )
+            or 0
+        )
+
+    def _undercover_vote_progress(
+        self, session: Session, game: UndercoverGameRecord
+    ) -> tuple[int, int, int]:
+        votes = int(
+            session.scalar(
+                select(func.count())
+                .select_from(UndercoverVoteRecord)
+                .where(
+                    UndercoverVoteRecord.game_id == game.id,
+                    UndercoverVoteRecord.round_number == game.current_vote_round,
+                )
+            )
+            or 0
+        )
+        return (
+            votes,
+            self._undercover_abstention_count(session, game),
+            self._undercover_living_count(session, game.id),
+        )
+
+    def _undercover_vote_result(
+        self,
+        session: Session,
+        game: UndercoverGameRecord,
+        status: str,
+        *,
+        base: UndercoverGameResult | None = None,
+        actor_seat: int | None = None,
+        actor_display_name: str | None = None,
+        abstained_labels: tuple[str, ...] = (),
+    ) -> UndercoverGameResult:
+        result = base or self._undercover_game_result(session, game, status)
+        votes, abstentions, alive_count = self._undercover_vote_progress(
+            session, game
+        )
+        return replace(
+            result,
+            status=status,
+            actor_seat=actor_seat,
+            actor_display_name=actor_display_name,
+            vote_count=votes,
+            abstention_count=abstentions,
+            completed_count=votes + abstentions,
+            eligible_count=alive_count,
+            abstained_labels=abstained_labels,
+        )
+
+    def _record_undercover_timeout_abstentions(
+        self, session: Session, game: UndercoverGameRecord, now: datetime
+    ) -> tuple[str, ...]:
+        completed_user_ids = set(
+            session.scalars(
+                select(UndercoverVoteRecord.voter_user_id).where(
+                    UndercoverVoteRecord.game_id == game.id,
+                    UndercoverVoteRecord.round_number == game.current_vote_round,
+                )
+            )
+        )
+        completed_user_ids.update(
+            session.scalars(
+                select(UndercoverAbstentionRecord.player_user_id).where(
+                    UndercoverAbstentionRecord.game_id == game.id,
+                    UndercoverAbstentionRecord.round_number
+                    == game.current_vote_round,
+                )
+            )
+        )
+        rows = list(
+            session.execute(
+                select(UndercoverGamePlayerRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
+                .where(
+                    UndercoverGamePlayerRecord.game_id == game.id,
+                    UndercoverGamePlayerRecord.state == "alive",
+                )
+                .order_by(UndercoverGamePlayerRecord.seat_number)
+            )
+        )
+        labels: list[str] = []
+        for player, user in rows:
+            if player.user_id in completed_user_ids:
+                continue
+            session.add(
+                UndercoverAbstentionRecord(
+                    game_id=game.id,
+                    round_number=game.current_vote_round,
+                    player_user_id=player.user_id,
+                    reason="timeout",
+                    requested_by_user_id=None,
+                    created_at=now,
+                )
+            )
+            labels.append(f"{player.seat_number}号 {user.display_name}")
+        session.flush()
+        return tuple(labels)
 
     def _undercover_game_result(
         self, session: Session, game: UndercoverGameRecord, status: str
@@ -5498,7 +5906,7 @@ class CoreRepository:
             raise RuntimeError("被投票玩家消失")
         eliminated.state = "eliminated"
         game.vote_deadline = None
-        winner = self._undercover_winner(session, game.id)
+        winner = self._undercover_winner(session, game)
         if winner is None:
             game.state = "speaking"
             session_record.state = "speaking"
@@ -5511,14 +5919,47 @@ class CoreRepository:
         session_record.state = "awaiting_continue"
         session_record.await_continue_deadline = now + _UNDERCOVER_CONTINUE_TIMEOUT
         self._record_undercover_facts(session, game, winner, None, now)
-        result = self._undercover_game_result(session, game, "settled")
-        return UndercoverGameResult(
-            **{
-                **result.__dict__,
-                "winner": winner,
-                "eliminated_seat": eliminated.seat_number,
-            }
+        next_round_exit_labels = self._apply_undercover_next_round_exits(
+            session, session_record.id, now
         )
+        result = self._undercover_game_result(session, game, "settled")
+        return replace(
+            result,
+            winner=winner,
+            eliminated_seat=eliminated.seat_number,
+            civilian_word=game.civilian_word,
+            undercover_word=game.undercover_word,
+            player_reveals=self._undercover_player_reveals(session, game.id),
+            manual_abstention_labels=self._undercover_abstention_labels(
+                session, game, "manual_skip"
+            ),
+            timeout_abstention_labels=self._undercover_abstention_labels(
+                session, game, "timeout"
+            ),
+            next_round_exit_labels=next_round_exit_labels,
+        )
+
+    def _apply_undercover_next_round_exits(
+        self, session: Session, session_id: UUID, now: datetime
+    ) -> tuple[str, ...]:
+        rows = list(
+            session.execute(
+                select(UndercoverSessionMemberRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == UndercoverSessionMemberRecord.user_id)
+                .where(
+                    UndercoverSessionMemberRecord.session_id == session_id,
+                    UndercoverSessionMemberRecord.leave_after_round.is_(True),
+                    UndercoverSessionMemberRecord.state == "joined",
+                )
+                .order_by(UndercoverSessionMemberRecord.joined_at)
+                .with_for_update()
+            )
+        )
+        for member, _ in rows:
+            member.state = "left"
+            member.left_at = now
+            member.leave_after_round = False
+        return tuple(user.display_name for _, user in rows)
 
     def _record_undercover_facts(
         self,
@@ -5544,19 +5985,68 @@ class CoreRepository:
                 occurred_at=now,
             )
 
-    def _undercover_winner(self, session: Session, game_id: UUID) -> str | None:
+    def _undercover_player_reveals(
+        self, session: Session, game_id: UUID
+    ) -> tuple[UndercoverPlayerReveal, ...]:
+        return tuple(
+            UndercoverPlayerReveal(
+                seat_number=player.seat_number,
+                display_name=user.display_name,
+                role=player.role,
+                state=player.state,
+            )
+            for player, user in session.execute(
+                select(UndercoverGamePlayerRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
+                .where(UndercoverGamePlayerRecord.game_id == game_id)
+                .order_by(UndercoverGamePlayerRecord.seat_number)
+            )
+        )
+
+    def _undercover_abstention_labels(
+        self, session: Session, game: UndercoverGameRecord, reason: str
+    ) -> tuple[str, ...]:
+        return tuple(
+            f"{seat_number}号 {display_name}"
+            for seat_number, display_name in session.execute(
+                select(
+                    UndercoverGamePlayerRecord.seat_number,
+                    UserRecord.display_name,
+                )
+                .join(
+                    UndercoverAbstentionRecord,
+                    UndercoverAbstentionRecord.player_user_id
+                    == UndercoverGamePlayerRecord.user_id,
+                )
+                .join(UserRecord, UserRecord.id == UndercoverGamePlayerRecord.user_id)
+                .where(
+                    UndercoverGamePlayerRecord.game_id == game.id,
+                    UndercoverAbstentionRecord.game_id == game.id,
+                    UndercoverAbstentionRecord.round_number
+                    == game.current_vote_round,
+                    UndercoverAbstentionRecord.reason == reason,
+                )
+                .order_by(UndercoverGamePlayerRecord.seat_number)
+            )
+        )
+
+    def _undercover_winner(
+        self, session: Session, game: UndercoverGameRecord
+    ) -> str | None:
         roles = [
             role
             for role in session.scalars(
                 select(UndercoverGamePlayerRecord.role).where(
-                    UndercoverGamePlayerRecord.game_id == game_id,
+                    UndercoverGamePlayerRecord.game_id == game.id,
                     UndercoverGamePlayerRecord.state == "alive",
                 )
             )
         ]
-        settings = self.get_undercover_settings()
         whiteboard_count = roles.count("whiteboard")
-        if whiteboard_count and len(roles) == settings.whiteboard_win_remaining:
+        if (
+            whiteboard_count
+            and len(roles) == game.whiteboard_win_remaining_snapshot
+        ):
             return "whiteboard"
         if "undercover" not in roles and not whiteboard_count:
             return "civilian"

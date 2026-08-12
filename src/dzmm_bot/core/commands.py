@@ -8,6 +8,7 @@ from .repository import (
     CoreRepository,
     blame_settlement_template_values,
     format_employee_number,
+    undercover_settlement_template_values,
 )
 from .service import CommandReply
 
@@ -72,9 +73,20 @@ class GroupCommandHandler:
                 return self._reply("/报数", "group_only", received_at)
             return self._number_bomb_submit(message, content, received_at)
         if command == "/跳过":
-            return self._number_bomb_skip(
-                message.sender_platform_id, content, received_at
+            summary = self._repository.active_gameplay_summary(
+                message.sender_platform_id, received_at
             )
+            if summary.game_type == "undercover":
+                return self._undercover_skip(
+                    message.sender_platform_id, content, received_at
+                )
+            if summary.game_type == "number_bomb":
+                return self._number_bomb_skip(
+                    message.sender_platform_id, content, received_at
+                )
+            if summary.game_type == "conflict":
+                return self._reply("/当前游戏", "conflict", received_at)
+            return self._reply("/跳过", "no_current_game", received_at)
         if command == "/甩锅游戏":
             return self._blame_start(message.sender_platform_id, content, received_at)
         if command == "/甩锅":
@@ -1179,12 +1191,17 @@ class GroupCommandHandler:
         if result.status != "voting":
             return self._reply("/开始投票", "cannot_start", received_at)
         summary = self._repository.undercover_session_summary()
+        vote_seconds = (
+            max(int((summary.vote_deadline - received_at).total_seconds()), 1)
+            if summary.vote_deadline is not None
+            else self._repository.get_undercover_settings().vote_seconds
+        )
         return self._reply(
             "/开始投票",
             "started",
             received_at,
             {
-                "{投票秒数}": self._repository.get_undercover_settings().vote_seconds,
+                "{投票秒数}": vote_seconds,
                 "{存活玩家}": "、".join(
                     f"{player.seat_number}号 {player.display_name}"
                     for player in summary.players
@@ -1203,11 +1220,22 @@ class GroupCommandHandler:
         scenarios = {
             "vote_recorded": "recorded",
             "duplicate_vote": "duplicate",
+            "already_abstained": "already_abstained",
             "invalid_vote_target": "invalid_target",
             "cannot_vote": "cannot_vote",
         }
         if result.status in scenarios:
-            return self._reply("/投票", scenarios[result.status], received_at)
+            values = None
+            if result.status == "vote_recorded":
+                values = {
+                    "{编号}": result.actor_seat,
+                    "{玩家名称}": result.actor_display_name,
+                    "{已完成人数}": result.completed_count,
+                    "{存活人数}": result.eligible_count,
+                }
+            return self._reply(
+                "/投票", scenarios[result.status], received_at, values
+            )
         if result.status == "tied":
             return self._reply(
                 "/投票",
@@ -1216,16 +1244,74 @@ class GroupCommandHandler:
                 {"{并列玩家}": self._undercover_player_labels(result.tied_seats)},
             )
         if result.status in {"eliminated", "settled"}:
-            values = self._undercover_elimination_values(result)
             if result.status == "settled":
-                values["{胜利阵营}"] = self._undercover_role_name(result.winner)
+                values = undercover_settlement_template_values(result)
+            else:
+                values = self._undercover_elimination_values(result)
             return self._reply("/投票", result.status, received_at, values)
         return self._reply("/投票", "cannot_vote", received_at)
 
+    def _undercover_skip(self, platform_id: str, content: str, received_at) -> str:
+        parts = content.split()
+        if len(parts) != 2 or not parts[1].isdigit() or int(parts[1]) < 1:
+            return self._reply("/跳过", "undercover_usage", received_at)
+        result = self._repository.skip_undercover_vote(
+            platform_id, int(parts[1]), received_at
+        )
+        if result.status == "abstained":
+            return self._reply(
+                "/跳过",
+                "undercover_abstained",
+                received_at,
+                {
+                    "{编号}": result.actor_seat,
+                    "{玩家名称}": result.actor_display_name,
+                    "{已完成人数}": result.completed_count,
+                    "{存活人数}": result.eligible_count,
+                    "{投票人数}": result.vote_count,
+                    "{弃票人数}": result.abstention_count,
+                },
+            )
+        scenarios = {
+            "cannot_skip_self": "undercover_cannot_skip_self",
+            "already_voted": "undercover_already_voted",
+            "already_abstained": "undercover_already_abstained",
+            "invalid_skip_target": "undercover_invalid_target",
+            "cannot_skip_vote": "undercover_cannot_skip",
+        }
+        if result.status in scenarios:
+            return self._reply("/跳过", scenarios[result.status], received_at)
+        if result.status == "vote_expired":
+            return self._reply("/跳过", "undercover_vote_expired", received_at)
+        if result.status == "tied":
+            return self._reply(
+                "/投票",
+                "tied",
+                received_at,
+                {"{并列玩家}": self._undercover_player_labels(result.tied_seats)},
+            )
+        if result.status in {"eliminated", "settled"}:
+            if result.status == "settled":
+                values = undercover_settlement_template_values(result)
+            else:
+                values = self._undercover_elimination_values(result)
+            return self._reply("/投票", result.status, received_at, values)
+        return self._reply("/跳过", "undercover_cannot_skip", received_at)
+
     def _undercover_leave(self, platform_id: str, received_at) -> str:
         result = self._repository.leave_undercover(platform_id, received_at)
-        if result.status == "left":
+        if result.status in {"left", "left_signup", "left_waiting_continue"}:
             return self._reply("/退出谁是卧底", "left", received_at)
+        if result.status == "leave_after_round":
+            return self._reply(
+                "/退出谁是卧底",
+                "leave_after_round",
+                received_at,
+                {
+                    "{编号}": result.actor_seat,
+                    "{玩家名称}": result.actor_display_name,
+                },
+            )
         if result.status == "settled":
             return self._reply(
                 "/退出谁是卧底",

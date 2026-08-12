@@ -280,6 +280,15 @@ def test_number_bomb_skip_command_removes_targets_from_entire_game():
     ]
 
 
+def test_skip_without_a_matching_game_reports_unavailable():
+    service, _, factory = _service()
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+
+    _receive(service, "skip-no-game", "outsider", "/跳过 2", now)
+
+    assert _latest_reply(factory) == "当前没有可执行跳过的游戏。"
+
+
 def test_end_game_hits_waiting_memory_duel_instead_of_undercover_fallback():
     service, repository, factory = _service()
     now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
@@ -693,10 +702,49 @@ def test_undercover_group_commands_signup_deal_vote_and_settle():
     for platform_id in platform_ids:
         repository.record_undercover_card_delivery(game.id, platform_id, True, now)
     undercover_seat = next(seat for _, role, seat in players if role == "undercover")
+    seat_by_platform_id = {platform_id: seat for platform_id, _, seat in players}
+
+    _receive(service, "undercover-exit-next", platform_ids[0], "/退出", now)
+    exit_reply = _latest_reply(factory)
+    assert "下一轮退出" in exit_reply
+    assert "员工1" in exit_reply
+    assert repository.undercover_session_summary().state == "speaking"
 
     _receive(service, "undercover-vote", platform_ids[0], "/开始投票", now)
     assert "投票开始" in _latest_reply(factory)
-    for index, platform_id in enumerate(platform_ids, start=1):
+    _receive(
+        service,
+        "undercover-ballot-1",
+        platform_ids[0],
+        f"/投票 {undercover_seat}",
+        now,
+    )
+    assert (
+        f"{seat_by_platform_id[platform_ids[0]]}号 员工1 已投票（1/4）"
+        in _latest_reply(factory)
+    )
+    _receive(
+        service,
+        "undercover-skip-3",
+        platform_ids[1],
+        f"/跳过 {seat_by_platform_id[platform_ids[2]]}",
+        now,
+    )
+    skip_reply = _latest_reply(factory)
+    assert (
+        f"{seat_by_platform_id[platform_ids[2]]}号 员工3 本轮弃票（2/4"
+        in skip_reply
+    )
+    assert "已投票 1 人、弃票 1 人" in skip_reply
+    _receive(
+        service,
+        "undercover-abstained-ballot",
+        platform_ids[2],
+        f"/投票 {undercover_seat}",
+        now,
+    )
+    assert "本轮已经弃票" in _latest_reply(factory)
+    for index, platform_id in ((2, platform_ids[1]), (4, platform_ids[3])):
         _receive(
             service,
             f"undercover-ballot-{index}",
@@ -704,7 +752,16 @@ def test_undercover_group_commands_signup_deal_vote_and_settle():
             f"/投票 {undercover_seat}",
             now,
         )
-    assert "平民阵营获胜" in _latest_reply(factory)
+    final_reply = _latest_reply(factory)
+    assert "平民阵营获胜" in final_reply
+    assert "平民词：咖啡" in final_reply
+    assert "卧底词：奶茶" in final_reply
+    assert "全部身份：" in final_reply
+    for number in range(1, 5):
+        assert f"员工{number}" in final_reply
+    assert "手动弃票：" in final_reply
+    assert "员工3" in final_reply
+    assert "下一轮退出：员工1" in final_reply
     assert repository.undercover_session_summary().state == "awaiting_continue"
 
 

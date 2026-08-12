@@ -261,6 +261,9 @@ class UndercoverSessionMemberRecord(Base):
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     queued_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     left_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    leave_after_round: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
 
 
 class UndercoverGameRecord(Base):
@@ -276,6 +279,10 @@ class UndercoverGameRecord(Base):
     current_vote_round: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     civilian_word: Mapped[str] = mapped_column(String(64), nullable=False)
     undercover_word: Mapped[str] = mapped_column(String(64), nullable=False)
+    vote_seconds_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
+    whiteboard_win_remaining_snapshot: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
     vote_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
@@ -311,6 +318,27 @@ class UndercoverVoteRecord(Base):
     round_number: Mapped[int] = mapped_column(Integer, nullable=False)
     voter_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     target_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class UndercoverAbstentionRecord(Base):
+    __tablename__ = "undercover_abstentions"
+    __table_args__ = (
+        UniqueConstraint("game_id", "round_number", "player_user_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("undercover_games.id"), nullable=False
+    )
+    round_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    player_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(String(24), nullable=False)
+    requested_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id")
+    )
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 

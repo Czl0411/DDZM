@@ -52,9 +52,19 @@ class AIMemoryWorker:
                 ),
                 "\n".join(claim.source_messages),
                 max_chars=8000,
-                timeout_seconds=20,
+                timeout_seconds=60,
             )[:8000]
             operations = parse_impression_operations(response)
+            candidate_ids = {candidate.id for candidate in claim.candidates}
+            entry_ids = {entry.id for entry in claim.stable_entries}
+            if any(
+                operation.candidate_id is not None
+                and operation.candidate_id not in candidate_ids
+                or operation.entry_id is not None
+                and operation.entry_id not in entry_ids
+                for operation in operations
+            ):
+                raise ValueError("印象引用不属于当前任务")
         except DeepSeekCallError as error:
             self._core.fail_ai_memory_job(
                 claim.user_id,

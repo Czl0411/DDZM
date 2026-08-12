@@ -186,7 +186,7 @@ def test_memory_worker_parses_json_and_completes_structured_operations():
             assert str(claim.stable_entries[0].id) in system_prompt
             assert str(claim.candidates[0].id) in system_prompt
             assert user_content == "我也喜欢短回复"
-            assert kwargs == {"max_chars": 8000, "timeout_seconds": 20}
+            assert kwargs == {"max_chars": 8000, "timeout_seconds": 60}
             return (
                 '{"operations":[{"action":"reinforce_candidate",'
                 f'"candidate_id":"{claim.candidates[0].id}"}}]}}'
@@ -247,6 +247,34 @@ def test_memory_worker_maps_invalid_json_and_timeout_to_safe_categories():
             "memory-1",
             timeout_claim.lease_token,
             "timeout",
+            NOW,
+        )
+    ]
+
+
+def test_memory_worker_rejects_references_outside_the_claim():
+    from dzmm_bot.ai.memory_worker import AIMemoryWorker
+
+    claim = _memory_claim()
+    core = FakeCore(None, memory_claim=claim)
+
+    class StaleReferenceClient:
+        def complete(self, *args, **kwargs):
+            return (
+                '{"operations":[{"action":"reinforce_candidate",'
+                f'"candidate_id":"{uuid4()}"}}]}}'
+            )
+
+    assert AIMemoryWorker(
+        "memory-1", core, StaleReferenceClient(), clock=lambda: NOW
+    ).run_once() is True
+    assert core.memory_completed == []
+    assert core.memory_failed == [
+        (
+            claim.user_id,
+            "memory-1",
+            claim.lease_token,
+            "invalid_response",
             NOW,
         )
     ]

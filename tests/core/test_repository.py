@@ -101,6 +101,22 @@ def test_personal_profile_reply_templates_are_managed(repository):
     } == {"not_joined", "empty", "shown"}
 
 
+def test_random_event_settings_accept_personal_profile_commands(repository):
+    current = repository.get_random_event_settings()
+    updated = repository.set_random_event_settings(
+        current.schedule_times,
+        current.signup_notice_template,
+        current.signup_timeout_minutes,
+        current.reminder_interval_minutes,
+        signup_allowed_commands=["/编辑档案", "/我的档案"],
+        in_progress_allowed_commands=["/我的档案"],
+        blocked_message=current.blocked_message,
+    )
+
+    assert updated.signup_allowed_commands == ["/编辑档案", "/我的档案"]
+    assert updated.in_progress_allowed_commands == ["/我的档案"]
+
+
 @pytest.mark.parametrize("command", ("/部门人数", "/我的部门人数"))
 def test_department_headcount_reply_templates_are_managed(repository, command):
     assert {

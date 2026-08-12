@@ -222,6 +222,13 @@ def test_personal_profile_commands_edit_and_show_only_profile_text():
     assert repository.find_user("profile-player").balance == 10
     assert repository.get_profile_settings().shared_labor == 4
 
+    help_result = _receive(
+        service, "profile-help", "profile-player", "/帮助 基础", now
+    )
+    help_reply = _replies_for(factory, help_result.message_id)[0]
+    assert "/编辑档案 档案内容" in help_reply
+    assert "/我的档案" in help_reply
+
 
 def test_personal_profile_commands_validate_membership_length_and_empty_state():
     service, repository, factory = _service()

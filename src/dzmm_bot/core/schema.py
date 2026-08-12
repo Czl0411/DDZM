@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -591,6 +592,10 @@ class NumberBombRoundRecord(Base):
     __tablename__ = "number_bomb_rounds"
     __table_args__ = (
         UniqueConstraint("game_id", "round_number", "attempt_number"),
+        CheckConstraint(
+            "multiplier_tenths IN (8, 9, 10, 11, 12)",
+            name="ck_number_bomb_round_multiplier_tenths",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -600,6 +605,9 @@ class NumberBombRoundRecord(Base):
     round_number: Mapped[int] = mapped_column(Integer, nullable=False)
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     punishment_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    multiplier_tenths: Mapped[int] = mapped_column(
+        Integer, default=8, nullable=False
+    )
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     total: Mapped[int | None] = mapped_column(Integer)
     player_count: Mapped[int] = mapped_column(Integer, nullable=False)

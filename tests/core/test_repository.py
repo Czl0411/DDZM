@@ -722,6 +722,10 @@ def test_number_bomb_schema_contains_provenance_state_and_idempotency_constraint
         tuple(column.name for column in constraint.columns)
         for constraint in rounds.constraints
     } >= {("game_id", "round_number", "attempt_number")}
+    assert rounds.c.multiplier_tenths.nullable is False
+    assert {constraint.name for constraint in rounds.constraints} >= {
+        "ck_number_bomb_round_multiplier_tenths"
+    }
     assert {
         tuple(column.name for column in constraint.columns)
         for constraint in round_players.constraints

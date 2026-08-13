@@ -104,7 +104,8 @@ def create_app(
     console = console_client or NoVNCClient()
     connect_websocket = websocket_connector or NoVNCWebSocketConnector()
     upload_dir = profile_upload_dir or Path(tempfile.gettempdir()) / "dzmm-profile-images"
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    upload_dir.chmod(0o700)
     console_session: tuple[str, str] | None = None
 
     def authorize(
@@ -684,6 +685,7 @@ def create_app(
         size = 0
         try:
             with destination.open("xb") as output:
+                destination.chmod(0o600)
                 while chunk := await file.read(1024 * 1024):
                     size += len(chunk)
                     if size > 10 * 1024 * 1024:
@@ -692,6 +694,21 @@ def create_app(
                             "image exceeds 10 MB",
                         )
                     output.write(chunk)
+            header = destination.read_bytes()[:12]
+            valid_signature = (
+                file.content_type == "image/png"
+                and header.startswith(b"\x89PNG\r\n\x1a\n")
+                or file.content_type == "image/jpeg"
+                and header.startswith(b"\xff\xd8\xff")
+                or file.content_type == "image/webp"
+                and header.startswith(b"RIFF")
+                and header[8:12] == b"WEBP"
+            )
+            if not valid_signature:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "invalid image content",
+                )
             upload = {
                 "temp_path": str(destination),
                 "original_filename": file.filename or "profile-image",

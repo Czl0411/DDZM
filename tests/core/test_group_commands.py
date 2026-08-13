@@ -302,6 +302,16 @@ def test_profile_image_command_validates_reference_and_profile_prerequisite():
     assert repository.find_user("image-player").balance == 20
 
 
+def test_basic_help_lists_profile_image_command():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    repository.create_user("image-player", "形象玩家", now, 20)
+
+    _receive(service, "profile-image-help", "image-player", "/帮助 基础", now)
+
+    assert "/编辑档案形象（回复一张图片）" in _latest_reply(factory)
+
+
 def test_profile_image_command_updates_and_my_profile_returns_optional_image_reply():
     from dzmm_bot.core.service import CommandReply
 

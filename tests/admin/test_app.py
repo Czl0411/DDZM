@@ -1319,17 +1319,18 @@ def test_admin_uploads_and_clears_employee_profile_image(
 ):
     from dzmm_bot.admin.app import create_app
 
+    upload_dir = tmp_path / "profile-uploads"
     client = TestClient(create_app(
         "admin-secret", core, repository=admin_repository,
         console_client=console, websocket_connector=websocket_connection.connect,
-        profile_upload_dir=tmp_path,
+        profile_upload_dir=upload_dir,
     ))
     core.personal_profiles["profile-user"] = "个人介绍"
 
     uploaded = client.post(
         "/api/game/users/profile-user/profile-image",
         headers=headers,
-        files={"file": ("profile.png", b"png-data", "image/png")},
+        files={"file": ("profile.png", b"\x89PNG\r\n\x1a\nimage-data", "image/png")},
     )
     task_id = uploaded.json()["id"]
     status_response = client.get(
@@ -1343,14 +1344,17 @@ def test_admin_uploads_and_clears_employee_profile_image(
     assert status_response.json()["status"] == "pending"
     assert cleared.status_code == 200
     saved_path = Path(core.last_profile_upload["temp_path"])
-    assert saved_path.parent == tmp_path
-    assert saved_path.read_bytes() == b"png-data"
+    assert saved_path.parent == upload_dir
+    assert saved_path.read_bytes() == b"\x89PNG\r\n\x1a\nimage-data"
+    assert upload_dir.stat().st_mode & 0o777 == 0o700
+    assert saved_path.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize(
     ("filename", "content_size", "mime_type"),
     [
         ("profile.gif", 3, "image/gif"),
+        ("profile.png", 12, "image/png"),
         ("profile.png", 10 * 1024 * 1024 + 1, "image/png"),
     ],
 )

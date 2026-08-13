@@ -1,3 +1,4 @@
+from collections import Counter
 from zoneinfo import ZoneInfo
 
 from dzmm_bot.runtime.contracts import InboundMessage
@@ -612,15 +613,29 @@ class GroupCommandHandler:
             headcounts = () if headcount is None else (headcount,)
         else:
             headcounts = self._repository.list_department_headcounts()
-        blocks = [
-            "\n".join(
-                (
-                    f"{item.department_name}：共 {item.total_count} 人",
-                    *(f"{rank.rank_name}：{rank.count} 人" for rank in item.ranks),
+        blocks = []
+        for item in headcounts:
+            lines = [
+                f"{item.department_name}：共 {item.total_count} 人",
+                *(f"{rank.rank_name}：{rank.count} 人" for rank in item.ranks),
+            ]
+            if item.highest_rank_name and item.highest_rank_members:
+                name_counts = Counter(
+                    member.display_name for member in item.highest_rank_members
                 )
-            )
-            for item in headcounts
-        ]
+                member_labels = [
+                    (
+                        f"{member.display_name} "
+                        f"{format_employee_number(member.employee_number)}"
+                        if name_counts[member.display_name] > 1
+                        else member.display_name
+                    )
+                    for member in item.highest_rank_members
+                ]
+                lines.append(
+                    f"最高职位者：{item.highest_rank_name} {'、'.join(member_labels)}"
+                )
+            blocks.append("\n".join(lines))
         return self._reply(
             command, "shown", received_at, {"{部门统计}": "\n\n".join(blocks)}
         )

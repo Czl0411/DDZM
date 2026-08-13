@@ -471,6 +471,31 @@ def test_new_upload_and_clear_supersede_older_profile_image_tasks(repository, no
     assert repository.get_profile_image_upload(second.id).status == "superseded"
 
 
+def test_final_profile_image_uploads_are_leased_for_temp_file_cleanup(repository, now):
+    repository.create_user("upload-player", "上传玩家", now, 30)
+    repository.set_personal_profile_by_admin("upload-player", "个人介绍")
+    first = repository.create_profile_image_upload(
+        "upload-player", "/tmp/first.png", "first.png", "image/png", now
+    )
+    repository.create_profile_image_upload(
+        "upload-player", "/tmp/second.png", "second.png", "image/png",
+        now + timedelta(seconds=1),
+    )
+
+    cleanup = repository.claim_profile_image_cleanup(
+        "worker-a", now + timedelta(seconds=2), 30
+    )
+
+    assert (cleanup.id, cleanup.temp_path) == (first.id, "/tmp/first.png")
+    assert repository.complete_profile_image_cleanup(
+        first.id, "worker-b", cleanup.lease_token, now + timedelta(seconds=3)
+    ) is False
+    assert repository.complete_profile_image_cleanup(
+        first.id, "worker-a", cleanup.lease_token, now + timedelta(seconds=3)
+    ) is True
+    assert repository.get_profile_image_upload(first.id).temp_path == ""
+
+
 def test_clearing_text_profile_invalidates_upload_even_without_existing_image(
     repository, now
 ):

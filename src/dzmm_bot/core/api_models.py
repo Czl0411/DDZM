@@ -341,6 +341,9 @@ class PersonalProfileResponse(ApiModel):
     platform_id: str
     display_name: str
     profile_text: str = Field(max_length=800)
+    profile_image_url: str | None
+    profile_version: int = Field(ge=0)
+    latest_upload: dict | None
 
 
 class SetPersonalProfileRequest(ApiModel):
@@ -355,6 +358,12 @@ class ProfileImageUploadClaimResponse(ApiModel):
     expected_profile_version: int = Field(ge=0)
     lease_token: UUID
     attempt_count: int = Field(ge=1)
+
+
+class ProfileImageCleanupClaimResponse(ApiModel):
+    id: UUID
+    temp_path: str
+    lease_token: UUID
 
 
 class CompleteProfileImageUploadRequest(ApiModel):

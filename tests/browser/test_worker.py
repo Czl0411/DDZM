@@ -162,6 +162,9 @@ class FakeCore:
     upload_tasks: list = field(default_factory=list)
     upload_completions: list[tuple] = field(default_factory=list)
     upload_failures: list[tuple] = field(default_factory=list)
+    upload_cleanup_tasks: list = field(default_factory=list)
+    upload_cleanups: list[tuple] = field(default_factory=list)
+    upload_completion_accepted: bool = True
 
     def submit_inbound(self, message):
         self.submitted_ids.append(message.platform_message_id)
@@ -228,6 +231,7 @@ class FakeCore:
         self.upload_completions.append(
             (task_id, worker_id, lease_token, result_url, now)
         )
+        return self.upload_completion_accepted
 
     def fail_profile_image_upload(
         self, task_id, worker_id, lease_token, failure_summary, now
@@ -235,6 +239,15 @@ class FakeCore:
         self.upload_failures.append(
             (task_id, worker_id, lease_token, failure_summary, now)
         )
+        return self.upload_completion_accepted
+
+    def claim_profile_image_cleanup(self, worker_id, now, lease_seconds):
+        return self.upload_cleanup_tasks.pop(0) if self.upload_cleanup_tasks else None
+
+    def complete_profile_image_cleanup(
+        self, task_id, worker_id, lease_token, now
+    ):
+        self.upload_cleanups.append((task_id, worker_id, lease_token, now))
 
 
 @pytest.fixture
@@ -482,6 +495,41 @@ def test_worker_reports_profile_image_upload_failure_and_removes_temp_file(
         task_id, "worker-a", LEASE, "upload_failed", NOW,
     )]
     assert not upload_path.exists()
+
+
+def test_worker_keeps_profile_image_temp_file_when_completion_is_rejected(
+    context, tmp_path
+):
+    from dzmm_bot.browser.core_client import ProfileImageUploadClaim
+
+    worker, _, _, _, core, _ = context
+    upload_path = tmp_path / "profile.png"
+    upload_path.write_bytes(b"image")
+    core.upload_completion_accepted = False
+    core.upload_tasks = [ProfileImageUploadClaim(
+        UUID(int=13), str(upload_path), "profile.png", "image/png", 1, LEASE, 1
+    )]
+
+    worker.run_once()
+
+    assert upload_path.exists()
+
+
+def test_worker_removes_superseded_profile_image_temp_file(context, tmp_path):
+    from dzmm_bot.browser.core_client import ProfileImageCleanupClaim
+
+    worker, _, _, _, core, _ = context
+    upload_path = tmp_path / "superseded.png"
+    upload_path.write_bytes(b"image")
+    task_id = UUID(int=12)
+    core.upload_cleanup_tasks = [ProfileImageCleanupClaim(
+        task_id, str(upload_path), LEASE
+    )]
+
+    worker.run_once()
+
+    assert not upload_path.exists()
+    assert core.upload_cleanups == [(task_id, "worker-a", LEASE, NOW)]
 
 
 def test_worker_retries_socket_timeout_with_the_same_platform_message_id(context):

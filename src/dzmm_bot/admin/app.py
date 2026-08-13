@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+import tempfile
 from secrets import compare_digest, token_urlsafe
 from typing import Annotated, Callable
 from uuid import UUID
@@ -8,11 +9,13 @@ from fastapi import (
     Cookie,
     Depends,
     FastAPI,
+    File,
     Header,
     HTTPException,
     Query,
     Request,
     Response,
+    UploadFile,
     WebSocket,
     status,
 )
@@ -93,12 +96,15 @@ def create_app(
     repository: AdminRepository,
     console_client: NoVNCClient | None = None,
     websocket_connector: Callable | None = None,
+    profile_upload_dir: Path | None = None,
 ) -> FastAPI:
     if not admin_token:
         raise ValueError("admin_token must be nonempty")
     app = FastAPI()
     console = console_client or NoVNCClient()
     connect_websocket = websocket_connector or NoVNCWebSocketConnector()
+    upload_dir = profile_upload_dir or Path(tempfile.gettempdir()) / "dzmm-profile-images"
+    upload_dir.mkdir(parents=True, exist_ok=True)
     console_session: tuple[str, str] | None = None
 
     def authorize(
@@ -661,6 +667,57 @@ def create_app(
                 platform_id, request["profile_text"]
             )
         )
+
+    @app.post(
+        "/api/game/users/{platform_id}/profile-image",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def upload_personal_profile_image(
+        platform_id: str,
+        _: Annotated[None, Depends(authorize)],
+        file: Annotated[UploadFile, File()],
+    ) -> dict:
+        allowed = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+        if file.content_type not in allowed:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid image type")
+        destination = upload_dir / f"{token_urlsafe(24)}{allowed[file.content_type]}"
+        size = 0
+        try:
+            with destination.open("xb") as output:
+                while chunk := await file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > 10 * 1024 * 1024:
+                        raise HTTPException(
+                            status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            "image exceeds 10 MB",
+                        )
+                    output.write(chunk)
+            upload = {
+                "temp_path": str(destination),
+                "original_filename": file.filename or "profile-image",
+                "mime_type": file.content_type,
+                "now": beijing_now().isoformat(),
+            }
+            return _relay_core(
+                lambda: core.create_profile_image_upload(platform_id, upload)
+            )
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+        finally:
+            await file.close()
+
+    @app.get("/api/game/profile-image-uploads/{task_id}")
+    def personal_profile_image_upload_status(
+        task_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        return _relay_core(lambda: core.get_profile_image_upload(task_id))
+
+    @app.delete("/api/game/users/{platform_id}/profile-image")
+    def clear_personal_profile_image(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        return _relay_core(lambda: core.clear_profile_image(platform_id))
 
     @app.get("/api/game/number-bomb/settings")
     def number_bomb_settings(

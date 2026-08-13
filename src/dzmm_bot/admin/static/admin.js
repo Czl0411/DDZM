@@ -47,7 +47,7 @@ const pageSizeByList = new Map();
 const listFilters = new Map();
 const randomEventCommandOptions = [
   ["/入职", "/入职"], ["/我的物品", "/我的物品"], ["/打卡", "/打卡"],
-  ["/余额", "/余额"], ["/我", "/我（含 /me）"], ["/编辑档案", "/编辑档案"], ["/我的档案", "/我的档案"], ["/商店", "/商店"],
+  ["/余额", "/余额"], ["/我", "/我（含 /me）"], ["/编辑档案", "/编辑档案"], ["/编辑档案形象", "/编辑档案形象"], ["/我的档案", "/我的档案"], ["/商店", "/商店"],
   ["/帮助", "/帮助"], ["/加入", "/加入"], ["/退出", "/退出"],
   ["/摸鱼躲猫猫", "/开始摸鱼躲藏、/躲"], ["/记忆考核", "/记忆考核"],
   ["/继续", "/继续"], ["/收手", "/收手"], ["/投降", "/投降"],
@@ -275,6 +275,7 @@ const blameIncidentModal = document.querySelector("#blame-incident-modal");
 const aiAssistantSettingsModal = document.querySelector("#ai-assistant-settings-modal");
 const employeeMemoryModal = document.querySelector("#employee-memory-modal");
 const employeeProfileModal = document.querySelector("#employee-profile-modal");
+let employeeProfileImagePoll = null;
 const aiKnowledgeCardModal = document.querySelector("#ai-knowledge-card-modal");
 const rankModal = document.querySelector("#rank-modal");
 const departmentModal = document.querySelector("#department-modal");
@@ -375,6 +376,8 @@ function closeSettingsModal() {
 }
 function closeProfileSettingsModal() { profileSettingsModal.hidden = true; }
 function closeEmployeeProfileModal() {
+  clearTimeout(employeeProfileImagePoll);
+  employeeProfileImagePoll = null;
   employeeProfileModal.hidden = true;
   delete employeeProfileModal.dataset.platformId;
 }
@@ -1024,7 +1027,34 @@ async function openEmployeeProfileModal(platformId, displayName) {
   employeeProfileModal.dataset.platformId = platformId;
   document.querySelector("#employee-profile-modal-title").textContent = `编辑档案：${displayName}`;
   document.querySelector("#employee-profile-text").value = profile.profile_text;
+  renderEmployeeProfileImage(profile.profile_image_url, profile.latest_upload);
   employeeProfileModal.hidden = false;
+}
+
+function renderEmployeeProfileImage(imageUrl, latestUpload = null) {
+  const image = document.querySelector("#employee-profile-image");
+  const empty = document.querySelector("#employee-profile-image-empty");
+  image.hidden = !imageUrl;
+  empty.hidden = Boolean(imageUrl);
+  if (imageUrl) image.src = imageUrl;
+  else image.removeAttribute("src");
+  document.querySelector("#employee-profile-image-status").textContent = latestUpload
+    ? `上传状态：${latestUpload.status}${latestUpload.failure_summary ? `（${latestUpload.failure_summary}）` : ""}`
+    : "";
+}
+
+async function pollEmployeeProfileImage(taskId) {
+  clearTimeout(employeeProfileImagePoll);
+  const task = await requestGame(`/api/game/profile-image-uploads/${taskId}`);
+  document.querySelector("#employee-profile-image-status").textContent = `上传状态：${task.status}${task.failure_summary ? `（${task.failure_summary}）` : ""}`;
+  if (["pending", "processing"].includes(task.status)) {
+    employeeProfileImagePoll = window.setTimeout(() => void pollEmployeeProfileImage(taskId), 1500);
+    return;
+  }
+  if (task.status === "completed") {
+    const profile = await requestGame(`/api/game/users/${employeeProfileModal.dataset.platformId}/profile`);
+    renderEmployeeProfileImage(profile.profile_image_url, null);
+  }
 }
 
 async function loadActivitySettings() {
@@ -1866,15 +1896,44 @@ employeeProfileModal.addEventListener("click", async (event) => {
     closeEmployeeProfileModal();
     return;
   }
-  if (event.target.id !== "save-employee-profile") return;
   const platformId = employeeProfileModal.dataset.platformId;
+  if (event.target.id === "upload-employee-profile-image") {
+    const fileInput = document.querySelector("#employee-profile-image-file");
+    const file = fileInput.files[0];
+    if (!file || !["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 10 * 1024 * 1024) {
+      setResult("请选择不超过 10 MB 的 JPEG、PNG 或 WebP 图片", "error");
+      return;
+    }
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const task = await requestGame(`/api/game/users/${platformId}/profile-image`, {method: "POST", body: form});
+      document.querySelector("#employee-profile-image-status").textContent = "上传状态：pending";
+      void pollEmployeeProfileImage(task.id);
+    } catch (error) {
+      setResult(`形象上传失败（${error.message}）`, "error");
+    }
+    return;
+  }
+  if (event.target.id === "clear-employee-profile-image") {
+    try {
+      const profile = await requestGame(`/api/game/users/${platformId}/profile-image`, {method: "DELETE"});
+      renderEmployeeProfileImage(profile.profile_image_url, null);
+      setResult("档案形象已清除", "success");
+    } catch (error) {
+      setResult(`清除失败（${error.message}）`, "error");
+    }
+    return;
+  }
+  if (event.target.id !== "save-employee-profile") return;
   try {
     await runMutation(event.target, "保存中…", async () => {
-      await requestGame(`/api/game/users/${platformId}/profile`, {
+      const profile = await requestGame(`/api/game/users/${platformId}/profile`, {
         method: "PUT",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({profile_text: document.querySelector("#employee-profile-text").value}),
       });
+      renderEmployeeProfileImage(profile.profile_image_url, null);
       closeEmployeeProfileModal();
     });
     setResult("员工档案已保存", "success");

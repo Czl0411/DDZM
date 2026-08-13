@@ -48,6 +48,13 @@ class ProfileImageUploadClaim:
     attempt_count: int
 
 
+@dataclass(frozen=True)
+class ProfileImageCleanupClaim:
+    id: UUID
+    temp_path: str
+    lease_token: UUID
+
+
 class CorePort(Protocol):
     def submit_inbound(self, message: InboundMessage) -> None: ...
 
@@ -64,12 +71,20 @@ class CorePort(Protocol):
     def complete_profile_image_upload(
         self, task_id: UUID, worker_id: str, lease_token: UUID,
         result_url: str, now: datetime,
-    ) -> None: ...
+    ) -> bool: ...
 
     def fail_profile_image_upload(
         self, task_id: UUID, worker_id: str, lease_token: UUID,
         failure_summary: str, now: datetime,
-    ) -> None: ...
+    ) -> bool: ...
+
+    def claim_profile_image_cleanup(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageCleanupClaim | None: ...
+
+    def complete_profile_image_cleanup(
+        self, task_id: UUID, worker_id: str, lease_token: UUID, now: datetime
+    ) -> bool: ...
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int
@@ -223,26 +238,55 @@ class CoreClient:
     def complete_profile_image_upload(
         self, task_id: UUID, worker_id: str, lease_token: UUID,
         result_url: str, now: datetime,
-    ) -> None:
-        self._post(
+    ) -> bool:
+        data = self._post(
             f"/internal/profile-image-uploads/{task_id}/completed",
             {
                 "worker_id": worker_id, "lease_token": str(lease_token),
                 "result_url": result_url, "now": now.isoformat(),
             },
         )
+        return bool(data["accepted"])
 
     def fail_profile_image_upload(
         self, task_id: UUID, worker_id: str, lease_token: UUID,
         failure_summary: str, now: datetime,
-    ) -> None:
-        self._post(
+    ) -> bool:
+        data = self._post(
             f"/internal/profile-image-uploads/{task_id}/failed",
             {
                 "worker_id": worker_id, "lease_token": str(lease_token),
                 "failure_summary": failure_summary, "now": now.isoformat(),
             },
         )
+        return bool(data["accepted"])
+
+    def claim_profile_image_cleanup(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageCleanupClaim | None:
+        data = self._post(
+            "/internal/profile-image-cleanups/claim",
+            _claim_payload(worker_id, now, lease_seconds),
+        )
+        if data is None:
+            return None
+        return ProfileImageCleanupClaim(
+            id=UUID(data["id"]),
+            temp_path=data["temp_path"],
+            lease_token=UUID(data["lease_token"]),
+        )
+
+    def complete_profile_image_cleanup(
+        self, task_id: UUID, worker_id: str, lease_token: UUID, now: datetime
+    ) -> bool:
+        data = self._post(
+            f"/internal/profile-image-cleanups/{task_id}/completed",
+            {
+                "worker_id": worker_id, "lease_token": str(lease_token),
+                "now": now.isoformat(),
+            },
+        )
+        return bool(data["accepted"])
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int

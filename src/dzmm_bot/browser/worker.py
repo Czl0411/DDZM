@@ -124,6 +124,7 @@ class BrowserWorker:
             return
 
         gateway = self._ensure_gateway()
+        self._process_profile_image_cleanup()
         self._process_profile_image_upload(gateway)
         self._sync_direct_chats(gateway, now)
         if self._listening:
@@ -177,24 +178,37 @@ class BrowserWorker:
             image_url = result.get("url") if isinstance(result, dict) else None
             if not isinstance(image_url, str) or not image_url:
                 raise ValueError("upload response missing image URL")
-            self._core.complete_profile_image_upload(
+            reported = self._core.complete_profile_image_upload(
                 claim.id, self._worker_id, claim.lease_token,
                 image_url, self._clock(),
             )
-            reported = True
         except Exception:
             _LOGGER.exception("profile image upload failed: %s", claim.id)
             try:
-                self._core.fail_profile_image_upload(
+                reported = self._core.fail_profile_image_upload(
                     claim.id, self._worker_id, claim.lease_token,
                     "upload_failed", self._clock(),
                 )
-                reported = True
             except Exception:
                 _LOGGER.exception("profile image upload failure report failed: %s", claim.id)
         finally:
             if reported:
                 path.unlink(missing_ok=True)
+
+    def _process_profile_image_cleanup(self) -> None:
+        claim = self._core.claim_profile_image_cleanup(
+            self._worker_id, self._clock(), self._lease_seconds
+        )
+        if claim is None:
+            return
+        try:
+            Path(claim.temp_path).unlink(missing_ok=True)
+        except OSError:
+            _LOGGER.exception("profile image temp cleanup failed: %s", claim.id)
+            return
+        self._core.complete_profile_image_cleanup(
+            claim.id, self._worker_id, claim.lease_token, self._clock()
+        )
 
     def _queue_inbound(self, message: InboundMessage) -> None:
         if not self._listening:

@@ -379,6 +379,13 @@ class ProfileImageUploadClaim:
 
 
 @dataclass(frozen=True)
+class ProfileImageCleanupClaim:
+    id: UUID
+    temp_path: str
+    lease_token: UUID
+
+
+@dataclass(frozen=True)
 class RandomEventSettings:
     schedule_times: list[str]
     signup_notice_template: str
@@ -9966,6 +9973,21 @@ class CoreRepository:
         with self._session() as session:
             return session.get(ProfileImageUploadRecord, UUID(str(task_id)))
 
+    def latest_profile_image_upload(
+        self, platform_id: str
+    ) -> ProfileImageUploadRecord | None:
+        with self._session() as session:
+            return session.scalar(
+                select(ProfileImageUploadRecord)
+                .join(UserRecord, ProfileImageUploadRecord.user_id == UserRecord.id)
+                .where(UserRecord.platform_id == platform_id)
+                .order_by(
+                    ProfileImageUploadRecord.created_at.desc(),
+                    ProfileImageUploadRecord.id.desc(),
+                )
+                .limit(1)
+            )
+
     def claim_profile_image_upload(
         self, worker_id: str, now: datetime, lease_seconds: int
     ) -> ProfileImageUploadClaim | None:
@@ -10046,6 +10068,71 @@ class CoreRepository:
             record.lease_expires_at = None
             record.updated_at = now
             record.completed_at = now
+            session.flush()
+            return True
+
+    def claim_profile_image_cleanup(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageCleanupClaim | None:
+        with self._session() as session:
+            record = session.scalar(
+                select(ProfileImageUploadRecord)
+                .where(
+                    ProfileImageUploadRecord.status.in_(
+                        ("completed", "failed", "superseded")
+                    ),
+                    ProfileImageUploadRecord.temp_path != "",
+                    or_(
+                        ProfileImageUploadRecord.lease_expires_at.is_(None),
+                        ProfileImageUploadRecord.lease_expires_at <= now,
+                    ),
+                )
+                .order_by(
+                    ProfileImageUploadRecord.completed_at,
+                    ProfileImageUploadRecord.created_at,
+                    ProfileImageUploadRecord.id,
+                )
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            if record is None:
+                return None
+            token = uuid4()
+            record.lease_worker_id = worker_id
+            record.lease_token = token
+            record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            record.updated_at = now
+            session.flush()
+            return ProfileImageCleanupClaim(record.id, record.temp_path, token)
+
+    def complete_profile_image_cleanup(
+        self,
+        task_id: UUID | str,
+        worker_id: str,
+        lease_token: UUID | str,
+        now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(
+                select(ProfileImageUploadRecord)
+                .where(
+                    ProfileImageUploadRecord.id == UUID(str(task_id)),
+                    ProfileImageUploadRecord.status.in_(
+                        ("completed", "failed", "superseded")
+                    ),
+                    ProfileImageUploadRecord.lease_worker_id == worker_id,
+                    ProfileImageUploadRecord.lease_token == UUID(str(lease_token)),
+                    ProfileImageUploadRecord.lease_expires_at > now,
+                )
+                .with_for_update()
+            )
+            if record is None:
+                return False
+            record.temp_path = ""
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            record.updated_at = now
             session.flush()
             return True
 

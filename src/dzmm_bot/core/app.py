@@ -52,6 +52,7 @@ from .api_models import (
     FailProfileImageUploadRequest,
     GameSettingsResponse,
     PersonalProfileResponse,
+    ProfileImageCleanupClaimResponse,
     ProfileImageUploadClaimResponse,
     ProfileImageUploadStatusResponse,
     ProfileSettingsResponse,
@@ -378,6 +379,35 @@ def create_app(
         return AcceptedResponse(accepted=repository.fail_profile_image_upload(
             task_id, request.worker_id, request.lease_token,
             request.failure_summary, request.now,
+        ))
+
+    @app.post(
+        "/internal/profile-image-cleanups/claim",
+        response_model=ProfileImageCleanupClaimResponse | None,
+    )
+    def claim_profile_image_cleanup(
+        request: ClaimRequest, _: Annotated[None, Depends(authorize)]
+    ) -> ProfileImageCleanupClaimResponse | None:
+        claim = repository.claim_profile_image_cleanup(
+            request.worker_id, request.now, request.lease_seconds
+        )
+        if claim is None:
+            return None
+        return ProfileImageCleanupClaimResponse(
+            id=claim.id, temp_path=claim.temp_path, lease_token=claim.lease_token
+        )
+
+    @app.post(
+        "/internal/profile-image-cleanups/{task_id}/completed",
+        response_model=AcceptedResponse,
+    )
+    def complete_profile_image_cleanup(
+        task_id: UUID,
+        request: RecalledRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.complete_profile_image_cleanup(
+            task_id, request.worker_id, request.lease_token, request.now
         ))
 
     @app.post(
@@ -810,10 +840,18 @@ def create_app(
         user = repository.find_user(platform_id)
         if user is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        latest_upload = repository.latest_profile_image_upload(platform_id)
         return PersonalProfileResponse(
             platform_id=user.platform_id,
             display_name=user.display_name,
             profile_text=user.profile_text,
+            profile_image_url=user.profile_image_url,
+            profile_version=user.profile_version,
+            latest_upload=None if latest_upload is None else {
+                "id": str(latest_upload.id),
+                "status": latest_upload.status,
+                "failure_summary": latest_upload.failure_summary,
+            },
         )
 
     @app.put(
@@ -840,6 +878,30 @@ def create_app(
             platform_id=user.platform_id,
             display_name=user.display_name,
             profile_text=user.profile_text,
+            profile_image_url=user.profile_image_url,
+            profile_version=user.profile_version,
+            latest_upload=None,
+        )
+
+    @app.delete(
+        "/internal/game/users/{platform_id}/profile-image",
+        response_model=PersonalProfileResponse,
+    )
+    def clear_personal_profile_image(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> PersonalProfileResponse:
+        if not repository.set_profile_image_by_admin(platform_id, None):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        user = repository.find_user(platform_id)
+        if user is None:
+            raise RuntimeError("profile user disappeared")
+        return PersonalProfileResponse(
+            platform_id=user.platform_id,
+            display_name=user.display_name,
+            profile_text=user.profile_text,
+            profile_image_url=user.profile_image_url,
+            profile_version=user.profile_version,
+            latest_upload=None,
         )
 
     @app.get(

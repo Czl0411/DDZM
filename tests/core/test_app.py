@@ -1407,6 +1407,27 @@ def test_profile_image_upload_internal_api_claims_and_completes(app_context, hea
     assert app_context.repository.find_user("upload-player").profile_image_url == (
         "https://cdn.example.com/profile.png"
     )
+    cleanup_claim = app_context.client.post(
+        "/internal/profile-image-cleanups/claim",
+        headers=headers,
+        json={
+            "worker_id": "worker-a",
+            "now": (NOW + timedelta(seconds=1)).isoformat(),
+            "lease_seconds": 30,
+        },
+    ).json()
+    cleaned = app_context.client.post(
+        f"/internal/profile-image-cleanups/{task_id}/completed",
+        headers=headers,
+        json={
+            "worker_id": "worker-a",
+            "lease_token": cleanup_claim["lease_token"],
+            "now": (NOW + timedelta(seconds=2)).isoformat(),
+        },
+    )
+    assert cleanup_claim["temp_path"] == "/tmp/profile.png"
+    assert cleaned.json() == {"accepted": True}
+    assert app_context.repository.get_profile_image_upload(task_id).temp_path == ""
 
 
 def test_outbound_sent_requires_all_fencing_fields(client, headers):

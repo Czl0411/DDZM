@@ -8,7 +8,11 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage
+from dzmm_bot.runtime.contracts import (
+    DirectChatRoom,
+    InboundMessage,
+    MessageReference,
+)
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -287,6 +291,7 @@ class AikdaSocketGateway:
             _shanghai_time(sent_at),
             source_type=source_type,
             chatroom_id=chatroom_id,
+            reference=_message_reference(content.get("reference")),
         )
         with self._pending_lock:
             if message_id in self._seen_ids:
@@ -297,6 +302,54 @@ class AikdaSocketGateway:
                 self._pending.append(inbound)
         if handler is not None:
             handler(inbound)
+
+
+def _message_reference(value: Any) -> MessageReference | None:
+    if not isinstance(value, dict):
+        return None
+    message_id = value.get("id")
+    sender_platform_id = value.get("sentBy")
+    content = value.get("content")
+    if (
+        not isinstance(message_id, str)
+        or not message_id
+        or not isinstance(sender_platform_id, str)
+        or not sender_platform_id
+        or not isinstance(content, dict)
+    ):
+        return None
+    content_type = content.get("type")
+    if not isinstance(content_type, str) or not content_type:
+        return None
+    image_url = content.get("url")
+    if image_url is not None and not isinstance(image_url, str):
+        return None
+    optional_strings = {
+        key: content.get(key)
+        for key in ("alt", "blurhash")
+    }
+    if any(value is not None and not isinstance(value, str) for value in optional_strings.values()):
+        return None
+    optional_dimensions = {
+        key: content.get(key)
+        for key in ("width", "height")
+    }
+    if any(
+        value is not None
+        and (isinstance(value, bool) or not isinstance(value, int) or value < 1)
+        for value in optional_dimensions.values()
+    ):
+        return None
+    return MessageReference(
+        message_id=message_id,
+        sender_platform_id=sender_platform_id,
+        content_type=content_type,
+        image_url=image_url,
+        alt=optional_strings["alt"],
+        width=optional_dimensions["width"],
+        height=optional_dimensions["height"],
+        blurhash=optional_strings["blurhash"],
+    )
 
 
 def _socket_client():

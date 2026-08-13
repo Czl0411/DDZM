@@ -11,6 +11,17 @@ class ApiModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class MessageReferenceRequest(ApiModel):
+    message_id: str = Field(min_length=1, max_length=255)
+    sender_platform_id: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(min_length=1, max_length=32)
+    image_url: str | None = Field(default=None, max_length=4096)
+    alt: str | None = Field(default=None, max_length=512)
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+    blurhash: str | None = Field(default=None, max_length=512)
+
+
 class InboundRequest(ApiModel):
     platform_message_id: str = Field(min_length=1, max_length=255)
     sender_platform_id: str = Field(min_length=1, max_length=255)
@@ -18,6 +29,7 @@ class InboundRequest(ApiModel):
     received_at: AwareDatetime
     source_type: Literal["group", "direct"] = "group"
     chatroom_id: str | None = Field(default=None, max_length=255)
+    reference: MessageReferenceRequest | None = None
 
     @model_validator(mode="after")
     def validate_direct_room(self):

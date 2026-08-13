@@ -126,16 +126,29 @@ class CoreClient:
         self._logger = logging.getLogger(__name__)
 
     def submit_inbound(self, message: InboundMessage) -> None:
+        reference = message.reference
+        payload = {
+            "platform_message_id": message.platform_message_id,
+            "sender_platform_id": message.sender_platform_id,
+            "content": message.content,
+            "received_at": message.received_at.isoformat(),
+            "source_type": message.source_type,
+            "chatroom_id": message.chatroom_id,
+        }
+        if reference is not None:
+            payload["reference"] = {
+                "message_id": reference.message_id,
+                "sender_platform_id": reference.sender_platform_id,
+                "content_type": reference.content_type,
+                "image_url": reference.image_url,
+                "alt": reference.alt,
+                "width": reference.width,
+                "height": reference.height,
+                "blurhash": reference.blurhash,
+            }
         self._post(
             "/internal/inbound",
-            {
-                "platform_message_id": message.platform_message_id,
-                "sender_platform_id": message.sender_platform_id,
-                "content": message.content,
-                "received_at": message.received_at.isoformat(),
-                "source_type": message.source_type,
-                "chatroom_id": message.chatroom_id,
-            },
+            payload,
         )
 
     def run_daily_jobs(self, now: datetime) -> None:

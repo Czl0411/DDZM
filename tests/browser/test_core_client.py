@@ -3,7 +3,12 @@ import json
 
 import httpx
 
-from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
+from dzmm_bot.runtime.contracts import (
+    DirectChatRoom,
+    InboundMessage,
+    LoginState,
+    MessageReference,
+)
 
 
 def test_core_client_heartbeat_reports_actual_and_returns_desired_listener_state():
@@ -190,3 +195,54 @@ def test_core_client_serializes_provenance_and_fetches_direct_inbound_rooms():
             },
         ),
     ]
+
+
+def test_core_client_serializes_referenced_image():
+    """Fails if the Worker-to-core HTTP request omits image reply metadata."""
+    from dzmm_bot.browser.core_client import CoreClient
+
+    observed = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.update(json.loads(request.content))
+        return httpx.Response(200, json={"accepted": True})
+
+    client = CoreClient(
+        "http://core.test",
+        "token",
+        client=httpx.Client(
+            base_url="http://core.test",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    now = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+
+    client.submit_inbound(
+        InboundMessage(
+            "reply-1",
+            "employee-1",
+            "/编辑档案形象",
+            now,
+            reference=MessageReference(
+                message_id="image-1",
+                sender_platform_id="employee-2",
+                content_type="image",
+                image_url="https://cdn.example.test/profile.png",
+                alt="profile.png",
+                width=1254,
+                height=1254,
+                blurhash="UsK-k9",
+            ),
+        )
+    )
+
+    assert observed["reference"] == {
+        "message_id": "image-1",
+        "sender_platform_id": "employee-2",
+        "content_type": "image",
+        "image_url": "https://cdn.example.test/profile.png",
+        "alt": "profile.png",
+        "width": 1254,
+        "height": 1254,
+        "blurhash": "UsK-k9",
+    }

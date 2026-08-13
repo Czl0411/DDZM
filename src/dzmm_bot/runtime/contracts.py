@@ -11,6 +11,18 @@ class LoginState(StrEnum):
 
 
 @dataclass(frozen=True)
+class MessageReference:
+    message_id: str
+    sender_platform_id: str
+    content_type: str
+    image_url: str | None = None
+    alt: str | None = None
+    width: int | None = None
+    height: int | None = None
+    blurhash: str | None = None
+
+
+@dataclass(frozen=True)
 class InboundMessage:
     platform_message_id: str
     sender_platform_id: str
@@ -18,6 +30,7 @@ class InboundMessage:
     received_at: datetime
     source_type: str = "group"
     chatroom_id: str | None = None
+    reference: MessageReference | None = None
 
 
 @dataclass(frozen=True)

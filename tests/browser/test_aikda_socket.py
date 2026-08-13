@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from dzmm_bot.browser.aikda_socket import AikdaSocketGateway, _socket_client
-from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage
+from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, MessageReference
 
 
 NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
@@ -102,6 +102,63 @@ def test_live_target_room_text_event_is_read_once(gateway):
     """Fails if the event handler does not retain a target-room text message."""
     adapter, socket, _ = gateway
     assert adapter.read_new() == []
+
+
+def test_live_replied_image_metadata_is_preserved(gateway):
+    """Fails if the Socket adapter keeps reply text but drops its image target."""
+    adapter, socket, _ = gateway
+    assert adapter.read_new() == []
+    payload = message("m-image-reply", "u-1", "/编辑档案形象")
+    payload["content"]["reference"] = {
+        "id": "image-1",
+        "sentBy": "u-2",
+        "content": {
+            "type": "image",
+            "url": "https://cdn.example.test/profile.png",
+            "alt": "profile.png",
+            "width": 1254,
+            "height": 1254,
+            "blurhash": "UsK-k9",
+        },
+    }
+
+    socket.trigger(
+        "message:new",
+        {"chatroomId": "room-1", "message": payload},
+    )
+
+    [received] = adapter.read_new()
+    assert received.reference == MessageReference(
+        message_id="image-1",
+        sender_platform_id="u-2",
+        content_type="image",
+        image_url="https://cdn.example.test/profile.png",
+        alt="profile.png",
+        width=1254,
+        height=1254,
+        blurhash="UsK-k9",
+    )
+
+
+def test_malformed_replied_image_is_ignored_without_dropping_text(gateway):
+    """Fails if malformed optional reference data discards a valid text command."""
+    adapter, socket, _ = gateway
+    assert adapter.read_new() == []
+    payload = message("m-bad-reply", "u-1", "/编辑档案形象")
+    payload["content"]["reference"] = {
+        "id": "image-1",
+        "sentBy": "u-2",
+        "content": {"type": "image", "url": 123},
+    }
+
+    socket.trigger(
+        "message:new",
+        {"chatroomId": "room-1", "message": payload},
+    )
+
+    [received] = adapter.read_new()
+    assert received.content == "/编辑档案形象"
+    assert received.reference is None
 
     socket.trigger(
         "message:new",

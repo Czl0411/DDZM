@@ -8,7 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from uvicorn import Config, Server
 
-from dzmm_bot.runtime.contracts import InboundMessage, WorkerHeartbeat
+from dzmm_bot.runtime.contracts import (
+    InboundMessage,
+    MessageReference,
+    WorkerHeartbeat,
+)
 from dzmm_bot.runtime.settings import Settings
 from dzmm_bot.ai.impressions import AIImpressionOperation
 
@@ -178,6 +182,7 @@ def create_app(
     def receive_inbound(
         request: InboundRequest, _: Annotated[None, Depends(authorize)]
     ) -> InboundResponse:
+        reference = request.reference
         result = service.receive_inbound(
             InboundMessage(
                 platform_message_id=request.platform_message_id,
@@ -186,6 +191,18 @@ def create_app(
                 received_at=request.received_at,
                 source_type=request.source_type,
                 chatroom_id=request.chatroom_id,
+                reference=None
+                if reference is None
+                else MessageReference(
+                    message_id=reference.message_id,
+                    sender_platform_id=reference.sender_platform_id,
+                    content_type=reference.content_type,
+                    image_url=reference.image_url,
+                    alt=reference.alt,
+                    width=reference.width,
+                    height=reference.height,
+                    blurhash=reference.blurhash,
+                ),
             )
         )
         return InboundResponse(

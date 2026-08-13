@@ -314,6 +314,79 @@ def test_profile_settings_are_versioned_and_admin_profile_writes_are_free(reposi
     assert repository.get_profile_settings().shared_labor == 9
 
 
+def test_profile_image_requires_a_text_profile_without_spending_resources(repository, now):
+    repository.create_user("image-player", "形象玩家", now, 30)
+
+    result = repository.edit_own_profile_image(
+        "image-player", "https://cdn.example.com/avatar.png"
+    )
+
+    assert result.status == "profile_required"
+    assert repository.find_user("image-player").balance == 30
+    assert repository.get_profile_settings().shared_labor == 5
+    assert repository.get_personal_profile_details("image-player") == ("", None)
+
+
+def test_profile_image_edit_is_atomic_and_unchanged_is_free(repository, now):
+    repository.create_user("image-player", "形象玩家", now, 30)
+    assert repository.set_personal_profile_by_admin("image-player", "个人介绍")
+    image_url = "https://cdn.example.com/avatar.webp"
+
+    updated = repository.edit_own_profile_image("image-player", image_url)
+    unchanged = repository.edit_own_profile_image("image-player", image_url)
+
+    assert (updated.status, updated.image_url, updated.cost) == (
+        "updated", image_url, 10,
+    )
+    assert unchanged.status == "unchanged"
+    user = repository.find_user("image-player")
+    assert (user.balance, user.profile_image_url, user.profile_version) == (
+        20, image_url, 1,
+    )
+    assert repository.get_profile_settings().shared_labor == 4
+    assert repository.get_personal_profile_details("image-player") == (
+        "个人介绍", image_url,
+    )
+
+
+def test_profile_image_resource_failures_leave_image_and_resources_unchanged(repository, now):
+    repository.create_user("image-player", "形象玩家", now, 9)
+    assert repository.set_personal_profile_by_admin("image-player", "个人介绍")
+
+    assert repository.edit_own_profile_image(
+        "image-player", "https://cdn.example.com/a.png"
+    ).status == "insufficient_balance"
+    repository.set_profile_settings(0, 0, expected_version=0)
+    assert repository.edit_own_profile_image(
+        "image-player", "https://cdn.example.com/b.png"
+    ).status == "insufficient_labor"
+
+    user = repository.find_user("image-player")
+    assert (user.balance, user.profile_image_url, user.profile_version) == (9, None, 0)
+    assert repository.get_profile_settings().shared_labor == 0
+
+
+def test_admin_profile_image_writes_are_versioned_and_cleared_with_text(repository, now):
+    repository.create_user("image-player", "形象玩家", now, 30)
+    assert repository.set_personal_profile_by_admin("image-player", "个人介绍")
+
+    assert repository.set_profile_image_by_admin(
+        "image-player", "https://cdn.example.com/admin.jpg"
+    ) is True
+    user = repository.find_user("image-player")
+    assert (user.profile_image_url, user.profile_version) == (
+        "https://cdn.example.com/admin.jpg", 1,
+    )
+
+    assert repository.set_personal_profile_by_admin("image-player", "") is True
+    user = repository.find_user("image-player")
+    assert (user.profile_text, user.profile_image_url, user.profile_version) == (
+        "", None, 2,
+    )
+    assert repository.find_user("image-player").balance == 30
+    assert repository.get_profile_settings().shared_labor == 5
+
+
 def test_employee_number_format_uses_four_digit_minimum_without_truncation():
     from dzmm_bot.core.repository import format_employee_number
 

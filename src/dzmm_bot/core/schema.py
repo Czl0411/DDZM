@@ -907,6 +907,10 @@ class UserRecord(Base):
     profile_text: Mapped[str] = mapped_column(
         Text, default="", server_default="", nullable=False
     )
+    profile_image_url: Mapped[str | None] = mapped_column(Text)
+    profile_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     rank_id: Mapped[UUID | None] = mapped_column(ForeignKey("ranks.id"))
     department_id: Mapped[UUID | None] = mapped_column(ForeignKey("departments.id"))
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)

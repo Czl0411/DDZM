@@ -360,6 +360,13 @@ class ProfileEditResult:
 
 
 @dataclass(frozen=True)
+class ProfileImageEditResult:
+    status: str
+    image_url: str | None = None
+    cost: int = 0
+
+
+@dataclass(frozen=True)
 class RandomEventSettings:
     schedule_times: list[str]
     signup_notice_template: str
@@ -9739,6 +9746,19 @@ class CoreRepository:
                 )
             )
 
+    def get_personal_profile_details(
+        self, platform_id: str
+    ) -> tuple[str, str | None] | None:
+        with self._session() as session:
+            row = session.execute(
+                select(UserRecord.profile_text, UserRecord.profile_image_url).where(
+                    UserRecord.platform_id == platform_id
+                )
+            ).one_or_none()
+            if row is None:
+                return None
+            return row.profile_text, row.profile_image_url
+
     def edit_own_profile(
         self, platform_id: str, profile_text: str
     ) -> ProfileEditResult:
@@ -9784,6 +9804,50 @@ class CoreRepository:
                     cost=settings.edit_cost,
                 )
 
+    def edit_own_profile_image(
+        self, platform_id: str, image_url: str
+    ) -> ProfileImageEditResult:
+        normalized = image_url.strip()
+        if not normalized:
+            raise ValueError("档案形象地址不能为空")
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return ProfileImageEditResult("not_joined")
+                if not user.profile_text.strip():
+                    return ProfileImageEditResult("profile_required")
+                if user.profile_image_url == normalized:
+                    return ProfileImageEditResult("unchanged", image_url=normalized)
+                settings = session.scalar(
+                    select(ProfileSettingsRecord)
+                    .where(ProfileSettingsRecord.id == 1)
+                    .with_for_update()
+                )
+                if settings is None:
+                    settings = self._profile_settings(session)
+                if user.balance < settings.edit_cost:
+                    return ProfileImageEditResult("insufficient_balance")
+                if settings.shared_labor < 1:
+                    return ProfileImageEditResult("insufficient_labor")
+                self._apply_balance_change(
+                    user,
+                    -settings.edit_cost,
+                    "profile_image_edit",
+                    datetime.now(BEIJING),
+                )
+                settings.shared_labor -= 1
+                user.profile_image_url = normalized
+                user.profile_version += 1
+                session.flush()
+                return ProfileImageEditResult(
+                    "updated", image_url=normalized, cost=settings.edit_cost
+                )
+
     def set_personal_profile_by_admin(
         self, platform_id: str, profile_text: str
     ) -> bool:
@@ -9799,6 +9863,29 @@ class CoreRepository:
             if user is None:
                 return False
             user.profile_text = normalized
+            if not normalized and user.profile_image_url is not None:
+                user.profile_image_url = None
+                user.profile_version += 1
+            session.flush()
+            return True
+
+    def set_profile_image_by_admin(
+        self, platform_id: str, image_url: str | None
+    ) -> bool:
+        normalized = image_url.strip() if image_url is not None else None
+        if image_url is not None and not normalized:
+            raise ValueError("档案形象地址不能为空")
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord)
+                .where(UserRecord.platform_id == platform_id)
+                .with_for_update()
+            )
+            if user is None:
+                return False
+            if user.profile_image_url != normalized:
+                user.profile_image_url = normalized
+                user.profile_version += 1
             session.flush()
             return True
 

@@ -4315,6 +4315,43 @@ def test_user_department_headcount_returns_only_current_department(
     assert repository.get_user_department_headcount("missing") is None
 
 
+def test_department_headcounts_include_all_highest_rank_members(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.repository import DepartmentHighestRankMember
+    from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
+
+    repository.create_user("junior", "初级员工", now, 0)
+    first, _ = repository.create_user("highest-1", "同名", now, 0)
+    second, _ = repository.create_user("highest-2", "同名", now, 0)
+    with session_factory.begin() as session:
+        tech = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
+        )
+        rank_two = session.scalar(
+            select(RankRecord).where(RankRecord.sort_order == 2)
+        )
+        assert tech is not None
+        assert rank_two is not None
+        for platform_id in ("junior", "highest-1", "highest-2"):
+            session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            ).department_id = tech.id
+        for platform_id in ("highest-1", "highest-2"):
+            session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            ).rank_id = rank_two.id
+
+    headcount = repository.get_user_department_headcount("junior")
+
+    assert headcount is not None
+    assert headcount.highest_rank_name == "正式员工"
+    assert headcount.highest_rank_members == (
+        DepartmentHighestRankMember("同名", first.employee_number),
+        DepartmentHighestRankMember("同名", second.employee_number),
+    )
+
+
 def test_department_application_changes_department_only_after_eligible_approval(
     repository, session_factory, now
 ):

@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from dzmm_bot.runtime.contracts import InboundMessage
+from dzmm_bot.runtime.contracts import InboundMessage, MessageReference
 
 
 BEIJING = ZoneInfo("Asia/Shanghai")
@@ -271,6 +271,83 @@ def test_personal_profile_unchanged_and_resource_failures_do_not_partially_charg
     _receive(service, "profile-no-labor", "profile-player", "/编辑档案 第二版", now)
     assert _latest_reply(factory) == "当前公共人力不足，暂时无法编辑档案。"
     assert repository.get_personal_profile("profile-player") == "第一版"
+
+
+def test_profile_image_command_validates_reference_and_profile_prerequisite():
+    service, repository, _ = _service()
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    repository.create_user("image-player", "形象玩家", now, 20)
+    handler = service._command_handler
+
+    assert handler.handle(InboundMessage(
+        "image-usage", "image-player", "/编辑档案形象", now
+    )) == "请回复一张图片后发送 /编辑档案形象。"
+    reference = MessageReference(
+        "source-image", "other", "image", "https://cdn.example.com/profile.png"
+    )
+    assert handler.handle(InboundMessage(
+        "image-no-profile", "image-player", "/编辑档案形象", now,
+        reference=reference,
+    )) == "请先完成个人档案，再设置档案形象。"
+    assert handler.handle(InboundMessage(
+        "image-not-joined", "missing", "/编辑档案形象", now,
+        reference=reference,
+    )) == "请先用 /入职 名字 加入摸鱼公司。"
+
+
+def test_profile_image_command_updates_and_my_profile_returns_optional_image_reply():
+    from dzmm_bot.core.service import CommandReply
+
+    service, repository, _ = _service()
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    repository.create_user("image-player", "形象玩家", now, 30)
+    repository.set_personal_profile_by_admin("image-player", "喜欢桌游")
+    handler = service._command_handler
+    image_url = "https://cdn.example.com/profile.webp"
+    reference = MessageReference("source-image", "other", "image", image_url)
+
+    assert handler.handle(InboundMessage(
+        "image-update", "image-player", "/编辑档案形象", now,
+        reference=reference,
+    )) == "档案形象已更新。"
+    shown = handler.handle(InboundMessage(
+        "image-show", "image-player", "/我的档案", now
+    ))
+
+    assert shown == [
+        CommandReply("喜欢桌游"),
+        CommandReply("", content_type="image", image_url=image_url, image_alt="档案形象"),
+    ]
+    assert repository.find_user("image-player").balance == 20
+    assert repository.get_profile_settings().shared_labor == 4
+
+
+def test_profile_image_command_unchanged_and_resource_failures_are_reported():
+    service, repository, _ = _service()
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    repository.create_user("image-player", "形象玩家", now, 10)
+    repository.set_personal_profile_by_admin("image-player", "个人介绍")
+    handler = service._command_handler
+    first_url = "https://cdn.example.com/a.png"
+
+    assert handler.handle(InboundMessage(
+        "image-first", "image-player", "/编辑档案形象", now,
+        reference=MessageReference("a", "other", "image", first_url),
+    )) == "档案形象已更新。"
+    assert handler.handle(InboundMessage(
+        "image-same", "image-player", "/编辑档案形象", now,
+        reference=MessageReference("a", "other", "image", first_url),
+    )) == "档案形象没有变化。"
+    assert handler.handle(InboundMessage(
+        "image-poor", "image-player", "/编辑档案形象", now,
+        reference=MessageReference("b", "other", "image", "https://cdn.example.com/b.png"),
+    )) == "余额不足，编辑档案形象需要 10 摸鱼币。"
+
+    repository.set_profile_settings(0, 0, expected_version=0)
+    assert handler.handle(InboundMessage(
+        "image-no-labor", "image-player", "/编辑档案形象", now,
+        reference=MessageReference("c", "other", "image", "https://cdn.example.com/c.png"),
+    )) == "当前公共人力不足，暂时无法编辑档案形象。"
 
 
 def test_number_bomb_group_commands_start_join_and_reject_group_reports():

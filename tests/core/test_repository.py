@@ -84,6 +84,7 @@ def test_command_registry_exposes_exact_enabled_syntax(repository):
     assert commands["/部门人数"] == "/部门人数"
     assert commands["/我的部门人数"] == "/我的部门人数"
     assert commands["/编辑档案"] == "/编辑档案 档案内容"
+    assert commands["/编辑档案形象"] == "/编辑档案形象（回复一张图片）"
     assert commands["/我的档案"] == "/我的档案"
 
 
@@ -99,6 +100,13 @@ def test_personal_profile_reply_templates_are_managed(repository):
         template.scenario
         for template in repository.list_reply_templates("/我的档案")
     } == {"not_joined", "empty", "shown"}
+    assert {
+        template.scenario
+        for template in repository.list_reply_templates("/编辑档案形象")
+    } == {
+        "usage", "not_joined", "profile_required", "unchanged",
+        "insufficient_balance", "insufficient_labor", "updated",
+    }
 
 
 def test_random_event_settings_accept_personal_profile_commands(repository):

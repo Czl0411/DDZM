@@ -28,6 +28,9 @@ class CommandReply:
     memory_round_id: UUID | None = None
     destination_chatroom_id: str | None = None
     delivery_kind: str = "group"
+    content_type: str = "text"
+    image_url: str | None = None
+    image_alt: str | None = None
 
 
 @dataclass(frozen=True)

@@ -26,6 +26,15 @@ class ChatGateway(Protocol):
         self, chatroom_id: str, text: str, *, message_id: str | None = None
     ) -> str: ...
 
+    def send_image(
+        self, image_url: str, *, alt: str = "image", message_id: str | None = None
+    ) -> str: ...
+
+    def send_image_to(
+        self, chatroom_id: str, image_url: str, *, alt: str = "image",
+        message_id: str | None = None,
+    ) -> str: ...
+
     def discover_direct_chats(self) -> list[DirectChatRoom]: ...
 
     def retract(self, message_id: str) -> None: ...
@@ -206,6 +215,17 @@ class _PlaywrightGateway:
         self, chatroom_id: str, text: str, *, message_id: str | None = None
     ) -> str:
         raise NotImplementedError("direct messages require the Aikda socket gateway")
+
+    def send_image(
+        self, image_url: str, *, alt: str = "image", message_id: str | None = None
+    ) -> str:
+        raise NotImplementedError("images require the Aikda socket gateway")
+
+    def send_image_to(
+        self, chatroom_id: str, image_url: str, *, alt: str = "image",
+        message_id: str | None = None,
+    ) -> str:
+        raise NotImplementedError("images require the Aikda socket gateway")
 
     def discover_direct_chats(self) -> list[DirectChatRoom]:
         raise NotImplementedError("direct messages require the Aikda socket gateway")

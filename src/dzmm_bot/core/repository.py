@@ -11171,6 +11171,46 @@ class CoreRepository:
                 round_record.outbound_message_id = records[0].id
             return records[0]
 
+    def enqueue_image_outbound(
+        self,
+        inbound_message_id: UUID | str,
+        image_url: str,
+        reply_index: int = 0,
+        *,
+        image_alt: str = "image",
+        destination_chatroom_id: str | None = None,
+        delivery_kind: str = "group",
+    ) -> OutboundRecord:
+        normalized_url = image_url.strip()
+        normalized_alt = image_alt.strip()
+        if not normalized_url:
+            raise ValueError("图片地址不能为空")
+        if not normalized_alt:
+            raise ValueError("图片替代文本不能为空")
+        with self._session() as session:
+            inbound_id = UUID(str(inbound_message_id))
+            latest_reply_index = session.scalar(
+                select(func.max(OutboundRecord.reply_index)).where(
+                    OutboundRecord.inbound_message_id == inbound_id
+                )
+            )
+            actual_reply_index = reply_index
+            if latest_reply_index is not None and actual_reply_index <= latest_reply_index:
+                actual_reply_index = latest_reply_index + 1
+            record = OutboundRecord(
+                inbound_message_id=inbound_id,
+                text="",
+                content_type="image",
+                image_url=normalized_url,
+                image_alt=normalized_alt,
+                reply_index=actual_reply_index,
+                destination_chatroom_id=destination_chatroom_id,
+                delivery_kind=delivery_kind,
+            )
+            session.add(record)
+            session.flush()
+            return record
+
     def _keeps_group_reply_intact(
         self,
         text: str,

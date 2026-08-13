@@ -294,6 +294,13 @@ def test_profile_image_command_validates_reference_and_profile_prerequisite():
         reference=reference,
     )) == "请先用 /入职 名字 加入摸鱼公司。"
 
+    repository.set_personal_profile_by_admin("image-player", "个人介绍")
+    assert handler.handle(InboundMessage(
+        "image-invalid-url", "image-player", "/编辑档案形象", now,
+        reference=MessageReference("invalid", "other", "image", "not-a-url"),
+    )) == "请回复一张图片后发送 /编辑档案形象。"
+    assert repository.find_user("image-player").balance == 20
+
 
 def test_profile_image_command_updates_and_my_profile_returns_optional_image_reply():
     from dzmm_bot.core.service import CommandReply
@@ -320,6 +327,30 @@ def test_profile_image_command_updates_and_my_profile_returns_optional_image_rep
     ]
     assert repository.find_user("image-player").balance == 20
     assert repository.get_profile_settings().shared_labor == 4
+
+
+def test_my_profile_service_queues_text_then_image():
+    from dzmm_bot.core.schema import OutboundRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    repository.create_user("image-player", "形象玩家", now, 30)
+    repository.set_personal_profile_by_admin("image-player", "喜欢桌游")
+    repository.set_profile_image_by_admin(
+        "image-player", "https://cdn.example.com/profile.webp"
+    )
+
+    result = _receive(service, "image-show-service", "image-player", "/我的档案", now)
+
+    with factory() as session:
+        replies = list(session.scalars(
+            select(OutboundRecord)
+            .where(OutboundRecord.inbound_message_id == result.message_id)
+            .order_by(OutboundRecord.reply_index)
+        ))
+    assert [reply.content_type for reply in replies] == ["text", "image"]
+    assert [reply.text for reply in replies] == ["喜欢桌游", ""]
+    assert replies[1].image_url == "https://cdn.example.com/profile.webp"
 
 
 def test_profile_image_command_unchanged_and_resource_failures_are_reported():

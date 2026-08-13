@@ -173,6 +173,18 @@ class CoreService:
                 message.received_at,
             )
             for reply_index, reply in enumerate(replies):
+                if reply.content_type == "image":
+                    if reply.image_url is None:
+                        raise RuntimeError("图片回复缺少图片地址")
+                    self._repository.enqueue_image_outbound(
+                        stored.id,
+                        reply.image_url,
+                        reply_index,
+                        image_alt=reply.image_alt or "image",
+                        destination_chatroom_id=reply.destination_chatroom_id,
+                        delivery_kind=reply.delivery_kind,
+                    )
+                    continue
                 if (
                     reply.recall_after_seconds is None
                     and reply.memory_round_id is None

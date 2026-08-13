@@ -67,6 +67,9 @@ class OutboundClaimResponse(ApiModel):
     id: UUID
     inbound_message_id: UUID | None
     text: str
+    content_type: Literal["text", "image"]
+    image_url: str | None
+    image_alt: str | None
     lease_token: UUID
     lease_expires_at: datetime
     attempt_count: int

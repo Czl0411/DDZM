@@ -394,6 +394,23 @@ def test_send_preserves_caller_message_id_and_uses_short_ack_timeout(gateway):
     assert socket.calls[1][2] == 3
 
 
+def test_send_image_uses_platform_image_content(gateway):
+    adapter, socket, _ = gateway
+
+    platform_message_id = adapter.send_image(
+        "https://cdn.example.com/profile.webp",
+        alt="档案形象",
+        message_id="image-outbound-1",
+    )
+
+    assert platform_message_id == "image-outbound-1"
+    assert socket.calls[1][1]["message"]["content"] == {
+        "type": "image",
+        "url": "https://cdn.example.com/profile.webp",
+        "alt": "档案形象",
+    }
+
+
 def test_send_joins_destination_before_sending_and_preserves_newlines(gateway):
     """Fails until sends explicitly join the target Aikda room first."""
     adapter, socket, _ = gateway

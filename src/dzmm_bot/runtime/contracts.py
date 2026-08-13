@@ -43,6 +43,9 @@ class DirectChatRoom:
 class OutboundMessage:
     inbound_message_id: str
     text: str
+    content_type: str = "text"
+    image_url: str | None = None
+    image_alt: str | None = None
     id: UUID = field(default_factory=uuid4)
     status: str = "pending"
     lease_worker_id: str | None = None

@@ -1345,6 +1345,11 @@ class OutboundRecord(Base):
     )
     reply_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(
+        String(16), default="text", server_default="text", nullable=False
+    )
+    image_url: Mapped[str | None] = mapped_column(Text)
+    image_alt: Mapped[str | None] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     lease_worker_id: Mapped[str | None] = mapped_column(String(255))
     lease_token: Mapped[UUID | None] = mapped_column(Uuid)

@@ -255,6 +255,21 @@ class BrowserWorker:
 
     def _send_outbound(self, gateway: ChatGateway, outbound) -> str:
         platform_message_id = str(outbound.id)
+        if outbound.content_type == "image":
+            if outbound.image_url is None:
+                raise RuntimeError("image outbound missing URL")
+            if outbound.destination_chatroom_id is not None:
+                return gateway.send_image_to(
+                    outbound.destination_chatroom_id,
+                    outbound.image_url,
+                    alt=outbound.image_alt or "image",
+                    message_id=platform_message_id,
+                )
+            return gateway.send_image(
+                outbound.image_url,
+                alt=outbound.image_alt or "image",
+                message_id=platform_message_id,
+            )
         if (
             self._bot_sender is not None
             and self._bot_chatroom_id is not None

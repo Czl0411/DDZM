@@ -246,3 +246,30 @@ def test_core_client_serializes_referenced_image():
         "height": 1254,
         "blurhash": "UsK-k9",
     }
+
+
+def test_core_client_deserializes_image_outbound_claim():
+    from dzmm_bot.browser.core_client import CoreClient
+
+    message_id = "00000000-0000-0000-0000-000000000001"
+    lease_token = "00000000-0000-0000-0000-000000000002"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": message_id, "inbound_message_id": None, "text": "",
+            "content_type": "image", "image_url": "https://cdn.example.com/profile.png",
+            "image_alt": "档案形象", "lease_token": lease_token,
+            "lease_expires_at": "2026-08-13T12:00:30Z", "attempt_count": 1,
+            "destination_chatroom_id": None, "delivery_kind": "group",
+            "recall_after_seconds": None,
+        })
+
+    client = CoreClient(
+        "http://core.test", "token",
+        client=httpx.Client(base_url="http://core.test", transport=httpx.MockTransport(handler)),
+    )
+    claim = client.claim_outbound("worker-a", datetime(2026, 8, 13, tzinfo=UTC), 30)
+
+    assert claim.content_type == "image"
+    assert claim.image_url == "https://cdn.example.com/profile.png"
+    assert claim.image_alt == "档案形象"

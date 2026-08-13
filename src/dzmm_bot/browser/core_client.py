@@ -15,6 +15,9 @@ class OutboundClaim:
     inbound_message_id: str | None
     text: str
     lease_token: UUID
+    content_type: str = "text"
+    image_url: str | None = None
+    image_alt: str | None = None
     destination_chatroom_id: str | None = None
     delivery_kind: str = "group"
     recall_after_seconds: int | None = None
@@ -187,6 +190,9 @@ class CoreClient:
             inbound_message_id=data["inbound_message_id"],
             text=data["text"],
             lease_token=UUID(data["lease_token"]),
+            content_type=data["content_type"],
+            image_url=data["image_url"],
+            image_alt=data["image_alt"],
             destination_chatroom_id=data["destination_chatroom_id"],
             delivery_kind=data["delivery_kind"],
             recall_after_seconds=data["recall_after_seconds"],

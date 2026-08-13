@@ -25,6 +25,7 @@ class FakeGateway:
     sent: list[str] = field(default_factory=list)
     direct_rooms: list[DirectChatRoom] = field(default_factory=list)
     sent_to: list[tuple[str, str]] = field(default_factory=list)
+    sent_images: list[tuple[str, str]] = field(default_factory=list)
     retracted: list[str] = field(default_factory=list)
     send_error: Exception | None = None
     read_error: Exception | None = None
@@ -59,6 +60,14 @@ class FakeGateway:
             raise self.send_error
         self.sent_to.append((chatroom_id, text))
         return f"direct-{len(self.sent_to)}"
+
+    def send_image(self, image_url, *, alt="image", message_id=None):
+        self.sent_message_ids.append(message_id)
+        self.sent_images.append((image_url, alt))
+        return f"image-{len(self.sent_images)}"
+
+    def send_image_to(self, chatroom_id, image_url, *, alt="image", message_id=None):
+        raise AssertionError("unexpected targeted image")
 
     def discover_direct_chats(self):
         return list(self.direct_rooms)
@@ -380,6 +389,25 @@ def test_sent_confirmation_includes_current_fencing_values(context):
     assert core.confirmed == [
         (OUTBOUND_ID, "worker-a", LEASE, "sent-1", NOW)
     ]
+
+
+def test_worker_routes_image_outbound_to_gateway_image_send(context):
+    worker, gateway, _, _, core, _ = context
+    core.pending = [OutboundClaim(
+        OUTBOUND_ID, "in-1", "", LEASE,
+        content_type="image",
+        image_url="https://cdn.example.com/profile.webp",
+        image_alt="档案形象",
+    )]
+
+    worker.run_once()
+
+    assert core.confirmed_event.wait(timeout=1)
+    assert gateway.sent == []
+    assert gateway.sent_images == [
+        ("https://cdn.example.com/profile.webp", "档案形象")
+    ]
+    assert core.confirmed[0][3] == "image-1"
 
 
 def test_worker_retries_socket_timeout_with_the_same_platform_message_id(context):

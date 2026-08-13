@@ -29,6 +29,12 @@ def test_profile_image_migration_backfills_and_downgrades(tmp_path, monkeypatch)
         Column("department_id", Uuid),
         Column("joined_at", DateTime(timezone=True), nullable=False),
     )
+    outbound_messages = Table(
+        "outbound_messages",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("text", Text, nullable=False),
+    )
     metadata.create_all(engine)
     with engine.begin() as connection:
         connection.execute(
@@ -40,6 +46,10 @@ def test_profile_image_migration_backfills_and_downgrades(tmp_path, monkeypatch)
                 "joined_at": datetime(2026, 8, 13, tzinfo=UTC),
             },
         )
+        connection.execute(
+            outbound_messages.insert(),
+            {"id": uuid4(), "text": "历史文本消息"},
+        )
     command.stamp(config, "20260812_40")
 
     command.upgrade(config, "20260813_41")
@@ -50,8 +60,17 @@ def test_profile_image_migration_backfills_and_downgrades(tmp_path, monkeypatch)
         assert connection.execute(
             text("SELECT profile_image_url, profile_version FROM users WHERE platform_id = 'legacy'")
         ).one() == (None, 0)
+        assert connection.execute(
+            text("SELECT content_type, image_url, image_alt FROM outbound_messages")
+        ).one() == ("text", None, None)
 
     command.downgrade(config, "20260812_40")
     columns = {column["name"] for column in inspect(engine).get_columns("users")}
     assert "profile_image_url" not in columns
     assert "profile_version" not in columns
+    outbound_columns = {
+        column["name"] for column in inspect(engine).get_columns("outbound_messages")
+    }
+    assert "content_type" not in outbound_columns
+    assert "image_url" not in outbound_columns
+    assert "image_alt" not in outbound_columns

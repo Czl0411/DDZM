@@ -1,4 +1,5 @@
 from collections import Counter
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from dzmm_bot.runtime.contracts import InboundMessage
@@ -18,6 +19,13 @@ _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
     "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
 }
+
+
+def _valid_image_url(value: str | None) -> bool:
+    if value is None:
+        return False
+    parsed = urlsplit(value.strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 class GroupCommandHandler:
@@ -530,7 +538,7 @@ class GroupCommandHandler:
             content != "/编辑档案形象"
             or reference is None
             or reference.content_type != "image"
-            or not reference.image_url
+            or not _valid_image_url(reference.image_url)
         ):
             return self._reply("/编辑档案形象", "usage", received_at)
         result = self._repository.edit_own_profile_image(

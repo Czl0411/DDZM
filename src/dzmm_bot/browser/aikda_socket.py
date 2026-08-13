@@ -106,18 +106,44 @@ class AikdaSocketGateway:
     def send_to(
         self, chatroom_id: str, text: str, *, message_id: str | None = None
     ) -> str:
+        if not text.strip():
+            raise ValueError("text must be nonempty")
+        return self._send_content(
+            chatroom_id, {"type": "text", "text": text}, message_id=message_id
+        )
+
+    def send_image(
+        self, image_url: str, *, alt: str = "image", message_id: str | None = None
+    ) -> str:
+        return self.send_image_to(
+            self.chatroom_id, image_url, alt=alt, message_id=message_id
+        )
+
+    def send_image_to(
+        self, chatroom_id: str, image_url: str, *, alt: str = "image",
+        message_id: str | None = None,
+    ) -> str:
+        if not image_url.strip():
+            raise ValueError("image_url must be nonempty")
+        return self._send_content(
+            chatroom_id,
+            {"type": "image", "url": image_url, "alt": alt or "image"},
+            message_id=message_id,
+        )
+
+    def _send_content(
+        self, chatroom_id: str, content: dict[str, Any], *, message_id: str | None
+    ) -> str:
         self._ensure_connected()
         if not chatroom_id:
             raise ValueError("chatroom_id must be nonempty")
-        if not text.strip():
-            raise ValueError("text must be nonempty")
         message_id = message_id or str(uuid4())
         message = {
             "message_id": message_id,
             "sent_by": self._bot_id,
             "chatroom_id": chatroom_id,
             "sent_at": _utc_iso(self._clock()),
-            "content": {"type": "text", "text": text},
+            "content": content,
         }
         if chatroom_id not in self._joined_direct_chatroom_ids:
             self._join_direct_room(chatroom_id)
@@ -132,8 +158,8 @@ class AikdaSocketGateway:
             _LOGGER.warning(
                 "aikda message:send rejected destination=%s chars=%s lines=%s code=%s error=%s",
                 chatroom_id,
-                len(text),
-                text.count("\n") + 1,
+                len(content.get("text", "")),
+                content.get("text", "").count("\n") + 1,
                 code or "-",
                 error,
             )

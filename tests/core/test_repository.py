@@ -5470,6 +5470,33 @@ def test_outbound_replies_for_one_inbound_are_claimed_in_reply_order(
     assert claimed_second.id == second.id
 
 
+def test_profile_image_outbound_waits_for_profile_text_and_keeps_image_fields(
+    repository, inbound, now
+):
+    stored, _ = repository.accept_inbound(inbound)
+    text_reply = repository.enqueue_outbound(stored.id, "个人介绍", 0)
+    image_reply = repository.enqueue_image_outbound(
+        stored.id,
+        "https://cdn.example.com/profile.webp",
+        1,
+        image_alt="档案形象",
+    )
+
+    first = repository.claim_outbound("worker-a", now, 30)
+    assert (first.id, first.content_type, first.text) == (
+        text_reply.id, "text", "个人介绍",
+    )
+    assert repository.claim_outbound("worker-b", now, 30) is None
+    assert repository.confirm_sent(
+        first.id, "worker-a", first.lease_token, "sent-text", now
+    )
+
+    second = repository.claim_outbound("worker-b", now, 30)
+    assert (second.id, second.content_type, second.image_url, second.image_alt) == (
+        image_reply.id, "image", "https://cdn.example.com/profile.webp", "档案形象",
+    )
+
+
 def test_outbound_reply_preserves_message_below_platform_limits(
     repository, session_factory, inbound
 ):

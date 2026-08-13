@@ -23,9 +23,22 @@ def upgrade() -> None:
                 server_default="0",
             )
         )
+    with op.batch_alter_table("outbound_messages") as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "content_type", sa.String(length=16), nullable=False,
+                server_default="text",
+            )
+        )
+        batch_op.add_column(sa.Column("image_url", sa.Text(), nullable=True))
+        batch_op.add_column(sa.Column("image_alt", sa.String(length=512), nullable=True))
 
 
 def downgrade() -> None:
+    with op.batch_alter_table("outbound_messages") as batch_op:
+        batch_op.drop_column("image_alt")
+        batch_op.drop_column("image_url")
+        batch_op.drop_column("content_type")
     with op.batch_alter_table("users") as batch_op:
         batch_op.drop_column("profile_version")
         batch_op.drop_column("profile_image_url")

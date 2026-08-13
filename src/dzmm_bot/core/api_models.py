@@ -11,6 +11,17 @@ class ApiModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class MessageReferenceRequest(ApiModel):
+    message_id: str = Field(min_length=1, max_length=255)
+    sender_platform_id: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(min_length=1, max_length=32)
+    image_url: str | None = Field(default=None, max_length=4096)
+    alt: str | None = Field(default=None, max_length=512)
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+    blurhash: str | None = Field(default=None, max_length=512)
+
+
 class InboundRequest(ApiModel):
     platform_message_id: str = Field(min_length=1, max_length=255)
     sender_platform_id: str = Field(min_length=1, max_length=255)
@@ -18,6 +29,7 @@ class InboundRequest(ApiModel):
     received_at: AwareDatetime
     source_type: Literal["group", "direct"] = "group"
     chatroom_id: str | None = Field(default=None, max_length=255)
+    reference: MessageReferenceRequest | None = None
 
     @model_validator(mode="after")
     def validate_direct_room(self):
@@ -55,6 +67,9 @@ class OutboundClaimResponse(ApiModel):
     id: UUID
     inbound_message_id: UUID | None
     text: str
+    content_type: Literal["text", "image"]
+    image_url: str | None
+    image_alt: str | None
     lease_token: UUID
     lease_expires_at: datetime
     attempt_count: int
@@ -326,10 +341,59 @@ class PersonalProfileResponse(ApiModel):
     platform_id: str
     display_name: str
     profile_text: str = Field(max_length=800)
+    profile_image_url: str | None
+    profile_version: int = Field(ge=0)
+    latest_upload: dict | None
 
 
 class SetPersonalProfileRequest(ApiModel):
     profile_text: str = Field(max_length=800)
+
+
+class ProfileImageUploadClaimResponse(ApiModel):
+    id: UUID
+    temp_path: str
+    original_filename: str
+    mime_type: str
+    expected_profile_version: int = Field(ge=0)
+    lease_token: UUID
+    attempt_count: int = Field(ge=1)
+
+
+class ProfileImageCleanupClaimResponse(ApiModel):
+    id: UUID
+    temp_path: str
+    lease_token: UUID
+
+
+class CompleteProfileImageUploadRequest(ApiModel):
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token: UUID
+    result_url: str = Field(min_length=1, max_length=4096)
+    now: AwareDatetime
+
+
+class FailProfileImageUploadRequest(ApiModel):
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token: UUID
+    failure_summary: str = Field(min_length=1, max_length=128)
+    now: AwareDatetime
+
+
+class CreateProfileImageUploadRequest(ApiModel):
+    temp_path: str = Field(min_length=1, max_length=4096)
+    original_filename: str = Field(min_length=1, max_length=255)
+    mime_type: Literal["image/jpeg", "image/png", "image/webp"]
+    now: AwareDatetime
+
+
+class ProfileImageUploadStatusResponse(ApiModel):
+    id: UUID
+    platform_id: str
+    status: Literal["pending", "processing", "completed", "failed", "superseded"]
+    result_url: str | None
+    failure_summary: str | None
+    expected_profile_version: int = Field(ge=0)
 
 
 class AIRankQuotaResponse(ApiModel):

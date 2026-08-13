@@ -483,6 +483,14 @@
       <div class="template-modal-backdrop" data-close-employee-profile-modal></div>
       <section class="template-modal-card employee-profile-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">员工档案</p><h2 id="employee-profile-modal-title">编辑个人档案</h2><p class="muted">管理员编辑或清空不扣员工余额，也不消耗公共人力。</p></div><button class="text-button" data-close-employee-profile-modal type="button">关闭</button></div>
         <label>个人档案<textarea id="employee-profile-text" rows="10" maxlength="800" placeholder="尚未填写"></textarea></label>
+        <section class="employee-profile-image-panel">
+          <h3>档案形象</h3>
+          <img id="employee-profile-image" alt="当前档案形象" hidden>
+          <p id="employee-profile-image-empty" class="muted">尚未设置档案形象</p>
+          <input id="employee-profile-image-file" type="file" accept="image/jpeg,image/png,image/webp">
+          <p id="employee-profile-image-status" class="muted" aria-live="polite"></p>
+          <div class="command-actions"><button id="upload-employee-profile-image" class="primary" type="button">上传并替换</button><button id="clear-employee-profile-image" class="danger-button" type="button">清除形象</button></div>
+        </section>
         <div class="template-modal-actions"><button class="secondary" data-close-employee-profile-modal type="button">取消</button><button id="save-employee-profile" class="primary" type="button">保存档案</button></div>
       </section>
     </div>

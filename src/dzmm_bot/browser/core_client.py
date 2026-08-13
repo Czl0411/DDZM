@@ -15,6 +15,9 @@ class OutboundClaim:
     inbound_message_id: str | None
     text: str
     lease_token: UUID
+    content_type: str = "text"
+    image_url: str | None = None
+    image_alt: str | None = None
     destination_chatroom_id: str | None = None
     delivery_kind: str = "group"
     recall_after_seconds: int | None = None
@@ -34,6 +37,24 @@ class WorkerCommand:
     lease_token: UUID
 
 
+@dataclass(frozen=True)
+class ProfileImageUploadClaim:
+    id: UUID
+    temp_path: str
+    original_filename: str
+    mime_type: str
+    expected_profile_version: int
+    lease_token: UUID
+    attempt_count: int
+
+
+@dataclass(frozen=True)
+class ProfileImageCleanupClaim:
+    id: UUID
+    temp_path: str
+    lease_token: UUID
+
+
 class CorePort(Protocol):
     def submit_inbound(self, message: InboundMessage) -> None: ...
 
@@ -42,6 +63,28 @@ class CorePort(Protocol):
     def sync_direct_chats(self, rooms: list[DirectChatRoom], now: datetime) -> None: ...
 
     def direct_inbound_chatroom_ids(self) -> tuple[str, ...]: ...
+
+    def claim_profile_image_upload(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageUploadClaim | None: ...
+
+    def complete_profile_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        result_url: str, now: datetime,
+    ) -> bool: ...
+
+    def fail_profile_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        failure_summary: str, now: datetime,
+    ) -> bool: ...
+
+    def claim_profile_image_cleanup(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageCleanupClaim | None: ...
+
+    def complete_profile_image_cleanup(
+        self, task_id: UUID, worker_id: str, lease_token: UUID, now: datetime
+    ) -> bool: ...
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int
@@ -126,16 +169,29 @@ class CoreClient:
         self._logger = logging.getLogger(__name__)
 
     def submit_inbound(self, message: InboundMessage) -> None:
+        reference = message.reference
+        payload = {
+            "platform_message_id": message.platform_message_id,
+            "sender_platform_id": message.sender_platform_id,
+            "content": message.content,
+            "received_at": message.received_at.isoformat(),
+            "source_type": message.source_type,
+            "chatroom_id": message.chatroom_id,
+        }
+        if reference is not None:
+            payload["reference"] = {
+                "message_id": reference.message_id,
+                "sender_platform_id": reference.sender_platform_id,
+                "content_type": reference.content_type,
+                "image_url": reference.image_url,
+                "alt": reference.alt,
+                "width": reference.width,
+                "height": reference.height,
+                "blurhash": reference.blurhash,
+            }
         self._post(
             "/internal/inbound",
-            {
-                "platform_message_id": message.platform_message_id,
-                "sender_platform_id": message.sender_platform_id,
-                "content": message.content,
-                "received_at": message.received_at.isoformat(),
-                "source_type": message.source_type,
-                "chatroom_id": message.chatroom_id,
-            },
+            payload,
         )
 
     def run_daily_jobs(self, now: datetime) -> None:
@@ -160,6 +216,78 @@ class CoreClient:
         data = self._get("/internal/direct-inbound/rooms")
         return tuple(data["chatroom_ids"])
 
+    def claim_profile_image_upload(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageUploadClaim | None:
+        data = self._post(
+            "/internal/profile-image-uploads/claim",
+            _claim_payload(worker_id, now, lease_seconds),
+        )
+        if data is None:
+            return None
+        return ProfileImageUploadClaim(
+            id=UUID(data["id"]),
+            temp_path=data["temp_path"],
+            original_filename=data["original_filename"],
+            mime_type=data["mime_type"],
+            expected_profile_version=data["expected_profile_version"],
+            lease_token=UUID(data["lease_token"]),
+            attempt_count=data["attempt_count"],
+        )
+
+    def complete_profile_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        result_url: str, now: datetime,
+    ) -> bool:
+        data = self._post(
+            f"/internal/profile-image-uploads/{task_id}/completed",
+            {
+                "worker_id": worker_id, "lease_token": str(lease_token),
+                "result_url": result_url, "now": now.isoformat(),
+            },
+        )
+        return bool(data["accepted"])
+
+    def fail_profile_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        failure_summary: str, now: datetime,
+    ) -> bool:
+        data = self._post(
+            f"/internal/profile-image-uploads/{task_id}/failed",
+            {
+                "worker_id": worker_id, "lease_token": str(lease_token),
+                "failure_summary": failure_summary, "now": now.isoformat(),
+            },
+        )
+        return bool(data["accepted"])
+
+    def claim_profile_image_cleanup(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageCleanupClaim | None:
+        data = self._post(
+            "/internal/profile-image-cleanups/claim",
+            _claim_payload(worker_id, now, lease_seconds),
+        )
+        if data is None:
+            return None
+        return ProfileImageCleanupClaim(
+            id=UUID(data["id"]),
+            temp_path=data["temp_path"],
+            lease_token=UUID(data["lease_token"]),
+        )
+
+    def complete_profile_image_cleanup(
+        self, task_id: UUID, worker_id: str, lease_token: UUID, now: datetime
+    ) -> bool:
+        data = self._post(
+            f"/internal/profile-image-cleanups/{task_id}/completed",
+            {
+                "worker_id": worker_id, "lease_token": str(lease_token),
+                "now": now.isoformat(),
+            },
+        )
+        return bool(data["accepted"])
+
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int
     ) -> OutboundClaim | None:
@@ -174,6 +302,9 @@ class CoreClient:
             inbound_message_id=data["inbound_message_id"],
             text=data["text"],
             lease_token=UUID(data["lease_token"]),
+            content_type=data["content_type"],
+            image_url=data["image_url"],
+            image_alt=data["image_alt"],
             destination_chatroom_id=data["destination_chatroom_id"],
             delivery_kind=data["delivery_kind"],
             recall_after_seconds=data["recall_after_seconds"],

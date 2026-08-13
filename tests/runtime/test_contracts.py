@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from dzmm_bot.runtime.contracts import (
     InboundMessage,
     LoginState,
+    MessageReference,
     OutboundMessage,
     WorkerHeartbeat,
 )
@@ -38,6 +39,30 @@ def test_inbound_message_preserves_group_defaults_and_direct_provenance():
 
     assert (group.source_type, group.chatroom_id) == ("group", None)
     assert (direct.source_type, direct.chatroom_id) == ("direct", "direct-room-1")
+
+
+def test_inbound_message_preserves_referenced_image_metadata():
+    """Fails if a replied image is flattened away before command handling."""
+    reference = MessageReference(
+        message_id="image-message-1",
+        sender_platform_id="image-sender-1",
+        content_type="image",
+        image_url="https://cdn.example.test/profile.png",
+        alt="profile.png",
+        width=1254,
+        height=1254,
+        blurhash="UsK-k9",
+    )
+
+    message = InboundMessage(
+        "reply-message-1",
+        "sender-1",
+        "/编辑档案形象",
+        datetime.now(UTC),
+        reference=reference,
+    )
+
+    assert message.reference == reference
 
 
 def test_outbound_message_has_stable_uuid_and_delivery_defaults():

@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 import logging
 from threading import Lock
@@ -123,6 +124,8 @@ class BrowserWorker:
             return
 
         gateway = self._ensure_gateway()
+        self._process_profile_image_cleanup()
+        self._process_profile_image_upload(gateway)
         self._sync_direct_chats(gateway, now)
         if self._listening:
             try:
@@ -161,6 +164,51 @@ class BrowserWorker:
                 )
 
         self._start_outbound_if_idle(gateway)
+
+    def _process_profile_image_upload(self, gateway: ChatGateway) -> None:
+        claim = self._core.claim_profile_image_upload(
+            self._worker_id, self._clock(), self._lease_seconds
+        )
+        if claim is None:
+            return
+        path = Path(claim.temp_path)
+        reported = False
+        try:
+            result = gateway.upload_image(path, claim.mime_type)
+            image_url = result.get("url") if isinstance(result, dict) else None
+            if not isinstance(image_url, str) or not image_url:
+                raise ValueError("upload response missing image URL")
+            reported = self._core.complete_profile_image_upload(
+                claim.id, self._worker_id, claim.lease_token,
+                image_url, self._clock(),
+            )
+        except Exception:
+            _LOGGER.exception("profile image upload failed: %s", claim.id)
+            try:
+                reported = self._core.fail_profile_image_upload(
+                    claim.id, self._worker_id, claim.lease_token,
+                    "upload_failed", self._clock(),
+                )
+            except Exception:
+                _LOGGER.exception("profile image upload failure report failed: %s", claim.id)
+        finally:
+            if reported:
+                path.unlink(missing_ok=True)
+
+    def _process_profile_image_cleanup(self) -> None:
+        claim = self._core.claim_profile_image_cleanup(
+            self._worker_id, self._clock(), self._lease_seconds
+        )
+        if claim is None:
+            return
+        try:
+            Path(claim.temp_path).unlink(missing_ok=True)
+        except OSError:
+            _LOGGER.exception("profile image temp cleanup failed: %s", claim.id)
+            return
+        self._core.complete_profile_image_cleanup(
+            claim.id, self._worker_id, claim.lease_token, self._clock()
+        )
 
     def _queue_inbound(self, message: InboundMessage) -> None:
         if not self._listening:
@@ -255,6 +303,21 @@ class BrowserWorker:
 
     def _send_outbound(self, gateway: ChatGateway, outbound) -> str:
         platform_message_id = str(outbound.id)
+        if outbound.content_type == "image":
+            if outbound.image_url is None:
+                raise RuntimeError("image outbound missing URL")
+            if outbound.destination_chatroom_id is not None:
+                return gateway.send_image_to(
+                    outbound.destination_chatroom_id,
+                    outbound.image_url,
+                    alt=outbound.image_alt or "image",
+                    message_id=platform_message_id,
+                )
+            return gateway.send_image(
+                outbound.image_url,
+                alt=outbound.image_alt or "image",
+                message_id=platform_message_id,
+            )
         if (
             self._bot_sender is not None
             and self._bot_chatroom_id is not None

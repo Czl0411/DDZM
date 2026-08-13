@@ -840,7 +840,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-            "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
+            "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
             }
     command_records = {record["command"]: record for record in commands.json()}
     for command in ("/部门人数", "/我的部门人数"):
@@ -1323,6 +1323,9 @@ def test_outbound_claim_and_fenced_sent_acknowledgement(
     )
 
     assert first["id"] == str(outbound.id)
+    assert (first["content_type"], first["image_url"], first["image_alt"]) == (
+        "text", None, None,
+    )
     assert first["recall_after_seconds"] is None
     assert second["id"] == str(outbound.id)
     assert stale.status_code == 200
@@ -1340,6 +1343,91 @@ def test_outbound_claim_and_fenced_sent_acknowledgement(
         ).json()
         is None
     )
+
+
+def test_image_outbound_claim_serializes_image_content(app_context, headers, payload):
+    inbound = app_context.client.post(
+        "/internal/inbound", headers=headers, json=payload
+    ).json()
+    outbound = app_context.repository.enqueue_image_outbound(
+        inbound["message_id"], "https://cdn.example.com/profile.png", image_alt="档案形象"
+    )
+
+    claimed = app_context.client.post(
+        "/internal/outbound/claim",
+        headers=headers,
+        json={"worker_id": "worker-a", "now": NOW.isoformat(), "lease_seconds": 30},
+    ).json()
+
+    assert claimed["id"] == str(outbound.id)
+    assert (claimed["content_type"], claimed["text"], claimed["image_url"], claimed["image_alt"]) == (
+        "image", "", "https://cdn.example.com/profile.png", "档案形象",
+    )
+
+
+def test_profile_image_upload_internal_api_claims_and_completes(app_context, headers):
+    app_context.repository.create_user("upload-player", "上传玩家", NOW, 30)
+    app_context.repository.set_personal_profile_by_admin("upload-player", "个人介绍")
+    created = app_context.client.post(
+        "/internal/game/users/upload-player/profile-image-uploads",
+        headers=headers,
+        json={
+            "temp_path": "/tmp/profile.png", "original_filename": "profile.png",
+            "mime_type": "image/png", "now": NOW.isoformat(),
+        },
+    )
+    task_id = created.json()["id"]
+
+    claimed = app_context.client.post(
+        "/internal/profile-image-uploads/claim",
+        headers=headers,
+        json={"worker_id": "worker-a", "now": NOW.isoformat(), "lease_seconds": 30},
+    )
+    claim = claimed.json()
+    completed = app_context.client.post(
+            f"/internal/profile-image-uploads/{task_id}/completed",
+        headers=headers,
+        json={
+            "worker_id": "worker-a", "lease_token": claim["lease_token"],
+            "result_url": "https://cdn.example.com/profile.png",
+            "now": NOW.isoformat(),
+        },
+    )
+
+    assert claimed.status_code == 200
+    assert created.json()["status"] == "pending"
+    assert (claim["id"], claim["temp_path"], claim["mime_type"]) == (
+        task_id, "/tmp/profile.png", "image/png",
+    )
+    assert completed.json() == {"accepted": True}
+    status_response = app_context.client.get(
+        f"/internal/profile-image-uploads/{task_id}", headers=headers
+    )
+    assert status_response.json()["status"] == "completed"
+    assert app_context.repository.find_user("upload-player").profile_image_url == (
+        "https://cdn.example.com/profile.png"
+    )
+    cleanup_claim = app_context.client.post(
+        "/internal/profile-image-cleanups/claim",
+        headers=headers,
+        json={
+            "worker_id": "worker-a",
+            "now": (NOW + timedelta(seconds=1)).isoformat(),
+            "lease_seconds": 30,
+        },
+    ).json()
+    cleaned = app_context.client.post(
+        f"/internal/profile-image-cleanups/{task_id}/completed",
+        headers=headers,
+        json={
+            "worker_id": "worker-a",
+            "lease_token": cleanup_claim["lease_token"],
+            "now": (NOW + timedelta(seconds=2)).isoformat(),
+        },
+    )
+    assert cleanup_claim["temp_path"] == "/tmp/profile.png"
+    assert cleaned.json() == {"accepted": True}
+    assert app_context.repository.get_profile_image_upload(task_id).temp_path == ""
 
 
 def test_outbound_sent_requires_all_fencing_fields(client, headers):

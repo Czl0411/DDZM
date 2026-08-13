@@ -4,11 +4,16 @@ from datetime import UTC, datetime
 import logging
 from threading import Event, Lock
 from typing import Any
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage
+from dzmm_bot.runtime.contracts import (
+    DirectChatRoom,
+    InboundMessage,
+    MessageReference,
+)
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,6 +28,7 @@ class AikdaSocketGateway:
         *,
         token_provider: Callable[[], str],
         request: Callable[[str, dict[str, Any] | None], dict[str, Any]],
+        upload: Callable[[Path, str, str], dict[str, Any]] | None = None,
         cookie_provider: Callable[[], str] | None = None,
         socket_factory: Callable[[], Any] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
@@ -35,6 +41,7 @@ class AikdaSocketGateway:
         self._origin = f"{parsed.scheme}://{parsed.netloc}"
         self._token_provider = token_provider
         self._request = request
+        self._upload = upload
         self._cookie_provider = cookie_provider
         self._socket_factory = socket_factory or _socket_client
         self._clock = clock
@@ -102,18 +109,50 @@ class AikdaSocketGateway:
     def send_to(
         self, chatroom_id: str, text: str, *, message_id: str | None = None
     ) -> str:
+        if not text.strip():
+            raise ValueError("text must be nonempty")
+        return self._send_content(
+            chatroom_id, {"type": "text", "text": text}, message_id=message_id
+        )
+
+    def send_image(
+        self, image_url: str, *, alt: str = "image", message_id: str | None = None
+    ) -> str:
+        return self.send_image_to(
+            self.chatroom_id, image_url, alt=alt, message_id=message_id
+        )
+
+    def send_image_to(
+        self, chatroom_id: str, image_url: str, *, alt: str = "image",
+        message_id: str | None = None,
+    ) -> str:
+        if not image_url.strip():
+            raise ValueError("image_url must be nonempty")
+        return self._send_content(
+            chatroom_id,
+            {"type": "image", "url": image_url, "alt": alt or "image"},
+            message_id=message_id,
+        )
+
+    def upload_image(self, path: Path, mime_type: str) -> dict:
+        if self._upload is None:
+            raise NotImplementedError("image uploader unavailable")
+        self._ensure_connected()
+        return self._upload(path, mime_type, self.chatroom_id)
+
+    def _send_content(
+        self, chatroom_id: str, content: dict[str, Any], *, message_id: str | None
+    ) -> str:
         self._ensure_connected()
         if not chatroom_id:
             raise ValueError("chatroom_id must be nonempty")
-        if not text.strip():
-            raise ValueError("text must be nonempty")
         message_id = message_id or str(uuid4())
         message = {
             "message_id": message_id,
             "sent_by": self._bot_id,
             "chatroom_id": chatroom_id,
             "sent_at": _utc_iso(self._clock()),
-            "content": {"type": "text", "text": text},
+            "content": content,
         }
         if chatroom_id not in self._joined_direct_chatroom_ids:
             self._join_direct_room(chatroom_id)
@@ -128,8 +167,8 @@ class AikdaSocketGateway:
             _LOGGER.warning(
                 "aikda message:send rejected destination=%s chars=%s lines=%s code=%s error=%s",
                 chatroom_id,
-                len(text),
-                text.count("\n") + 1,
+                len(content.get("text", "")),
+                content.get("text", "").count("\n") + 1,
                 code or "-",
                 error,
             )
@@ -287,6 +326,7 @@ class AikdaSocketGateway:
             _shanghai_time(sent_at),
             source_type=source_type,
             chatroom_id=chatroom_id,
+            reference=_message_reference(content.get("reference")),
         )
         with self._pending_lock:
             if message_id in self._seen_ids:
@@ -297,6 +337,54 @@ class AikdaSocketGateway:
                 self._pending.append(inbound)
         if handler is not None:
             handler(inbound)
+
+
+def _message_reference(value: Any) -> MessageReference | None:
+    if not isinstance(value, dict):
+        return None
+    message_id = value.get("id")
+    sender_platform_id = value.get("sentBy")
+    content = value.get("content")
+    if (
+        not isinstance(message_id, str)
+        or not message_id
+        or not isinstance(sender_platform_id, str)
+        or not sender_platform_id
+        or not isinstance(content, dict)
+    ):
+        return None
+    content_type = content.get("type")
+    if not isinstance(content_type, str) or not content_type:
+        return None
+    image_url = content.get("url")
+    if image_url is not None and not isinstance(image_url, str):
+        return None
+    optional_strings = {
+        key: content.get(key)
+        for key in ("alt", "blurhash")
+    }
+    if any(value is not None and not isinstance(value, str) for value in optional_strings.values()):
+        return None
+    optional_dimensions = {
+        key: content.get(key)
+        for key in ("width", "height")
+    }
+    if any(
+        value is not None
+        and (isinstance(value, bool) or not isinstance(value, int) or value < 1)
+        for value in optional_dimensions.values()
+    ):
+        return None
+    return MessageReference(
+        message_id=message_id,
+        sender_platform_id=sender_platform_id,
+        content_type=content_type,
+        image_url=image_url,
+        alt=optional_strings["alt"],
+        width=optional_dimensions["width"],
+        height=optional_dimensions["height"],
+        blurhash=optional_strings["blurhash"],
+    )
 
 
 def _socket_client():

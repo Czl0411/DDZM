@@ -26,6 +26,17 @@ class ChatGateway(Protocol):
         self, chatroom_id: str, text: str, *, message_id: str | None = None
     ) -> str: ...
 
+    def send_image(
+        self, image_url: str, *, alt: str = "image", message_id: str | None = None
+    ) -> str: ...
+
+    def send_image_to(
+        self, chatroom_id: str, image_url: str, *, alt: str = "image",
+        message_id: str | None = None,
+    ) -> str: ...
+
+    def upload_image(self, path: Path, mime_type: str) -> dict: ...
+
     def discover_direct_chats(self) -> list[DirectChatRoom]: ...
 
     def retract(self, message_id: str) -> None: ...
@@ -116,6 +127,7 @@ class BrowserSession:
             self.chat_url,
             token_provider=self._token,
             request=self._request,
+            upload=self._upload_image,
             cookie_provider=self._cookies,
             socket_factory=self._socket_factory,
         )
@@ -128,6 +140,25 @@ class BrowserSession:
             _TRPC_SCRIPT,
             {"procedure": procedure, "payload": payload},
         )
+
+    def _upload_image(
+        self, path: Path, mime_type: str, chatroom_id: str
+    ) -> dict:
+        response = self._context.request.post(
+            f"{_origin(self.chat_url)}/api/trpc/chatroom.uploadImage",
+            multipart={
+                "file": {
+                    "name": path.name,
+                    "mimeType": mime_type,
+                    "buffer": path.read_bytes(),
+                },
+                "chatroomId": chatroom_id,
+            },
+        )
+        if not response.ok:
+            raise RuntimeError("Aikda image upload failed")
+        body = response.json()
+        return body.get("result", {}).get("data", {}).get("json", body)
 
     def _cookies(self) -> str:
         origin = _origin(self.chat_url)
@@ -206,6 +237,20 @@ class _PlaywrightGateway:
         self, chatroom_id: str, text: str, *, message_id: str | None = None
     ) -> str:
         raise NotImplementedError("direct messages require the Aikda socket gateway")
+
+    def send_image(
+        self, image_url: str, *, alt: str = "image", message_id: str | None = None
+    ) -> str:
+        raise NotImplementedError("images require the Aikda socket gateway")
+
+    def send_image_to(
+        self, chatroom_id: str, image_url: str, *, alt: str = "image",
+        message_id: str | None = None,
+    ) -> str:
+        raise NotImplementedError("images require the Aikda socket gateway")
+
+    def upload_image(self, path: Path, mime_type: str) -> dict:
+        raise NotImplementedError("image upload requires the Aikda socket gateway")
 
     def discover_direct_chats(self) -> list[DirectChatRoom]:
         raise NotImplementedError("direct messages require the Aikda socket gateway")

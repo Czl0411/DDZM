@@ -3,7 +3,12 @@ import json
 
 import httpx
 
-from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
+from dzmm_bot.runtime.contracts import (
+    DirectChatRoom,
+    InboundMessage,
+    LoginState,
+    MessageReference,
+)
 
 
 def test_core_client_heartbeat_reports_actual_and_returns_desired_listener_state():
@@ -190,3 +195,160 @@ def test_core_client_serializes_provenance_and_fetches_direct_inbound_rooms():
             },
         ),
     ]
+
+
+def test_core_client_serializes_referenced_image():
+    """Fails if the Worker-to-core HTTP request omits image reply metadata."""
+    from dzmm_bot.browser.core_client import CoreClient
+
+    observed = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.update(json.loads(request.content))
+        return httpx.Response(200, json={"accepted": True})
+
+    client = CoreClient(
+        "http://core.test",
+        "token",
+        client=httpx.Client(
+            base_url="http://core.test",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    now = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+
+    client.submit_inbound(
+        InboundMessage(
+            "reply-1",
+            "employee-1",
+            "/编辑档案形象",
+            now,
+            reference=MessageReference(
+                message_id="image-1",
+                sender_platform_id="employee-2",
+                content_type="image",
+                image_url="https://cdn.example.test/profile.png",
+                alt="profile.png",
+                width=1254,
+                height=1254,
+                blurhash="UsK-k9",
+            ),
+        )
+    )
+
+    assert observed["reference"] == {
+        "message_id": "image-1",
+        "sender_platform_id": "employee-2",
+        "content_type": "image",
+        "image_url": "https://cdn.example.test/profile.png",
+        "alt": "profile.png",
+        "width": 1254,
+        "height": 1254,
+        "blurhash": "UsK-k9",
+    }
+
+
+def test_core_client_deserializes_image_outbound_claim():
+    from dzmm_bot.browser.core_client import CoreClient
+
+    message_id = "00000000-0000-0000-0000-000000000001"
+    lease_token = "00000000-0000-0000-0000-000000000002"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": message_id, "inbound_message_id": None, "text": "",
+            "content_type": "image", "image_url": "https://cdn.example.com/profile.png",
+            "image_alt": "档案形象", "lease_token": lease_token,
+            "lease_expires_at": "2026-08-13T12:00:30Z", "attempt_count": 1,
+            "destination_chatroom_id": None, "delivery_kind": "group",
+            "recall_after_seconds": None,
+        })
+
+    client = CoreClient(
+        "http://core.test", "token",
+        client=httpx.Client(base_url="http://core.test", transport=httpx.MockTransport(handler)),
+    )
+    claim = client.claim_outbound("worker-a", datetime(2026, 8, 13, tzinfo=UTC), 30)
+
+    assert claim.content_type == "image"
+    assert claim.image_url == "https://cdn.example.com/profile.png"
+    assert claim.image_alt == "档案形象"
+
+
+def test_core_client_claims_and_completes_profile_image_upload():
+    from dzmm_bot.browser.core_client import CoreClient
+
+    observed = []
+    task_id = "00000000-0000-0000-0000-000000000003"
+    lease_token = "00000000-0000-0000-0000-000000000004"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append((request.url.path, json.loads(request.content)))
+        if request.url.path.endswith("/claim"):
+            return httpx.Response(200, json={
+                "id": task_id, "temp_path": "/tmp/profile.png",
+                "original_filename": "profile.png", "mime_type": "image/png",
+                "expected_profile_version": 2, "lease_token": lease_token,
+                "attempt_count": 1,
+            })
+        return httpx.Response(200, json={"accepted": True})
+
+    client = CoreClient(
+        "http://core.test", "token",
+        client=httpx.Client(base_url="http://core.test", transport=httpx.MockTransport(handler)),
+    )
+    now = datetime(2026, 8, 13, tzinfo=UTC)
+
+    claim = client.claim_profile_image_upload("worker-a", now, 30)
+    accepted = client.complete_profile_image_upload(
+        claim.id, "worker-a", claim.lease_token,
+        "https://cdn.example.com/profile.png", now,
+    )
+
+    assert claim.temp_path == "/tmp/profile.png"
+    assert accepted is True
+    assert observed[1] == (
+        f"/internal/profile-image-uploads/{task_id}/completed",
+        {
+            "worker_id": "worker-a", "lease_token": lease_token,
+            "result_url": "https://cdn.example.com/profile.png",
+            "now": now.isoformat(),
+        },
+    )
+
+
+def test_core_client_claims_and_completes_profile_image_cleanup():
+    from dzmm_bot.browser.core_client import CoreClient
+
+    observed = []
+    task_id = "00000000-0000-0000-0000-000000000005"
+    lease_token = "00000000-0000-0000-0000-000000000006"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append((request.url.path, json.loads(request.content)))
+        if request.url.path.endswith("/claim"):
+            return httpx.Response(200, json={
+                "id": task_id, "temp_path": "/tmp/superseded.png",
+                "lease_token": lease_token,
+            })
+        return httpx.Response(200, json={"accepted": True})
+
+    client = CoreClient(
+        "http://core.test", "token",
+        client=httpx.Client(base_url="http://core.test", transport=httpx.MockTransport(handler)),
+    )
+    now = datetime(2026, 8, 13, tzinfo=UTC)
+
+    claim = client.claim_profile_image_cleanup("worker-a", now, 30)
+    client.complete_profile_image_cleanup(
+        claim.id, "worker-a", claim.lease_token, now
+    )
+
+    assert claim.temp_path == "/tmp/superseded.png"
+    assert observed[1] == (
+        f"/internal/profile-image-cleanups/{task_id}/completed",
+        {
+            "worker_id": "worker-a", "lease_token": lease_token,
+            "now": now.isoformat(),
+        },
+    )

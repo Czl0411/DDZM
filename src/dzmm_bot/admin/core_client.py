@@ -65,6 +65,12 @@ class AdminCorePort(Protocol):
 
     def set_personal_profile(self, platform_id: str, profile_text: str) -> dict: ...
 
+    def create_profile_image_upload(self, platform_id: str, upload: dict) -> dict: ...
+
+    def get_profile_image_upload(self, task_id: str) -> dict: ...
+
+    def clear_profile_image(self, platform_id: str) -> dict: ...
+
     def get_ai_assistant_settings(self) -> dict: ...
 
     def set_ai_assistant_settings(self, settings: dict) -> dict: ...
@@ -317,6 +323,24 @@ class CoreClient:
         response = self._client.put(
             f"/internal/game/users/{platform_id}/profile",
             json={"profile_text": profile_text},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def create_profile_image_upload(self, platform_id: str, upload: dict) -> dict:
+        response = self._client.post(
+            f"/internal/game/users/{platform_id}/profile-image-uploads",
+            json=upload,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_profile_image_upload(self, task_id: str) -> dict:
+        return self._get(f"/internal/profile-image-uploads/{task_id}")
+
+    def clear_profile_image(self, platform_id: str) -> dict:
+        response = self._client.delete(
+            f"/internal/game/users/{platform_id}/profile-image"
         )
         response.raise_for_status()
         return response.json()

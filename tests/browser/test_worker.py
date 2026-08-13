@@ -25,6 +25,9 @@ class FakeGateway:
     sent: list[str] = field(default_factory=list)
     direct_rooms: list[DirectChatRoom] = field(default_factory=list)
     sent_to: list[tuple[str, str]] = field(default_factory=list)
+    sent_images: list[tuple[str, str]] = field(default_factory=list)
+    uploaded_images: list[tuple[str, str]] = field(default_factory=list)
+    upload_error: Exception | None = None
     retracted: list[str] = field(default_factory=list)
     send_error: Exception | None = None
     read_error: Exception | None = None
@@ -59,6 +62,20 @@ class FakeGateway:
             raise self.send_error
         self.sent_to.append((chatroom_id, text))
         return f"direct-{len(self.sent_to)}"
+
+    def send_image(self, image_url, *, alt="image", message_id=None):
+        self.sent_message_ids.append(message_id)
+        self.sent_images.append((image_url, alt))
+        return f"image-{len(self.sent_images)}"
+
+    def send_image_to(self, chatroom_id, image_url, *, alt="image", message_id=None):
+        raise AssertionError("unexpected targeted image")
+
+    def upload_image(self, path, mime_type):
+        if self.upload_error is not None:
+            raise self.upload_error
+        self.uploaded_images.append((str(path), mime_type))
+        return {"url": "https://cdn.example.com/uploaded.png"}
 
     def discover_direct_chats(self):
         return list(self.direct_rooms)
@@ -142,6 +159,12 @@ class FakeCore:
     failed_event: Event = field(default_factory=Event)
     released: list[tuple] = field(default_factory=list)
     released_event: Event = field(default_factory=Event)
+    upload_tasks: list = field(default_factory=list)
+    upload_completions: list[tuple] = field(default_factory=list)
+    upload_failures: list[tuple] = field(default_factory=list)
+    upload_cleanup_tasks: list = field(default_factory=list)
+    upload_cleanups: list[tuple] = field(default_factory=list)
+    upload_completion_accepted: bool = True
 
     def submit_inbound(self, message):
         self.submitted_ids.append(message.platform_message_id)
@@ -198,6 +221,33 @@ class FakeCore:
 
     def direct_inbound_chatroom_ids(self):
         return self.direct_rooms_to_read
+
+    def claim_profile_image_upload(self, worker_id, now, lease_seconds):
+        return self.upload_tasks.pop(0) if self.upload_tasks else None
+
+    def complete_profile_image_upload(
+        self, task_id, worker_id, lease_token, result_url, now
+    ):
+        self.upload_completions.append(
+            (task_id, worker_id, lease_token, result_url, now)
+        )
+        return self.upload_completion_accepted
+
+    def fail_profile_image_upload(
+        self, task_id, worker_id, lease_token, failure_summary, now
+    ):
+        self.upload_failures.append(
+            (task_id, worker_id, lease_token, failure_summary, now)
+        )
+        return self.upload_completion_accepted
+
+    def claim_profile_image_cleanup(self, worker_id, now, lease_seconds):
+        return self.upload_cleanup_tasks.pop(0) if self.upload_cleanup_tasks else None
+
+    def complete_profile_image_cleanup(
+        self, task_id, worker_id, lease_token, now
+    ):
+        self.upload_cleanups.append((task_id, worker_id, lease_token, now))
 
 
 @pytest.fixture
@@ -380,6 +430,106 @@ def test_sent_confirmation_includes_current_fencing_values(context):
     assert core.confirmed == [
         (OUTBOUND_ID, "worker-a", LEASE, "sent-1", NOW)
     ]
+
+
+def test_worker_routes_image_outbound_to_gateway_image_send(context):
+    worker, gateway, _, _, core, _ = context
+    core.pending = [OutboundClaim(
+        OUTBOUND_ID, "in-1", "", LEASE,
+        content_type="image",
+        image_url="https://cdn.example.com/profile.webp",
+        image_alt="档案形象",
+    )]
+
+    worker.run_once()
+
+    assert core.confirmed_event.wait(timeout=1)
+    assert gateway.sent == []
+    assert gateway.sent_images == [
+        ("https://cdn.example.com/profile.webp", "档案形象")
+    ]
+    assert core.confirmed[0][3] == "image-1"
+
+
+def test_worker_uploads_profile_image_reports_completion_and_removes_temp_file(
+    context, tmp_path
+):
+    from dzmm_bot.browser.core_client import ProfileImageUploadClaim
+
+    worker, gateway, _, _, core, _ = context
+    upload_path = tmp_path / "profile.png"
+    upload_path.write_bytes(b"image")
+    task_id = UUID(int=10)
+    core.upload_tasks = [ProfileImageUploadClaim(
+        task_id, str(upload_path), "profile.png", "image/png", 1, LEASE, 1
+    )]
+
+    worker.run_once()
+
+    assert gateway.uploaded_images == [(str(upload_path), "image/png")]
+    assert core.upload_completions == [(
+        task_id, "worker-a", LEASE,
+        "https://cdn.example.com/uploaded.png", NOW,
+    )]
+    assert not upload_path.exists()
+
+
+def test_worker_reports_profile_image_upload_failure_and_removes_temp_file(
+    context, tmp_path
+):
+    from dzmm_bot.browser.core_client import ProfileImageUploadClaim
+
+    worker, gateway, _, _, core, _ = context
+    upload_path = tmp_path / "profile.webp"
+    upload_path.write_bytes(b"image")
+    gateway.upload_error = RuntimeError("platform rejected upload")
+    task_id = UUID(int=11)
+    core.upload_tasks = [ProfileImageUploadClaim(
+        task_id, str(upload_path), "profile.webp", "image/webp", 1, LEASE, 1
+    )]
+
+    worker.run_once()
+
+    assert core.upload_completions == []
+    assert core.upload_failures == [(
+        task_id, "worker-a", LEASE, "upload_failed", NOW,
+    )]
+    assert not upload_path.exists()
+
+
+def test_worker_keeps_profile_image_temp_file_when_completion_is_rejected(
+    context, tmp_path
+):
+    from dzmm_bot.browser.core_client import ProfileImageUploadClaim
+
+    worker, _, _, _, core, _ = context
+    upload_path = tmp_path / "profile.png"
+    upload_path.write_bytes(b"image")
+    core.upload_completion_accepted = False
+    core.upload_tasks = [ProfileImageUploadClaim(
+        UUID(int=13), str(upload_path), "profile.png", "image/png", 1, LEASE, 1
+    )]
+
+    worker.run_once()
+
+    assert upload_path.exists()
+
+
+def test_worker_removes_superseded_profile_image_temp_file(context, tmp_path):
+    from dzmm_bot.browser.core_client import ProfileImageCleanupClaim
+
+    worker, _, _, _, core, _ = context
+    upload_path = tmp_path / "superseded.png"
+    upload_path.write_bytes(b"image")
+    task_id = UUID(int=12)
+    core.upload_cleanup_tasks = [ProfileImageCleanupClaim(
+        task_id, str(upload_path), LEASE
+    )]
+
+    worker.run_once()
+
+    assert not upload_path.exists()
+    assert core.upload_cleanups == [(task_id, "worker-a", LEASE, NOW)]
 
 
 def test_worker_retries_socket_timeout_with_the_same_platform_message_id(context):

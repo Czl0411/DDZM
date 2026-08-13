@@ -68,6 +68,9 @@ class FakeCore:
         default_factory=lambda: {"edit_cost": 10, "shared_labor": 5, "version": 0}
     )
     personal_profiles: dict[str, str] = field(default_factory=dict)
+    personal_profile_images: dict[str, str | None] = field(default_factory=dict)
+    profile_uploads: dict[str, dict] = field(default_factory=dict)
+    last_profile_upload: dict | None = None
     activity_settings: dict = field(
         default_factory=lambda: {
             "rules": [
@@ -393,10 +396,30 @@ class FakeCore:
             "platform_id": platform_id,
             "display_name": "档案员工",
             "profile_text": self.personal_profiles.get(platform_id, ""),
+            "profile_image_url": self.personal_profile_images.get(platform_id),
+            "profile_version": 0,
+            "latest_upload": None,
         }
 
     def set_personal_profile(self, platform_id, profile_text):
         self.personal_profiles[platform_id] = profile_text
+        return self.get_personal_profile(platform_id)
+
+    def create_profile_image_upload(self, platform_id, upload):
+        self.last_profile_upload = upload
+        task = {
+            "id": "upload-1", "platform_id": platform_id, "status": "pending",
+            "result_url": None, "failure_summary": None,
+            "expected_profile_version": 1,
+        }
+        self.profile_uploads[task["id"]] = task
+        return task
+
+    def get_profile_image_upload(self, task_id):
+        return self.profile_uploads[task_id]
+
+    def clear_profile_image(self, platform_id):
+        self.personal_profile_images[platform_id] = None
         return self.get_personal_profile(platform_id)
 
     def get_ai_assistant_settings(self):
@@ -1280,11 +1303,81 @@ def test_admin_exposes_personal_profile_controls(client):
     assert 'id="profile-settings-edit-cost"' in page
     assert 'id="profile-settings-shared-labor"' in page
     assert 'id="employee-profile-text"' in page
+    assert 'id="employee-profile-image"' in page
+    assert 'id="employee-profile-image-file"' in page
+    assert 'id="upload-employee-profile-image"' in page
+    assert 'id="clear-employee-profile-image"' in page
     assert 'maxlength="800"' in page
     assert 'data-personal-profile=' in script
     assert '"/api/game/profile-settings"' in script
     assert '`/api/game/users/${platformId}/profile`' in script
     assert 'Idempotency-Key' in script
+
+
+def test_admin_uploads_and_clears_employee_profile_image(
+    tmp_path, core, console, websocket_connection, admin_repository, headers
+):
+    from dzmm_bot.admin.app import create_app
+
+    upload_dir = tmp_path / "profile-uploads"
+    client = TestClient(create_app(
+        "admin-secret", core, repository=admin_repository,
+        console_client=console, websocket_connector=websocket_connection.connect,
+        profile_upload_dir=upload_dir,
+    ))
+    core.personal_profiles["profile-user"] = "个人介绍"
+
+    uploaded = client.post(
+        "/api/game/users/profile-user/profile-image",
+        headers=headers,
+        files={"file": ("profile.png", b"\x89PNG\r\n\x1a\nimage-data", "image/png")},
+    )
+    task_id = uploaded.json()["id"]
+    status_response = client.get(
+        f"/api/game/profile-image-uploads/{task_id}", headers=headers
+    )
+    cleared = client.delete(
+        "/api/game/users/profile-user/profile-image", headers=headers
+    )
+
+    assert uploaded.status_code == 202
+    assert status_response.json()["status"] == "pending"
+    assert cleared.status_code == 200
+    saved_path = Path(core.last_profile_upload["temp_path"])
+    assert saved_path.parent == upload_dir
+    assert saved_path.read_bytes() == b"\x89PNG\r\n\x1a\nimage-data"
+    assert upload_dir.stat().st_mode & 0o777 == 0o700
+    assert saved_path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize(
+    ("filename", "content_size", "mime_type"),
+    [
+        ("profile.gif", 3, "image/gif"),
+        ("profile.png", 12, "image/png"),
+        ("profile.png", 10 * 1024 * 1024 + 1, "image/png"),
+    ],
+)
+def test_admin_rejects_invalid_profile_image_upload(
+    tmp_path, core, console, websocket_connection, admin_repository, headers,
+    filename, content_size, mime_type,
+):
+    from dzmm_bot.admin.app import create_app
+
+    client = TestClient(create_app(
+        "admin-secret", core, repository=admin_repository,
+        console_client=console, websocket_connector=websocket_connection.connect,
+        profile_upload_dir=tmp_path,
+    ))
+
+    response = client.post(
+        "/api/game/users/profile-user/profile-image",
+        headers=headers,
+        files={"file": (filename, b"x" * content_size, mime_type)},
+    )
+
+    assert response.status_code == 422
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_admin_rejects_stale_configuration_write(client, headers):

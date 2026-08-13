@@ -1035,8 +1035,10 @@ def test_department_headcount_commands_show_totals_and_rank_counts_only():
     all_reply = _replies_for(factory, all_result.message_id)[0]
     assert all_reply == (
         "【部门人数统计】\n"
-        "未分配部门：共 1 人\n实习生：1 人\n\n"
-        "核心技术部：共 3 人\n实习生：2 人\n正式员工：1 人"
+        "未分配部门：共 1 人\n实习生：1 人\n"
+        "最高职位者：实习生 未分配同事\n\n"
+        "核心技术部：共 3 人\n实习生：2 人\n正式员工：1 人\n"
+        "最高职位者：正式员工 技术乙"
     )
     assert "查询人" not in all_reply
     assert "技术甲" not in all_reply
@@ -1046,8 +1048,45 @@ def test_department_headcount_commands_show_totals_and_rank_counts_only():
     )
     assert _replies_for(factory, mine_result.message_id) == [
         "【我的部门人数统计】\n"
-        "核心技术部：共 3 人\n实习生：2 人\n正式员工：1 人"
+        "核心技术部：共 3 人\n实习生：2 人\n正式员工：1 人\n"
+        "最高职位者：正式员工 技术乙"
     ]
+
+
+def test_department_headcount_shows_numbers_only_for_tied_duplicate_names():
+    from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    repository.create_user("viewer", "查询人", now, 0)
+    first, _ = repository.create_user("highest-1", "同名", now, 0)
+    second, _ = repository.create_user("highest-2", "同名", now, 0)
+    with factory.begin() as session:
+        tech = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
+        )
+        rank_two = session.scalar(
+            select(RankRecord).where(RankRecord.sort_order == 2)
+        )
+        assert tech is not None
+        assert rank_two is not None
+        for platform_id in ("viewer", "highest-1", "highest-2"):
+            session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            ).department_id = tech.id
+        for platform_id in ("highest-1", "highest-2"):
+            session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            ).rank_id = rank_two.id
+
+    result = _receive(service, "duplicate-heads", "viewer", "/部门人数", now)
+    reply = _replies_for(factory, result.message_id)[0]
+
+    assert (
+        f"最高职位者：正式员工 同名 #{first.employee_number:04d}、"
+        f"同名 #{second.employee_number:04d}"
+    ) in reply
+    assert "查询人 #" not in reply
 
 
 @pytest.mark.parametrize("command", ("/部门人数", "/我的部门人数"))

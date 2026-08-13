@@ -97,6 +97,7 @@ from .schema import (
     NumberBombRoundPlayerRecord,
     NumberBombRoundRecord,
     NumberBombSettingsRecord,
+    ProfileImageUploadRecord,
     OutboundRecord,
     UndercoverGamePlayerRecord,
     UndercoverGameRecord,
@@ -364,6 +365,17 @@ class ProfileImageEditResult:
     status: str
     image_url: str | None = None
     cost: int = 0
+
+
+@dataclass(frozen=True)
+class ProfileImageUploadClaim:
+    id: UUID
+    temp_path: str
+    original_filename: str
+    mime_type: str
+    expected_profile_version: int
+    lease_token: UUID
+    attempt_count: int
 
 
 @dataclass(frozen=True)
@@ -9864,9 +9876,17 @@ class CoreRepository:
             if user is None:
                 return False
             user.profile_text = normalized
-            if not normalized and user.profile_image_url is not None:
+            if not normalized:
                 user.profile_image_url = None
                 user.profile_version += 1
+                session.execute(
+                    update(ProfileImageUploadRecord)
+                    .where(
+                        ProfileImageUploadRecord.user_id == user.id,
+                        ProfileImageUploadRecord.status.in_(("pending", "processing")),
+                    )
+                    .values(status="superseded")
+                )
             session.flush()
             return True
 
@@ -9884,9 +9904,180 @@ class CoreRepository:
             )
             if user is None:
                 return False
-            if user.profile_image_url != normalized:
+            if user.profile_image_url != normalized or normalized is None:
                 user.profile_image_url = normalized
                 user.profile_version += 1
+                session.execute(
+                    update(ProfileImageUploadRecord)
+                    .where(
+                        ProfileImageUploadRecord.user_id == user.id,
+                        ProfileImageUploadRecord.status == "pending",
+                    )
+                    .values(status="superseded")
+                )
+            session.flush()
+            return True
+
+    def create_profile_image_upload(
+        self,
+        platform_id: str,
+        temp_path: str,
+        original_filename: str,
+        mime_type: str,
+        now: datetime,
+    ) -> ProfileImageUploadRecord:
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord)
+                .where(UserRecord.platform_id == platform_id)
+                .with_for_update()
+            )
+            if user is None:
+                raise ValueError("员工不存在")
+            if not user.profile_text.strip():
+                raise ValueError("请先完成个人档案")
+            user.profile_version += 1
+            session.execute(
+                update(ProfileImageUploadRecord)
+                .where(
+                    ProfileImageUploadRecord.user_id == user.id,
+                    ProfileImageUploadRecord.status == "pending",
+                )
+                .values(status="superseded", updated_at=now, completed_at=now)
+            )
+            record = ProfileImageUploadRecord(
+                user_id=user.id,
+                temp_path=temp_path,
+                original_filename=original_filename,
+                mime_type=mime_type,
+                expected_profile_version=user.profile_version,
+                status="pending",
+                attempt_count=0,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def get_profile_image_upload(
+        self, task_id: UUID | str
+    ) -> ProfileImageUploadRecord | None:
+        with self._session() as session:
+            return session.get(ProfileImageUploadRecord, UUID(str(task_id)))
+
+    def claim_profile_image_upload(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageUploadClaim | None:
+        with self._session() as session:
+            record = session.scalar(
+                select(ProfileImageUploadRecord)
+                .where(
+                    ProfileImageUploadRecord.status.in_(("pending", "processing")),
+                    or_(
+                        ProfileImageUploadRecord.lease_expires_at.is_(None),
+                        ProfileImageUploadRecord.lease_expires_at <= now,
+                    ),
+                )
+                .order_by(
+                    ProfileImageUploadRecord.created_at,
+                    ProfileImageUploadRecord.id,
+                )
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            if record is None:
+                return None
+            user = session.get(UserRecord, record.user_id)
+            if user is None or user.profile_version != record.expected_profile_version:
+                record.status = "superseded"
+                record.completed_at = now
+                record.updated_at = now
+                return None
+            token = uuid4()
+            record.status = "processing"
+            record.lease_worker_id = worker_id
+            record.lease_token = token
+            record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            record.attempt_count += 1
+            record.updated_at = now
+            session.flush()
+            return ProfileImageUploadClaim(
+                id=record.id,
+                temp_path=record.temp_path,
+                original_filename=record.original_filename,
+                mime_type=record.mime_type,
+                expected_profile_version=record.expected_profile_version,
+                lease_token=token,
+                attempt_count=record.attempt_count,
+            )
+
+    def complete_profile_image_upload(
+        self,
+        task_id: UUID | str,
+        worker_id: str,
+        lease_token: UUID | str,
+        result_url: str,
+        now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(
+                select(ProfileImageUploadRecord)
+                .where(
+                    ProfileImageUploadRecord.id == UUID(str(task_id)),
+                    ProfileImageUploadRecord.status == "processing",
+                    ProfileImageUploadRecord.lease_worker_id == worker_id,
+                    ProfileImageUploadRecord.lease_token == UUID(str(lease_token)),
+                    ProfileImageUploadRecord.lease_expires_at > now,
+                )
+                .with_for_update()
+            )
+            if record is None:
+                return False
+            user = session.get(UserRecord, record.user_id, with_for_update=True)
+            if user is None or user.profile_version != record.expected_profile_version:
+                record.status = "superseded"
+            else:
+                user.profile_image_url = result_url.strip()
+                record.status = "completed"
+                record.result_url = result_url.strip()
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            record.updated_at = now
+            record.completed_at = now
+            session.flush()
+            return True
+
+    def fail_profile_image_upload(
+        self,
+        task_id: UUID | str,
+        worker_id: str,
+        lease_token: UUID | str,
+        failure_summary: str,
+        now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(
+                select(ProfileImageUploadRecord)
+                .where(
+                    ProfileImageUploadRecord.id == UUID(str(task_id)),
+                    ProfileImageUploadRecord.status == "processing",
+                    ProfileImageUploadRecord.lease_worker_id == worker_id,
+                    ProfileImageUploadRecord.lease_token == UUID(str(lease_token)),
+                    ProfileImageUploadRecord.lease_expires_at > now,
+                )
+                .with_for_update()
+            )
+            if record is None:
+                return False
+            record.status = "failed"
+            record.failure_summary = failure_summary[:128]
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            record.updated_at = now
+            record.completed_at = now
             session.flush()
             return True
 
@@ -9895,6 +10086,10 @@ class CoreRepository:
             return session.scalar(
                 select(UserRecord).where(UserRecord.platform_id == platform_id)
             )
+
+    def find_user_by_id(self, user_id: UUID | str) -> UserRecord | None:
+        with self._session() as session:
+            return session.get(UserRecord, UUID(str(user_id)))
 
     @staticmethod
     def _take_employee_number(session: Session) -> int:

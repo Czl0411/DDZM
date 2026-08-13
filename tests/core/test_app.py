@@ -1365,6 +1365,50 @@ def test_image_outbound_claim_serializes_image_content(app_context, headers, pay
     )
 
 
+def test_profile_image_upload_internal_api_claims_and_completes(app_context, headers):
+    app_context.repository.create_user("upload-player", "上传玩家", NOW, 30)
+    app_context.repository.set_personal_profile_by_admin("upload-player", "个人介绍")
+    created = app_context.client.post(
+        "/internal/game/users/upload-player/profile-image-uploads",
+        headers=headers,
+        json={
+            "temp_path": "/tmp/profile.png", "original_filename": "profile.png",
+            "mime_type": "image/png", "now": NOW.isoformat(),
+        },
+    )
+    task_id = created.json()["id"]
+
+    claimed = app_context.client.post(
+        "/internal/profile-image-uploads/claim",
+        headers=headers,
+        json={"worker_id": "worker-a", "now": NOW.isoformat(), "lease_seconds": 30},
+    )
+    claim = claimed.json()
+    completed = app_context.client.post(
+            f"/internal/profile-image-uploads/{task_id}/completed",
+        headers=headers,
+        json={
+            "worker_id": "worker-a", "lease_token": claim["lease_token"],
+            "result_url": "https://cdn.example.com/profile.png",
+            "now": NOW.isoformat(),
+        },
+    )
+
+    assert claimed.status_code == 200
+    assert created.json()["status"] == "pending"
+    assert (claim["id"], claim["temp_path"], claim["mime_type"]) == (
+        task_id, "/tmp/profile.png", "image/png",
+    )
+    assert completed.json() == {"accepted": True}
+    status_response = app_context.client.get(
+        f"/internal/profile-image-uploads/{task_id}", headers=headers
+    )
+    assert status_response.json()["status"] == "completed"
+    assert app_context.repository.find_user("upload-player").profile_image_url == (
+        "https://cdn.example.com/profile.png"
+    )
+
+
 def test_outbound_sent_requires_all_fencing_fields(client, headers):
     response = client.post(
         "/internal/outbound/00000000-0000-0000-0000-000000000000/sent",

@@ -411,6 +411,35 @@ def test_send_image_uses_platform_image_content(gateway):
     }
 
 
+def test_upload_image_delegates_to_authenticated_room_uploader(tmp_path):
+    observed = {}
+    image_path = tmp_path / "profile.png"
+    image_path.write_bytes(b"image")
+
+    def upload(path, mime_type, chatroom_id):
+        observed.update(
+            path=path, mime_type=mime_type, chatroom_id=chatroom_id
+        )
+        return {"url": "https://cdn.example.com/uploaded.png"}
+
+    adapter = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "token",
+        request=FakeRequest(),
+        upload=upload,
+        socket_factory=FakeSocket,
+    )
+
+    result = adapter.upload_image(image_path, "image/png")
+
+    assert result == {"url": "https://cdn.example.com/uploaded.png"}
+    assert observed == {
+        "path": image_path,
+        "mime_type": "image/png",
+        "chatroom_id": "room-1",
+    }
+
+
 def test_send_joins_destination_before_sending_and_preserves_newlines(gateway):
     """Fails until sends explicitly join the target Aikda room first."""
     adapter, socket, _ = gateway

@@ -916,6 +916,35 @@ class UserRecord(Base):
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class ProfileImageUploadRecord(Base):
+    __tablename__ = "profile_image_uploads"
+    __table_args__ = (
+        Index(
+            "ix_profile_image_uploads_claim",
+            "status",
+            "lease_expires_at",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    temp_path: Mapped[str] = mapped_column(Text, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_profile_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    lease_worker_id: Mapped[str | None] = mapped_column(String(255))
+    lease_token: Mapped[UUID | None] = mapped_column(Uuid)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    result_url: Mapped[str | None] = mapped_column(Text)
+    failure_summary: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
 class EmployeeNumberCounterRecord(Base):
     __tablename__ = "employee_number_counters"
 

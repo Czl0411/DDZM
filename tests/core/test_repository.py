@@ -395,6 +395,122 @@ def test_admin_profile_image_writes_are_versioned_and_cleared_with_text(reposito
     assert repository.get_profile_settings().shared_labor == 5
 
 
+def test_profile_image_upload_tasks_are_leased_and_expired_leases_are_recovered(
+    repository, now
+):
+    repository.create_user("upload-player", "上传玩家", now, 30)
+    repository.set_personal_profile_by_admin("upload-player", "个人介绍")
+    task = repository.create_profile_image_upload(
+        "upload-player", "/tmp/profile.png", "profile.png", "image/png", now
+    )
+
+    assert (task.status, task.expected_profile_version) == ("pending", 1)
+    assert repository.find_user("upload-player").profile_version == 1
+    first = repository.claim_profile_image_upload("worker-a", now, 30)
+    assert (first.id, first.temp_path, first.mime_type, first.attempt_count) == (
+        task.id, "/tmp/profile.png", "image/png", 1,
+    )
+    assert repository.claim_profile_image_upload("worker-b", now, 30) is None
+
+    second = repository.claim_profile_image_upload(
+        "worker-b", now + timedelta(seconds=31), 30
+    )
+    assert second.id == task.id
+    assert second.lease_token != first.lease_token
+    assert second.attempt_count == 2
+
+
+def test_profile_image_upload_completion_is_fenced_and_version_checked(repository, now):
+    repository.create_user("upload-player", "上传玩家", now, 30)
+    repository.set_personal_profile_by_admin("upload-player", "个人介绍")
+    task = repository.create_profile_image_upload(
+        "upload-player", "/tmp/profile.png", "profile.png", "image/png", now
+    )
+    claim = repository.claim_profile_image_upload("worker-a", now, 30)
+
+    assert repository.complete_profile_image_upload(
+        task.id, "worker-b", claim.lease_token,
+        "https://cdn.example.com/wrong.png", now,
+    ) is False
+    assert repository.complete_profile_image_upload(
+        task.id, "worker-a", claim.lease_token,
+        "https://cdn.example.com/profile.png", now,
+    ) is True
+
+    completed = repository.get_profile_image_upload(task.id)
+    user = repository.find_user("upload-player")
+    assert (completed.status, completed.result_url) == (
+        "completed", "https://cdn.example.com/profile.png",
+    )
+    assert user.profile_image_url == "https://cdn.example.com/profile.png"
+    assert user.profile_version == 1
+
+
+def test_new_upload_and_clear_supersede_older_profile_image_tasks(repository, now):
+    repository.create_user("upload-player", "上传玩家", now, 30)
+    repository.set_personal_profile_by_admin("upload-player", "个人介绍")
+    first = repository.create_profile_image_upload(
+        "upload-player", "/tmp/first.png", "first.png", "image/png", now
+    )
+    first_claim = repository.claim_profile_image_upload("worker-a", now, 30)
+    second = repository.create_profile_image_upload(
+        "upload-player", "/tmp/second.png", "second.png", "image/png",
+        now + timedelta(seconds=1),
+    )
+
+    assert second.expected_profile_version == 2
+    assert repository.complete_profile_image_upload(
+        first.id, "worker-a", first_claim.lease_token,
+        "https://cdn.example.com/first.png", now + timedelta(seconds=2),
+    ) is True
+    assert repository.get_profile_image_upload(first.id).status == "superseded"
+    assert repository.find_user("upload-player").profile_image_url is None
+
+    repository.set_profile_image_by_admin("upload-player", None)
+    assert repository.find_user("upload-player").profile_version == 3
+    assert repository.get_profile_image_upload(second.id).status == "superseded"
+
+
+def test_clearing_text_profile_invalidates_upload_even_without_existing_image(
+    repository, now
+):
+    repository.create_user("upload-player", "上传玩家", now, 30)
+    repository.set_personal_profile_by_admin("upload-player", "个人介绍")
+    task = repository.create_profile_image_upload(
+        "upload-player", "/tmp/pending.png", "pending.png", "image/png", now
+    )
+
+    assert repository.set_personal_profile_by_admin("upload-player", "") is True
+
+    user = repository.find_user("upload-player")
+    assert (user.profile_text, user.profile_image_url, user.profile_version) == (
+        "", None, 2,
+    )
+    assert repository.get_profile_image_upload(task.id).status == "superseded"
+
+
+def test_failed_profile_image_upload_keeps_existing_image(repository, now):
+    repository.create_user("upload-player", "上传玩家", now, 30)
+    repository.set_personal_profile_by_admin("upload-player", "个人介绍")
+    repository.set_profile_image_by_admin(
+        "upload-player", "https://cdn.example.com/existing.png"
+    )
+    task = repository.create_profile_image_upload(
+        "upload-player", "/tmp/new.webp", "new.webp", "image/webp", now
+    )
+    claim = repository.claim_profile_image_upload("worker-a", now, 30)
+
+    assert repository.fail_profile_image_upload(
+        task.id, "worker-a", claim.lease_token, "upload_failed", now
+    ) is True
+
+    failed = repository.get_profile_image_upload(task.id)
+    assert (failed.status, failed.failure_summary) == ("failed", "upload_failed")
+    assert repository.find_user("upload-player").profile_image_url == (
+        "https://cdn.example.com/existing.png"
+    )
+
+
 def test_employee_number_format_uses_four_digit_minimum_without_truncation():
     from dzmm_bot.core.repository import format_employee_number
 

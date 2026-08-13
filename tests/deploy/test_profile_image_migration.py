@@ -56,6 +56,7 @@ def test_profile_image_migration_backfills_and_downgrades(tmp_path, monkeypatch)
 
     columns = {column["name"] for column in inspect(engine).get_columns("users")}
     assert {"profile_image_url", "profile_version"} <= columns
+    assert "profile_image_uploads" in inspect(engine).get_table_names()
     with engine.connect() as connection:
         assert connection.execute(
             text("SELECT profile_image_url, profile_version FROM users WHERE platform_id = 'legacy'")
@@ -68,6 +69,7 @@ def test_profile_image_migration_backfills_and_downgrades(tmp_path, monkeypatch)
     columns = {column["name"] for column in inspect(engine).get_columns("users")}
     assert "profile_image_url" not in columns
     assert "profile_version" not in columns
+    assert "profile_image_uploads" not in inspect(engine).get_table_names()
     outbound_columns = {
         column["name"] for column in inspect(engine).get_columns("outbound_messages")
     }

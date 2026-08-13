@@ -69,6 +69,22 @@ class FakeContext:
         self.closed = True
 
 
+class FakeUploadResponse:
+    ok = True
+
+    def json(self):
+        return {"result": {"data": {"json": {"url": "https://cdn.example/upload.png"}}}}
+
+
+class FakeRequestContext:
+    def __init__(self):
+        self.calls = []
+
+    def post(self, url, *, multipart):
+        self.calls.append((url, multipart))
+        return FakeUploadResponse()
+
+
 class FakeChromium:
     def __init__(self, context):
         self.context = context
@@ -240,6 +256,46 @@ def test_configured_session_uses_socket_gateway_instead_of_dom_chat_controls(tmp
     assert socket.calls[1][0] == "message:send"
     assert platform_id == socket.calls[1][1]["message"]["message_id"]
     assert page.filled == []
+
+
+def test_configured_session_uploads_image_as_multipart_without_hex_encoding(tmp_path):
+    page = FakePage("https://chat.example/chat?c=group-1")
+    socket = FakeSocket()
+    page.evaluate = lambda script, arg=None: (
+        "short-lived-token"
+        if "api/auth/token" in script
+        else {"id": "bot-1"}
+        if arg["procedure"] == "user.getMe"
+        else {"messages": []}
+    )
+    context = FakeContext(page.url)
+    context.request = FakeRequestContext()
+    context.pages = [page]
+    session = BrowserSession(
+        tmp_path / "profile",
+        "https://chat.example/login",
+        chat_url="https://chat.example/chat?c=group-1",
+        playwright_factory=lambda: FakePlaywright(FakeChromium(context)),
+        socket_factory=lambda: socket,
+    )
+    image_path = tmp_path / "profile.png"
+    image_path.write_bytes(b"raw-image")
+
+    gateway = session.start_headless()
+    result = gateway.upload_image(image_path, "image/png")
+
+    assert result == {"url": "https://cdn.example/upload.png"}
+    assert context.request.calls == [(
+        "https://chat.example/api/trpc/chatroom.uploadImage",
+        {
+            "file": {
+                "name": "profile.png",
+                "mimeType": "image/png",
+                "buffer": b"raw-image",
+            },
+            "chatroomId": "group-1",
+        },
+    )]
 
 
 def test_configured_session_forwards_browser_cookies_to_socket_handshake(tmp_path):

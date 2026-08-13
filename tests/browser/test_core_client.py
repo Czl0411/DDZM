@@ -273,3 +273,44 @@ def test_core_client_deserializes_image_outbound_claim():
     assert claim.content_type == "image"
     assert claim.image_url == "https://cdn.example.com/profile.png"
     assert claim.image_alt == "档案形象"
+
+
+def test_core_client_claims_and_completes_profile_image_upload():
+    from dzmm_bot.browser.core_client import CoreClient
+
+    observed = []
+    task_id = "00000000-0000-0000-0000-000000000003"
+    lease_token = "00000000-0000-0000-0000-000000000004"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append((request.url.path, json.loads(request.content)))
+        if request.url.path.endswith("/claim"):
+            return httpx.Response(200, json={
+                "id": task_id, "temp_path": "/tmp/profile.png",
+                "original_filename": "profile.png", "mime_type": "image/png",
+                "expected_profile_version": 2, "lease_token": lease_token,
+                "attempt_count": 1,
+            })
+        return httpx.Response(200, json={"accepted": True})
+
+    client = CoreClient(
+        "http://core.test", "token",
+        client=httpx.Client(base_url="http://core.test", transport=httpx.MockTransport(handler)),
+    )
+    now = datetime(2026, 8, 13, tzinfo=UTC)
+
+    claim = client.claim_profile_image_upload("worker-a", now, 30)
+    client.complete_profile_image_upload(
+        claim.id, "worker-a", claim.lease_token,
+        "https://cdn.example.com/profile.png", now,
+    )
+
+    assert claim.temp_path == "/tmp/profile.png"
+    assert observed[1] == (
+        f"/internal/profile-image-uploads/{task_id}/completed",
+        {
+            "worker_id": "worker-a", "lease_token": lease_token,
+            "result_url": "https://cdn.example.com/profile.png",
+            "now": now.isoformat(),
+        },
+    )

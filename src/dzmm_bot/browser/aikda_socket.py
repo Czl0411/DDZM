@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import logging
 from threading import Event, Lock
 from typing import Any
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -27,6 +28,7 @@ class AikdaSocketGateway:
         *,
         token_provider: Callable[[], str],
         request: Callable[[str, dict[str, Any] | None], dict[str, Any]],
+        upload: Callable[[Path, str, str], dict[str, Any]] | None = None,
         cookie_provider: Callable[[], str] | None = None,
         socket_factory: Callable[[], Any] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
@@ -39,6 +41,7 @@ class AikdaSocketGateway:
         self._origin = f"{parsed.scheme}://{parsed.netloc}"
         self._token_provider = token_provider
         self._request = request
+        self._upload = upload
         self._cookie_provider = cookie_provider
         self._socket_factory = socket_factory or _socket_client
         self._clock = clock
@@ -130,6 +133,12 @@ class AikdaSocketGateway:
             {"type": "image", "url": image_url, "alt": alt or "image"},
             message_id=message_id,
         )
+
+    def upload_image(self, path: Path, mime_type: str) -> dict:
+        if self._upload is None:
+            raise NotImplementedError("image uploader unavailable")
+        self._ensure_connected()
+        return self._upload(path, mime_type, self.chatroom_id)
 
     def _send_content(
         self, chatroom_id: str, content: dict[str, Any], *, message_id: str | None

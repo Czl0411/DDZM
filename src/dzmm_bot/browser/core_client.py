@@ -37,6 +37,17 @@ class WorkerCommand:
     lease_token: UUID
 
 
+@dataclass(frozen=True)
+class ProfileImageUploadClaim:
+    id: UUID
+    temp_path: str
+    original_filename: str
+    mime_type: str
+    expected_profile_version: int
+    lease_token: UUID
+    attempt_count: int
+
+
 class CorePort(Protocol):
     def submit_inbound(self, message: InboundMessage) -> None: ...
 
@@ -45,6 +56,20 @@ class CorePort(Protocol):
     def sync_direct_chats(self, rooms: list[DirectChatRoom], now: datetime) -> None: ...
 
     def direct_inbound_chatroom_ids(self) -> tuple[str, ...]: ...
+
+    def claim_profile_image_upload(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageUploadClaim | None: ...
+
+    def complete_profile_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        result_url: str, now: datetime,
+    ) -> None: ...
+
+    def fail_profile_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        failure_summary: str, now: datetime,
+    ) -> None: ...
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int
@@ -175,6 +200,49 @@ class CoreClient:
     def direct_inbound_chatroom_ids(self) -> tuple[str, ...]:
         data = self._get("/internal/direct-inbound/rooms")
         return tuple(data["chatroom_ids"])
+
+    def claim_profile_image_upload(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageUploadClaim | None:
+        data = self._post(
+            "/internal/profile-image-uploads/claim",
+            _claim_payload(worker_id, now, lease_seconds),
+        )
+        if data is None:
+            return None
+        return ProfileImageUploadClaim(
+            id=UUID(data["id"]),
+            temp_path=data["temp_path"],
+            original_filename=data["original_filename"],
+            mime_type=data["mime_type"],
+            expected_profile_version=data["expected_profile_version"],
+            lease_token=UUID(data["lease_token"]),
+            attempt_count=data["attempt_count"],
+        )
+
+    def complete_profile_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        result_url: str, now: datetime,
+    ) -> None:
+        self._post(
+            f"/internal/profile-image-uploads/{task_id}/completed",
+            {
+                "worker_id": worker_id, "lease_token": str(lease_token),
+                "result_url": result_url, "now": now.isoformat(),
+            },
+        )
+
+    def fail_profile_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        failure_summary: str, now: datetime,
+    ) -> None:
+        self._post(
+            f"/internal/profile-image-uploads/{task_id}/failed",
+            {
+                "worker_id": worker_id, "lease_token": str(lease_token),
+                "failure_summary": failure_summary, "now": now.isoformat(),
+            },
+        )
 
     def claim_outbound(
         self, worker_id: str, now: datetime, lease_seconds: int

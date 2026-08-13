@@ -347,6 +347,46 @@ class SetPersonalProfileRequest(ApiModel):
     profile_text: str = Field(max_length=800)
 
 
+class ProfileImageUploadClaimResponse(ApiModel):
+    id: UUID
+    temp_path: str
+    original_filename: str
+    mime_type: str
+    expected_profile_version: int = Field(ge=0)
+    lease_token: UUID
+    attempt_count: int = Field(ge=1)
+
+
+class CompleteProfileImageUploadRequest(ApiModel):
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token: UUID
+    result_url: str = Field(min_length=1, max_length=4096)
+    now: AwareDatetime
+
+
+class FailProfileImageUploadRequest(ApiModel):
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token: UUID
+    failure_summary: str = Field(min_length=1, max_length=128)
+    now: AwareDatetime
+
+
+class CreateProfileImageUploadRequest(ApiModel):
+    temp_path: str = Field(min_length=1, max_length=4096)
+    original_filename: str = Field(min_length=1, max_length=255)
+    mime_type: Literal["image/jpeg", "image/png", "image/webp"]
+    now: AwareDatetime
+
+
+class ProfileImageUploadStatusResponse(ApiModel):
+    id: UUID
+    platform_id: str
+    status: Literal["pending", "processing", "completed", "failed", "superseded"]
+    result_url: str | None
+    failure_summary: str | None
+    expected_profile_version: int = Field(ge=0)
+
+
 class AIRankQuotaResponse(ApiModel):
     rank_id: UUID
     rank_name: str

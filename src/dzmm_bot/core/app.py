@@ -38,17 +38,22 @@ from .api_models import (
     AdminStatusResponse,
     ClaimRequest,
     CompleteWorkerCommandRequest,
+    CompleteProfileImageUploadRequest,
     CommandDefinitionResponse,
     CommandTemplateResponse,
     CreateDepartmentRequest,
     CreateAIPlayerImpressionRequest,
     CreateItemRequest,
+    CreateProfileImageUploadRequest,
     DailyJobsRequest,
     DirectChatSyncRequest,
     DirectInboundRoomsResponse,
     FailedRequest,
+    FailProfileImageUploadRequest,
     GameSettingsResponse,
     PersonalProfileResponse,
+    ProfileImageUploadClaimResponse,
+    ProfileImageUploadStatusResponse,
     ProfileSettingsResponse,
     HealthResponse,
     HeartbeatRequest,
@@ -273,6 +278,107 @@ def create_app(
             request.now,
         )
         return AcceptedResponse(accepted=accepted)
+
+    @app.post(
+        "/internal/profile-image-uploads/claim",
+        response_model=ProfileImageUploadClaimResponse | None,
+    )
+    def claim_profile_image_upload(
+        request: ClaimRequest, _: Annotated[None, Depends(authorize)]
+    ) -> ProfileImageUploadClaimResponse | None:
+        claim = repository.claim_profile_image_upload(
+            request.worker_id, request.now, request.lease_seconds
+        )
+        if claim is None:
+            return None
+        return ProfileImageUploadClaimResponse(
+            id=claim.id,
+            temp_path=claim.temp_path,
+            original_filename=claim.original_filename,
+            mime_type=claim.mime_type,
+            expected_profile_version=claim.expected_profile_version,
+            lease_token=claim.lease_token,
+            attempt_count=claim.attempt_count,
+        )
+
+    @app.post(
+        "/internal/game/users/{platform_id}/profile-image-uploads",
+        response_model=ProfileImageUploadStatusResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_profile_image_upload(
+        platform_id: str,
+        request: CreateProfileImageUploadRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> ProfileImageUploadStatusResponse:
+        try:
+            record = repository.create_profile_image_upload(
+                platform_id,
+                request.temp_path,
+                request.original_filename,
+                request.mime_type,
+                request.now,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return ProfileImageUploadStatusResponse(
+            id=record.id,
+            platform_id=platform_id,
+            status=record.status,
+            result_url=record.result_url,
+            failure_summary=record.failure_summary,
+            expected_profile_version=record.expected_profile_version,
+        )
+
+    @app.get(
+        "/internal/profile-image-uploads/{task_id}",
+        response_model=ProfileImageUploadStatusResponse,
+    )
+    def profile_image_upload_status(
+        task_id: UUID, _: Annotated[None, Depends(authorize)]
+    ) -> ProfileImageUploadStatusResponse:
+        record = repository.get_profile_image_upload(task_id)
+        if record is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "upload not found")
+        user = repository.find_user_by_id(record.user_id)
+        if user is None:
+            raise RuntimeError("upload user disappeared")
+        return ProfileImageUploadStatusResponse(
+            id=record.id,
+            platform_id=user.platform_id,
+            status=record.status,
+            result_url=record.result_url,
+            failure_summary=record.failure_summary,
+            expected_profile_version=record.expected_profile_version,
+        )
+
+    @app.post(
+        "/internal/profile-image-uploads/{task_id}/completed",
+        response_model=AcceptedResponse,
+    )
+    def complete_profile_image_upload(
+        task_id: UUID,
+        request: CompleteProfileImageUploadRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.complete_profile_image_upload(
+            task_id, request.worker_id, request.lease_token,
+            request.result_url, request.now,
+        ))
+
+    @app.post(
+        "/internal/profile-image-uploads/{task_id}/failed",
+        response_model=AcceptedResponse,
+    )
+    def fail_profile_image_upload(
+        task_id: UUID,
+        request: FailProfileImageUploadRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.fail_profile_image_upload(
+            task_id, request.worker_id, request.lease_token,
+            request.failure_summary, request.now,
+        ))
 
     @app.post(
         "/internal/outbound/{message_id}/failed", response_model=AcceptedResponse

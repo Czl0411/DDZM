@@ -281,7 +281,7 @@ def test_profile_image_command_validates_reference_and_profile_prerequisite():
 
     assert handler.handle(InboundMessage(
         "image-usage", "image-player", "/编辑档案形象", now
-    )) == "请回复一张图片后发送 /编辑档案形象。"
+    )) == "请先完成个人档案，再设置档案形象。"
     reference = MessageReference(
         "source-image", "other", "image", "https://cdn.example.com/profile.png"
     )

@@ -531,8 +531,13 @@ class GroupCommandHandler:
     def _edit_profile_image(
         self, message: InboundMessage, content: str, received_at
     ) -> str:
-        if self._repository.get_personal_profile(message.sender_platform_id) is None:
+        profile_text = self._repository.get_personal_profile(
+            message.sender_platform_id
+        )
+        if profile_text is None:
             return self._reply("/编辑档案形象", "not_joined", received_at)
+        if not profile_text.strip():
+            return self._reply("/编辑档案形象", "profile_required", received_at)
         reference = message.reference
         if (
             content != "/编辑档案形象"

@@ -10016,6 +10016,9 @@ class CoreRepository:
                     ),
                 )
             )
+            highest_rank_known = all(
+                rank.sort_order is not None for rank in ordered_ranks
+            )
             results.append(
                 DepartmentHeadcount(
                     department_id=current_department_id,
@@ -10024,11 +10027,14 @@ class CoreRepository:
                     ranks=ordered_ranks,
                     highest_rank_name=(
                         highest_ranks[current_department_id][0]
-                        if current_department_id in highest_ranks
+                        if highest_rank_known
+                        and current_department_id in highest_ranks
                         else None
                     ),
                     highest_rank_members=tuple(
                         highest_rank_members.get(current_department_id, ())
+                        if highest_rank_known
+                        else ()
                     ),
                 )
             )

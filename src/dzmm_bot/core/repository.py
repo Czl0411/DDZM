@@ -144,6 +144,31 @@ _DEFAULT_CURRENCY_NAME = "摸鱼币"
 _DEFAULT_ONBOARDING_BONUS = 0
 _DEFAULT_CHECKIN_REWARD = 5
 _DEFAULT_WEEKLY_ATTENDANCE_REWARD = 5
+_BALANCE_SOURCE_LABELS = {
+    "onboarding": "入职奖励",
+    "checkin": "每日打卡",
+    "weekly_attendance": "周全勤奖励",
+    "activity_reward": "活跃度奖励",
+    "board_bonus": "董事会奖金",
+    "shop": "商店购买",
+    "promotion": "职位晋升",
+    "profile_edit": "编辑个人档案",
+    "profile_image_edit": "编辑档案形象",
+    "random_event": "随机事件奖励",
+    "hide_and_seek": "摸鱼躲猫猫报名",
+    "hide_and_seek_win": "摸鱼躲猫猫获胜",
+    "hide_and_seek_penalty": "摸鱼躲猫猫处罚",
+    "blame_guarantee": "甩锅游戏保证金",
+    "blame_win": "甩锅游戏获胜",
+    "blame_refund": "甩锅游戏退款",
+    "memory_assessment_single_reward": "记忆考核奖励",
+    "memory_assessment_duel_pool": "记忆对战奖池",
+    "memory_assessment_duel_reward": "记忆对战奖励",
+    "memory_assessment_duel_wrong": "记忆对战答错",
+    "red_packet_fund": "发出红包",
+    "red_packet_claim": "领取红包",
+    "red_packet_refund": "红包退款",
+}
 _DEFAULT_RED_PACKET_EXPIRY_MINUTES = 10
 _DEFAULT_RED_PACKET_EMPTY_PROBABILITY_PERCENT = 5
 _RED_PACKET_DAILY_LIMIT = 5
@@ -904,6 +929,29 @@ class UserProfile:
     user: UserRecord
     rank: RankRecord
     department: DepartmentRecord
+
+
+@dataclass(frozen=True)
+class BalanceTransactionSummary:
+    id: UUID
+    amount: int
+    source: str
+    source_label: str
+    occurred_at: datetime
+    balance_after: int
+
+
+@dataclass(frozen=True)
+class EmployeeBalanceLedger:
+    platform_id: str
+    display_name: str
+    current_balance: int
+    items: tuple[BalanceTransactionSummary, ...]
+    total: int
+
+
+def balance_source_label(source: str) -> str:
+    return _BALANCE_SOURCE_LABELS.get(source, source)
 
 
 @dataclass(frozen=True)
@@ -11308,6 +11356,65 @@ class CoreRepository:
                 )
             )
             return users, total
+
+    def list_balance_transactions_page(
+        self, platform_id: str, page: int, page_size: int
+    ) -> EmployeeBalanceLedger | None:
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return None
+            total = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(BalanceTransactionRecord)
+                    .where(BalanceTransactionRecord.user_id == user.id)
+                )
+                or 0
+            )
+            newer_total = func.coalesce(
+                func.sum(BalanceTransactionRecord.amount).over(
+                    order_by=(
+                        BalanceTransactionRecord.occurred_at.desc(),
+                        BalanceTransactionRecord.id.desc(),
+                    ),
+                    rows=(None, -1),
+                ),
+                0,
+            )
+            rows = session.execute(
+                select(
+                    BalanceTransactionRecord,
+                    (user.balance - newer_total).label("balance_after"),
+                )
+                .where(BalanceTransactionRecord.user_id == user.id)
+                .order_by(
+                    BalanceTransactionRecord.occurred_at.desc(),
+                    BalanceTransactionRecord.id.desc(),
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).all()
+            items = tuple(
+                BalanceTransactionSummary(
+                    id=record.id,
+                    amount=record.amount,
+                    source=record.source,
+                    source_label=balance_source_label(record.source),
+                    occurred_at=record.occurred_at,
+                    balance_after=int(balance_after),
+                )
+                for record, balance_after in rows
+            )
+            return EmployeeBalanceLedger(
+                platform_id=user.platform_id,
+                display_name=user.display_name,
+                current_balance=user.balance,
+                items=items,
+                total=total,
+            )
 
     def add_item(
         self, name: str, description: str, price: int, stock: int

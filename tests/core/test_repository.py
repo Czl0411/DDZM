@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, exists, func, inspect, select, text
+from sqlalchemy import create_engine, event, exists, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
@@ -313,6 +313,33 @@ def test_employee_balance_ledger_handles_empty_missing_and_beyond_last_page(
     assert beyond is not None
     assert beyond.items == ()
     assert repository.list_balance_transactions_page("missing-ledger", 1, 20) is None
+
+
+def test_employee_balance_ledger_uses_one_snapshot_query(
+    repository, session_factory, now
+):
+    user, _ = repository.create_user("snapshot-ledger", "快照员工", now, 0)
+    repository.record_balance_change(user.id, 5, "checkin", now)
+    statements = []
+    engine = session_factory.kw["bind"]
+
+    def capture_statement(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_statement)
+    try:
+        ledger = repository.list_balance_transactions_page("snapshot-ledger", 1, 20)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_statement)
+
+    assert ledger is not None
+    assert len(statements) == 1
+
+
+def test_balance_source_label_localizes_checkin_backfill():
+    from dzmm_bot.core.repository import balance_source_label
+
+    assert balance_source_label("checkin_backfill") == "每日打卡（补录）"
 
 
 def test_personal_profile_defaults_and_atomic_edit(repository, now):

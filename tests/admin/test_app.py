@@ -1374,6 +1374,7 @@ def test_admin_exposes_employee_balance_ledger_modal(client):
     assert "上一页" in script
     assert "下一页" in script
     assert "读取摸鱼币流水失败" in script
+    assert "employeeBalanceLedgerRequestId" in script
     assert 'renderPagination(document.querySelector("#employee-balance-ledger-pagination")' in script
 
 

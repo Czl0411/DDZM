@@ -147,6 +147,7 @@ _DEFAULT_WEEKLY_ATTENDANCE_REWARD = 5
 _BALANCE_SOURCE_LABELS = {
     "onboarding": "入职奖励",
     "checkin": "每日打卡",
+    "checkin_backfill": "每日打卡（补录）",
     "weekly_attendance": "周全勤奖励",
     "activity_reward": "活跃度奖励",
     "board_bonus": "董事会奖金",
@@ -11361,59 +11362,93 @@ class CoreRepository:
         self, platform_id: str, page: int, page_size: int
     ) -> EmployeeBalanceLedger | None:
         with self._session() as session:
-            user = session.scalar(
-                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            transaction_total = (
+                select(func.count(BalanceTransactionRecord.id))
+                .where(BalanceTransactionRecord.user_id == UserRecord.id)
+                .correlate(UserRecord)
+                .scalar_subquery()
             )
-            if user is None:
-                return None
-            total = int(
-                session.scalar(
-                    select(func.count())
-                    .select_from(BalanceTransactionRecord)
-                    .where(BalanceTransactionRecord.user_id == user.id)
+            employee = (
+                select(
+                    UserRecord.id.label("user_id"),
+                    UserRecord.platform_id,
+                    UserRecord.display_name,
+                    UserRecord.balance.label("current_balance"),
+                    transaction_total.label("total"),
                 )
-                or 0
+                .where(UserRecord.platform_id == platform_id)
+                .cte("ledger_employee")
+            )
+            ordering = (
+                BalanceTransactionRecord.occurred_at.desc(),
+                BalanceTransactionRecord.id.desc(),
             )
             newer_total = func.coalesce(
                 func.sum(BalanceTransactionRecord.amount).over(
-                    order_by=(
-                        BalanceTransactionRecord.occurred_at.desc(),
-                        BalanceTransactionRecord.id.desc(),
-                    ),
+                    order_by=ordering,
                     rows=(None, -1),
                 ),
                 0,
             )
+            transactions = (
+                select(
+                    BalanceTransactionRecord.id.label("transaction_id"),
+                    BalanceTransactionRecord.amount,
+                    BalanceTransactionRecord.source,
+                    BalanceTransactionRecord.occurred_at,
+                    newer_total.label("newer_total"),
+                    func.row_number().over(order_by=ordering).label("position"),
+                )
+                .join(employee, BalanceTransactionRecord.user_id == employee.c.user_id)
+                .cte("ledger_transactions")
+            )
+            offset = (page - 1) * page_size
             rows = session.execute(
                 select(
-                    BalanceTransactionRecord,
-                    (user.balance - newer_total).label("balance_after"),
+                    employee.c.platform_id,
+                    employee.c.display_name,
+                    employee.c.current_balance,
+                    employee.c.total,
+                    transactions.c.transaction_id,
+                    transactions.c.amount,
+                    transactions.c.source,
+                    transactions.c.occurred_at,
+                    (
+                        employee.c.current_balance
+                        - func.coalesce(transactions.c.newer_total, 0)
+                    ).label("balance_after"),
                 )
-                .where(BalanceTransactionRecord.user_id == user.id)
-                .order_by(
-                    BalanceTransactionRecord.occurred_at.desc(),
-                    BalanceTransactionRecord.id.desc(),
+                .select_from(employee)
+                .outerjoin(
+                    transactions,
+                    and_(
+                        transactions.c.position > offset,
+                        transactions.c.position <= offset + page_size,
+                    ),
                 )
-                .offset((page - 1) * page_size)
-                .limit(page_size)
-            ).all()
+                .order_by(transactions.c.position)
+            ).mappings().all()
+            if not rows:
+                return None
+            first = rows[0]
             items = tuple(
                 BalanceTransactionSummary(
-                    id=record.id,
-                    amount=record.amount,
-                    source=record.source,
-                    source_label=balance_source_label(record.source),
-                    occurred_at=record.occurred_at,
-                    balance_after=int(balance_after),
+                    id=row["transaction_id"],
+                    amount=row["amount"],
+                    source=row["source"],
+                    source_label=balance_source_label(row["source"]),
+                    occurred_at=row["occurred_at"],
+                    balance_after=int(row["balance_after"]),
                 )
-                for record, balance_after in rows
+                for row in rows
+                if row["transaction_id"] is not None
             )
             return EmployeeBalanceLedger(
-                platform_id=user.platform_id,
-                display_name=user.display_name,
-                current_balance=user.balance,
+                platform_id=first["platform_id"],
+                display_name=first["display_name"],
+                current_balance=first["current_balance"],
                 items=items,
-                total=total,
+                total=int(first["total"]),
             )
 
     def add_item(

@@ -275,6 +275,7 @@ const blameIncidentModal = document.querySelector("#blame-incident-modal");
 const aiAssistantSettingsModal = document.querySelector("#ai-assistant-settings-modal");
 const employeeMemoryModal = document.querySelector("#employee-memory-modal");
 const employeeBalanceLedgerModal = document.querySelector("#employee-balance-ledger-modal");
+let employeeBalanceLedgerRequestId = 0;
 const employeeProfileModal = document.querySelector("#employee-profile-modal");
 let employeeProfileImagePoll = null;
 const aiKnowledgeCardModal = document.querySelector("#ai-knowledge-card-modal");
@@ -377,6 +378,7 @@ function closeSettingsModal() {
 }
 function closeProfileSettingsModal() { profileSettingsModal.hidden = true; }
 function closeEmployeeBalanceLedgerModal() {
+  employeeBalanceLedgerRequestId += 1;
   employeeBalanceLedgerModal.hidden = true;
   delete employeeBalanceLedgerModal.dataset.platformId;
 }
@@ -1042,8 +1044,13 @@ function formatSignedAmount(amount) {
 
 async function loadEmployeeBalanceLedger(page = 1) {
   const platformId = employeeBalanceLedgerModal.dataset.platformId;
+  const requestId = ++employeeBalanceLedgerRequestId;
   const ledger = await requestGame(`/api/game/users/${platformId}/balance-transactions?page=${page}&page_size=20`);
   const currencyName = (gameSettings || await loadSettings()).currency_name;
+  if (
+    requestId !== employeeBalanceLedgerRequestId
+    || platformId !== employeeBalanceLedgerModal.dataset.platformId
+  ) return false;
   document.querySelector("#employee-balance-ledger-modal-title").textContent = `摸鱼币流水：${ledger.display_name}`;
   document.querySelector("#employee-balance-ledger-summary").innerHTML = `<strong>当前余额：${ledger.current_balance} ${escapeHtml(currencyName)}</strong><small>共 ${ledger.total} 条流水</small>`;
   document.querySelector("#employee-balance-ledger-list").innerHTML = ledger.items.map((item) => {
@@ -1055,12 +1062,12 @@ async function loadEmployeeBalanceLedger(page = 1) {
       setResult(`读取摸鱼币流水失败（${error.message}）`, "error");
     });
   });
+  return true;
 }
 
 async function openEmployeeBalanceLedgerModal(platformId) {
   employeeBalanceLedgerModal.dataset.platformId = platformId;
-  await loadEmployeeBalanceLedger(1);
-  employeeBalanceLedgerModal.hidden = false;
+  if (await loadEmployeeBalanceLedger(1)) employeeBalanceLedgerModal.hidden = false;
 }
 
 function renderEmployeeProfileImage(imageUrl, latestUpload = null) {

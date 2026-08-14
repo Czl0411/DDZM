@@ -1049,8 +1049,12 @@ async function loadEmployeeBalanceLedger(page = 1) {
   document.querySelector("#employee-balance-ledger-list").innerHTML = ledger.items.map((item) => {
     const tone = item.amount > 0 ? "positive" : item.amount < 0 ? "negative" : "neutral";
     return `<article class="data-row balance-ledger-entry" data-tone="${tone}"><div><b>${escapeHtml(item.source_label)}</b><small>${formatHeartbeat(item.occurred_at)}</small></div><div class="balance-ledger-values"><strong class="balance-ledger-amount">${formatSignedAmount(item.amount)}</strong><small>变动后：${item.balance_after} ${escapeHtml(currencyName)}</small></div></article>`;
-  }).join("") || '<p class="muted">该员工暂无摸鱼币流水。</p>';
-  renderPagination(document.querySelector("#employee-balance-ledger-pagination"), ledger, "条流水", loadEmployeeBalanceLedger);
+  }).join("") || '<p class="muted">暂无摸鱼币流水记录。</p>';
+  renderPagination(document.querySelector("#employee-balance-ledger-pagination"), ledger, "条流水", (nextPage) => {
+    void loadEmployeeBalanceLedger(nextPage).catch((error) => {
+      setResult(`读取摸鱼币流水失败（${error.message}）`, "error");
+    });
+  });
 }
 
 async function openEmployeeBalanceLedgerModal(platformId) {

@@ -1180,6 +1180,9 @@ def test_admin_proxies_employee_balance_ledger(client, headers, core):
     assert client.get(
         "/api/game/users/user-1/balance-transactions"
     ).status_code == 401
+    assert client.get(
+        "/api/game/users/user-1/balance-transactions?page=0", headers=headers
+    ).status_code == 422
 
 
 def test_admin_proxies_rank_department_and_promotion_pages_with_board_boundary(
@@ -1366,6 +1369,11 @@ def test_admin_exposes_employee_balance_ledger_modal(client):
     assert 'data-balance-ledger=' in script
     assert '`/api/game/users/${platformId}/balance-transactions?page=${page}&page_size=20`' in script
     assert "formatSignedAmount" in script
+    assert "当前余额" in script
+    assert "暂无摸鱼币流水记录" in script
+    assert "上一页" in script
+    assert "下一页" in script
+    assert "读取摸鱼币流水失败" in script
     assert 'renderPagination(document.querySelector("#employee-balance-ledger-pagination")' in script
 
 

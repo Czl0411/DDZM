@@ -404,7 +404,9 @@ def create_app(
         page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100),
     ) -> dict:
-        return core.list_balance_transactions(platform_id, page, page_size)
+        return _relay_core(
+            lambda: core.list_balance_transactions(platform_id, page, page_size)
+        )
 
     @app.get("/api/game/ranks")
     def game_ranks(_: Annotated[None, Depends(authorize)]) -> list[dict]:

@@ -138,6 +138,14 @@ select:hover { border-color: #bdb5ff; }
 .undercover-role-row label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
 .event-input-grid label { display: grid; gap: 6px; color: var(--muted); }
 .employee-memory-modal-card { width: min(100%, 820px); max-height: min(88vh, 900px); overflow: auto; }
+.employee-balance-ledger-modal-card { width: min(100%, 760px); max-height: min(88vh, 900px); overflow: auto; }
+.balance-ledger-summary { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.balance-ledger-summary small { color: var(--muted); }
+.balance-ledger-list { min-height: 100px; }
+.balance-ledger-values { display: grid; gap: 3px; text-align: right; }
+.balance-ledger-values small { color: var(--muted); }
+.balance-ledger-entry[data-tone="positive"] .balance-ledger-amount { color: var(--success); }
+.balance-ledger-entry[data-tone="negative"] .balance-ledger-amount { color: var(--danger); }
 .employee-profile-modal-card { width: min(100%, 720px); max-height: min(88vh, 900px); overflow: auto; }
 .employee-profile-image-panel { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fafbff; }
 .employee-profile-image-panel h3 { margin: 0; }

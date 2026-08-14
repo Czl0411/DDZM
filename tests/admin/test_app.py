@@ -1354,6 +1354,21 @@ def test_admin_exposes_personal_profile_controls(client):
     assert 'Idempotency-Key' in script
 
 
+def test_admin_exposes_employee_balance_ledger_modal(client):
+    page = client.get("/").text
+    script = client.get("/static/admin.js").text
+
+    assert 'id="employee-balance-ledger-modal"' in page
+    assert 'id="employee-balance-ledger-summary"' in page
+    assert 'id="employee-balance-ledger-list"' in page
+    assert 'id="employee-balance-ledger-pagination"' in page
+    assert "历史流水从 2026-08-05 起记录" in page
+    assert 'data-balance-ledger=' in script
+    assert '`/api/game/users/${platformId}/balance-transactions?page=${page}&page_size=20`' in script
+    assert "formatSignedAmount" in script
+    assert 'renderPagination(document.querySelector("#employee-balance-ledger-pagination")' in script
+
+
 def test_admin_uploads_and_clears_employee_profile_image(
     tmp_path, core, console, websocket_connection, admin_repository, headers
 ):

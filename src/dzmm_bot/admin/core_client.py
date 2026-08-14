@@ -29,6 +29,10 @@ class AdminCorePort(Protocol):
 
     def list_game_users(self, page: int, page_size: int) -> dict: ...
 
+    def list_balance_transactions(
+        self, platform_id: str, page: int, page_size: int
+    ) -> dict: ...
+
     def list_game_items(self, page: int, page_size: int) -> dict: ...
 
     def create_game_item(self, item: dict) -> dict: ...
@@ -235,6 +239,14 @@ class CoreClient:
     def list_game_users(self, page: int, page_size: int) -> dict:
         return self._get(
             "/internal/game/users", params={"page": page, "page_size": page_size}
+        )
+
+    def list_balance_transactions(
+        self, platform_id: str, page: int, page_size: int
+    ) -> dict:
+        return self._get(
+            f"/internal/game/users/{platform_id}/balance-transactions",
+            params={"page": page, "page_size": page_size},
         )
 
     def list_game_items(self, page: int, page_size: int) -> dict:

@@ -53,6 +53,8 @@ class FakeCore:
         ]
     )
     employees: list[dict] = field(default_factory=list)
+    balance_ledgers: dict[str, dict] = field(default_factory=dict)
+    balance_ledger_requests: list[tuple[str, int, int]] = field(default_factory=list)
     items: list[dict] = field(default_factory=list)
     template_error: bool = False
     game_settings: dict = field(
@@ -297,6 +299,10 @@ class FakeCore:
 
     def list_game_users(self, page, page_size):
         return _page(self.employees, page, page_size)
+
+    def list_balance_transactions(self, platform_id, page, page_size):
+        self.balance_ledger_requests.append((platform_id, page, page_size))
+        return self.balance_ledgers[platform_id]
 
     def list_game_items(self, page, page_size):
         return _page(self.items, page, page_size)
@@ -1142,6 +1148,40 @@ def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):
     assert items.json()["items"][0]["name"] == "午休券20"
 
 
+def test_admin_proxies_employee_balance_ledger(client, headers, core):
+    core.balance_ledgers["user-1"] = {
+        "platform_id": "user-1",
+        "display_name": "员工1",
+        "current_balance": 12,
+        "items": [
+            {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "amount": -3,
+                "source": "shop",
+                "source_label": "商店购买",
+                "occurred_at": "2026-08-14T09:00:00+08:00",
+                "balance_after": 12,
+            }
+        ],
+        "page": 2,
+        "page_size": 20,
+        "total": 21,
+        "pages": 2,
+    }
+
+    response = client.get(
+        "/api/game/users/user-1/balance-transactions?page=2&page_size=20",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["source_label"] == "商店购买"
+    assert core.balance_ledger_requests == [("user-1", 2, 20)]
+    assert client.get(
+        "/api/game/users/user-1/balance-transactions"
+    ).status_code == 401
+
+
 def test_admin_proxies_rank_department_and_promotion_pages_with_board_boundary(
     client, headers, core, admin_repository
 ):
@@ -1724,6 +1764,29 @@ def test_concrete_core_client_uses_aggregate_status_endpoint():
             "worker_commands_pending": 1,
         },
     }
+
+
+def test_concrete_core_client_requests_employee_balance_ledger_page():
+    from dzmm_bot.admin.core_client import CoreClient
+
+    def handle(request):
+        assert request.headers["X-Core-Token"] == "core-secret"
+        assert request.url.path == "/internal/game/users/user-1/balance-transactions"
+        assert dict(request.url.params) == {"page": "2", "page_size": "20"}
+        return httpx.Response(200, json={"items": [], "total": 0})
+
+    transport = httpx.MockTransport(handle)
+    http_client = httpx.Client(
+        base_url="http://127.0.0.1:18120",
+        headers={"X-Core-Token": "core-secret"},
+        transport=transport,
+    )
+
+    result = CoreClient("unused", "unused", client=http_client).list_balance_transactions(
+        "user-1", 2, 20
+    )
+
+    assert result == {"items": [], "total": 0}
 
 
 def test_novnc_websocket_connector_targets_only_loopback():

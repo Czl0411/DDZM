@@ -107,12 +107,14 @@ from .api_models import (
     SetBlameGameSettingsRequest,
     BlameIncidentCardResponse,
     PaginatedBlameIncidentCardsResponse,
+    PaginatedBalanceTransactionsResponse,
     CreateBlameIncidentCardRequest,
     UpdateBlameIncidentCardRequest,
     BlameGameSessionResponse,
     BlameGamePlayerResponse,
     BlameGameIncidentResponse,
     BlameGameHolderResponse,
+    BalanceTransactionResponse,
     HideAndSeekSceneResponse,
     PaginatedHideAndSeekScenesResponse,
     CreateHideAndSeekSceneRequest,
@@ -722,6 +724,40 @@ def create_app(
         if profile is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
         return _user_profile_response(profile)
+
+    @app.get(
+        "/internal/game/users/{platform_id}/balance-transactions",
+        response_model=PaginatedBalanceTransactionsResponse,
+    )
+    def balance_transactions(
+        platform_id: str,
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> PaginatedBalanceTransactionsResponse:
+        ledger = repository.list_balance_transactions_page(platform_id, page, page_size)
+        if ledger is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        return PaginatedBalanceTransactionsResponse(
+            platform_id=ledger.platform_id,
+            display_name=ledger.display_name,
+            current_balance=ledger.current_balance,
+            items=[
+                BalanceTransactionResponse(
+                    id=item.id,
+                    amount=item.amount,
+                    source=item.source,
+                    source_label=item.source_label,
+                    occurred_at=item.occurred_at,
+                    balance_after=item.balance_after,
+                )
+                for item in ledger.items
+            ],
+            page=page,
+            page_size=page_size,
+            total=ledger.total,
+            pages=(ledger.total + page_size - 1) // page_size,
+        )
 
     @app.get("/internal/game/users", response_model=PaginatedUsersResponse)
     def game_users(

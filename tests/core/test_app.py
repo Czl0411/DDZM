@@ -950,6 +950,53 @@ def test_game_management_returns_paginated_employees_and_items(
     assert len(items.json()["items"]) == 1
 
 
+def test_employee_balance_ledger_endpoint_is_paginated_and_protected(
+    app_context, client, headers
+):
+    user, _ = app_context.repository.create_user("ledger-api", "流水员工", NOW, 10)
+    app_context.repository.record_balance_change(
+        user.id, -2, "shop", NOW + timedelta(minutes=1)
+    )
+    app_context.repository.record_balance_change(
+        user.id, 5, "checkin", NOW + timedelta(minutes=2)
+    )
+
+    response = client.get(
+        "/internal/game/users/ledger-api/balance-transactions?page=1&page_size=1",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "platform_id": "ledger-api",
+        "display_name": "流水员工",
+        "current_balance": 13,
+        "items": [
+            {
+                "id": response.json()["items"][0]["id"],
+                "amount": 5,
+                "source": "checkin",
+                "source_label": "每日打卡",
+                "occurred_at": "2026-08-04T20:02:00+08:00",
+                "balance_after": 13,
+            }
+        ],
+        "page": 1,
+        "page_size": 1,
+        "total": 3,
+        "pages": 3,
+    }
+    assert client.get(
+        "/internal/game/users/ledger-api/balance-transactions"
+    ).status_code == 401
+    assert client.get(
+        "/internal/game/users/missing/balance-transactions", headers=headers
+    ).status_code == 404
+    assert client.get(
+        "/internal/game/users/ledger-api/balance-transactions?page=0", headers=headers
+    ).status_code == 422
+
+
 def test_game_settings_can_be_read_and_updated(client, headers):
     initial = client.get("/internal/game/settings", headers=headers)
     updated = client.patch(

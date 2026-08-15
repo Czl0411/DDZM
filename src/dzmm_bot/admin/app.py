@@ -206,6 +206,14 @@ def create_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.get("/static/admin_urls.js")
+    def javascript_urls() -> FileResponse:
+        return FileResponse(
+            _ROOT / "static" / "admin_urls.js",
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.get("/static/admin.css")
     def stylesheet() -> FileResponse:
         return FileResponse(

@@ -2252,6 +2252,14 @@ def test_admin_static_assets_disable_browser_cache(client):
     assert response.headers["cache-control"] == "no-store"
 
 
+def test_admin_serves_random_event_submission_url_helper_without_cache(client):
+    response = client.get("/static/admin_urls.js")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/javascript")
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_admin_index_disables_browser_cache(client):
     response = client.get("/")
 

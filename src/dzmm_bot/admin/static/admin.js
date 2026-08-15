@@ -283,6 +283,8 @@ const blameBombSettingsModal = document.querySelector("#blame-bomb-settings-moda
 const blameIncidentModal = document.querySelector("#blame-incident-modal");
 const aiAssistantSettingsModal = document.querySelector("#ai-assistant-settings-modal");
 const employeeMemoryModal = document.querySelector("#employee-memory-modal");
+const employeeBalanceLedgerModal = document.querySelector("#employee-balance-ledger-modal");
+let employeeBalanceLedgerRequestId = 0;
 const employeeProfileModal = document.querySelector("#employee-profile-modal");
 let employeeProfileImagePoll = null;
 const aiKnowledgeCardModal = document.querySelector("#ai-knowledge-card-modal");
@@ -384,6 +386,11 @@ function closeSettingsModal() {
   settingsModal.hidden = true;
 }
 function closeProfileSettingsModal() { profileSettingsModal.hidden = true; }
+function closeEmployeeBalanceLedgerModal() {
+  employeeBalanceLedgerRequestId += 1;
+  employeeBalanceLedgerModal.hidden = true;
+  delete employeeBalanceLedgerModal.dataset.platformId;
+}
 function closeEmployeeProfileModal() {
   clearTimeout(employeeProfileImagePoll);
   employeeProfileImagePoll = null;
@@ -1136,6 +1143,38 @@ async function openEmployeeProfileModal(platformId, displayName) {
   employeeProfileModal.hidden = false;
 }
 
+function formatSignedAmount(amount) {
+  return amount > 0 ? `+${amount}` : String(amount);
+}
+
+async function loadEmployeeBalanceLedger(page = 1) {
+  const platformId = employeeBalanceLedgerModal.dataset.platformId;
+  const requestId = ++employeeBalanceLedgerRequestId;
+  const ledger = await requestGame(`/api/game/users/${platformId}/balance-transactions?page=${page}&page_size=20`);
+  const currencyName = (gameSettings || await loadSettings()).currency_name;
+  if (
+    requestId !== employeeBalanceLedgerRequestId
+    || platformId !== employeeBalanceLedgerModal.dataset.platformId
+  ) return false;
+  document.querySelector("#employee-balance-ledger-modal-title").textContent = `摸鱼币流水：${ledger.display_name}`;
+  document.querySelector("#employee-balance-ledger-summary").innerHTML = `<strong>当前余额：${ledger.current_balance} ${escapeHtml(currencyName)}</strong><small>共 ${ledger.total} 条流水</small>`;
+  document.querySelector("#employee-balance-ledger-list").innerHTML = ledger.items.map((item) => {
+    const tone = item.amount > 0 ? "positive" : item.amount < 0 ? "negative" : "neutral";
+    return `<article class="data-row balance-ledger-entry" data-tone="${tone}"><div><b>${escapeHtml(item.source_label)}</b><small>${formatHeartbeat(item.occurred_at)}</small></div><div class="balance-ledger-values"><strong class="balance-ledger-amount">${formatSignedAmount(item.amount)}</strong><small>变动后：${item.balance_after} ${escapeHtml(currencyName)}</small></div></article>`;
+  }).join("") || '<p class="muted">暂无摸鱼币流水记录。</p>';
+  renderPagination(document.querySelector("#employee-balance-ledger-pagination"), ledger, "条流水", (nextPage) => {
+    void loadEmployeeBalanceLedger(nextPage).catch((error) => {
+      setResult(`读取摸鱼币流水失败（${error.message}）`, "error");
+    });
+  });
+  return true;
+}
+
+async function openEmployeeBalanceLedgerModal(platformId) {
+  employeeBalanceLedgerModal.dataset.platformId = platformId;
+  if (await loadEmployeeBalanceLedger(1)) employeeBalanceLedgerModal.hidden = false;
+}
+
 function renderEmployeeProfileImage(imageUrl, latestUpload = null) {
   const image = document.querySelector("#employee-profile-image");
   const empty = document.querySelector("#employee-profile-image-empty");
@@ -1318,7 +1357,7 @@ async function loadEmployees(page = employeePage) {
   employeePage = employees.page;
   const filtered = filterList("employees", employees.items, (employee) => `${employee.display_name} ${formatEmployeeNumber(employee.employee_number)} ${employee.employee_number} ${employee.rank_name || ""} ${employee.department_name || ""}`);
   document.querySelector("#employee-list").innerHTML = filtered.map((employee) => `
-    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>工号：${formatEmployeeNumber(employee.employee_number)} · ${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong><button class="secondary" data-personal-profile="${escapeHtml(employee.platform_id)}" data-personal-profile-name="${escapeHtml(employee.display_name)}" type="button">档案</button><button class="secondary" data-ai-memory="${escapeHtml(employee.platform_id)}" data-ai-memory-name="${escapeHtml(employee.display_name)}" type="button">AI 记忆</button>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
+    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>工号：${formatEmployeeNumber(employee.employee_number)} · ${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong><button class="secondary" data-balance-ledger="${escapeHtml(employee.platform_id)}" type="button">摸鱼币流水</button><button class="secondary" data-personal-profile="${escapeHtml(employee.platform_id)}" data-personal-profile-name="${escapeHtml(employee.display_name)}" type="button">档案</button><button class="secondary" data-ai-memory="${escapeHtml(employee.platform_id)}" data-ai-memory-name="${escapeHtml(employee.display_name)}" type="button">AI 记忆</button>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
   renderPagination(document.querySelector("#employee-pagination"), employees, "位员工", loadEmployees);
 }
 
@@ -1768,6 +1807,15 @@ for (const button of document.querySelectorAll(".nav-item")) {
   button.addEventListener("click", () => void loadGameView(button.dataset.view));
 }
 document.querySelector("#employee-list").addEventListener("click", async (event) => {
+  const ledgerButton = event.target.closest("button[data-balance-ledger]");
+  if (ledgerButton) {
+    try {
+      await openEmployeeBalanceLedgerModal(ledgerButton.dataset.balanceLedger);
+    } catch (error) {
+      setResult(`读取摸鱼币流水失败（${error.message}）`, "error");
+    }
+    return;
+  }
   const profileButton = event.target.closest("button[data-personal-profile]");
   if (profileButton) {
     try {
@@ -2006,6 +2054,11 @@ profileSettingsModal.addEventListener("click", async (event) => {
     setResult("档案设置已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}），请刷新后重试`, "error");
+  }
+});
+employeeBalanceLedgerModal.addEventListener("click", (event) => {
+  if (event.target.closest("[data-close-employee-balance-ledger-modal]")) {
+    closeEmployeeBalanceLedgerModal();
   }
 });
 employeeProfileModal.addEventListener("click", async (event) => {

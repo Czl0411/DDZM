@@ -405,6 +405,17 @@ def create_app(
     ) -> dict:
         return core.list_game_users(page, page_size)
 
+    @app.get("/api/game/users/{platform_id}/balance-transactions")
+    def balance_transactions(
+        platform_id: str,
+        _: Annotated[None, Depends(authorize)],
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        return _relay_core(
+            lambda: core.list_balance_transactions(platform_id, page, page_size)
+        )
+
     @app.get("/api/game/ranks")
     def game_ranks(_: Annotated[None, Depends(authorize)]) -> list[dict]:
         return _relay_core(core.list_ranks)

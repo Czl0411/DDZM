@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, exists, func, inspect, select, text
+from sqlalchemy import create_engine, event, exists, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
@@ -272,6 +272,74 @@ def repository(session_factory):
     from dzmm_bot.core.repository import CoreRepository
 
     return CoreRepository(session_factory, number_bomb_random=Random(1))
+
+
+def test_employee_balance_ledger_pages_and_reconstructs_balance(repository, now):
+    user, _ = repository.create_user("ledger-player", "流水员工", now, 0)
+    repository.record_balance_change(user.id, 20, "onboarding", now + timedelta(minutes=1))
+    repository.record_balance_change(user.id, 4, "custom_source", now + timedelta(minutes=2))
+    repository.record_balance_change(user.id, -3, "shop", now + timedelta(minutes=3))
+    repository.record_balance_change(user.id, 7, "checkin", now + timedelta(minutes=4))
+
+    first_page = repository.list_balance_transactions_page("ledger-player", 1, 2)
+    second_page = repository.list_balance_transactions_page("ledger-player", 2, 2)
+
+    assert first_page is not None
+    assert (first_page.display_name, first_page.current_balance, first_page.total) == (
+        "流水员工", 28, 4,
+    )
+    assert [item.amount for item in first_page.items] == [7, -3]
+    assert [item.balance_after for item in first_page.items] == [28, 21]
+    assert [item.source_label for item in first_page.items] == ["每日打卡", "商店购买"]
+
+    assert second_page is not None
+    assert [item.amount for item in second_page.items] == [4, 20]
+    assert [item.balance_after for item in second_page.items] == [24, 20]
+    assert [item.source_label for item in second_page.items] == [
+        "custom_source", "入职奖励",
+    ]
+
+
+def test_employee_balance_ledger_handles_empty_missing_and_beyond_last_page(
+    repository, now
+):
+    repository.create_user("empty-ledger", "空流水员工", now, 0)
+
+    empty = repository.list_balance_transactions_page("empty-ledger", 1, 20)
+    beyond = repository.list_balance_transactions_page("empty-ledger", 3, 20)
+
+    assert empty is not None
+    assert (empty.current_balance, empty.total, empty.items) == (0, 0, ())
+    assert beyond is not None
+    assert beyond.items == ()
+    assert repository.list_balance_transactions_page("missing-ledger", 1, 20) is None
+
+
+def test_employee_balance_ledger_uses_one_snapshot_query(
+    repository, session_factory, now
+):
+    user, _ = repository.create_user("snapshot-ledger", "快照员工", now, 0)
+    repository.record_balance_change(user.id, 5, "checkin", now)
+    statements = []
+    engine = session_factory.kw["bind"]
+
+    def capture_statement(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_statement)
+    try:
+        ledger = repository.list_balance_transactions_page("snapshot-ledger", 1, 20)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_statement)
+
+    assert ledger is not None
+    assert len(statements) == 1
+
+
+def test_balance_source_label_localizes_checkin_backfill():
+    from dzmm_bot.core.repository import balance_source_label
+
+    assert balance_source_label("checkin_backfill") == "每日打卡（补录）"
 
 
 def test_personal_profile_defaults_and_atomic_edit(repository, now):

@@ -187,6 +187,26 @@ class UserResponse(ApiModel):
     department_name: str
 
 
+class BalanceTransactionResponse(ApiModel):
+    id: UUID
+    amount: int
+    source: str
+    source_label: str
+    occurred_at: datetime
+    balance_after: int
+
+
+class PaginatedBalanceTransactionsResponse(ApiModel):
+    platform_id: str
+    display_name: str
+    current_balance: int
+    items: list[BalanceTransactionResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
 class RankResponse(ApiModel):
     id: UUID
     sort_order: int

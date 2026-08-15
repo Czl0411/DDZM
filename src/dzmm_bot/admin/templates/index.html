@@ -495,6 +495,15 @@
         <div class="template-modal-actions"><button id="clear-employee-memory" class="danger-button" type="button">清空印象</button><button class="secondary" data-close-employee-memory-modal type="button">关闭</button></div>
       </section>
     </div>
+    <div id="employee-balance-ledger-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="employee-balance-ledger-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-employee-balance-ledger-modal></div>
+      <section class="template-modal-card employee-balance-ledger-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">摸鱼币流水</p><h2 id="employee-balance-ledger-modal-title">员工摸鱼币流水</h2><p class="muted">历史流水从 2026-08-05 起记录，更早的余额变动不会补造。</p></div><button class="text-button" data-close-employee-balance-ledger-modal type="button">关闭</button></div>
+        <div id="employee-balance-ledger-summary" class="balance-ledger-summary"></div>
+        <div id="employee-balance-ledger-list" class="data-list balance-ledger-list"></div>
+        <nav id="employee-balance-ledger-pagination" class="pagination" aria-label="摸鱼币流水分页"></nav>
+        <div class="template-modal-actions"><button class="secondary" data-close-employee-balance-ledger-modal type="button">关闭</button></div>
+      </section>
+    </div>
     <div id="employee-profile-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="employee-profile-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-employee-profile-modal></div>
       <section class="template-modal-card employee-profile-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">员工档案</p><h2 id="employee-profile-modal-title">编辑个人档案</h2><p class="muted">管理员编辑或清空不扣员工余额，也不消耗公共人力。</p></div><button class="text-button" data-close-employee-profile-modal type="button">关闭</button></div>

@@ -5,6 +5,7 @@ from time import monotonic, sleep
 from zoneinfo import ZoneInfo
 
 import pytest
+from socketio.exceptions import TimeoutError as SocketTimeoutError
 
 from dzmm_bot.browser.aikda_socket import AikdaSocketGateway, _socket_client
 from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, MessageReference
@@ -22,6 +23,7 @@ class FakeSocket:
         self.connect_calls = []
         self.call_result = {"success": True}
         self.call_results = []
+        self.call_errors_by_room = {}
         self.calls = []
         self.message_after_join = None
         self.joined_payload = {"syncMode": "http"}
@@ -46,6 +48,9 @@ class FakeSocket:
         if not self.joined:
             raise RuntimeError("server join was not completed")
         self.calls.append((event, payload, timeout))
+        error = self.call_errors_by_room.get(payload.get("chatroomId"))
+        if error is not None:
+            raise error
         if self.call_results:
             return self.call_results.pop(0)
         return self.call_result
@@ -279,7 +284,7 @@ def test_private_socket_events_are_read_once_after_active_room_join(gateway):
 
     assert adapter.read_new(("direct-1",)) == []
     assert socket.calls == [
-        ("message:join-room", {"chatroomId": "direct-1"}, 10)
+        ("message:join-room", {"chatroomId": "direct-1"}, 2)
     ]
 
     socket.trigger(
@@ -300,8 +305,24 @@ def test_private_socket_events_are_read_once_after_active_room_join(gateway):
     ]
     assert adapter.read_new(("direct-1",)) == []
     assert socket.calls == [
-        ("message:join-room", {"chatroomId": "direct-1"}, 10)
+        ("message:join-room", {"chatroomId": "direct-1"}, 2)
     ]
+
+
+def test_direct_room_join_timeout_does_not_block_the_next_room(gateway):
+    """Fails if one unresponsive private room aborts or monopolizes room syncing."""
+    adapter, socket, _ = gateway
+    socket.call_errors_by_room["direct-1"] = SocketTimeoutError()
+
+    assert adapter.read_new(("direct-1", "direct-2")) == []
+    assert socket.calls == [
+        ("message:join-room", {"chatroomId": "direct-1"}, 2)
+    ]
+
+    assert adapter.read_new(("direct-1", "direct-2")) == []
+    assert socket.calls[-1] == (
+        "message:join-room", {"chatroomId": "direct-2"}, 2
+    )
 
 
 def test_unknown_private_socket_event_is_available_for_mapping(gateway):

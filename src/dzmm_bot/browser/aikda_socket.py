@@ -19,6 +19,7 @@ from dzmm_bot.runtime.contracts import (
 
 _LOGGER = logging.getLogger(__name__)
 _SEND_ACK_TIMEOUT_SECONDS = 3
+_DIRECT_JOIN_ACK_TIMEOUT_SECONDS = 2
 
 
 class AikdaMessageRejectedError(RuntimeError):
@@ -65,6 +66,7 @@ class AikdaSocketGateway:
         self._message_handler: Callable[[InboundMessage], None] | None = None
         self._direct_chatroom_ids: set[str] = set()
         self._joined_direct_chatroom_ids: set[str] = set()
+        self._next_direct_room_join_index = 0
 
     def set_message_handler(
         self, handler: Callable[[InboundMessage], None]
@@ -94,20 +96,40 @@ class AikdaSocketGateway:
         if targets != self._direct_chatroom_ids:
             self._direct_chatroom_ids = targets
             self._reconcile_needed = True
-        for chatroom_id in direct_chatroom_ids:
-            self._join_direct_room(chatroom_id)
+            self._next_direct_room_join_index = 0
+        for offset in range(len(direct_chatroom_ids)):
+            index = (self._next_direct_room_join_index + offset) % len(
+                direct_chatroom_ids
+            )
+            chatroom_id = direct_chatroom_ids[index]
+            if chatroom_id in self._joined_direct_chatroom_ids:
+                continue
+            self._next_direct_room_join_index = (index + 1) % len(
+                direct_chatroom_ids
+            )
+            try:
+                self._join_direct_room(
+                    chatroom_id, timeout=_DIRECT_JOIN_ACK_TIMEOUT_SECONDS
+                )
+            except (SocketTimeoutError, RuntimeError) as exc:
+                _LOGGER.warning(
+                    "direct message room join deferred chatroom=%s error=%s",
+                    chatroom_id,
+                    exc or type(exc).__name__,
+                )
+            return
 
     def _drain_pending(self) -> list[InboundMessage]:
         with self._pending_lock:
             messages, self._pending = self._pending, deque()
         return sorted(messages, key=lambda message: message.received_at)
 
-    def _join_direct_room(self, chatroom_id: str) -> None:
+    def _join_direct_room(self, chatroom_id: str, *, timeout: float = 10) -> None:
         with self._state_lock:
             if chatroom_id in self._joined_direct_chatroom_ids:
                 return
             joined = self._call(
-                "message:join-room", {"chatroomId": chatroom_id}, timeout=10
+                "message:join-room", {"chatroomId": chatroom_id}, timeout=timeout
             )
             if not joined or joined.get("success") is not True:
                 error = joined.get("error", "message room join failed") if joined else "message room join failed"

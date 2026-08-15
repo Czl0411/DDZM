@@ -185,6 +185,34 @@ def test_concurrent_socket_sends_to_the_same_room_wait_for_the_previous_ack():
     assert socket.max_pending_acknowledgements == 1
 
 
+def test_background_send_does_not_reconnect_through_owner_thread_dependencies():
+    """Fails if a sender thread invokes browser-backed reconnect dependencies."""
+    socket = FakeSocket()
+    request = FakeRequest()
+    gateway = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "token",
+        request=request,
+        socket_factory=lambda: socket,
+        clock=lambda: NOW,
+    )
+    errors = []
+
+    def send():
+        try:
+            gateway.send_to("direct-1", "hello")
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = Thread(target=send)
+    thread.start()
+    thread.join()
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], SocketTimeoutError)
+    assert request.calls == []
+
+
 @pytest.fixture
 def gateway():
     socket = FakeSocket()

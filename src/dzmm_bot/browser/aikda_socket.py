@@ -2,7 +2,7 @@ from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 import logging
-from threading import Event, Lock, RLock
+from threading import Event, Lock, RLock, get_ident
 from typing import Any
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -51,6 +51,7 @@ class AikdaSocketGateway:
         self._cookie_provider = cookie_provider
         self._socket_factory = socket_factory or _socket_client
         self._clock = clock
+        self._owner_thread_id = get_ident()
         self._socket = None
         self._bot_id: str | None = None
         self._authenticated = False
@@ -306,6 +307,8 @@ class AikdaSocketGateway:
         if self._socket is not None and self._socket.connected and self._joined.is_set():
             self._authenticated = True
             return
+        if get_ident() != self._owner_thread_id:
+            raise SocketTimeoutError()
         profile = self._request("user.getMe")
         bot_id = profile.get("id")
         if not bot_id:

@@ -193,11 +193,23 @@ class RandomEventSubmissionHandler:
                 error = "身份名称需为 1～32 字。"
             elif any(item["role"] == value for item in roles):
                 error = "身份名称不能重复。"
-            elif len(roles) >= 20:
-                error = "身份种类最多 20 个。"
+            elif len(roles) >= int(data["participant_count"]):
+                error = "身份已分配完成。"
             else:
-                data["_working_role"] = value
-                next_step = "role_capacity"
+                role = {"role": value, "capacity": 1}
+                edit_index = data.pop("_editing_role_index", None)
+                data.pop("_editing_role_original", None)
+                data.pop("_editing_return_step", None)
+                data.pop("_editing_events_original", None)
+                if edit_index is None:
+                    roles.append(role)
+                else:
+                    roles.insert(edit_index, role)
+                next_step = (
+                    "event_name"
+                    if len(roles) == int(data["participant_count"])
+                    else "role_name"
+                )
         elif step == "role_capacity":
             try:
                 capacity = int(value)

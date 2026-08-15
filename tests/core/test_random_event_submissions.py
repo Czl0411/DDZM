@@ -170,19 +170,41 @@ def test_submission_wizard_collects_complete_scene_one_field_at_a_time(repositor
     assert "报名公告" in handler.handle(_direct("失踪的咖啡")).text
     assert "参加人数" in handler.handle(_direct("茶水间出事了，快来报名。")).text
     assert "身份名称" in handler.handle(_direct("3")).text
-    assert "身份人数" in handler.handle(_direct("调查员")).text
-    assert "还剩 1" in handler.handle(_direct("2")).text
-    assert "身份人数" in handler.handle(_direct("嫌疑人")).text
-    assert "事件名称" in handler.handle(_direct("1")).text
+    assert "还剩 2" in handler.handle(_direct("调查员")).text
+    assert "还剩 1" in handler.handle(_direct("嫌疑人")).text
+    assert "事件名称" in handler.handle(_direct("目击者")).text
     assert "剧情开场白" in handler.handle(_direct("现场")).text
     controls = handler.handle(_direct("{调查员}发现了空杯。"))
     assert "/事件完成" in controls.text
     preview = handler.handle(_direct("/事件完成"))
     assert "失踪的咖啡" in preview.text
-    assert "调查员 × 2" in preview.text
+    assert "调查员 × 1" in preview.text
+    assert "嫌疑人 × 1" in preview.text
+    assert "目击者 × 1" in preview.text
     assert "/确认投稿" in preview.text
     confirmed = handler.handle(_direct("/确认投稿"))
     assert "已提交审核" in confirmed.text
+
+
+def test_submission_role_names_each_fill_one_seat(repository):
+    """Fails if role entry still needs a capacity message or stores another value."""
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    for content in (
+        "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "2",
+        "调查员", "嫌疑人",
+    ):
+        reply = handler.handle(_direct(content))
+
+    draft = repository.active_random_event_submission("employee-1", NOW)
+    assert reply is not None
+    assert "事件名称" in reply.text
+    assert "身份人数" not in reply.text
+    assert draft.current_step == "event_name"
+    assert draft.content["roles"] == [
+        {"role": "调查员", "capacity": 1},
+        {"role": "嫌疑人", "capacity": 1},
+    ]
 
 
 def test_submission_wizard_rejects_misordered_variable_braces_immediately(repository):

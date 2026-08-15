@@ -1074,7 +1074,8 @@ class GroupCommandHandler:
                         "result",
                         received_at,
                         {"{结果正文}": result.public_message},
-                    )
+                    ),
+                    force_group_destination=True,
                 )
             )
         if result.status == "invalid_round":
@@ -1105,7 +1106,10 @@ class GroupCommandHandler:
                 else "skipped"
             )
             replies = [
-                CommandReply(self._reply("/跳过", scenario, received_at, values))
+                CommandReply(
+                    self._reply("/跳过", scenario, received_at, values),
+                    force_group_destination=True,
+                )
             ]
             if result.status == "settled":
                 replies.append(
@@ -1115,7 +1119,8 @@ class GroupCommandHandler:
                             "result",
                             received_at,
                             {"{结果正文}": result.public_message},
-                        )
+                        ),
+                        force_group_destination=True,
                     )
                 )
             return replies
@@ -1153,7 +1158,8 @@ class GroupCommandHandler:
                             if player.state == "current"
                         ),
                     },
-                )
+                ),
+                force_group_destination=True,
             )
         ]
         replies.extend(self._number_bomb_private_prompt_replies(result, received_at))
@@ -1848,6 +1854,9 @@ class GroupCommandHandler:
                 (
                     ("/加入", "/加入 身份：选择身份报名随机事件"),
                     ("/退出", "/退出：退出或结算当前随机事件"),
+                    ("/投稿", "/投稿 随机事件：进入私聊投稿向导"),
+                    ("/我的投稿", "/我的投稿：查看最近投稿状态"),
+                    ("/撤回投稿", "/撤回投稿 编号：撤回待审核投稿"),
                 ),
             ),
             "摸鱼躲藏": (

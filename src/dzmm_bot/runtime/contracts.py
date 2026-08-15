@@ -20,6 +20,7 @@ class MessageReference:
     width: int | None = None
     height: int | None = None
     blurhash: str | None = None
+    text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,7 +55,12 @@ class OutboundMessage:
     attempt_count: int = 0
     platform_sent_id: str | None = None
     destination_chatroom_id: str | None = None
+    delivery_key: str = "__group__"
     delivery_kind: str = "group"
+    reference_message_id: str | None = None
+    reference_sender_platform_id: str | None = None
+    reference_content_type: str | None = None
+    reference_text: str | None = None
 
 
 @dataclass(frozen=True)

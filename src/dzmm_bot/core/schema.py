@@ -160,6 +160,24 @@ class RandomEventSettingsRecord(Base):
     signup_allowed_commands: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     in_progress_allowed_commands: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     blocked_message: Mapped[str] = mapped_column(Text, nullable=False)
+    submission_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    submission_draft_timeout_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=30, server_default="30"
+    )
+    submission_max_participants: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=99, server_default="99"
+    )
+    submission_default_target_rounds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=10, server_default="10"
+    )
+    submission_default_event_reward: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=6, server_default="6"
+    )
+    submission_approval_reward: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=10, server_default="10"
+    )
 
 
 class HideAndSeekSettingsRecord(Base):
@@ -807,6 +825,62 @@ class RandomEventSceneOpeningRecord(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class RandomEventSubmissionCounterRecord(Base):
+    __tablename__ = "random_event_submission_counters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    next_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class RandomEventSubmissionRecord(Base):
+    __tablename__ = "random_event_submissions"
+    __table_args__ = (
+        Index(
+            "ux_random_event_submissions_one_draft",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status = 'draft'"),
+            sqlite_where=text("status = 'draft'"),
+        ),
+        Index(
+            "ux_random_event_submissions_one_pending",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("status = 'pending'"),
+        ),
+        Index("ix_random_event_submissions_status_number", "status", "number"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    number: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    current_step: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="scene_name"
+    )
+    content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    target_rounds: Mapped[int | None] = mapped_column(Integer)
+    event_reward: Mapped[int | None] = mapped_column(Integer)
+    approval_reward: Mapped[int | None] = mapped_column(Integer)
+    reviewer: Mapped[str | None] = mapped_column(String(255))
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+    scene_id: Mapped[UUID | None] = mapped_column(ForeignKey("random_event_scenes.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, onupdate=beijing_now, nullable=False
+    )
+    last_activity_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    submitted_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    cancelled_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    reviewed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    reward_granted_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
 class RandomEventScheduleRecord(Base):
     __tablename__ = "random_event_schedules"
     __table_args__ = (UniqueConstraint("event_date", "scheduled_at"),)
@@ -1362,6 +1436,14 @@ class OutboundRecord(Base):
             "reply_index",
             postgresql_where=text("status IN ('pending', 'leased')"),
         ),
+        Index(
+            "ix_outbound_messages_delivery_order",
+            "delivery_key",
+            "status",
+            "created_at",
+            "reply_index",
+            "id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -1369,9 +1451,16 @@ class OutboundRecord(Base):
         ForeignKey("inbound_messages.id")
     )
     destination_chatroom_id: Mapped[str | None] = mapped_column(String(255))
+    delivery_key: Mapped[str] = mapped_column(
+        String(255), default="__group__", server_default="__group__", nullable=False
+    )
     delivery_kind: Mapped[str] = mapped_column(
         String(32), default="group", nullable=False
     )
+    reference_message_id: Mapped[str | None] = mapped_column(String(255))
+    reference_sender_platform_id: Mapped[str | None] = mapped_column(String(255))
+    reference_content_type: Mapped[str | None] = mapped_column(String(32))
+    reference_text: Mapped[str | None] = mapped_column(Text)
     reply_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(

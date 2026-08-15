@@ -22,6 +22,8 @@ let departmentPage = 1;
 let promotionPage = 1;
 let departmentRequestPage = 1;
 let randomEventScenePage = 1;
+let randomEventSubmissionPage = 1;
+let randomEventSubmissionStatus = "pending";
 let randomEventSceneOpeningTarget = null;
 let randomEventAddScenes = [];
 let hideAndSeekSettings = null;
@@ -138,6 +140,10 @@ function initializePageSizeControls() {
   renderPageSizeControl("random-event-today", () => {
     todayRandomEventPage = 1;
     renderTodayRandomEvents(todayRandomEvents);
+  });
+  renderPageSizeControl("random-event-submissions", () => {
+    randomEventSubmissionPage = 1;
+    void loadRandomEventSubmissions();
   });
   renderPageSizeControl("hide-and-seek-scenes", () => {
     hideAndSeekScenePage = 1;
@@ -259,6 +265,9 @@ const redPacketExpiryMinutes = document.querySelector("#red-packet-expiry-minute
 const redPacketEmptyProbability = document.querySelector("#red-packet-empty-probability");
 const forceEndCurrentGame = document.querySelector("#force-end-current-game");
 const randomEventSettingsModal = document.querySelector("#random-event-settings-modal");
+const randomEventSubmissionModal = document.querySelector("#random-event-submission-modal");
+const randomEventSubmissionRoles = document.querySelector("#random-event-submission-roles");
+const randomEventSubmissionEvents = document.querySelector("#random-event-submission-events");
 const randomEventSceneModal = document.querySelector("#random-event-scene-modal");
 const randomEventTimeModal = document.querySelector("#random-event-time-modal");
 const randomEventAddModal = document.querySelector("#random-event-add-modal");
@@ -505,13 +514,38 @@ function renderRandomEventSettings(settings) {
     <article><span>每日固定场次</span><strong>${settings.schedule_times.length} 场</strong><small>${escapeHtml(settings.schedule_times.join(" · "))}（北京时间）</small></article>
     <article><span>报名补充说明</span><strong>已配置</strong><small>${escapeHtml(settings.signup_notice_template)}</small></article>
     <article><span>报名与提醒</span><strong>${settings.signup_timeout_minutes} / ${settings.reminder_interval_minutes} 分钟</strong><small>报名超时 / 未满员提醒</small></article>
-    <article><span>期间指令放行</span><strong>${settings.signup_allowed_commands.length} / ${settings.in_progress_allowed_commands.length}</strong><small>报名中 / 进行中</small></article>`;
+    <article><span>期间指令放行</span><strong>${settings.signup_allowed_commands.length} / ${settings.in_progress_allowed_commands.length}</strong><small>报名中 / 进行中</small></article>
+    <article><span>玩家投稿</span><strong>${settings.submission_enabled ? "已开放" : "已关闭"}</strong><small>草稿 ${settings.submission_draft_timeout_minutes} 分钟过期 · 最多 ${settings.submission_max_participants} 人 · 通过奖励 ${settings.submission_approval_reward}</small></article>`;
 }
 
 function renderRandomEventScenes(scenes) {
   const filtered = filterList("random-event-scenes", scenes, (scene) => `${scene.name} ${scene.signup_text} ${scene.events.map((item) => item.name).join(" ")}`);
   document.querySelector("#random-event-scene-list").innerHTML = filtered.map((scene) => `
     <article class="data-row"><div><b>${escapeHtml(scene.name)}</b><small>${statusBadge(scene.enabled ? "已启用" : "已停用", scene.enabled ? "success" : "warning")}</small><small>报名公告：${escapeHtml(scene.signup_text)}</small><small>事件模板：${scene.events.length} 条</small><small>席位：${scene.seats.map((seat) => `${escapeHtml(seat.role)} × ${seat.capacity}`).join(" · ")}</small></div><div class="command-actions"><strong>${scene.target_rounds} 轮 · ${scene.reward} 奖励</strong><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="edit" type="button">编辑</button><button class="secondary" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="toggle" type="button">${scene.enabled ? "停用" : "启用"}</button><button class="danger-button" data-random-event-scene="${escapeHtml(JSON.stringify(scene))}" data-scene-action="delete" type="button">删除</button></div></article>`).join("") || "<p class=\"muted\">没有符合条件的场景。</p>";
+}
+
+function randomEventSubmissionStatusLabel(status) {
+  return ({draft: "草稿", pending: "待审核", approved: "已通过", rejected: "未通过", withdrawn: "已撤回", expired: "已过期", cancelled: "已取消"})[status] || status;
+}
+
+function formatRandomEventSubmissionNumber(number) {
+  return `#${String(number).padStart(4, "0")}`;
+}
+
+function renderRandomEventSubmissions(pageData) {
+  document.querySelector("#random-event-submission-list").innerHTML = pageData.items.map((submission) => `
+    <article class="data-row"><div><b>${formatRandomEventSubmissionNumber(submission.number)} · ${escapeHtml(submission.content.scene_name || "未命名场景")}</b><small>${statusBadge(randomEventSubmissionStatusLabel(submission.status), submission.status === "pending" ? "warning" : submission.status === "approved" ? "success" : "")}</small><small>投稿人：${escapeHtml(submission.display_name)} ${escapeHtml(submission.employee_number)} · ${submission.content.participant_count || 0} 人 · ${submission.content.events?.length || 0} 个事件</small><small>${submission.submitted_at ? `提交于 ${formatHeartbeat(submission.submitted_at)}` : "尚未提交"}${submission.reviewer ? ` · 审核人 ${escapeHtml(submission.reviewer)}` : ""}</small></div><button class="secondary" data-random-event-submission-id="${submission.id}" type="button">${submission.status === "pending" ? "审核" : "查看"}</button></article>`).join("") || "<p class=\"muted\">当前没有符合条件的投稿。</p>";
+  renderPagination(document.querySelector("#random-event-submission-pagination"), pageData, "份投稿", loadRandomEventSubmissions);
+}
+
+async function loadRandomEventSubmissions(page = randomEventSubmissionPage) {
+  const pageSize = pageSizeFor("random-event-submissions");
+  const submissions = await requestGame(buildRandomEventSubmissionsPath(page, pageSize, randomEventSubmissionStatus));
+  randomEventSubmissionPage = submissions.page;
+  renderRandomEventSubmissions(submissions);
+  if (randomEventSubmissionStatus === "pending") {
+    document.querySelector("#random-event-submission-pending-count").textContent = submissions.total ? `(${submissions.total})` : "";
+  }
 }
 
 function renderHideAndSeekSettings(settings) {
@@ -873,10 +907,11 @@ function renderTodayRandomEvents(events) {
 }
 
 async function loadRandomEvents(page = randomEventScenePage) {
-  const [settings, scenes, today] = await Promise.all([
+  const [settings, scenes, today, submissions] = await Promise.all([
     requestGame("/api/game/random-events/settings"),
     requestGame(`/api/game/random-events/scenes?page=${page}&page_size=${pageSizeFor("random-event-scenes")}`),
     requestGame("/api/game/random-events/today"),
+    requestGame(buildRandomEventSubmissionsPath(randomEventSubmissionPage, pageSizeFor("random-event-submissions"), randomEventSubmissionStatus)),
   ]);
   randomEventSettings = settings;
   randomEventScenePage = scenes.page;
@@ -886,6 +921,11 @@ async function loadRandomEvents(page = randomEventScenePage) {
   renderRandomEventScenes(scenes.items);
   renderPagination(document.querySelector("#random-event-scene-pagination"), scenes, "个场景", loadRandomEvents);
   renderTodayRandomEvents(today.items);
+  randomEventSubmissionPage = submissions.page;
+  renderRandomEventSubmissions(submissions);
+  if (randomEventSubmissionStatus === "pending") {
+    document.querySelector("#random-event-submission-pending-count").textContent = submissions.total ? `(${submissions.total})` : "";
+  }
 }
 
 function renderRandomEventSceneSeat(role = "", capacity = 1) {
@@ -931,6 +971,65 @@ function insertRandomEventRoleVariable(role) {
   opening.focus();
 }
 
+function renderRandomEventSubmissionRole(role = {}) {
+  const row = document.createElement("div");
+  row.className = "scene-seat-row";
+  row.innerHTML = `<input data-submission-role maxlength="32" placeholder="身份名称" value="${escapeHtml(role.role || "")}"><input data-submission-capacity type="number" min="1" max="999" value="${role.capacity || 1}"><button class="text-button" data-remove-submission-role type="button">删除</button>`;
+  randomEventSubmissionRoles.append(row);
+}
+
+function renderRandomEventSubmissionEvent(item = {}) {
+  const row = document.createElement("div");
+  row.className = "scene-opening-row";
+  row.innerHTML = `<div class="scene-opening-editor"><input data-submission-event-name maxlength="64" placeholder="事件名称" value="${escapeHtml(item.name || "")}"><textarea data-submission-event-opening rows="4" maxlength="2000" placeholder="正式剧情开场白">${escapeHtml(item.opening_text || "")}</textarea></div><button class="text-button" data-remove-submission-event type="button">删除</button>`;
+  randomEventSubmissionEvents.append(row);
+}
+
+function randomEventSubmissionContentFromModal() {
+  return {
+    scene_name: document.querySelector("#random-event-submission-scene-name").value.trim(),
+    signup_text: document.querySelector("#random-event-submission-signup-text").value.trim(),
+    participant_count: Number(document.querySelector("#random-event-submission-participant-count").value),
+    roles: [...randomEventSubmissionRoles.querySelectorAll(".scene-seat-row")].map((row) => ({
+      role: row.querySelector("[data-submission-role]").value.trim(),
+      capacity: Number(row.querySelector("[data-submission-capacity]").value),
+    })),
+    events: [...randomEventSubmissionEvents.querySelectorAll(".scene-opening-row")].map((row) => ({
+      name: row.querySelector("[data-submission-event-name]").value.trim(),
+      opening_text: row.querySelector("[data-submission-event-opening]").value.trim(),
+    })),
+  };
+}
+
+async function openRandomEventSubmissionModal(submissionId) {
+  const submission = await requestGame(`/api/game/random-events/submissions/${submissionId}`);
+  randomEventSubmissionModal.dataset.submissionId = submission.id;
+  randomEventSubmissionModal.dataset.status = submission.status;
+  document.querySelector("#random-event-submission-modal-title").textContent = `审核投稿 ${formatRandomEventSubmissionNumber(submission.number)}`;
+  document.querySelector("#random-event-submission-meta").textContent = `${submission.display_name} ${submission.employee_number} · ${randomEventSubmissionStatusLabel(submission.status)}`;
+  document.querySelector("#random-event-submission-scene-name").value = submission.content.scene_name || "";
+  document.querySelector("#random-event-submission-signup-text").value = submission.content.signup_text || "";
+  document.querySelector("#random-event-submission-participant-count").value = submission.content.participant_count || 1;
+  randomEventSubmissionRoles.innerHTML = "";
+  (submission.content.roles || []).forEach(renderRandomEventSubmissionRole);
+  randomEventSubmissionEvents.innerHTML = "";
+  (submission.content.events || []).forEach(renderRandomEventSubmissionEvent);
+  document.querySelector("#random-event-submission-rewards").textContent = `固定配置：${submission.target_rounds} 轮 · 完成奖励 ${submission.event_reward} · 通过奖励 ${submission.approval_reward}`;
+  document.querySelector("#random-event-submission-rejection-reason").value = submission.rejection_reason || "";
+  const editable = submission.status === "pending";
+  randomEventSubmissionModal.querySelectorAll("input, textarea").forEach((input) => { input.disabled = !editable; });
+  randomEventSubmissionModal.querySelectorAll("[data-remove-submission-role], [data-remove-submission-event]").forEach((button) => { button.hidden = !editable; });
+  for (const id of ["add-random-event-submission-role", "add-random-event-submission-event", "save-random-event-submission", "reject-random-event-submission", "approve-random-event-submission"]) {
+    document.querySelector(`#${id}`).hidden = !editable;
+  }
+  randomEventSubmissionModal.hidden = false;
+}
+
+function closeRandomEventSubmissionModal() {
+  randomEventSubmissionModal.hidden = true;
+  delete randomEventSubmissionModal.dataset.submissionId;
+}
+
 async function openRandomEventSettingsModal() {
   const settings = randomEventSettings || await requestGame("/api/game/random-events/settings");
   randomEventSettings = settings;
@@ -940,6 +1039,12 @@ async function openRandomEventSettingsModal() {
   document.querySelector("#random-event-signup-timeout").value = settings.signup_timeout_minutes;
   document.querySelector("#random-event-reminder-interval").value = settings.reminder_interval_minutes;
   document.querySelector("#random-event-blocked-message").value = settings.blocked_message;
+  document.querySelector("#random-event-submission-enabled").checked = settings.submission_enabled;
+  document.querySelector("#random-event-submission-timeout").value = settings.submission_draft_timeout_minutes;
+  document.querySelector("#random-event-submission-max-participants").value = settings.submission_max_participants;
+  document.querySelector("#random-event-submission-target-rounds").value = settings.submission_default_target_rounds;
+  document.querySelector("#random-event-submission-event-reward").value = settings.submission_default_event_reward;
+  document.querySelector("#random-event-submission-approval-reward").value = settings.submission_approval_reward;
   renderRandomEventCommandPermissions("#random-event-signup-command-permissions", "signup", settings.signup_allowed_commands);
   renderRandomEventCommandPermissions("#random-event-progress-command-permissions", "progress", settings.in_progress_allowed_commands);
   randomEventSettingsModal.hidden = false;
@@ -1644,6 +1749,18 @@ document.querySelector("#refresh-random-events").addEventListener("click", async
     setResult(`刷新失败（${error.message}）`, "error");
   }
 });
+document.querySelector("#refresh-random-event-submissions").addEventListener("click", async (event) => {
+  try {
+    await runMutation(event.currentTarget, "刷新中…", loadRandomEventSubmissions);
+  } catch (error) {
+    setResult(`刷新投稿失败（${error.message}）`, "error");
+  }
+});
+document.querySelector("#random-event-submission-status").addEventListener("change", (event) => {
+  randomEventSubmissionStatus = event.target.value;
+  randomEventSubmissionPage = 1;
+  void loadRandomEventSubmissions();
+});
 for (const button of document.querySelectorAll("button[data-action]")) {
   button.addEventListener("click", () => submitAction(button));
 }
@@ -2107,6 +2224,12 @@ randomEventSettingsModal.addEventListener("click", async (event) => {
     signup_allowed_commands: [...randomEventSettingsModal.querySelectorAll("[data-random-event-signup-command]:checked")].map((input) => input.value),
     in_progress_allowed_commands: [...randomEventSettingsModal.querySelectorAll("[data-random-event-progress-command]:checked")].map((input) => input.value),
     blocked_message: document.querySelector("#random-event-blocked-message").value.trim(),
+    submission_enabled: document.querySelector("#random-event-submission-enabled").checked,
+    submission_draft_timeout_minutes: Number(document.querySelector("#random-event-submission-timeout").value),
+    submission_max_participants: Number(document.querySelector("#random-event-submission-max-participants").value),
+    submission_default_target_rounds: Number(document.querySelector("#random-event-submission-target-rounds").value),
+    submission_default_event_reward: Number(document.querySelector("#random-event-submission-event-reward").value),
+    submission_approval_reward: Number(document.querySelector("#random-event-submission-approval-reward").value),
   };
   if (!settings.schedule_times.length || !settings.signup_notice_template || !settings.blocked_message) {
     setResult("请至少设置一个触发时刻、报名补充说明和拦截提示", "error");
@@ -2316,6 +2439,76 @@ document.querySelector("#today-random-event-list").addEventListener("click", asy
     setResult("随机事件已开始报名", "success");
   } catch (error) {
     setResult(`立即触发失败（${error.message}）`, "error");
+  }
+});
+document.querySelector("#random-event-submission-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-random-event-submission-id]");
+  if (!button) return;
+  try {
+    await runMutation(button, "加载中…", () => openRandomEventSubmissionModal(button.dataset.randomEventSubmissionId));
+  } catch (error) {
+    setResult(`读取投稿失败（${error.message}）`, "error");
+  }
+});
+randomEventSubmissionModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-random-event-submission-modal]")) {
+    closeRandomEventSubmissionModal();
+    return;
+  }
+  if (event.target.id === "add-random-event-submission-role") {
+    renderRandomEventSubmissionRole();
+    return;
+  }
+  if (event.target.id === "add-random-event-submission-event") {
+    renderRandomEventSubmissionEvent();
+    return;
+  }
+  const removeRole = event.target.closest("[data-remove-submission-role]");
+  if (removeRole) {
+    removeRole.closest(".scene-seat-row").remove();
+    return;
+  }
+  const removeEvent = event.target.closest("[data-remove-submission-event]");
+  if (removeEvent) {
+    removeEvent.closest(".scene-opening-row").remove();
+    return;
+  }
+  const submissionId = randomEventSubmissionModal.dataset.submissionId;
+  if (!submissionId) return;
+  const button = event.target.closest("#save-random-event-submission, #approve-random-event-submission, #reject-random-event-submission");
+  if (!button) return;
+  try {
+    await runMutation(button, "处理中…", async () => {
+      if (button.id === "save-random-event-submission") {
+        await requestGame(`/api/game/random-events/submissions/${submissionId}`, {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json", "Idempotency-Key": idempotencyKey()},
+          body: JSON.stringify({content: randomEventSubmissionContentFromModal()}),
+        });
+        setResult("投稿修改已保存", "success");
+        await openRandomEventSubmissionModal(submissionId);
+        return;
+      }
+      if (button.id === "approve-random-event-submission") {
+        await requestGame(`/api/game/random-events/submissions/${submissionId}/approve`, {
+          method: "POST", headers: {"Idempotency-Key": idempotencyKey()},
+        });
+        setResult("投稿已通过，场景与奖励已生效", "success");
+      } else {
+        const reason = document.querySelector("#random-event-submission-rejection-reason").value.trim();
+        if (!reason) throw new Error("请填写拒绝原因");
+        await requestGame(`/api/game/random-events/submissions/${submissionId}/reject`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "Idempotency-Key": idempotencyKey()},
+          body: JSON.stringify({reason}),
+        });
+        setResult("投稿已拒绝", "success");
+      }
+      closeRandomEventSubmissionModal();
+      await loadRandomEventSubmissions();
+    });
+  } catch (error) {
+    setResult(`审核操作失败（${error.message}）`, "error");
   }
 });
 randomEventDetailsModal.addEventListener("click", (event) => {

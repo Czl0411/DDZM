@@ -1,5 +1,7 @@
 from collections import deque
 from datetime import UTC, datetime, timedelta
+from threading import Event, Lock, Thread
+from time import monotonic, sleep
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -82,6 +84,100 @@ def message(message_id, sent_by, text, sent_at="2026-08-05T04:00:00Z"):
         "sent_at": sent_at,
         "content": {"type": "text", "text": text},
     }
+
+
+class ConcurrentEmitSocket:
+    def __init__(self):
+        self.connected = True
+        self.eio = self
+        self._emit_guard = Lock()
+        self._active_emits = 0
+        self.max_active_emits = 0
+        self._pending_acknowledgements = 0
+        self.max_pending_acknowledgements = 0
+
+    @staticmethod
+    def create_event():
+        return Event()
+
+    def emit(self, event, data=None, namespace=None, callback=None):
+        with self._emit_guard:
+            self._active_emits += 1
+            self.max_active_emits = max(self.max_active_emits, self._active_emits)
+            self._pending_acknowledgements += 1
+            self.max_pending_acknowledgements = max(
+                self.max_pending_acknowledgements,
+                self._pending_acknowledgements,
+            )
+        sleep(0.02)
+        with self._emit_guard:
+            self._active_emits -= 1
+
+        def acknowledge():
+            sleep(0.08)
+            with self._emit_guard:
+                self._pending_acknowledgements -= 1
+            callback({"success": True})
+
+        Thread(target=acknowledge).start()
+
+
+def test_concurrent_socket_sends_serialize_emit_but_overlap_ack_waits():
+    socket = ConcurrentEmitSocket()
+    gateway = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "token",
+        request=FakeRequest(),
+        socket_factory=lambda: socket,
+        clock=lambda: NOW,
+    )
+    gateway._socket = socket
+    gateway._joined.set()
+    gateway._authenticated = True
+    gateway._bot_id = "bot-1"
+    gateway._joined_direct_chatroom_ids.update({"direct-1", "direct-2"})
+
+    started = monotonic()
+    threads = [
+        Thread(target=gateway.send_to, args=(room, "hello"))
+        for room in ("direct-1", "direct-2")
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert socket.max_active_emits == 1
+    assert socket.max_pending_acknowledgements == 2
+    assert monotonic() - started < 0.18
+
+
+def test_concurrent_socket_sends_to_the_same_room_wait_for_the_previous_ack():
+    """Fails if a direct send can overtake an unacknowledged send in the same room."""
+    socket = ConcurrentEmitSocket()
+    gateway = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "token",
+        request=FakeRequest(),
+        socket_factory=lambda: socket,
+        clock=lambda: NOW,
+    )
+    gateway._socket = socket
+    gateway._joined.set()
+    gateway._authenticated = True
+    gateway._bot_id = "bot-1"
+    gateway._joined_direct_chatroom_ids.add("direct-1")
+
+    threads = [
+        Thread(target=gateway.send_to, args=("direct-1", text))
+        for text in ("first", "second")
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert socket.max_pending_acknowledgements == 1
 
 
 @pytest.fixture
@@ -392,6 +488,36 @@ def test_send_preserves_caller_message_id_and_uses_short_ack_timeout(gateway):
     assert platform_message_id == "outbound-1"
     assert socket.calls[1][1]["message"]["message_id"] == "outbound-1"
     assert socket.calls[1][2] == 3
+
+
+def test_send_serializes_reply_reference_into_text_content(gateway):
+    adapter, socket, _ = gateway
+    reference = MessageReference(
+        message_id="trigger-1",
+        sender_platform_id="employee-1",
+        content_type="text",
+        text="/余额",
+    )
+
+    adapter.send("余额：5 摸鱼币", reference=reference)
+
+    assert socket.calls[1][1]["message"]["content"] == {
+        "type": "text",
+        "text": "余额：5 摸鱼币",
+        "reference": {
+            "id": "trigger-1",
+            "sentBy": "employee-1",
+            "content": {"type": "text", "text": "/余额"},
+        },
+    }
+
+
+def test_send_without_reply_reference_omits_reference_field(gateway):
+    adapter, socket, _ = gateway
+
+    adapter.send("系统广播")
+
+    assert "reference" not in socket.calls[1][1]["message"]["content"]
 
 
 def test_send_image_uses_platform_image_content(gateway):

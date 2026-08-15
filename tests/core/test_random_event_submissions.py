@@ -1,0 +1,505 @@
+from datetime import UTC, datetime, timedelta
+from copy import deepcopy
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from dzmm_bot.core.repository import CoreRepository
+from dzmm_bot.core.random_event_submissions import RandomEventSubmissionHandler
+from dzmm_bot.core.commands import GroupCommandHandler
+from dzmm_bot.core.service import CoreService
+from dzmm_bot.core.schema import InboundRecord, OutboundRecord
+from dzmm_bot.runtime.contracts import InboundMessage
+from sqlalchemy import select
+from dzmm_bot.core.schema import Base
+
+
+NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def repository():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    return CoreRepository(sessionmaker(engine, expire_on_commit=False))
+
+
+def _employee(repository, platform_id="employee-1"):
+    repository.create_user(platform_id, "投稿人", NOW, 0)
+    repository.upsert_direct_chats([(platform_id, f"direct-{platform_id}")], NOW)
+
+
+def _pending_submission(repository, platform_id="employee-1"):
+    _employee(repository, platform_id)
+    draft = repository.start_random_event_submission(platform_id, NOW).submission
+    repository.replace_random_event_submission_content(
+        draft.id,
+        {
+            "scene_name": f"失踪的咖啡-{platform_id}",
+            "signup_text": "茶水间出事了，快来报名。",
+            "participant_count": 3,
+            "roles": [
+                {"role": "调查员", "capacity": 2},
+                {"role": "嫌疑人", "capacity": 1},
+            ],
+            "events": [
+                {"name": "现场", "opening_text": "{调查员}发现了空杯。"}
+            ],
+        },
+        "preview",
+        NOW,
+    )
+    return repository.confirm_random_event_submission(platform_id, NOW)
+
+
+def test_submission_start_requires_employee_and_known_direct_chat(repository):
+    assert repository.start_random_event_submission("outsider", NOW).status == "not_joined"
+
+    repository.create_user("employee-1", "投稿人", NOW, 0)
+    assert repository.start_random_event_submission("employee-1", NOW).status == "no_direct_chat"
+
+
+def test_submission_start_resumes_the_same_draft(repository):
+    _employee(repository)
+
+    first = repository.start_random_event_submission("employee-1", NOW)
+    resumed = repository.start_random_event_submission(
+        "employee-1", NOW + timedelta(minutes=1)
+    )
+
+    assert first.status == "started"
+    assert resumed.status == "resumed"
+    assert resumed.submission.id == first.submission.id
+    assert resumed.submission.current_step == "scene_name"
+    assert resumed.direct_chatroom_id == "direct-employee-1"
+
+
+def test_submission_start_reports_expired_draft_and_creates_a_new_one(repository):
+    _employee(repository)
+    first = repository.start_random_event_submission("employee-1", NOW).submission
+
+    restarted = repository.start_random_event_submission(
+        "employee-1", NOW + timedelta(minutes=31)
+    )
+
+    assert restarted.status == "expired_started"
+    assert restarted.submission.id != first.id
+    assert repository.get_random_event_submission(first.id).status == "expired"
+
+
+def test_submission_confirmation_locks_configured_numeric_values(repository):
+    _employee(repository)
+    started = repository.start_random_event_submission("employee-1", NOW)
+    repository.replace_random_event_submission_content(
+        started.submission.id,
+        {
+            "scene_name": "失踪的咖啡",
+            "signup_text": "茶水间出事了，快来报名。",
+            "participant_count": 3,
+            "roles": [
+                {"role": "调查员", "capacity": 2},
+                {"role": "嫌疑人", "capacity": 1},
+            ],
+            "events": [
+                {"name": "现场", "opening_text": "{调查员}发现了空杯。"}
+            ],
+        },
+        "preview",
+        NOW,
+    )
+
+    submitted = repository.confirm_random_event_submission("employee-1", NOW)
+
+    assert submitted.status == "pending"
+    assert submitted.target_rounds == 10
+    assert submitted.event_reward == 6
+    assert submitted.approval_reward == 10
+    assert repository.start_random_event_submission(
+        "employee-1", NOW + timedelta(minutes=1)
+    ).status == "started"
+    with pytest.raises(ValueError, match="待审核"):
+        repository.confirm_random_event_submission("employee-1", NOW)
+
+
+def test_inactive_submission_draft_expires_without_affecting_other_user(repository):
+    _employee(repository, "employee-1")
+    _employee(repository, "employee-2")
+    first = repository.start_random_event_submission("employee-1", NOW).submission
+    second = repository.start_random_event_submission(
+        "employee-2", NOW + timedelta(minutes=20)
+    ).submission
+
+    expired = repository.expire_random_event_submission_drafts(
+        NOW + timedelta(minutes=31)
+    )
+
+    assert expired == 1
+    assert repository.get_random_event_submission(first.id).status == "expired"
+    assert repository.get_random_event_submission(second.id).status == "draft"
+
+
+def test_daily_jobs_expire_inactive_submission_drafts(repository):
+    """Fails if an abandoned private wizard remains active until its owner returns."""
+    _employee(repository)
+    draft = repository.start_random_event_submission("employee-1", NOW).submission
+
+    repository.run_daily_jobs(NOW + timedelta(minutes=31))
+
+    assert repository.get_random_event_submission(draft.id).status == "expired"
+
+
+def _direct(content, platform_id="employee-1", message_id="message-1"):
+    return InboundMessage(
+        message_id,
+        platform_id,
+        content,
+        NOW,
+        source_type="direct",
+        chatroom_id=f"direct-{platform_id}",
+    )
+
+
+def test_submission_wizard_collects_complete_scene_one_field_at_a_time(repository):
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+
+    start = handler.handle(_direct("/投稿 随机事件"))
+    assert start.text == "请先发送场景名称（1～64 字）。"
+
+    assert "报名公告" in handler.handle(_direct("失踪的咖啡")).text
+    assert "参加人数" in handler.handle(_direct("茶水间出事了，快来报名。")).text
+    assert "身份名称" in handler.handle(_direct("3")).text
+    assert "身份人数" in handler.handle(_direct("调查员")).text
+    assert "还剩 1" in handler.handle(_direct("2")).text
+    assert "身份人数" in handler.handle(_direct("嫌疑人")).text
+    assert "事件名称" in handler.handle(_direct("1")).text
+    assert "剧情开场白" in handler.handle(_direct("现场")).text
+    controls = handler.handle(_direct("{调查员}发现了空杯。"))
+    assert "/事件完成" in controls.text
+    preview = handler.handle(_direct("/事件完成"))
+    assert "失踪的咖啡" in preview.text
+    assert "调查员 × 2" in preview.text
+    assert "/确认投稿" in preview.text
+    confirmed = handler.handle(_direct("/确认投稿"))
+    assert "已提交审核" in confirmed.text
+
+
+def test_submission_wizard_rejects_misordered_variable_braces_immediately(repository):
+    """Fails if malformed braces advance the wizard and only fail at confirmation."""
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    for content in (
+        "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "2",
+        "调查员", "2", "现场",
+    ):
+        handler.handle(_direct(content))
+
+    reply = handler.handle(_direct("}{"))
+
+    assert "括号不完整" in reply.text
+    assert repository.active_random_event_submission(
+        "employee-1", NOW
+    ).current_step == "event_opening"
+
+
+def test_submission_step_prompt_uses_configured_reply_template(repository):
+    _employee(repository)
+    repository.set_reply_template(
+        "/投稿", "prompt_scene_name", "请填写投稿场景名。"
+    )
+
+    reply = RandomEventSubmissionHandler(repository).handle(
+        _direct("/投稿 随机事件")
+    )
+
+    assert reply.text == "请填写投稿场景名。"
+
+
+def test_submission_wizard_does_not_consume_unrelated_commands(repository):
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    handler.handle(_direct("/投稿 随机事件"))
+
+    assert handler.handle(_direct("/余额")) is None
+    assert repository.active_random_event_submission(
+        "employee-1", NOW
+    ).current_step == "scene_name"
+
+
+def test_submission_cancel_requires_confirmation(repository):
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    handler.handle(_direct("/投稿 随机事件"))
+
+    prompt = handler.handle(_direct("/取消投稿"))
+    assert "/确认取消投稿" in prompt.text
+    assert repository.active_random_event_submission("employee-1", NOW) is not None
+
+    cancelled = handler.handle(_direct("/确认取消投稿"))
+    assert "已取消" in cancelled.text
+    assert repository.active_random_event_submission("employee-1", NOW) is None
+
+
+def test_submission_confirmation_reports_when_submissions_were_disabled(repository):
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    for content in (
+        "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "2",
+        "调查员", "2", "现场", "{调查员}发现空杯。", "/事件完成",
+    ):
+        handler.handle(_direct(content))
+    settings = repository.get_random_event_settings()
+    repository.set_random_event_settings(
+        settings.schedule_times,
+        settings.signup_notice_template,
+        settings.signup_timeout_minutes,
+        settings.reminder_interval_minutes,
+        settings.signup_allowed_commands,
+        settings.in_progress_allowed_commands,
+        settings.blocked_message,
+        submission_enabled=False,
+    )
+
+    reply = handler.handle(_direct("/确认投稿"))
+
+    assert "未开放" in reply.text
+    assert repository.active_random_event_submission("employee-1", NOW) is not None
+
+
+def test_my_submissions_shows_submission_and_review_times(repository):
+    """Fails if players cannot tell when a reviewed submission changed state."""
+    pending = _pending_submission(repository)
+    repository.reject_random_event_submission(
+        pending.id, "super-admin", "身份说明需补充", NOW + timedelta(hours=1)
+    )
+
+    reply = RandomEventSubmissionHandler(repository).handle(_direct("/我的投稿"))
+
+    assert "提交于 2026-08-15 20:00" in reply.text
+    assert "审核于 2026-08-15 21:00" in reply.text
+
+
+def test_group_submission_entry_enqueues_group_notice_and_private_prompt(repository):
+    _employee(repository)
+    service = CoreService(repository, GroupCommandHandler(repository))
+
+    service.receive_inbound(
+        InboundMessage("group-start", "employee-1", "/投稿 随机事件", NOW)
+    )
+
+    with repository._session_factory() as session:
+        records = list(
+            session.scalars(
+                select(OutboundRecord).order_by(OutboundRecord.created_at, OutboundRecord.reply_index)
+            )
+        )
+    assert [(record.text, record.destination_chatroom_id) for record in records] == [
+        ("已转入私聊引导。", None),
+        ("请先发送场景名称（1～64 字）。", "direct-employee-1"),
+    ]
+    assert records[0].reference_message_id == "group-start"
+    assert records[1].reference_message_id is None
+
+
+def test_direct_balance_command_does_not_advance_submission_draft(repository):
+    _employee(repository)
+    service = CoreService(repository, GroupCommandHandler(repository))
+    service.receive_inbound(_direct("/投稿 随机事件", message_id="start"))
+
+    service.receive_inbound(_direct("/余额", message_id="balance"))
+
+    draft = repository.active_random_event_submission("employee-1", NOW)
+    assert draft.current_step == "scene_name"
+    with repository._session_factory() as session:
+        balance_reply = session.scalar(
+            select(OutboundRecord).where(
+                OutboundRecord.reference_message_id == "balance"
+            )
+        )
+    assert "余额" in balance_reply.text
+    assert balance_reply.destination_chatroom_id == "direct-employee-1"
+
+
+def test_direct_game_command_does_not_advance_submission_draft(repository):
+    _employee(repository)
+    service = CoreService(repository, GroupCommandHandler(repository))
+    service.receive_inbound(_direct("/投稿 随机事件", message_id="start"))
+
+    service.receive_inbound(_direct("/退出", message_id="exit"))
+
+    draft = repository.active_random_event_submission("employee-1", NOW)
+    assert draft.current_step == "scene_name"
+    with repository._session_factory() as session:
+        reply = session.scalar(
+            select(OutboundRecord).where(OutboundRecord.reference_message_id == "exit")
+        )
+    assert reply is not None
+
+
+def test_edit_role_refills_role_name_and_capacity(repository):
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    for content in (
+        "/投稿 随机事件",
+        "失踪的咖啡",
+        "茶水间出事了。",
+        "2",
+        "调查员",
+        "2",
+        "现场",
+        "{调查员}发现空杯。",
+        "/事件完成",
+    ):
+        handler.handle(_direct(content))
+
+    prompt = handler.handle(_direct("/修改身份 1"))
+    renamed = handler.handle(_direct("侦探"))
+    next_prompt = handler.handle(_direct("2"))
+
+    assert "身份名称" in prompt.text
+    assert "身份人数" in renamed.text
+    assert "事件名称" in next_prompt.text
+
+
+def test_back_from_first_role_returns_to_participant_count(repository):
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    for content in (
+        "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "2"
+    ):
+        handler.handle(_direct(content))
+
+    reply = handler.handle(_direct("/上一步"))
+
+    assert "参加人数" in reply.text
+
+
+def test_edit_event_refills_event_name_and_opening(repository):
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    for content in (
+        "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "2",
+        "调查员", "2", "旧事件", "{调查员}发现空杯。", "/事件完成",
+    ):
+        handler.handle(_direct(content))
+
+    prompt = handler.handle(_direct("/修改事件 1"))
+    opening = handler.handle(_direct("新事件"))
+    handler.handle(_direct("{调查员}发现文件。"))
+    preview = handler.handle(_direct("/事件完成"))
+
+    assert "事件名称" in prompt.text
+    assert "剧情开场白" in opening.text
+    assert "新事件" in preview.text
+    assert "旧事件" not in preview.text
+
+
+def test_plain_direct_submission_value_is_not_marked_ai_memory_eligible(repository):
+    _employee(repository)
+    service = CoreService(repository, GroupCommandHandler(repository))
+    service.receive_inbound(_direct("/投稿 随机事件", message_id="start"))
+
+    service.receive_inbound(_direct("失踪的咖啡", message_id="draft-content"))
+
+    with repository._session_factory() as session:
+        inbound = session.scalar(
+            select(InboundRecord).where(
+                InboundRecord.platform_message_id == "draft-content"
+            )
+        )
+    assert inbound.ai_memory_eligible is False
+
+
+def test_submission_approval_atomically_creates_scene_rewards_and_notifies(repository):
+    pending = _pending_submission(repository)
+
+    approved = repository.approve_random_event_submission(
+        pending.id, "管理员甲", NOW
+    )
+
+    assert approved.status == "approved"
+    assert approved.scene_id is not None
+    profile = repository.get_user_profile("employee-1")
+    assert profile.user.balance == 10
+    [scene] = repository.list_random_event_scenes()
+    assert scene.name == "失踪的咖啡-employee-1"
+    assert scene.enabled is True
+    with repository._session_factory() as session:
+        notification = session.scalar(
+            select(OutboundRecord).where(OutboundRecord.inbound_message_id.is_(None))
+        )
+    assert notification.destination_chatroom_id == "direct-employee-1"
+    assert "获得 10 摸鱼币" in notification.text
+
+    with pytest.raises(ValueError, match="待审核"):
+        repository.approve_random_event_submission(pending.id, "管理员乙", NOW)
+    assert repository.get_user_profile("employee-1").user.balance == 10
+    [fact] = repository.list_ai_activity_facts("employee-1")
+    assert fact.activity_type == "随机事件投稿"
+    assert (fact.participation_count, fact.win_count, fact.loss_count) == (2, 1, 0)
+
+
+def test_submission_rejection_requires_reason_and_notifies_without_reward(repository):
+    pending = _pending_submission(repository)
+
+    with pytest.raises(ValueError, match="拒绝原因"):
+        repository.reject_random_event_submission(pending.id, "管理员甲", "", NOW)
+
+    rejected = repository.reject_random_event_submission(
+        pending.id, "管理员甲", "身份设计不完整", NOW
+    )
+
+    assert rejected.status == "rejected"
+    assert rejected.rejection_reason == "身份设计不完整"
+    assert repository.get_user_profile("employee-1").user.balance == 0
+    with repository._session_factory() as session:
+        notification = session.scalar(
+            select(OutboundRecord).where(OutboundRecord.inbound_message_id.is_(None))
+        )
+    assert "身份设计不完整" in notification.text
+
+
+def test_pending_submission_remains_editable_after_maximum_is_reduced(repository):
+    pending = _pending_submission(repository)
+    settings = repository.get_random_event_settings()
+    repository.set_random_event_settings(
+        settings.schedule_times,
+        settings.signup_notice_template,
+        settings.signup_timeout_minutes,
+        settings.reminder_interval_minutes,
+        settings.signup_allowed_commands,
+        settings.in_progress_allowed_commands,
+        settings.blocked_message,
+        submission_max_participants=2,
+    )
+
+    updated = repository.update_random_event_submission_content(
+        pending.id,
+        {**pending.content, "scene_name": "修改后的场景"},
+        NOW + timedelta(minutes=1),
+    )
+
+    assert updated.content["scene_name"] == "修改后的场景"
+
+
+def test_admin_edit_rejects_unbalanced_role_variable_braces(repository):
+    pending = _pending_submission(repository)
+    content = deepcopy(pending.content)
+    content["events"][0]["opening_text"] = "{调查员发现了空杯。"
+
+    with pytest.raises(ValueError, match="括号"):
+        repository.update_random_event_submission_content(
+            pending.id, content, NOW + timedelta(minutes=1)
+        )
+
+
+def test_admin_edit_rejects_non_text_nested_content(repository):
+    pending = _pending_submission(repository)
+    content = deepcopy(pending.content)
+    content["events"][0]["opening_text"] = {"unexpected": "object"}
+
+    with pytest.raises(ValueError, match="事件模板无效"):
+        repository.update_random_event_submission_content(
+            pending.id, content, NOW + timedelta(minutes=1)
+        )

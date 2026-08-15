@@ -19,7 +19,12 @@ class OutboundClaim:
     image_url: str | None = None
     image_alt: str | None = None
     destination_chatroom_id: str | None = None
+    delivery_key: str = "__group__"
     delivery_kind: str = "group"
+    reference_message_id: str | None = None
+    reference_sender_platform_id: str | None = None
+    reference_content_type: str | None = None
+    reference_text: str | None = None
     recall_after_seconds: int | None = None
 
 
@@ -87,7 +92,12 @@ class CorePort(Protocol):
     ) -> bool: ...
 
     def claim_outbound(
-        self, worker_id: str, now: datetime, lease_seconds: int
+        self,
+        worker_id: str,
+        now: datetime,
+        lease_seconds: int,
+        excluded_delivery_keys: tuple[str, ...] = (),
+        required_delivery_key: str | None = None,
     ) -> OutboundClaim | None: ...
 
     def confirm_sent(
@@ -179,7 +189,7 @@ class CoreClient:
             "chatroom_id": message.chatroom_id,
         }
         if reference is not None:
-            payload["reference"] = {
+            reference_payload = {
                 "message_id": reference.message_id,
                 "sender_platform_id": reference.sender_platform_id,
                 "content_type": reference.content_type,
@@ -189,6 +199,9 @@ class CoreClient:
                 "height": reference.height,
                 "blurhash": reference.blurhash,
             }
+            if reference.text is not None:
+                reference_payload["text"] = reference.text
+            payload["reference"] = reference_payload
         self._post(
             "/internal/inbound",
             payload,
@@ -289,11 +302,19 @@ class CoreClient:
         return bool(data["accepted"])
 
     def claim_outbound(
-        self, worker_id: str, now: datetime, lease_seconds: int
+        self,
+        worker_id: str,
+        now: datetime,
+        lease_seconds: int,
+        excluded_delivery_keys: tuple[str, ...] = (),
+        required_delivery_key: str | None = None,
     ) -> OutboundClaim | None:
+        payload = _claim_payload(worker_id, now, lease_seconds)
+        payload["excluded_delivery_keys"] = list(excluded_delivery_keys)
+        payload["required_delivery_key"] = required_delivery_key
         data = self._post(
             "/internal/outbound/claim",
-            _claim_payload(worker_id, now, lease_seconds),
+            payload,
         )
         if data is None:
             return None
@@ -306,7 +327,12 @@ class CoreClient:
             image_url=data["image_url"],
             image_alt=data["image_alt"],
             destination_chatroom_id=data["destination_chatroom_id"],
+            delivery_key=data.get("delivery_key") or data.get("destination_chatroom_id") or "__group__",
             delivery_kind=data["delivery_kind"],
+            reference_message_id=data.get("reference_message_id"),
+            reference_sender_platform_id=data.get("reference_sender_platform_id"),
+            reference_content_type=data.get("reference_content_type"),
+            reference_text=data.get("reference_text"),
             recall_after_seconds=data["recall_after_seconds"],
         )
 

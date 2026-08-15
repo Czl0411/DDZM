@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from threading import Event
+from threading import Event, Lock
 from time import monotonic, sleep
 from uuid import UUID
 
@@ -9,7 +9,12 @@ from socketio.exceptions import TimeoutError as SocketTimeoutError
 
 from dzmm_bot.browser.core_client import OutboundClaim, OutboundRecallClaim, WorkerCommand
 from dzmm_bot.browser.worker import BrowserWorker
-from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
+from dzmm_bot.runtime.contracts import (
+    DirectChatRoom,
+    InboundMessage,
+    LoginState,
+    MessageReference,
+)
 
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
@@ -36,6 +41,11 @@ class FakeGateway:
     send_delay_seconds: float = 0
     sent_message_ids: list[str | None] = field(default_factory=list)
     send_errors: list[Exception] = field(default_factory=list)
+    sent_references: list[MessageReference | None] = field(default_factory=list)
+    direct_send_release: Event | None = None
+    direct_send_started: Event = field(default_factory=Event)
+    direct_send_count: int = 0
+    direct_send_lock: Lock = field(default_factory=Lock)
 
     def read_new(self, direct_chatroom_ids=()):
         self.read_targets.append(direct_chatroom_ids)
@@ -43,8 +53,9 @@ class FakeGateway:
             raise self.read_error
         return list(self.messages)
 
-    def send(self, text, *, message_id=None):
+    def send(self, text, *, message_id=None, reference=None):
         self.sent_message_ids.append(message_id)
+        self.sent_references.append(reference)
         if self.send_errors:
             raise self.send_errors.pop(0)
         if self.send_error:
@@ -54,8 +65,15 @@ class FakeGateway:
         self.sent.append(text)
         return f"sent-{len(self.sent)}"
 
-    def send_to(self, chatroom_id, text, *, message_id=None):
+    def send_to(self, chatroom_id, text, *, message_id=None, reference=None):
         self.sent_message_ids.append(message_id)
+        self.sent_references.append(reference)
+        with self.direct_send_lock:
+            self.direct_send_count += 1
+            if self.direct_send_count >= 2:
+                self.direct_send_started.set()
+        if self.direct_send_release is not None:
+            self.direct_send_release.wait(timeout=2)
         if self.send_errors:
             raise self.send_errors.pop(0)
         if self.send_error:
@@ -63,12 +81,16 @@ class FakeGateway:
         self.sent_to.append((chatroom_id, text))
         return f"direct-{len(self.sent_to)}"
 
-    def send_image(self, image_url, *, alt="image", message_id=None):
+    def send_image(self, image_url, *, alt="image", message_id=None, reference=None):
         self.sent_message_ids.append(message_id)
+        self.sent_references.append(reference)
         self.sent_images.append((image_url, alt))
         return f"image-{len(self.sent_images)}"
 
-    def send_image_to(self, chatroom_id, image_url, *, alt="image", message_id=None):
+    def send_image_to(
+        self, chatroom_id, image_url, *, alt="image", message_id=None,
+        reference=None,
+    ):
         raise AssertionError("unexpected targeted image")
 
     def upload_image(self, path, mime_type):
@@ -170,8 +192,20 @@ class FakeCore:
         self.submitted_ids.append(message.platform_message_id)
         self.submitted_event.set()
 
-    def claim_outbound(self, worker_id, now, lease_seconds):
-        return self.pending.pop(0) if self.pending else None
+    def claim_outbound(
+        self, worker_id, now, lease_seconds, excluded_delivery_keys=(),
+        required_delivery_key=None,
+    ):
+        for index, outbound in enumerate(self.pending):
+            if outbound.delivery_key in excluded_delivery_keys:
+                continue
+            if (
+                required_delivery_key is not None
+                and outbound.delivery_key != required_delivery_key
+            ):
+                continue
+            return self.pending.pop(index)
+        return None
 
     def confirm_sent(self, message_id, worker_id, lease_token, platform_sent_id, now):
         self.confirmed.append(
@@ -568,6 +602,64 @@ def test_worker_drains_at_most_twenty_outbounds_in_order(context):
     ]
 
 
+def test_worker_sends_different_direct_rooms_concurrently():
+    gateway = FakeGateway()
+    gateway.direct_send_release = Event()
+    core = FakeCore(pending=[
+        OutboundClaim(
+            UUID(int=101), "in-a", "A", LEASE,
+            destination_chatroom_id="direct-a", delivery_key="direct-a",
+            delivery_kind="direct",
+        ),
+        OutboundClaim(
+            UUID(int=102), "in-b", "B", LEASE,
+            destination_chatroom_id="direct-b", delivery_key="direct-b",
+            delivery_kind="direct",
+        ),
+    ])
+    worker = BrowserWorker(
+        worker_id="worker-a",
+        core=core,
+        session=FakeSession(gateway),
+        desktop=FakeDesktop(),
+        clock=lambda: NOW,
+        outbound_concurrency=2,
+    )
+
+    worker.run_once()
+
+    assert gateway.direct_send_started.wait(timeout=1)
+    gateway.direct_send_release.set()
+    deadline = monotonic() + 1
+    while len(core.confirmed) < 2 and monotonic() < deadline:
+        sleep(0.01)
+    assert {item[0] for item in core.confirmed} == {UUID(int=101), UUID(int=102)}
+
+
+def test_worker_passes_trigger_reference_to_gateway(context):
+    worker, gateway, _, _, core, _ = context
+    core.pending = [OutboundClaim(
+        OUTBOUND_ID,
+        "in-1",
+        "余额：5 摸鱼币",
+        LEASE,
+        reference_message_id="platform-trigger-1",
+        reference_sender_platform_id="employee-1",
+        reference_content_type="text",
+        reference_text="/余额",
+    )]
+
+    worker.run_once()
+
+    assert core.confirmed_event.wait(timeout=1)
+    assert gateway.sent_references == [MessageReference(
+        message_id="platform-trigger-1",
+        sender_platform_id="employee-1",
+        content_type="text",
+        text="/余额",
+    )]
+
+
 def test_worker_stops_outbound_batch_when_time_budget_is_reached():
     gateway = FakeGateway()
     session = FakeSession(gateway)
@@ -655,6 +747,37 @@ def test_worker_uses_bot_api_for_group_replies_over_the_character_limit(context)
 
     assert bot_sender.sent_to == [("group-1", text)]
     assert gateway.sent == []
+
+
+def test_worker_keeps_referenced_long_reply_on_socket_gateway(context):
+    _, gateway, session, desktop, core, _ = context
+    bot_sender = FakeBotSender()
+    worker = BrowserWorker(
+        worker_id="worker-a",
+        core=core,
+        session=session,
+        desktop=desktop,
+        clock=lambda: NOW,
+        bot_sender=bot_sender,
+        bot_chatroom_id="group-1",
+    )
+    text = "字" * 1001
+    core.pending = [OutboundClaim(
+        OUTBOUND_ID,
+        "in-1",
+        text,
+        LEASE,
+        reference_message_id="trigger-1",
+        reference_sender_platform_id="employee-1",
+        reference_content_type="text",
+        reference_text="@总监事 介绍玩法",
+    )]
+
+    worker.run_once()
+
+    assert core.confirmed_event.wait(timeout=1)
+    assert bot_sender.sent_to == []
+    assert gateway.sent == [text]
 
 
 def test_worker_keeps_recalled_group_replies_on_the_browser_gateway(context):

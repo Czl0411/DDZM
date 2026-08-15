@@ -10,10 +10,16 @@ from typing import Protocol
 
 from socketio.exceptions import TimeoutError as SocketTimeoutError
 
-from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
+from dzmm_bot.runtime.contracts import (
+    DirectChatRoom,
+    InboundMessage,
+    LoginState,
+    MessageReference,
+)
 from dzmm_bot.runtime.outbound import requires_bot_group_sender
 
 from .core_client import CorePort, OutboundClaim, WorkerCommand
+from .aikda_socket import AikdaMessageRejectedError
 from .session import BrowserSession, ChatGateway
 
 
@@ -46,7 +52,10 @@ class BrowserWorker:
         lease_seconds: int = 30,
         bot_sender: BotSender | None = None,
         bot_chatroom_id: str | None = None,
+        outbound_concurrency: int = 4,
     ) -> None:
+        if not 1 <= outbound_concurrency <= 16:
+            raise ValueError("outbound_concurrency must be between 1 and 16")
         self._worker_id = worker_id
         self._core = core
         self._session = session
@@ -69,9 +78,10 @@ class BrowserWorker:
             max_workers=1, thread_name_prefix="dzmm-inbound"
         )
         self._outbound_executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="dzmm-outbound"
+            max_workers=outbound_concurrency, thread_name_prefix="dzmm-outbound"
         )
-        self._outbound_future: Future[None] | None = None
+        self._outbound_concurrency = outbound_concurrency
+        self._outbound_futures: dict[str, Future[None]] = {}
         self._paused_messages: list[InboundMessage] = []
         self._paused_messages_lock = Lock()
         self._outbound_failed = False
@@ -234,33 +244,50 @@ class BrowserWorker:
         self._core.submit_inbound(message)
 
     def _start_outbound_if_idle(self, gateway: ChatGateway) -> None:
-        if self._outbound_future is not None and not self._outbound_future.done():
-            return
-        if self._outbound_future is not None:
-            self._outbound_future.result()
-        self._outbound_future = self._outbound_executor.submit(
-            self._drain_outbound, gateway
-        )
+        for delivery_key, future in tuple(self._outbound_futures.items()):
+            if not future.done():
+                continue
+            del self._outbound_futures[delivery_key]
+            future.result()
+        while len(self._outbound_futures) < self._outbound_concurrency:
+            outbound = self._core.claim_outbound(
+                self._worker_id,
+                self._clock(),
+                self._lease_seconds,
+                tuple(self._outbound_futures),
+            )
+            if outbound is None:
+                return
+            delivery_key = outbound.delivery_key
+            self._outbound_futures[delivery_key] = self._outbound_executor.submit(
+                self._drain_outbound, gateway, outbound
+            )
 
     def _consume_outbound_failure(self) -> bool:
         with self._outbound_failed_lock:
             failed, self._outbound_failed = self._outbound_failed, False
         return failed
 
-    def _drain_outbound(self, gateway: ChatGateway) -> None:
+    def _drain_outbound(self, gateway: ChatGateway, outbound) -> None:
         started_at = self._monotonic()
         sent_count = 0
         while sent_count < _OUTBOUND_BATCH_SIZE:
             if self._monotonic() - started_at >= _OUTBOUND_BATCH_BUDGET_SECONDS:
                 return
-            outbound = self._core.claim_outbound(
-                self._worker_id, self._clock(), self._lease_seconds
-            )
             if outbound is None:
-                return
+                outbound = self._core.claim_outbound(
+                    self._worker_id,
+                    self._clock(),
+                    self._lease_seconds,
+                    required_delivery_key=delivery_key,
+                )
+                if outbound is None:
+                    return
+            delivery_key = outbound.delivery_key
             if not self._send_one_outbound(gateway, outbound):
                 return
             sent_count += 1
+            outbound = None
 
     def _send_one_outbound(self, gateway: ChatGateway, outbound) -> bool:
         try:
@@ -276,6 +303,17 @@ class BrowserWorker:
             )
             with self._outbound_failed_lock:
                 self._outbound_failed = True
+            return False
+        except AikdaMessageRejectedError as error:
+            _LOGGER.warning(
+                "outbound send rejected: %s: %s", outbound.id, error
+            )
+            self._core.mark_outbound_failed(
+                outbound.id,
+                self._worker_id,
+                outbound.lease_token,
+                self._clock(),
+            )
             return False
         except Exception as error:
             if "请勿发送重复内容" in str(error):
@@ -303,6 +341,7 @@ class BrowserWorker:
 
     def _send_outbound(self, gateway: ChatGateway, outbound) -> str:
         platform_message_id = str(outbound.id)
+        reference = self._outbound_reference(outbound)
         if outbound.content_type == "image":
             if outbound.image_url is None:
                 raise RuntimeError("image outbound missing URL")
@@ -312,11 +351,13 @@ class BrowserWorker:
                     outbound.image_url,
                     alt=outbound.image_alt or "image",
                     message_id=platform_message_id,
+                    reference=reference,
                 )
             return gateway.send_image(
                 outbound.image_url,
                 alt=outbound.image_alt or "image",
                 message_id=platform_message_id,
+                reference=reference,
             )
         if (
             self._bot_sender is not None
@@ -324,6 +365,7 @@ class BrowserWorker:
             and outbound.destination_chatroom_id is None
             and outbound.delivery_kind == "group"
             and outbound.recall_after_seconds is None
+            and reference is None
             and requires_bot_group_sender(outbound.text)
         ):
             return self._bot_sender.send_to(self._bot_chatroom_id, outbound.text)
@@ -332,8 +374,26 @@ class BrowserWorker:
                 outbound.destination_chatroom_id,
                 outbound.text,
                 message_id=platform_message_id,
+                reference=reference,
             )
-        return gateway.send(outbound.text, message_id=platform_message_id)
+        return gateway.send(
+            outbound.text, message_id=platform_message_id, reference=reference
+        )
+
+    @staticmethod
+    def _outbound_reference(outbound) -> MessageReference | None:
+        if (
+            outbound.reference_message_id is None
+            or outbound.reference_sender_platform_id is None
+            or outbound.reference_content_type is None
+        ):
+            return None
+        return MessageReference(
+            message_id=outbound.reference_message_id,
+            sender_platform_id=outbound.reference_sender_platform_id,
+            content_type=outbound.reference_content_type,
+            text=outbound.reference_text,
+        )
 
     def _sync_direct_chats(self, gateway: ChatGateway, now: datetime) -> None:
         if (

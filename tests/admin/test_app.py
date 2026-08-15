@@ -144,9 +144,16 @@ class FakeCore:
             "signup_allowed_commands": ["/加入", "/退出"],
             "in_progress_allowed_commands": ["/退出"],
             "blocked_message": "当前有随机事件发生，监事不会处理。",
+            "submission_enabled": True,
+            "submission_draft_timeout_minutes": 30,
+            "submission_max_participants": 99,
+            "submission_default_target_rounds": 10,
+            "submission_default_event_reward": 6,
+            "submission_approval_reward": 10,
         }
     )
     random_event_scenes: list[dict] = field(default_factory=list)
+    random_event_submissions: list[dict] = field(default_factory=list)
     today_random_events: list[dict] = field(default_factory=list)
     hide_and_seek_settings: dict = field(
         default_factory=lambda: {
@@ -549,6 +556,35 @@ class FakeCore:
     def set_random_event_settings(self, settings):
         self.random_event_settings = settings
         return self.random_event_settings
+
+    def list_random_event_submissions(self, status_filter, page, page_size):
+        items = self.random_event_submissions
+        if status_filter:
+            items = [item for item in items if item["status"] == status_filter]
+        return _page(items, page, page_size)
+
+    def random_event_submission(self, submission_id):
+        return next(
+            item for item in self.random_event_submissions if item["id"] == submission_id
+        )
+
+    def update_random_event_submission(self, submission_id, content, now):
+        item = self.random_event_submission(submission_id)
+        item["content"] = content
+        return item
+
+    def approve_random_event_submission(self, submission_id, reviewer, now):
+        item = self.random_event_submission(submission_id)
+        item["status"] = "approved"
+        item["reviewer"] = reviewer
+        return item
+
+    def reject_random_event_submission(self, submission_id, reviewer, reason, now):
+        item = self.random_event_submission(submission_id)
+        item["status"] = "rejected"
+        item["reviewer"] = reviewer
+        item["rejection_reason"] = reason
+        return item
 
     def list_random_event_scenes(self, page, page_size):
         return _page(self.random_event_scenes, page, page_size)
@@ -2005,6 +2041,12 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
             "signup_allowed_commands": ["/加入", "/退出"],
             "in_progress_allowed_commands": ["/退出"],
             "blocked_message": "当前有随机事件发生，监事不会处理。",
+            "submission_enabled": True,
+            "submission_draft_timeout_minutes": 45,
+            "submission_max_participants": 88,
+            "submission_default_target_rounds": 12,
+            "submission_default_event_reward": 7,
+            "submission_approval_reward": 11,
         },
     )
     scene = client.post(
@@ -2022,10 +2064,64 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
 
     assert settings.status_code == 200
     assert settings.json()["version"] == 1
+    assert core.random_event_settings["submission_draft_timeout_minutes"] == 45
     assert scene.status_code == 201
     assert scene.json()["name"] == "茶水间"
     assert scene.json()["openings"] == ["咖啡机突然发出一声巨响。"]
     assert client.get("/api/game/random-events/scenes", headers=headers).json()["items"]
+
+
+def test_admin_random_event_submission_review_is_visible_and_actionable(
+    client, headers, core
+):
+    core.random_event_submissions.append(
+        {
+            "id": "submission-1",
+            "number": "RE-0001",
+            "status": "pending",
+            "content": {
+                "scene_name": "夜班文件失踪案",
+                "signup_text": "夜班文件不见了，快来报名。",
+                "participant_count": 2,
+                "roles": [
+                    {"name": "调查员", "capacity": 1},
+                    {"name": "目击者", "capacity": 1},
+                ],
+                "events": [
+                    {"name": "档案室", "opening_text": "{调查员}开始寻找文件。"}
+                ],
+            },
+            "target_rounds": 10,
+            "event_reward": 6,
+            "approval_reward": 10,
+            "submitter": {"display_name": "投稿人", "employee_number": 15},
+            "submitted_at": "2026-08-15T10:00:00+08:00",
+            "reviewer": None,
+            "rejection_reason": None,
+        }
+    )
+
+    listed = client.get(
+        "/api/game/random-events/submissions?status=pending", headers=headers
+    )
+    approved = client.post(
+        "/api/game/random-events/submissions/submission-1/approve",
+        headers={**headers, "Idempotency-Key": "approve-submission-1"},
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["number"] == "RE-0001"
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+
+
+def test_random_event_submission_admin_controls_are_rendered(client):
+    page = client.get("/").text
+
+    assert 'data-management-tab="submissions"' in page
+    assert 'id="random-event-submission-list"' in page
+    assert 'id="random-event-submission-modal"' in page
+    assert 'id="random-event-submission-enabled"' in page
 
 
 def test_random_event_scene_validation_identifies_missing_fields(client, headers):

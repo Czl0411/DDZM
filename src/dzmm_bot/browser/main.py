@@ -56,6 +56,7 @@ def create_worker(settings: Settings) -> BrowserWorker:
         clock=lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
         bot_sender=bot_sender,
         bot_chatroom_id=bot_chatroom_id,
+        outbound_concurrency=settings.outbound_concurrency,
     )
     return worker
 

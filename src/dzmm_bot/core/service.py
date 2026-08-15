@@ -6,9 +6,19 @@ from dzmm_bot.runtime.contracts import InboundMessage
 
 from .ai_mentions import BOT_MENTION_PREFIX, normalize_ai_mention
 from .repository import CoreRepository
+from .random_event_submissions import (
+    RandomEventSubmissionHandler,
+    SUBMISSION_COMMANDS,
+    SubmissionReply,
+)
 
 
-_DIRECT_COMMANDS = {"/报数", "/发红包", "/抢红包"}
+_DIRECT_COMMANDS = {
+    "/报数", "/发红包", "/抢红包", "/余额", "/我的物品", "/我",
+    "/帮助", "/当前游戏", "/我的档案", "/我的部门人数", "/打卡",
+    "/编辑档案", "/编辑档案形象", "/加入", "/退出", "/开始",
+    "/答案", "/继续", "/收手", "/投降", "/跳过", "/结束游戏",
+}
 _RANDOM_EVENT_INDEPENDENT_COMMANDS = {"/发红包", "/抢红包"}
 
 
@@ -31,6 +41,7 @@ class CommandReply:
     content_type: str = "text"
     image_url: str | None = None
     image_alt: str | None = None
+    force_group_destination: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,6 +58,7 @@ class CoreService:
     ) -> None:
         self._repository = repository
         self._command_handler = command_handler or NoopCommandHandler()
+        self._submission_handler = RandomEventSubmissionHandler(repository)
 
     def receive_inbound(self, message: InboundMessage) -> ReceiveResult:
         with self._repository.transaction():
@@ -56,28 +68,27 @@ class CoreService:
             stored, inserted = self._repository.accept_inbound(message)
             if not inserted:
                 return ReceiveResult(stored.id, False)
+            command = command_parts[0] if command_parts else ""
+            if command in SUBMISSION_COMMANDS:
+                self._repository.ensure_command_definitions()
+                if not self._repository.is_command_enabled(command):
+                    return ReceiveResult(stored.id, True)
+                submission_reply = self._submission_handler.handle(message)
+                self._enqueue_replies(stored.id, submission_reply)
+                return ReceiveResult(stored.id, True)
             if message.source_type == "direct":
                 parts = message.content.strip().split(maxsplit=1)
-                if not parts or parts[0] not in _DIRECT_COMMANDS:
+                if parts and parts[0] in _DIRECT_COMMANDS:
+                    direct_reply = self._command_handler.handle(message)
+                elif not message.content.lstrip().startswith("/"):
+                    direct_reply = self._submission_handler.handle(message)
+                else:
                     return ReceiveResult(stored.id, True)
-                direct_reply = self._command_handler.handle(message)
-                direct_replies = direct_reply if isinstance(direct_reply, list) else [direct_reply]
-                for reply_index, item in enumerate(
-                    reply for reply in direct_replies if reply is not None
-                ):
-                    reply = item if isinstance(item, CommandReply) else CommandReply(item)
-                    if (
-                        reply.destination_chatroom_id is None
-                        and reply.delivery_kind != "group"
-                    ):
-                        raise RuntimeError("私聊指令回复缺少目标房间")
-                    self._repository.enqueue_outbound(
-                        stored.id,
-                        reply.text,
-                        reply_index,
-                        destination_chatroom_id=reply.destination_chatroom_id,
-                        delivery_kind=reply.delivery_kind,
-                    )
+                self._enqueue_replies(
+                    stored.id,
+                    direct_reply,
+                    default_destination_chatroom_id=message.chatroom_id,
+                )
                 return ReceiveResult(stored.id, True)
             self._repository.record_activity(
                 message.sender_platform_id, message.received_at, message.content
@@ -215,6 +226,56 @@ class CoreService:
                     delivery_kind=reply.delivery_kind,
                 )
             return ReceiveResult(stored.id, True)
+
+    def _enqueue_replies(
+        self,
+        inbound_message_id: UUID,
+        response,
+        *,
+        default_destination_chatroom_id: str | None = None,
+    ) -> None:
+        items = response if isinstance(response, list) else [response]
+        for reply_index, item in enumerate(item for item in items if item is not None):
+            if isinstance(item, SubmissionReply):
+                reply = CommandReply(
+                    item.text,
+                    destination_chatroom_id=item.destination_chatroom_id,
+                    delivery_kind=item.delivery_kind,
+                )
+            elif isinstance(item, CommandReply):
+                reply = item
+            else:
+                reply = CommandReply(item)
+            destination = reply.destination_chatroom_id
+            delivery_kind = reply.delivery_kind
+            if (
+                destination is None
+                and default_destination_chatroom_id is not None
+                and not reply.force_group_destination
+            ):
+                destination = default_destination_chatroom_id
+                delivery_kind = "direct"
+            if reply.content_type == "image":
+                if reply.image_url is None:
+                    raise RuntimeError("图片回复缺少图片地址")
+                self._repository.enqueue_image_outbound(
+                    inbound_message_id,
+                    reply.image_url,
+                    reply_index,
+                    image_alt=reply.image_alt or "image",
+                    destination_chatroom_id=destination,
+                    delivery_kind=delivery_kind,
+                )
+            else:
+                self._repository.enqueue_outbound(
+                    inbound_message_id,
+                    reply.text,
+                    reply_index,
+                    recall_after_seconds=reply.recall_after_seconds,
+                    memory_round_id=reply.memory_round_id,
+                    destination_chatroom_id=destination,
+                    delivery_kind=delivery_kind,
+                )
 
 
 def _allows_random_event_command(content: str, event_state: str, settings) -> bool:

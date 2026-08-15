@@ -164,12 +164,77 @@ def test_direct_number_bomb_reports_are_isolated_and_destination_aware(session_f
         "direct-room-3", "number_bomb_private",
     )
     assert "报数成功" in replies[0].text
-    assert (replies[1].destination_chatroom_id, replies[1].delivery_kind) == (
+    assert {
+        (reply.destination_chatroom_id, reply.delivery_kind)
+        for reply in replies[1:]
+    } == {(None, "group")}
+    result_text = replies[1].text
+    assert "第 1 轮 - 真心话" in result_text
+    assert "本轮随机倍率：×1.2" in result_text
+    assert "最终数 F：平均值 × 1.2 = 60.00" in result_text
+    assert replies[0].reference_message_id == "direct-inbound-3"
+    assert {reply.reference_message_id for reply in replies[1:]} == {None}
+
+    continued = service.receive_inbound(InboundMessage(
+        "direct-continue",
+        "direct-p1",
+        "/继续",
+        now + timedelta(seconds=1),
+        source_type="direct",
+        chatroom_id="direct-room-1",
+    ))
+    with session_factory() as session:
+        continued_replies = list(session.scalars(
+            select(OutboundRecord)
+            .where(OutboundRecord.inbound_message_id == continued.message_id)
+            .order_by(OutboundRecord.reply_index)
+        ))
+    assert (continued_replies[0].destination_chatroom_id, continued_replies[0].delivery_kind) == (
         None, "group",
     )
-    assert "第 1 轮 - 真心话" in replies[1].text
-    assert "本轮随机倍率：×1.2" in replies[1].text
-    assert "最终数 F：平均值 × 1.2 = 60.00" in replies[1].text
+    assert continued_replies[0].reference_message_id is None
+    assert all(
+        reply.destination_chatroom_id is not None
+        for reply in continued_replies[1:]
+    )
+
+
+def test_direct_profile_text_and_image_stay_in_the_direct_chat(session_factory):
+    """Fails if structured direct replies silently fall back to the group room."""
+    from dzmm_bot.core.commands import GroupCommandHandler
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import OutboundRecord
+    from dzmm_bot.core.service import CoreService
+
+    repository = CoreRepository(session_factory)
+    now = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
+    repository.create_user("profile-direct", "档案玩家", now, 0)
+    repository.set_personal_profile_by_admin("profile-direct", "喜欢桌游")
+    repository.set_profile_image_by_admin(
+        "profile-direct", "https://cdn.example.com/profile.webp"
+    )
+    service = CoreService(repository, GroupCommandHandler(repository))
+
+    result = service.receive_inbound(InboundMessage(
+        "profile-direct-message",
+        "profile-direct",
+        "/我的档案",
+        now,
+        source_type="direct",
+        chatroom_id="profile-direct-room",
+    ))
+
+    with session_factory() as session:
+        replies = list(session.scalars(
+            select(OutboundRecord)
+            .where(OutboundRecord.inbound_message_id == result.message_id)
+            .order_by(OutboundRecord.reply_index)
+        ))
+    assert [reply.content_type for reply in replies] == ["text", "image"]
+    assert {
+        (reply.destination_chatroom_id, reply.delivery_kind)
+        for reply in replies
+    } == {("profile-direct-room", "direct")}
 
 
 @pytest.mark.parametrize("content", ["/发红包 2 2", "/抢红包"])

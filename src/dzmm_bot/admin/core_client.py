@@ -115,6 +115,24 @@ class AdminCorePort(Protocol):
 
     def set_random_event_settings(self, settings: dict) -> dict: ...
 
+    def list_random_event_submissions(
+        self, status: str | None, page: int, page_size: int
+    ) -> dict: ...
+
+    def random_event_submission(self, submission_id: str) -> dict: ...
+
+    def update_random_event_submission(
+        self, submission_id: str, content: dict, now: str
+    ) -> dict: ...
+
+    def approve_random_event_submission(
+        self, submission_id: str, reviewer: str, now: str
+    ) -> dict: ...
+
+    def reject_random_event_submission(
+        self, submission_id: str, reviewer: str, reason: str, now: str
+    ) -> dict: ...
+
     def get_hide_and_seek_settings(self) -> dict: ...
 
     def set_hide_and_seek_settings(self, settings: dict) -> dict: ...
@@ -162,6 +180,24 @@ class AdminCorePort(Protocol):
     def delete_random_event_scene(self, scene_id: str) -> dict: ...
 
     def list_today_random_events(self) -> list[dict]: ...
+
+    def list_random_event_submissions(
+        self, status: str | None, page: int, page_size: int
+    ) -> dict: ...
+
+    def random_event_submission(self, submission_id: str) -> dict: ...
+
+    def update_random_event_submission(
+        self, submission_id: str, content: dict, now: str
+    ) -> dict: ...
+
+    def approve_random_event_submission(
+        self, submission_id: str, reviewer: str, now: str
+    ) -> dict: ...
+
+    def reject_random_event_submission(
+        self, submission_id: str, reviewer: str, reason: str, now: str
+    ) -> dict: ...
 
     def reschedule_random_event(self, schedule_id: str, scheduled_at: str) -> dict: ...
 
@@ -585,6 +621,41 @@ class CoreClient:
     def list_today_random_events(self) -> list[dict]:
         return self._get("/internal/game/random-events/today")
 
+    def list_random_event_submissions(
+        self, status: str | None, page: int, page_size: int
+    ) -> dict:
+        params = {"page": page, "page_size": page_size}
+        if status is not None:
+            params["status"] = status
+        return self._get("/internal/random-event-submissions", params=params)
+
+    def random_event_submission(self, submission_id: str) -> dict:
+        return self._get(f"/internal/random-event-submissions/{submission_id}")
+
+    def update_random_event_submission(
+        self, submission_id: str, content: dict, now: str
+    ) -> dict:
+        return self._patch(
+            f"/internal/random-event-submissions/{submission_id}",
+            {"content": content, "now": now},
+        )
+
+    def approve_random_event_submission(
+        self, submission_id: str, reviewer: str, now: str
+    ) -> dict:
+        return self._post(
+            f"/internal/random-event-submissions/{submission_id}/approve",
+            {"reviewer": reviewer, "now": now},
+        )
+
+    def reject_random_event_submission(
+        self, submission_id: str, reviewer: str, reason: str, now: str
+    ) -> dict:
+        return self._post(
+            f"/internal/random-event-submissions/{submission_id}/reject",
+            {"reviewer": reviewer, "reason": reason, "now": now},
+        )
+
     def reschedule_random_event(self, schedule_id: str, scheduled_at: str) -> dict:
         response = self._client.patch(
             f"/internal/game/random-events/today/{schedule_id}",
@@ -615,6 +686,16 @@ class CoreClient:
 
     def _get(self, path: str, params: dict | None = None):
         response = self._client.get(path, params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def _post(self, path: str, payload: dict):
+        response = self._client.post(path, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def _patch(self, path: str, payload: dict):
+        response = self._client.patch(path, json=payload)
         response.raise_for_status()
         return response.json()
 

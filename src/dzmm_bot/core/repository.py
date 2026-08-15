@@ -1,4 +1,5 @@
 from collections.abc import Iterator, Sequence
+from copy import deepcopy
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -117,6 +118,8 @@ from .schema import (
     RandomEventSceneOpeningRecord,
     RandomEventSceneSeatRecord,
     RandomEventSettingsRecord,
+    RandomEventSubmissionCounterRecord,
+    RandomEventSubmissionRecord,
     DepartmentRecord,
     DepartmentApprovalRecord,
     DepartmentRequestRecord,
@@ -174,6 +177,11 @@ _DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE = (
 _DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS = ("/加入", "/退出")
 _DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS = ("/退出",)
 _DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE = "当前有随机事件发生，监事不会处理。"
+_DEFAULT_RANDOM_EVENT_SUBMISSION_TIMEOUT_MINUTES = 30
+_DEFAULT_RANDOM_EVENT_SUBMISSION_MAX_PARTICIPANTS = 99
+_DEFAULT_RANDOM_EVENT_SUBMISSION_TARGET_ROUNDS = 10
+_DEFAULT_RANDOM_EVENT_SUBMISSION_EVENT_REWARD = 6
+_DEFAULT_RANDOM_EVENT_SUBMISSION_APPROVAL_REWARD = 10
 _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
     {
         "/入职", "/我的物品", "/打卡", "/余额", "/我", "/编辑档案", "/编辑档案形象", "/我的档案", "/商店", "/帮助", "/当前游戏",
@@ -394,6 +402,42 @@ class RandomEventSettings:
     signup_allowed_commands: list[str]
     in_progress_allowed_commands: list[str]
     blocked_message: str
+    submission_enabled: bool
+    submission_draft_timeout_minutes: int
+    submission_max_participants: int
+    submission_default_target_rounds: int
+    submission_default_event_reward: int
+    submission_approval_reward: int
+
+
+@dataclass(frozen=True)
+class RandomEventSubmission:
+    id: UUID
+    number: int
+    user_id: UUID
+    status: str
+    current_step: str
+    content: dict
+    target_rounds: int | None
+    event_reward: int | None
+    approval_reward: int | None
+    created_at: datetime
+    updated_at: datetime
+    last_activity_at: datetime
+    expires_at: datetime | None
+    submitted_at: datetime | None
+    rejection_reason: str | None
+    reviewer: str | None
+    reviewed_at: datetime | None
+    scene_id: UUID | None
+    reward_granted_at: datetime | None
+
+
+@dataclass(frozen=True)
+class RandomEventSubmissionStartResult:
+    status: str
+    submission: RandomEventSubmission | None = None
+    direct_chatroom_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1105,6 +1149,19 @@ _COMMAND_DEFINITIONS = (
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹", "创建蹦蹦数字炸弹报名局，至少3人后发送 /开始"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
     ("/跳过", "/跳过 编号 [编号...]", "排除蹦蹦数字炸弹中尚未报数的参与者"),
+    ("/投稿", "/投稿 随机事件", "进入随机事件私聊投稿向导"),
+    ("/我的投稿", "/我的投稿", "查看自己最近的随机事件投稿状态"),
+    ("/撤回投稿", "/撤回投稿 编号", "撤回自己仍在等待审核的随机事件投稿"),
+    ("/上一步", "/上一步", "返回随机事件投稿的上一个填写步骤"),
+    ("/取消投稿", "/取消投稿", "申请取消当前随机事件投稿草稿"),
+    ("/确认取消投稿", "/确认取消投稿", "确认取消当前随机事件投稿草稿"),
+    ("/确认投稿", "/确认投稿", "确认提交随机事件投稿审核"),
+    ("/继续添加", "/继续添加", "继续添加随机事件投稿的事件模板"),
+    ("/事件完成", "/事件完成", "完成随机事件模板填写并预览投稿"),
+    ("/修改身份", "/修改身份 编号", "修改随机事件投稿中的指定身份"),
+    ("/删除身份", "/删除身份 编号 [编号...]", "删除随机事件投稿中的身份"),
+    ("/修改事件", "/修改事件 编号", "修改随机事件投稿中的指定事件"),
+    ("/删除事件", "/删除事件 编号 [编号...]", "删除随机事件投稿中的事件"),
 )
 
 
@@ -1266,6 +1323,22 @@ class CoreRepository:
                 )
             )
 
+    def _render_reply_template(
+        self,
+        command: str,
+        scenario: str,
+        now: datetime,
+        values: dict[str, str],
+    ) -> str:
+        definition = template_definition(command, scenario)
+        record = self.get_reply_template(command, scenario)
+        template = record.template if record is not None else definition.default
+        context = {"{日期}": now.date().isoformat(), **values}
+        try:
+            return render_template(definition, template, context)
+        except ValueError:
+            return render_template(definition, definition.default, context)
+
     def set_reply_template(
         self, command: str, scenario: str, template: str
     ) -> CommandReplyTemplateRecord:
@@ -1370,6 +1443,12 @@ class CoreRepository:
         signup_allowed_commands: list[str] | None = None,
         in_progress_allowed_commands: list[str] | None = None,
         blocked_message: str | None = None,
+        submission_enabled: bool | None = None,
+        submission_draft_timeout_minutes: int | None = None,
+        submission_max_participants: int | None = None,
+        submission_default_target_rounds: int | None = None,
+        submission_default_event_reward: int | None = None,
+        submission_approval_reward: int | None = None,
     ) -> RandomEventSettings:
         if not isinstance(schedule_times, list) or not schedule_times:
             raise ValueError("每日固定场次至少需要一个时间")
@@ -1414,6 +1493,25 @@ class CoreRepository:
             blocked_message = _validate_random_event_blocked_message(
                 record.blocked_message if blocked_message is None else blocked_message
             )
+            submission_enabled = (
+                record.submission_enabled
+                if submission_enabled is None
+                else submission_enabled
+            )
+            numeric_submission_values = (
+                ("草稿超时", submission_draft_timeout_minutes, 1, 1440),
+                ("最大参加人数", submission_max_participants, 1, 999),
+                ("默认目标轮数", submission_default_target_rounds, 1, 999),
+                ("默认事件奖励", submission_default_event_reward, 0, 999),
+                ("投稿通过奖励", submission_approval_reward, 0, 999),
+            )
+            for label, value, minimum, maximum in numeric_submission_values:
+                if value is not None and (
+                    isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or not minimum <= value <= maximum
+                ):
+                    raise ValueError(f"{label}需在 {minimum} 至 {maximum} 之间")
             record.schedule_times = normalized_times
             record.signup_notice_template = signup_notice_template
             record.signup_timeout_minutes = signup_timeout_minutes
@@ -1421,8 +1519,539 @@ class CoreRepository:
             record.signup_allowed_commands = signup_allowed_commands
             record.in_progress_allowed_commands = in_progress_allowed_commands
             record.blocked_message = blocked_message
+            record.submission_enabled = submission_enabled
+            if submission_draft_timeout_minutes is not None:
+                record.submission_draft_timeout_minutes = submission_draft_timeout_minutes
+            if submission_max_participants is not None:
+                record.submission_max_participants = submission_max_participants
+            if submission_default_target_rounds is not None:
+                record.submission_default_target_rounds = submission_default_target_rounds
+            if submission_default_event_reward is not None:
+                record.submission_default_event_reward = submission_default_event_reward
+            if submission_approval_reward is not None:
+                record.submission_approval_reward = submission_approval_reward
             session.flush()
             return _random_event_settings(record)
+
+    def start_random_event_submission(
+        self, platform_id: str, now: datetime
+    ) -> RandomEventSubmissionStartResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                settings = self.get_random_event_settings()
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return RandomEventSubmissionStartResult("not_joined")
+                direct_chatroom_id = session.scalar(
+                    select(DirectChatRecord.chatroom_id).where(
+                        DirectChatRecord.platform_user_id == platform_id
+                    )
+                )
+                if direct_chatroom_id is None:
+                    return RandomEventSubmissionStartResult("no_direct_chat")
+                draft = session.scalar(
+                    select(RandomEventSubmissionRecord)
+                    .where(
+                        RandomEventSubmissionRecord.user_id == user.id,
+                        RandomEventSubmissionRecord.status == "draft",
+                    )
+                    .with_for_update()
+                )
+                expired_draft = False
+                if draft is not None and draft.expires_at is not None and draft.expires_at <= now:
+                    draft.status = "expired"
+                    draft.current_step = "expired"
+                    draft = None
+                    expired_draft = True
+                if not settings.submission_enabled:
+                    return RandomEventSubmissionStartResult("disabled")
+                if draft is not None:
+                    draft.last_activity_at = now
+                    draft.expires_at = now + timedelta(
+                        minutes=settings.submission_draft_timeout_minutes
+                    )
+                    session.flush()
+                    return RandomEventSubmissionStartResult(
+                        "resumed", _random_event_submission(draft), direct_chatroom_id
+                    )
+                counter = session.get(
+                    RandomEventSubmissionCounterRecord, 1, with_for_update=True
+                )
+                if counter is None:
+                    values = {"id": 1, "next_number": 1}
+                    dialect_name = session.get_bind().dialect.name
+                    statement = (
+                        postgresql_insert(RandomEventSubmissionCounterRecord)
+                        if dialect_name == "postgresql"
+                        else sqlite_insert(RandomEventSubmissionCounterRecord)
+                    ).values(**values)
+                    session.execute(
+                        statement.on_conflict_do_nothing(
+                            index_elements=[RandomEventSubmissionCounterRecord.id]
+                        )
+                    )
+                    counter = session.get(
+                        RandomEventSubmissionCounterRecord,
+                        1,
+                        with_for_update=True,
+                    )
+                    if counter is None:
+                        raise RuntimeError("投稿编号计数器初始化失败")
+                number = counter.next_number
+                counter.next_number += 1
+                draft = RandomEventSubmissionRecord(
+                    number=number,
+                    user_id=user.id,
+                    status="draft",
+                    current_step="scene_name",
+                    content={},
+                    last_activity_at=now,
+                    expires_at=now + timedelta(
+                        minutes=settings.submission_draft_timeout_minutes
+                    ),
+                )
+                session.add(draft)
+                session.flush()
+                return RandomEventSubmissionStartResult(
+                    "expired_started" if expired_draft else "started",
+                    _random_event_submission(draft),
+                    direct_chatroom_id,
+                )
+
+    def get_random_event_submission(
+        self, submission_id: UUID | str
+    ) -> RandomEventSubmission | None:
+        with self._session() as session:
+            record = session.get(
+                RandomEventSubmissionRecord, UUID(str(submission_id))
+            )
+            return None if record is None else _random_event_submission(record)
+
+    def active_random_event_submission(
+        self, platform_id: str, now: datetime
+    ) -> RandomEventSubmission | None:
+        now = now.astimezone(BEIJING)
+        self.expire_random_event_submission_drafts(now)
+        with self._session() as session:
+            record = session.scalar(
+                select(RandomEventSubmissionRecord)
+                .join(UserRecord, UserRecord.id == RandomEventSubmissionRecord.user_id)
+                .where(
+                    UserRecord.platform_id == platform_id,
+                    RandomEventSubmissionRecord.status == "draft",
+                )
+            )
+            return None if record is None else _random_event_submission(record)
+
+    def replace_random_event_submission_content(
+        self,
+        submission_id: UUID | str,
+        content: dict,
+        current_step: str,
+        now: datetime,
+    ) -> RandomEventSubmission:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                record = session.get(
+                    RandomEventSubmissionRecord,
+                    UUID(str(submission_id)),
+                    with_for_update=True,
+                )
+                if record is None or record.status != "draft":
+                    raise ValueError("投稿草稿不存在")
+                settings = self.get_random_event_settings()
+                record.content = dict(content)
+                record.current_step = current_step
+                record.last_activity_at = now
+                record.updated_at = now
+                record.expires_at = now + timedelta(
+                    minutes=settings.submission_draft_timeout_minutes
+                )
+                session.flush()
+                return _random_event_submission(record)
+
+    def confirm_random_event_submission(
+        self, platform_id: str, now: datetime
+    ) -> RandomEventSubmission:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                settings = self.get_random_event_settings()
+                if not settings.submission_enabled:
+                    raise ValueError("随机事件投稿当前未开放")
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    raise ValueError("请先入职")
+                if session.scalar(
+                    select(RandomEventSubmissionRecord.id).where(
+                        RandomEventSubmissionRecord.user_id == user.id,
+                        RandomEventSubmissionRecord.status == "pending",
+                    )
+                ) is not None:
+                    raise ValueError("你已有一份待审核投稿")
+                record = session.scalar(
+                    select(RandomEventSubmissionRecord)
+                    .where(
+                        RandomEventSubmissionRecord.user_id == user.id,
+                        RandomEventSubmissionRecord.status == "draft",
+                    )
+                    .with_for_update()
+                )
+                if record is None or record.current_step != "preview":
+                    raise ValueError("投稿尚未完成预览")
+                _validate_random_event_submission_content(
+                    record.content,
+                    settings.submission_max_participants,
+                    settings.submission_default_event_reward,
+                    settings.submission_default_target_rounds,
+                )
+                record.status = "pending"
+                record.current_step = "submitted"
+                record.target_rounds = settings.submission_default_target_rounds
+                record.event_reward = settings.submission_default_event_reward
+                record.approval_reward = settings.submission_approval_reward
+                record.submitted_at = now
+                record.updated_at = now
+                record.last_activity_at = now
+                record.expires_at = None
+                self._record_ai_activity_fact(
+                    session,
+                    event_key=f"random-event-submission:{record.id}:submitted",
+                    user_id=user.id,
+                    activity_type="随机事件投稿",
+                    result="ended",
+                    occurred_at=now,
+                )
+                session.flush()
+                return _random_event_submission(record)
+
+    def expire_random_event_submission_drafts(self, now: datetime) -> int:
+        now = now.astimezone(BEIJING)
+        with self._session() as session:
+            result = session.execute(
+                update(RandomEventSubmissionRecord)
+                .where(
+                    RandomEventSubmissionRecord.status == "draft",
+                    RandomEventSubmissionRecord.expires_at.is_not(None),
+                    RandomEventSubmissionRecord.expires_at <= now,
+                )
+                .values(status="expired", current_step="expired", updated_at=now)
+            )
+            return int(result.rowcount or 0)
+
+    def cancel_random_event_submission(
+        self, platform_id: str, now: datetime
+    ) -> RandomEventSubmission | None:
+        now = now.astimezone(BEIJING)
+        with self._session() as session:
+            record = session.scalar(
+                select(RandomEventSubmissionRecord)
+                .join(UserRecord, UserRecord.id == RandomEventSubmissionRecord.user_id)
+                .where(
+                    UserRecord.platform_id == platform_id,
+                    RandomEventSubmissionRecord.status == "draft",
+                )
+                .with_for_update()
+            )
+            if record is None:
+                return None
+            record.status = "cancelled"
+            record.current_step = "cancelled"
+            record.cancelled_at = now
+            record.updated_at = now
+            record.expires_at = None
+            session.flush()
+            return _random_event_submission(record)
+
+    def recent_random_event_submissions(
+        self, platform_id: str, limit: int = 5
+    ) -> list[RandomEventSubmission]:
+        with self._session() as session:
+            records = list(
+                session.scalars(
+                    select(RandomEventSubmissionRecord)
+                    .join(UserRecord, UserRecord.id == RandomEventSubmissionRecord.user_id)
+                    .where(UserRecord.platform_id == platform_id)
+                    .order_by(RandomEventSubmissionRecord.number.desc())
+                    .limit(limit)
+                )
+            )
+            return [_random_event_submission(record) for record in records]
+
+    def withdraw_random_event_submission(
+        self, platform_id: str, number: int, now: datetime
+    ) -> RandomEventSubmission | None:
+        now = now.astimezone(BEIJING)
+        with self._session() as session:
+            record = session.scalar(
+                select(RandomEventSubmissionRecord)
+                .join(UserRecord, UserRecord.id == RandomEventSubmissionRecord.user_id)
+                .where(
+                    UserRecord.platform_id == platform_id,
+                    RandomEventSubmissionRecord.number == number,
+                    RandomEventSubmissionRecord.status == "pending",
+                )
+                .with_for_update()
+            )
+            if record is None:
+                return None
+            record.status = "withdrawn"
+            record.current_step = "withdrawn"
+            record.withdrawn_at = now
+            record.updated_at = now
+            self._record_ai_activity_fact(
+                session,
+                event_key=f"random-event-submission:{record.id}:withdrawn",
+                user_id=record.user_id,
+                activity_type="随机事件投稿",
+                result="cancelled",
+                occurred_at=now,
+            )
+            session.flush()
+            return _random_event_submission(record)
+
+    def update_random_event_submission_content(
+        self, submission_id: UUID | str, content: dict, now: datetime
+    ) -> RandomEventSubmission:
+        now = now.astimezone(BEIJING)
+        with self._session() as session:
+            record = session.get(
+                RandomEventSubmissionRecord,
+                UUID(str(submission_id)),
+                with_for_update=True,
+            )
+            if record is None or record.status != "pending":
+                raise ValueError("仅待审核投稿可以编辑")
+            _validate_random_event_submission_content(
+                content,
+                max(
+                    self.get_random_event_settings().submission_max_participants,
+                    int(record.content.get("participant_count", 0) or 0),
+                ),
+                record.event_reward or 0,
+                record.target_rounds or 1,
+            )
+            record.content = deepcopy(content)
+            record.updated_at = now
+            session.flush()
+            return _random_event_submission(record)
+
+    def list_random_event_submissions(
+        self, status: str | None = None, page: int = 1, page_size: int = 20
+    ) -> tuple[list[tuple[RandomEventSubmission, UserRecord]], int]:
+        with self._session() as session:
+            filters = [] if status is None else [RandomEventSubmissionRecord.status == status]
+            total = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(RandomEventSubmissionRecord)
+                    .where(*filters)
+                )
+                or 0
+            )
+            rows = list(
+                session.execute(
+                    select(RandomEventSubmissionRecord, UserRecord)
+                    .join(UserRecord, UserRecord.id == RandomEventSubmissionRecord.user_id)
+                    .where(*filters)
+                    .order_by(RandomEventSubmissionRecord.number.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            return [(_random_event_submission(record), user) for record, user in rows], total
+
+    def random_event_submission_with_user(
+        self, submission_id: UUID | str
+    ) -> tuple[RandomEventSubmission, UserRecord] | None:
+        with self._session() as session:
+            row = session.execute(
+                select(RandomEventSubmissionRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == RandomEventSubmissionRecord.user_id)
+                .where(RandomEventSubmissionRecord.id == UUID(str(submission_id)))
+            ).first()
+            if row is None:
+                return None
+            record, user = row
+            return _random_event_submission(record), user
+
+    def approve_random_event_submission(
+        self,
+        submission_id: UUID | str,
+        reviewer: str,
+        now: datetime,
+    ) -> RandomEventSubmission:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                record = session.get(
+                    RandomEventSubmissionRecord,
+                    UUID(str(submission_id)),
+                    with_for_update=True,
+                )
+                if record is None or record.status != "pending":
+                    raise ValueError("仅待审核投稿可以通过")
+                if not reviewer.strip():
+                    raise ValueError("审核人不能为空")
+                if record.target_rounds is None or record.event_reward is None or record.approval_reward is None:
+                    raise ValueError("投稿配置快照不完整")
+                content = dict(record.content)
+                rules, templates = _validate_random_event_submission_content(
+                    content,
+                    max(
+                        self.get_random_event_settings().submission_max_participants,
+                        int(content.get("participant_count", 0) or 0),
+                    ),
+                    record.event_reward,
+                    record.target_rounds,
+                )
+                name = str(content["scene_name"]).strip()
+                if session.scalar(
+                    select(RandomEventSceneRecord.id).where(
+                        RandomEventSceneRecord.name == name
+                    )
+                ) is not None:
+                    raise ValueError("场景名称已存在")
+                scene = RandomEventSceneRecord(
+                    name=name,
+                    signup_text=str(content["signup_text"]).strip(),
+                    reward=record.event_reward,
+                    target_rounds=record.target_rounds,
+                    enabled=True,
+                )
+                session.add(scene)
+                session.flush()
+                session.add_all(
+                    RandomEventSceneSeatRecord(
+                        scene_id=scene.id, role=rule.role, capacity=rule.capacity
+                    )
+                    for rule in rules
+                )
+                session.add_all(
+                    RandomEventSceneOpeningRecord(
+                        scene_id=scene.id,
+                        position=index,
+                        name=template.name,
+                        content=template.opening_text,
+                    )
+                    for index, template in enumerate(templates)
+                )
+                user = session.get(UserRecord, record.user_id, with_for_update=True)
+                if user is None:
+                    raise ValueError("投稿员工不存在")
+                self._apply_balance_change(
+                    user,
+                    record.approval_reward,
+                    "random_event_submission_approval",
+                    now,
+                )
+                direct_chatroom_id = session.scalar(
+                    select(DirectChatRecord.chatroom_id).where(
+                        DirectChatRecord.platform_user_id == user.platform_id
+                    )
+                )
+                if direct_chatroom_id is None:
+                    raise ValueError("投稿员工私聊房间不存在")
+                record.status = "approved"
+                record.current_step = "approved"
+                record.reviewer = reviewer.strip()
+                record.reviewed_at = now
+                record.reward_granted_at = now
+                record.scene_id = scene.id
+                record.updated_at = now
+                self._record_ai_activity_fact(
+                    session,
+                    event_key=f"random-event-submission:{record.id}:approved",
+                    user_id=user.id,
+                    activity_type="随机事件投稿",
+                    result="win",
+                    occurred_at=now,
+                )
+                self.enqueue_system_outbound(
+                    self._render_reply_template(
+                        "/投稿",
+                        "approved",
+                        now,
+                        {
+                            "{场景名称}": name,
+                            "{通过奖励}": str(record.approval_reward),
+                        },
+                    ),
+                    destination_chatroom_id=direct_chatroom_id,
+                    delivery_kind="direct",
+                )
+                session.flush()
+                return _random_event_submission(record)
+
+    def reject_random_event_submission(
+        self,
+        submission_id: UUID | str,
+        reviewer: str,
+        reason: str,
+        now: datetime,
+    ) -> RandomEventSubmission:
+        now = now.astimezone(BEIJING)
+        normalized_reason = reason.strip()
+        if not normalized_reason:
+            raise ValueError("拒绝原因不能为空")
+        if len(normalized_reason) > 2000:
+            raise ValueError("拒绝原因不能超过 2000 字")
+        with self.transaction():
+            with self._session() as session:
+                record = session.get(
+                    RandomEventSubmissionRecord,
+                    UUID(str(submission_id)),
+                    with_for_update=True,
+                )
+                if record is None or record.status != "pending":
+                    raise ValueError("仅待审核投稿可以拒绝")
+                user = session.get(UserRecord, record.user_id)
+                if user is None:
+                    raise ValueError("投稿员工不存在")
+                direct_chatroom_id = session.scalar(
+                    select(DirectChatRecord.chatroom_id).where(
+                        DirectChatRecord.platform_user_id == user.platform_id
+                    )
+                )
+                if direct_chatroom_id is None:
+                    raise ValueError("投稿员工私聊房间不存在")
+                name = str(record.content.get("scene_name", "未命名"))
+                record.status = "rejected"
+                record.current_step = "rejected"
+                record.reviewer = reviewer.strip()
+                record.reviewed_at = now
+                record.rejection_reason = normalized_reason
+                record.updated_at = now
+                self._record_ai_activity_fact(
+                    session,
+                    event_key=f"random-event-submission:{record.id}:rejected",
+                    user_id=user.id,
+                    activity_type="随机事件投稿",
+                    result="loss",
+                    occurred_at=now,
+                )
+                self.enqueue_system_outbound(
+                    self._render_reply_template(
+                        "/投稿",
+                        "rejected",
+                        now,
+                        {"{场景名称}": name, "{拒绝原因}": normalized_reason},
+                    ),
+                    destination_chatroom_id=direct_chatroom_id,
+                    delivery_kind="direct",
+                )
+                session.flush()
+                return _random_event_submission(record)
 
     def get_memory_assessment_settings(self) -> MemoryAssessmentSettings:
         with self._session() as session:
@@ -3125,6 +3754,17 @@ class CoreRepository:
                 )
             )
 
+    def direct_inbound_chatroom_ids(self) -> tuple[str, ...]:
+        with self._session() as session:
+            return tuple(
+                session.scalars(
+                    select(DirectChatRecord.chatroom_id).order_by(
+                        DirectChatRecord.discovered_at,
+                        DirectChatRecord.chatroom_id,
+                    )
+                )
+            )
+
     def get_red_packet_settings(self) -> RedPacketSettings:
         with self._session() as session:
             record = session.get(RedPacketSettingsRecord, 1)
@@ -3184,6 +3824,7 @@ class CoreRepository:
         with self.transaction():
             for message in self.expire_red_packets(now):
                 self.enqueue_system_outbound(message)
+            self.expire_random_event_submission_drafts(now)
             with self._session() as session:
                 user = session.scalar(
                     select(UserRecord)
@@ -9422,6 +10063,7 @@ class CoreRepository:
                     )
             for message in self.expire_red_packets(now):
                 self.enqueue_system_outbound(message)
+            self.expire_random_event_submission_drafts(now)
             self._settle_weekly_attendance_rewards(now)
             self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)
@@ -11377,6 +12019,9 @@ class CoreRepository:
             raise ValueError("撤回秒数必须为正整数")
         with self._session() as session:
             inbound_id = UUID(str(inbound_message_id))
+            inbound = session.get(InboundRecord, inbound_id)
+            if inbound is None:
+                raise ValueError("入站消息不存在")
             latest_reply_index = session.scalar(
                 select(func.max(OutboundRecord.reply_index)).where(
                     OutboundRecord.inbound_message_id == inbound_id
@@ -11385,11 +12030,15 @@ class CoreRepository:
             first_reply_index = reply_index
             if latest_reply_index is not None and first_reply_index <= latest_reply_index:
                 first_reply_index = latest_reply_index + 1
+            reference = _outbound_reference_snapshot(
+                inbound, destination_chatroom_id
+            )
             replies = [reply] if self._keeps_group_reply_intact(
                 reply,
                 recall_after_seconds=recall_after_seconds,
                 destination_chatroom_id=destination_chatroom_id,
                 delivery_kind=delivery_kind,
+                has_reference=bool(reference),
             ) else _outbound_text_chunks(reply)
             records = [
                 OutboundRecord(
@@ -11398,7 +12047,9 @@ class CoreRepository:
                     reply_index=first_reply_index + index,
                     recall_after_seconds=recall_after_seconds,
                     destination_chatroom_id=destination_chatroom_id,
+                    delivery_key=destination_chatroom_id or "__group__",
                     delivery_kind=delivery_kind,
+                    **reference,
                 )
                 for index, text in enumerate(replies)
             ]
@@ -11430,6 +12081,7 @@ class CoreRepository:
                 recall_after_seconds=recall_after_seconds,
                 destination_chatroom_id=destination_chatroom_id,
                 delivery_kind=delivery_kind,
+                has_reference=False,
             ) else _outbound_text_chunks(text)
             records = [
                 OutboundRecord(
@@ -11438,6 +12090,7 @@ class CoreRepository:
                     reply_index=index,
                     recall_after_seconds=recall_after_seconds,
                     destination_chatroom_id=destination_chatroom_id,
+                    delivery_key=destination_chatroom_id or "__group__",
                     delivery_kind=delivery_kind,
                 )
                 for index, part in enumerate(texts)
@@ -11471,6 +12124,9 @@ class CoreRepository:
             raise ValueError("图片替代文本不能为空")
         with self._session() as session:
             inbound_id = UUID(str(inbound_message_id))
+            inbound = session.get(InboundRecord, inbound_id)
+            if inbound is None:
+                raise ValueError("入站消息不存在")
             latest_reply_index = session.scalar(
                 select(func.max(OutboundRecord.reply_index)).where(
                     OutboundRecord.inbound_message_id == inbound_id
@@ -11479,6 +12135,9 @@ class CoreRepository:
             actual_reply_index = reply_index
             if latest_reply_index is not None and actual_reply_index <= latest_reply_index:
                 actual_reply_index = latest_reply_index + 1
+            reference = _outbound_reference_snapshot(
+                inbound, destination_chatroom_id
+            )
             record = OutboundRecord(
                 inbound_message_id=inbound_id,
                 text="",
@@ -11487,7 +12146,9 @@ class CoreRepository:
                 image_alt=normalized_alt,
                 reply_index=actual_reply_index,
                 destination_chatroom_id=destination_chatroom_id,
+                delivery_key=destination_chatroom_id or "__group__",
                 delivery_kind=delivery_kind,
+                **reference,
             )
             session.add(record)
             session.flush()
@@ -11500,11 +12161,13 @@ class CoreRepository:
         recall_after_seconds: int | None,
         destination_chatroom_id: str | None,
         delivery_kind: str,
+        has_reference: bool,
     ) -> bool:
         return (
             recall_after_seconds is not None
             or (
                 self._preserve_long_group_messages
+                and not has_reference
                 and destination_chatroom_id is None
                 and delivery_kind == "group"
                 and requires_bot_group_sender(text)
@@ -11512,7 +12175,12 @@ class CoreRepository:
         )
 
     def claim_outbound(
-        self, worker_id: str, now: datetime, lease_seconds: int
+        self,
+        worker_id: str,
+        now: datetime,
+        lease_seconds: int,
+        excluded_delivery_keys: tuple[str, ...] = (),
+        required_delivery_key: str | None = None,
     ) -> OutboundRecord | None:
         with self._session() as session:
             earlier_reply = aliased(OutboundRecord)
@@ -11524,19 +12192,47 @@ class CoreRepository:
                     earlier_reply.status.in_(("pending", "leased")),
                 )
             )
+            earlier_delivery = aliased(OutboundRecord)
+            is_earlier_delivery_message = or_(
+                earlier_delivery.created_at < OutboundRecord.created_at,
+                and_(
+                    earlier_delivery.created_at == OutboundRecord.created_at,
+                    earlier_delivery.reply_index < OutboundRecord.reply_index,
+                ),
+                and_(
+                    earlier_delivery.created_at == OutboundRecord.created_at,
+                    earlier_delivery.reply_index == OutboundRecord.reply_index,
+                    earlier_delivery.id < OutboundRecord.id,
+                ),
+            )
+            has_unfinished_earlier_delivery = exists(
+                select(1).where(
+                    earlier_delivery.delivery_key == OutboundRecord.delivery_key,
+                    earlier_delivery.status.in_(("pending", "leased")),
+                    is_earlier_delivery_message,
+                )
+            )
+            filters = [
+                OutboundRecord.status.in_(("pending", "leased")),
+                or_(
+                    OutboundRecord.lease_expires_at.is_(None),
+                    OutboundRecord.lease_expires_at <= now,
+                ),
+                or_(
+                    OutboundRecord.inbound_message_id.is_(None),
+                    ~has_unfinished_earlier_reply,
+                ),
+                ~has_unfinished_earlier_delivery,
+            ]
+            if excluded_delivery_keys:
+                filters.append(
+                    OutboundRecord.delivery_key.not_in(excluded_delivery_keys)
+                )
+            if required_delivery_key is not None:
+                filters.append(OutboundRecord.delivery_key == required_delivery_key)
             record = session.scalar(
                 select(OutboundRecord)
-                .where(
-                    OutboundRecord.status.in_(("pending", "leased")),
-                    or_(
-                        OutboundRecord.lease_expires_at.is_(None),
-                        OutboundRecord.lease_expires_at <= now,
-                    ),
-                    or_(
-                        OutboundRecord.inbound_message_id.is_(None),
-                        ~has_unfinished_earlier_reply,
-                    ),
-                )
+                .where(*filters)
                 .order_by(
                     OutboundRecord.created_at,
                     OutboundRecord.reply_index,
@@ -11985,7 +12681,56 @@ def _random_event_settings(record: RandomEventSettingsRecord) -> RandomEventSett
         signup_allowed_commands=list(record.signup_allowed_commands),
         in_progress_allowed_commands=list(record.in_progress_allowed_commands),
         blocked_message=record.blocked_message,
+        submission_enabled=record.submission_enabled,
+        submission_draft_timeout_minutes=record.submission_draft_timeout_minutes,
+        submission_max_participants=record.submission_max_participants,
+        submission_default_target_rounds=record.submission_default_target_rounds,
+        submission_default_event_reward=record.submission_default_event_reward,
+        submission_approval_reward=record.submission_approval_reward,
     )
+
+
+def _random_event_submission(
+    record: RandomEventSubmissionRecord,
+) -> RandomEventSubmission:
+    return RandomEventSubmission(
+        id=record.id,
+        number=record.number,
+        user_id=record.user_id,
+        status=record.status,
+        current_step=record.current_step,
+        content=dict(record.content),
+        target_rounds=record.target_rounds,
+        event_reward=record.event_reward,
+        approval_reward=record.approval_reward,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        last_activity_at=record.last_activity_at,
+        expires_at=record.expires_at,
+        submitted_at=record.submitted_at,
+        rejection_reason=record.rejection_reason,
+        reviewer=record.reviewer,
+        reviewed_at=record.reviewed_at,
+        scene_id=record.scene_id,
+        reward_granted_at=record.reward_granted_at,
+    )
+
+
+def _outbound_reference_snapshot(
+    inbound: InboundRecord, destination_chatroom_id: str | None
+) -> dict[str, str]:
+    inbound_delivery_key = (
+        inbound.chatroom_id if inbound.source_type == "direct" else "__group__"
+    )
+    outbound_delivery_key = destination_chatroom_id or "__group__"
+    if inbound_delivery_key != outbound_delivery_key:
+        return {}
+    return {
+        "reference_message_id": inbound.platform_message_id,
+        "reference_sender_platform_id": inbound.sender_platform_id,
+        "reference_content_type": "text",
+        "reference_text": inbound.content,
+    }
 
 
 def _validate_random_event_allowed_commands(commands: list[str]) -> list[str]:
@@ -12463,6 +13208,70 @@ def _validate_random_event_scene(
         [template.opening_text for template in templates], {rule.role for rule in rules}
     )
     return rules, templates
+
+
+def _validate_random_event_submission_content(
+    content: dict,
+    maximum_participants: int,
+    reward: int,
+    target_rounds: int,
+) -> tuple[list[RandomEventSeatRule], list[RandomEventTemplate]]:
+    if not isinstance(content, dict):
+        raise ValueError("投稿内容无效")
+    participant_count = content.get("participant_count")
+    if (
+        isinstance(participant_count, bool)
+        or not isinstance(participant_count, int)
+        or not 1 <= participant_count <= maximum_participants
+    ):
+        raise ValueError("事件参加人数无效")
+    roles = content.get("roles")
+    events = content.get("events")
+    if not isinstance(roles, list) or not isinstance(events, list):
+        raise ValueError("身份或事件模板无效")
+    if not 1 <= len(roles) <= 20 or not 1 <= len(events) <= 20:
+        raise ValueError("身份和事件模板数量需在 1 至 20 之间")
+    if not isinstance(content.get("scene_name"), str) or not isinstance(
+        content.get("signup_text"), str
+    ):
+        raise ValueError("场景名称和报名公告无效")
+    if any(
+        not isinstance(role, dict) or not isinstance(role.get("role"), str)
+        for role in roles
+    ):
+        raise ValueError("身份席位无效")
+    if any(
+        not isinstance(event, dict)
+        or not isinstance(event.get("name"), str)
+        or not isinstance(event.get("opening_text"), str)
+        for event in events
+    ):
+        raise ValueError("事件模板无效")
+    for event in events:
+        opening = event["opening_text"]
+        text_without_variables = _ROLE_VARIABLE.sub("", opening)
+        if "{" in text_without_variables or "}" in text_without_variables:
+            raise ValueError("身份变量括号不完整")
+    seats = [
+        (str(role.get("role", "")), role.get("capacity"))
+        for role in roles
+        if isinstance(role, dict)
+    ]
+    if len(seats) != len(roles) or sum(
+        capacity for _, capacity in seats if isinstance(capacity, int)
+    ) != participant_count or any(
+        isinstance(capacity, bool) or not isinstance(capacity, int)
+        for _, capacity in seats
+    ):
+        raise ValueError("身份席位合计必须等于事件参加人数")
+    return _validate_random_event_scene(
+        str(content.get("scene_name", "")).strip(),
+        str(content.get("signup_text", "")).strip(),
+        events,
+        reward,
+        target_rounds,
+        seats,
+    )
 
 
 def _validate_formal_opening_variables(openings: list[str], roles: set[str]) -> None:

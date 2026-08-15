@@ -601,6 +601,14 @@ def create_app(
         )
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        optional = (
+            "submission_enabled",
+            "submission_draft_timeout_minutes",
+            "submission_max_participants",
+            "submission_default_target_rounds",
+            "submission_default_event_reward",
+            "submission_approval_reward",
+        )
         return versioned_configuration_response(
             identity,
             idempotency_key,
@@ -1089,6 +1097,14 @@ def create_app(
             "in_progress_allowed_commands",
             "blocked_message",
         )
+        optional = (
+            "submission_enabled",
+            "submission_draft_timeout_minutes",
+            "submission_max_participants",
+            "submission_default_target_rounds",
+            "submission_default_event_reward",
+            "submission_approval_reward",
+        )
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
         return versioned_configuration_response(
@@ -1097,7 +1113,10 @@ def create_app(
             if_match,
             lambda: _relay_core(
                 lambda: core.set_random_event_settings(
-                    {key: request[key] for key in required}
+                    {
+                        **{key: request[key] for key in required},
+                        **{key: request[key] for key in optional if key in request},
+                    }
                 )
             ),
             scope="random-event-settings",
@@ -1409,6 +1428,97 @@ def create_app(
             if_match,
             lambda: _relay_core(lambda: core.delete_hide_and_seek_scene(scene_id)),
             scope=f"hide-and-seek-scene:{scene_id}",
+        )
+
+    @app.get("/api/game/random-events/submissions")
+    def random_event_submissions(
+        _: Annotated[AdminIdentity, Depends(authorize)],
+        status_filter: str | None = Query(None, alias="status"),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        return _relay_core(
+            lambda: core.list_random_event_submissions(
+                status_filter, page, page_size
+            )
+        )
+
+    @app.get("/api/game/random-events/submissions/{submission_id}")
+    def random_event_submission(
+        submission_id: str,
+        _: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
+        return _relay_core(lambda: core.random_event_submission(submission_id))
+
+    @app.patch("/api/game/random-events/submissions/{submission_id}")
+    def update_random_event_submission(
+        submission_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> JSONResponse:
+        content = request.get("content")
+        if not isinstance(content, dict):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "投稿内容无效")
+        return idempotent_response(
+            identity,
+            idempotency_key,
+            lambda: (
+                200,
+                _relay_core(
+                    lambda: core.update_random_event_submission(
+                        submission_id, content, beijing_now().isoformat()
+                    )
+                ),
+            ),
+            scope=f"random-event-submission:{submission_id}:edit",
+        )
+
+    @app.post("/api/game/random-events/submissions/{submission_id}/approve")
+    def approve_random_event_submission(
+        submission_id: str,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> JSONResponse:
+        return idempotent_response(
+            identity,
+            idempotency_key,
+            lambda: (
+                200,
+                _relay_core(
+                    lambda: core.approve_random_event_submission(
+                        submission_id, identity.username, beijing_now().isoformat()
+                    )
+                ),
+            ),
+            scope=f"random-event-submission:{submission_id}:approve",
+        )
+
+    @app.post("/api/game/random-events/submissions/{submission_id}/reject")
+    def reject_random_event_submission(
+        submission_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> JSONResponse:
+        reason = request.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "拒绝原因不能为空")
+        return idempotent_response(
+            identity,
+            idempotency_key,
+            lambda: (
+                200,
+                _relay_core(
+                    lambda: core.reject_random_event_submission(
+                        submission_id,
+                        identity.username,
+                        reason,
+                        beijing_now().isoformat(),
+                    )
+                ),
+            ),
+            scope=f"random-event-submission:{submission_id}:reject",
         )
 
     @app.get("/api/game/random-events/scenes")

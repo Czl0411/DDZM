@@ -5,7 +5,12 @@ from typing import Callable, Protocol
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from dzmm_bot.runtime.contracts import DirectChatRoom, InboundMessage, LoginState
+from dzmm_bot.runtime.contracts import (
+    DirectChatRoom,
+    InboundMessage,
+    LoginState,
+    MessageReference,
+)
 from dzmm_bot.dzmm_source import DzmmMessageSource
 
 from .aikda_socket import AikdaSocketGateway
@@ -20,19 +25,24 @@ class ChatGateway(Protocol):
         self, direct_chatroom_ids: tuple[str, ...] = ()
     ) -> list[InboundMessage]: ...
 
-    def send(self, text: str, *, message_id: str | None = None) -> str: ...
+    def send(
+        self, text: str, *, message_id: str | None = None,
+        reference: MessageReference | None = None,
+    ) -> str: ...
 
     def send_to(
-        self, chatroom_id: str, text: str, *, message_id: str | None = None
+        self, chatroom_id: str, text: str, *, message_id: str | None = None,
+        reference: MessageReference | None = None,
     ) -> str: ...
 
     def send_image(
-        self, image_url: str, *, alt: str = "image", message_id: str | None = None
+        self, image_url: str, *, alt: str = "image", message_id: str | None = None,
+        reference: MessageReference | None = None,
     ) -> str: ...
 
     def send_image_to(
         self, chatroom_id: str, image_url: str, *, alt: str = "image",
-        message_id: str | None = None,
+        message_id: str | None = None, reference: MessageReference | None = None,
     ) -> str: ...
 
     def upload_image(self, path: Path, mime_type: str) -> dict: ...
@@ -226,7 +236,10 @@ class _PlaywrightGateway:
     ) -> list[InboundMessage]:
         return self.read_new(direct_chatroom_ids)
 
-    def send(self, text: str, *, message_id: str | None = None) -> str:
+    def send(
+        self, text: str, *, message_id: str | None = None,
+        reference: MessageReference | None = None,
+    ) -> str:
         page = self._active_page()
         editor = page.locator("textarea, [contenteditable='true']").last
         editor.fill(text)
@@ -234,18 +247,20 @@ class _PlaywrightGateway:
         return f"dzmm:{int(time() * 1000)}"
 
     def send_to(
-        self, chatroom_id: str, text: str, *, message_id: str | None = None
+        self, chatroom_id: str, text: str, *, message_id: str | None = None,
+        reference: MessageReference | None = None,
     ) -> str:
         raise NotImplementedError("direct messages require the Aikda socket gateway")
 
     def send_image(
-        self, image_url: str, *, alt: str = "image", message_id: str | None = None
+        self, image_url: str, *, alt: str = "image", message_id: str | None = None,
+        reference: MessageReference | None = None,
     ) -> str:
         raise NotImplementedError("images require the Aikda socket gateway")
 
     def send_image_to(
         self, chatroom_id: str, image_url: str, *, alt: str = "image",
-        message_id: str | None = None,
+        message_id: str | None = None, reference: MessageReference | None = None,
     ) -> str:
         raise NotImplementedError("images require the Aikda socket gateway")
 

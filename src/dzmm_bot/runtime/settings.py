@@ -14,6 +14,7 @@ class Settings:
     browser_cdp_port: int
     admin_web_port: int
     novnc_port: int
+    outbound_concurrency: int = 4
     chat_url: str | None = None
     bot_api_token: str | None = None
     deepseek_api_key: str | None = None
@@ -39,6 +40,9 @@ class Settings:
             browser_cdp_port=_port("DZMM_BROWSER_CDP_PORT", 19222),
             admin_web_port=_port("DZMM_ADMIN_WEB_PORT", 18090),
             novnc_port=_port("DZMM_NOVNC_PORT", 16080),
+            outbound_concurrency=_bounded_int(
+                "DZMM_OUTBOUND_CONCURRENCY", 4, minimum=1, maximum=16
+            ),
             chat_url=_optional("DZMM_CHAT_URL", empty_as_none=True),
             bot_api_token=_optional("DZMM_BOT_API_TOKEN", empty_as_none=True),
             deepseek_api_key=_optional("DP_API_KEY", empty_as_none=True),
@@ -69,3 +73,13 @@ def _optional(name: str, *, empty_as_none: bool = False) -> str | None:
 
 def _port(name: str, default: int) -> int:
     return int(os.environ.get(name, default))
+
+
+def _bounded_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, default))
+    except ValueError as error:
+        raise ValueError(f"{name} must be an integer") from error
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value

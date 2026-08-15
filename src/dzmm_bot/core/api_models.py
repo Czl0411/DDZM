@@ -20,6 +20,7 @@ class MessageReferenceRequest(ApiModel):
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
     blurhash: str | None = Field(default=None, max_length=512)
+    text: str | None = None
 
 
 class InboundRequest(ApiModel):
@@ -61,6 +62,8 @@ class ClaimRequest(ApiModel):
     worker_id: str = Field(min_length=1, max_length=255)
     now: AwareDatetime
     lease_seconds: int = Field(gt=0)
+    excluded_delivery_keys: list[str] = Field(default_factory=list, max_length=16)
+    required_delivery_key: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class OutboundClaimResponse(ApiModel):
@@ -74,7 +77,12 @@ class OutboundClaimResponse(ApiModel):
     lease_expires_at: datetime
     attempt_count: int
     destination_chatroom_id: str | None
+    delivery_key: str
     delivery_kind: str
+    reference_message_id: str | None
+    reference_sender_platform_id: str | None
+    reference_content_type: str | None
+    reference_text: str | None
     recall_after_seconds: int | None
 
 
@@ -688,10 +696,21 @@ class RandomEventSettingsResponse(ApiModel):
     signup_allowed_commands: list[str] = Field(max_length=32)
     in_progress_allowed_commands: list[str] = Field(max_length=32)
     blocked_message: str = Field(min_length=1, max_length=2000)
+    submission_enabled: bool = True
+    submission_draft_timeout_minutes: int = Field(default=30, ge=1, le=1440)
+    submission_max_participants: int = Field(default=99, ge=1, le=999)
+    submission_default_target_rounds: int = Field(default=10, ge=1, le=999)
+    submission_default_event_reward: int = Field(default=6, ge=0, le=999)
+    submission_approval_reward: int = Field(default=10, ge=0, le=999)
 
 
 class SetRandomEventSettingsRequest(RandomEventSettingsResponse):
-    pass
+    submission_enabled: bool | None = None
+    submission_draft_timeout_minutes: int | None = Field(default=None, ge=1, le=1440)
+    submission_max_participants: int | None = Field(default=None, ge=1, le=999)
+    submission_default_target_rounds: int | None = Field(default=None, ge=1, le=999)
+    submission_default_event_reward: int | None = Field(default=None, ge=0, le=999)
+    submission_approval_reward: int | None = Field(default=None, ge=0, le=999)
 
 
 class HideAndSeekSettingsResponse(ApiModel):

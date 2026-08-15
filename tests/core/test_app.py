@@ -106,7 +106,62 @@ def test_direct_chat_sync_persists_discovered_room(app_context, headers):
     assert (record.platform_user_id, record.chatroom_id) == ("employee-1", "direct-1")
 
 
-def test_direct_inbound_rooms_returns_collecting_round_participant_rooms(
+def test_direct_inbound_rooms_include_all_discovered_direct_chats(
+    app_context, headers
+):
+    app_context.repository.upsert_direct_chats(
+        [("employee-1", "direct-1"), ("employee-2", "direct-2")], NOW
+    )
+
+    response = app_context.client.get(
+        "/internal/direct-inbound/rooms", headers=headers
+    )
+
+    assert response.status_code == 200
+    assert set(response.json()["chatroom_ids"]) == {"direct-1", "direct-2"}
+
+
+def test_random_event_submission_review_api_lists_and_approves(app_context, headers):
+    repository = app_context.repository
+    repository.create_user("submitter", "投稿人", NOW, 0)
+    repository.upsert_direct_chats([("submitter", "direct-submitter")], NOW)
+    draft = repository.start_random_event_submission("submitter", NOW).submission
+    repository.replace_random_event_submission_content(
+        draft.id,
+        {
+            "scene_name": "夜班文件失踪案",
+            "signup_text": "夜班文件不见了，快来报名。",
+            "participant_count": 2,
+            "roles": [
+                {"role": "调查员", "capacity": 1},
+                {"role": "嫌疑人", "capacity": 1},
+            ],
+            "events": [{"name": "现场", "opening_text": "{调查员}开始排查。"}],
+        },
+        "preview",
+        NOW,
+    )
+    pending = repository.confirm_random_event_submission("submitter", NOW)
+
+    listed = app_context.client.get(
+        "/internal/random-event-submissions?status=pending&page=1&page_size=20",
+        headers=headers,
+    )
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["employee_number"] == "#0001"
+    assert listed.json()["items"][0]["content"]["scene_name"] == "夜班文件失踪案"
+
+    approved = app_context.client.post(
+        f"/internal/random-event-submissions/{pending.id}/approve",
+        headers=headers,
+        json={"reviewer": "管理员甲", "now": NOW.isoformat()},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+    assert approved.json()["scene_id"] is not None
+
+
+def test_direct_inbound_rooms_keep_discovered_rooms_after_game_state_changes(
     app_context, headers
 ):
     with app_context.session_factory.begin() as session:
@@ -169,7 +224,7 @@ def test_direct_inbound_rooms_returns_collecting_round_participant_rooms(
         session.query(NumberBombGameRecord).update({"state": "waiting_continue"})
     assert app_context.client.get(
         "/internal/direct-inbound/rooms", headers=headers
-    ).json() == {"chatroom_ids": []}
+    ).json() == {"chatroom_ids": ["direct-1"]}
 
 
 def test_number_bomb_settings_core_api_validates_bounds(client, headers):
@@ -840,7 +895,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-            "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝"
+            "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/投稿", "/我的投稿", "/撤回投稿", "/上一步", "/取消投稿", "/确认取消投稿", "/确认投稿", "/继续添加", "/事件完成", "/修改身份", "/删除身份", "/修改事件", "/删除事件"
             }
     command_records = {record["command"]: record for record in commands.json()}
     for command in ("/部门人数", "/我的部门人数"):

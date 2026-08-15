@@ -1480,6 +1480,36 @@ def test_number_bomb_start_locks_only_members_when_checking_direct_chats(
     assert "FOR UPDATE OF number_bomb_members" in statements[0]
 
 
+def test_random_event_submission_start_locks_the_submitter_before_draft_lookup(
+    repository, session_factory, now
+):
+    """Fails if two starts for one employee can both observe no active draft."""
+    from sqlalchemy import event
+    from sqlalchemy.dialects import postgresql
+
+    repository.create_user("submission-lock", "投稿人", now, 0)
+    repository.upsert_direct_chats(
+        [("submission-lock", "direct-submission-lock")], now
+    )
+    statements = []
+
+    def capture_user_lock(execute_state):
+        if not execute_state.is_select:
+            return
+        statement = str(execute_state.statement.compile(dialect=postgresql.dialect()))
+        if "FROM users" in statement and "users.platform_id" in statement:
+            statements.append(statement)
+
+    event.listen(session_factory.class_, "do_orm_execute", capture_user_lock)
+    try:
+        result = repository.start_random_event_submission("submission-lock", now)
+    finally:
+        event.remove(session_factory.class_, "do_orm_execute", capture_user_lock)
+
+    assert result.status == "started"
+    assert any("FOR UPDATE" in statement for statement in statements)
+
+
 def test_number_bomb_signup_leave_and_last_member_release(repository, now):
     repository.create_user("number-alone", "独行玩家", now, 7)
     repository.upsert_direct_chats([("number-alone", "direct-number-alone")], now)
@@ -5611,6 +5641,76 @@ def test_outbound_replies_for_one_inbound_are_claimed_in_reply_order(
     assert claimed_second.id == second.id
 
 
+def test_outbound_reply_captures_trigger_reference_and_delivery_key(
+    repository, now
+):
+    inbound = InboundMessage(
+        "platform-trigger-1",
+        "sender-1",
+        "/余额",
+        now,
+        source_type="direct",
+        chatroom_id="direct-room-1",
+    )
+    stored, _ = repository.accept_inbound(inbound)
+
+    outbound = repository.enqueue_outbound(
+        stored.id,
+        "你的余额为 10 摸鱼币。",
+        destination_chatroom_id="direct-room-1",
+        delivery_kind="direct",
+    )
+
+    assert outbound.delivery_key == "direct-room-1"
+    assert outbound.reference_message_id == "platform-trigger-1"
+    assert outbound.reference_sender_platform_id == "sender-1"
+    assert outbound.reference_content_type == "text"
+    assert outbound.reference_text == "/余额"
+
+
+def test_claim_outbound_skips_busy_delivery_key_but_claims_another_key(
+    repository, now
+):
+    first_inbound, _ = repository.accept_inbound(
+        InboundMessage(
+            "platform-a-1", "sender-a", "第一条", now,
+            source_type="direct", chatroom_id="direct-a",
+        )
+    )
+    second_inbound, _ = repository.accept_inbound(
+        InboundMessage(
+            "platform-a-2", "sender-a", "第二条", now + timedelta(seconds=1),
+            source_type="direct", chatroom_id="direct-a",
+        )
+    )
+    other_inbound, _ = repository.accept_inbound(
+        InboundMessage(
+            "platform-b-1", "sender-b", "另一会话", now + timedelta(seconds=2),
+            source_type="direct", chatroom_id="direct-b",
+        )
+    )
+    first = repository.enqueue_outbound(
+        first_inbound.id, "A1", destination_chatroom_id="direct-a",
+        delivery_kind="direct",
+    )
+    repository.enqueue_outbound(
+        second_inbound.id, "A2", destination_chatroom_id="direct-a",
+        delivery_kind="direct",
+    )
+    other = repository.enqueue_outbound(
+        other_inbound.id, "B1", destination_chatroom_id="direct-b",
+        delivery_kind="direct",
+    )
+
+    assert repository.claim_outbound("worker-a", now, 30).id == first.id
+    claimed_other = repository.claim_outbound(
+        "worker-b", now, 30, excluded_delivery_keys=("direct-a",)
+    )
+
+    assert claimed_other.id == other.id
+    assert claimed_other.delivery_key == "direct-b"
+
+
 def test_profile_image_outbound_waits_for_profile_text_and_keeps_image_fields(
     repository, inbound, now
 ):
@@ -5656,6 +5756,29 @@ def test_outbound_reply_preserves_message_below_platform_limits(
         )
     assert [record.text for record in records] == [text]
     assert [record.reply_index for record in records] == [0]
+
+
+def test_referenced_long_reply_splits_even_when_bot_api_is_enabled(
+    session_factory, inbound
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import OutboundRecord
+
+    repository = CoreRepository(
+        session_factory, preserve_long_group_messages=True
+    )
+    stored, _ = repository.accept_inbound(inbound)
+
+    repository.enqueue_outbound(stored.id, "字" * 1001)
+
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                select(OutboundRecord).order_by(OutboundRecord.reply_index)
+            )
+        )
+    assert [len(record.text) for record in records] == [1000, 1]
+    assert {record.reference_message_id for record in records} == {"platform-1"}
 
 
 def test_system_outbound_splits_a_line_over_one_thousand_characters(
@@ -6373,6 +6496,25 @@ def test_migration_creates_all_runtime_tables(migrated_postgres_url):
     assert "ix_outbound_messages_claim" in {
         index["name"] for index in inspector.get_indexes("outbound_messages")
     }
+
+
+def test_outbound_reply_reference_migration_adds_delivery_contract(
+    migrated_postgres_url,
+):
+    engine = create_engine(migrated_postgres_url)
+    columns = {
+        column["name"]: column
+        for column in inspect(engine).get_columns("outbound_messages")
+    }
+
+    assert {
+        "delivery_key",
+        "reference_message_id",
+        "reference_sender_platform_id",
+        "reference_content_type",
+        "reference_text",
+    } <= columns.keys()
+    assert columns["delivery_key"]["nullable"] is False
 
 
 def test_migration_seeds_undercover_word_library(migrated_postgres_url):

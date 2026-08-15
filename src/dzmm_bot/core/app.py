@@ -145,6 +145,7 @@ from .repository import (
     ManualLoginOwnerError,
     MemoryAssessmentLevelRule,
     UndercoverRoleRule,
+    format_employee_number,
 )
 from .reply_templates import definitions_for_command, template_definition
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
@@ -208,6 +209,7 @@ def create_app(
                     width=reference.width,
                     height=reference.height,
                     blurhash=reference.blurhash,
+                    text=reference.text,
                 ),
             )
         )
@@ -233,7 +235,7 @@ def create_app(
         _: Annotated[None, Depends(authorize)],
     ) -> DirectInboundRoomsResponse:
         return DirectInboundRoomsResponse(
-            chatroom_ids=list(repository.number_bomb_direct_chatroom_ids())
+            chatroom_ids=list(repository.direct_inbound_chatroom_ids())
         )
 
     @app.post(
@@ -244,7 +246,11 @@ def create_app(
         request: ClaimRequest, _: Annotated[None, Depends(authorize)]
     ) -> OutboundClaimResponse | None:
         record = repository.claim_outbound(
-            request.worker_id, request.now, request.lease_seconds
+            request.worker_id,
+            request.now,
+            request.lease_seconds,
+            tuple(request.excluded_delivery_keys),
+            request.required_delivery_key,
         )
         if record is None:
             return None
@@ -259,7 +265,12 @@ def create_app(
             lease_expires_at=record.lease_expires_at,
             attempt_count=record.attempt_count,
             destination_chatroom_id=record.destination_chatroom_id,
+            delivery_key=record.delivery_key,
             delivery_kind=record.delivery_kind,
+            reference_message_id=record.reference_message_id,
+            reference_sender_platform_id=record.reference_sender_platform_id,
+            reference_content_type=record.reference_content_type,
+            reference_text=record.reference_text,
             recall_after_seconds=record.recall_after_seconds,
         )
 
@@ -1383,6 +1394,12 @@ def create_app(
                 request.signup_allowed_commands,
                 request.in_progress_allowed_commands,
                 request.blocked_message,
+                request.submission_enabled,
+                request.submission_draft_timeout_minutes,
+                request.submission_max_participants,
+                request.submission_default_target_rounds,
+                request.submission_default_event_reward,
+                request.submission_approval_reward,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -1697,6 +1714,103 @@ def create_app(
         return AcceptedResponse(
             accepted=result.status in {"cancelled", "settled", "signup_expired"}
         )
+
+    @app.get(
+        "/internal/random-event-submissions",
+    )
+    def random_event_submissions(
+        _: Annotated[None, Depends(authorize)],
+        status_filter: str | None = Query(None, alias="status"),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+    ) -> dict:
+        allowed = {
+            "draft", "cancelled", "pending", "approved", "rejected",
+            "withdrawn", "expired",
+        }
+        if status_filter is not None and status_filter not in allowed:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "投稿状态无效")
+        rows, total = repository.list_random_event_submissions(
+            status_filter, page, page_size
+        )
+        return {
+            "items": [
+                _random_event_submission_response(submission, user)
+                for submission, user in rows
+            ],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "pages": (total + page_size - 1) // page_size,
+        }
+
+    @app.get("/internal/random-event-submissions/{submission_id}")
+    def random_event_submission(
+        submission_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        row = repository.random_event_submission_with_user(submission_id)
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "投稿不存在")
+        return _random_event_submission_response(*row)
+
+    @app.patch("/internal/random-event-submissions/{submission_id}")
+    def update_random_event_submission(
+        submission_id: UUID,
+        request: dict,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        try:
+            repository.update_random_event_submission_content(
+                submission_id,
+                request["content"],
+                datetime.fromisoformat(str(request["now"])),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        row = repository.random_event_submission_with_user(submission_id)
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "投稿不存在")
+        return _random_event_submission_response(*row)
+
+    @app.post("/internal/random-event-submissions/{submission_id}/approve")
+    def approve_random_event_submission(
+        submission_id: UUID,
+        request: dict,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        try:
+            repository.approve_random_event_submission(
+                submission_id,
+                str(request.get("reviewer", "")),
+                datetime.fromisoformat(str(request["now"])),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        row = repository.random_event_submission_with_user(submission_id)
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "投稿不存在")
+        return _random_event_submission_response(*row)
+
+    @app.post("/internal/random-event-submissions/{submission_id}/reject")
+    def reject_random_event_submission(
+        submission_id: UUID,
+        request: dict,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        try:
+            repository.reject_random_event_submission(
+                submission_id,
+                str(request.get("reviewer", "")),
+                str(request.get("reason", "")),
+                datetime.fromisoformat(str(request["now"])),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        row = repository.random_event_submission_with_user(submission_id)
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "投稿不存在")
+        return _random_event_submission_response(*row)
 
     @app.get(
         "/internal/game/random-events/scenes",
@@ -2226,6 +2340,12 @@ def _random_event_settings_response(settings) -> RandomEventSettingsResponse:
         signup_allowed_commands=settings.signup_allowed_commands,
         in_progress_allowed_commands=settings.in_progress_allowed_commands,
         blocked_message=settings.blocked_message,
+        submission_enabled=settings.submission_enabled,
+        submission_draft_timeout_minutes=settings.submission_draft_timeout_minutes,
+        submission_max_participants=settings.submission_max_participants,
+        submission_default_target_rounds=settings.submission_default_target_rounds,
+        submission_default_event_reward=settings.submission_default_event_reward,
+        submission_approval_reward=settings.submission_approval_reward,
     )
 
 
@@ -2374,6 +2494,30 @@ def _random_event_scene_response(scene) -> RandomEventSceneResponse:
         enabled=scene.enabled,
         seats=[{"role": seat.role, "capacity": seat.capacity} for seat in scene.seats],
     )
+
+
+def _random_event_submission_response(submission, user) -> dict:
+    return {
+        "id": submission.id,
+        "number": submission.number,
+        "status": submission.status,
+        "current_step": submission.current_step,
+        "content": submission.content,
+        "target_rounds": submission.target_rounds,
+        "event_reward": submission.event_reward,
+        "approval_reward": submission.approval_reward,
+        "created_at": submission.created_at,
+        "updated_at": submission.updated_at,
+        "submitted_at": submission.submitted_at,
+        "reviewer": submission.reviewer,
+        "reviewed_at": submission.reviewed_at,
+        "rejection_reason": submission.rejection_reason,
+        "scene_id": submission.scene_id,
+        "reward_granted_at": submission.reward_granted_at,
+        "platform_id": user.platform_id,
+        "display_name": user.display_name,
+        "employee_number": format_employee_number(user.employee_number),
+    }
 
 
 def _random_event_schedule_response(schedule) -> RandomEventScheduleResponse:

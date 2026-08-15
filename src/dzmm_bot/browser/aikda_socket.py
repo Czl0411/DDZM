@@ -2,12 +2,13 @@ from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 import logging
-from threading import Event, Lock
+from threading import Event, Lock, RLock
 from typing import Any
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo
+from socketio.exceptions import TimeoutError as SocketTimeoutError
 
 from dzmm_bot.runtime.contracts import (
     DirectChatRoom,
@@ -18,6 +19,10 @@ from dzmm_bot.runtime.contracts import (
 
 _LOGGER = logging.getLogger(__name__)
 _SEND_ACK_TIMEOUT_SECONDS = 3
+
+
+class AikdaMessageRejectedError(RuntimeError):
+    pass
 
 
 class AikdaSocketGateway:
@@ -53,6 +58,10 @@ class AikdaSocketGateway:
         self._pending: deque[InboundMessage] = deque()
         self._seen_ids: set[str] = set()
         self._pending_lock = Lock()
+        self._state_lock = RLock()
+        self._emit_lock = Lock()
+        self._send_locks_guard = Lock()
+        self._send_locks = {}
         self._message_handler: Callable[[InboundMessage], None] | None = None
         self._direct_chatroom_ids: set[str] = set()
         self._joined_direct_chatroom_ids: set[str] = set()
@@ -86,8 +95,7 @@ class AikdaSocketGateway:
             self._direct_chatroom_ids = targets
             self._reconcile_needed = True
         for chatroom_id in direct_chatroom_ids:
-            if chatroom_id not in self._joined_direct_chatroom_ids:
-                self._join_direct_room(chatroom_id)
+            self._join_direct_room(chatroom_id)
 
     def _drain_pending(self) -> list[InboundMessage]:
         with self._pending_lock:
@@ -95,44 +103,55 @@ class AikdaSocketGateway:
         return sorted(messages, key=lambda message: message.received_at)
 
     def _join_direct_room(self, chatroom_id: str) -> None:
-        joined = self._socket.call(
-            "message:join-room", {"chatroomId": chatroom_id}, timeout=10
-        )
-        if not joined or joined.get("success") is not True:
-            error = joined.get("error", "message room join failed") if joined else "message room join failed"
-            raise RuntimeError(error)
-        self._joined_direct_chatroom_ids.add(chatroom_id)
+        with self._state_lock:
+            if chatroom_id in self._joined_direct_chatroom_ids:
+                return
+            joined = self._call(
+                "message:join-room", {"chatroomId": chatroom_id}, timeout=10
+            )
+            if not joined or joined.get("success") is not True:
+                error = joined.get("error", "message room join failed") if joined else "message room join failed"
+                raise RuntimeError(error)
+            self._joined_direct_chatroom_ids.add(chatroom_id)
 
-    def send(self, text: str, *, message_id: str | None = None) -> str:
-        return self.send_to(self.chatroom_id, text, message_id=message_id)
+    def send(
+        self, text: str, *, message_id: str | None = None,
+        reference: MessageReference | None = None,
+    ) -> str:
+        return self.send_to(
+            self.chatroom_id, text, message_id=message_id, reference=reference
+        )
 
     def send_to(
-        self, chatroom_id: str, text: str, *, message_id: str | None = None
+        self, chatroom_id: str, text: str, *, message_id: str | None = None,
+        reference: MessageReference | None = None,
     ) -> str:
         if not text.strip():
             raise ValueError("text must be nonempty")
-        return self._send_content(
-            chatroom_id, {"type": "text", "text": text}, message_id=message_id
-        )
+        content = {"type": "text", "text": text}
+        if reference is not None:
+            content["reference"] = _reference_payload(reference)
+        return self._send_content(chatroom_id, content, message_id=message_id)
 
     def send_image(
-        self, image_url: str, *, alt: str = "image", message_id: str | None = None
+        self, image_url: str, *, alt: str = "image", message_id: str | None = None,
+        reference: MessageReference | None = None,
     ) -> str:
         return self.send_image_to(
-            self.chatroom_id, image_url, alt=alt, message_id=message_id
+            self.chatroom_id, image_url, alt=alt, message_id=message_id,
+            reference=reference,
         )
 
     def send_image_to(
         self, chatroom_id: str, image_url: str, *, alt: str = "image",
-        message_id: str | None = None,
+        message_id: str | None = None, reference: MessageReference | None = None,
     ) -> str:
         if not image_url.strip():
             raise ValueError("image_url must be nonempty")
-        return self._send_content(
-            chatroom_id,
-            {"type": "image", "url": image_url, "alt": alt or "image"},
-            message_id=message_id,
-        )
+        content = {"type": "image", "url": image_url, "alt": alt or "image"}
+        if reference is not None:
+            content["reference"] = _reference_payload(reference)
+        return self._send_content(chatroom_id, content, message_id=message_id)
 
     def upload_image(self, path: Path, mime_type: str) -> dict:
         if self._upload is None:
@@ -143,37 +162,41 @@ class AikdaSocketGateway:
     def _send_content(
         self, chatroom_id: str, content: dict[str, Any], *, message_id: str | None
     ) -> str:
-        self._ensure_connected()
         if not chatroom_id:
             raise ValueError("chatroom_id must be nonempty")
-        message_id = message_id or str(uuid4())
-        message = {
-            "message_id": message_id,
-            "sent_by": self._bot_id,
-            "chatroom_id": chatroom_id,
-            "sent_at": _utc_iso(self._clock()),
-            "content": content,
-        }
-        if chatroom_id not in self._joined_direct_chatroom_ids:
+        with self._send_lock(chatroom_id):
+            self._ensure_connected()
+            message_id = message_id or str(uuid4())
+            message = {
+                "message_id": message_id,
+                "sent_by": self._bot_id,
+                "chatroom_id": chatroom_id,
+                "sent_at": _utc_iso(self._clock()),
+                "content": content,
+            }
             self._join_direct_room(chatroom_id)
-        acknowledgement = self._socket.call(
-            "message:send",
-            {"chatroomId": chatroom_id, "message": message},
-            timeout=_SEND_ACK_TIMEOUT_SECONDS,
-        )
-        if not acknowledgement or acknowledgement.get("success") is not True:
-            error = acknowledgement.get("error", "message acknowledgement failed") if acknowledgement else "message acknowledgement failed"
-            code = acknowledgement.get("code") if acknowledgement else None
-            _LOGGER.warning(
-                "aikda message:send rejected destination=%s chars=%s lines=%s code=%s error=%s",
-                chatroom_id,
-                len(content.get("text", "")),
-                content.get("text", "").count("\n") + 1,
-                code or "-",
-                error,
+            acknowledgement = self._call(
+                "message:send",
+                {"chatroomId": chatroom_id, "message": message},
+                timeout=_SEND_ACK_TIMEOUT_SECONDS,
             )
-            raise RuntimeError(error)
+            if not acknowledgement or acknowledgement.get("success") is not True:
+                error = acknowledgement.get("error", "message acknowledgement failed") if acknowledgement else "message acknowledgement failed"
+                code = acknowledgement.get("code") if acknowledgement else None
+                _LOGGER.warning(
+                    "aikda message:send rejected destination=%s chars=%s lines=%s code=%s error=%s",
+                    chatroom_id,
+                    len(content.get("text", "")),
+                    content.get("text", "").count("\n") + 1,
+                    code or "-",
+                    error,
+                )
+                raise AikdaMessageRejectedError(error)
         return message_id
+
+    def _send_lock(self, chatroom_id: str):
+        with self._send_locks_guard:
+            return self._send_locks.setdefault(chatroom_id, Lock())
 
     def discover_direct_chats(self) -> list[DirectChatRoom]:
         self._ensure_connected()
@@ -209,7 +232,7 @@ class AikdaSocketGateway:
 
     def retract(self, message_id: str) -> None:
         self._ensure_connected()
-        acknowledgement = self._socket.call(
+        acknowledgement = self._call(
             "message:recall",
             {"chatroomId": self.chatroom_id, "messageId": message_id},
             timeout=10,
@@ -228,11 +251,36 @@ class AikdaSocketGateway:
         return self._authenticated
 
     def close(self) -> None:
-        if self._socket is not None:
-            self._socket.disconnect()
-        self._authenticated = False
+        with self._state_lock:
+            if self._socket is not None:
+                self._socket.disconnect()
+            self._authenticated = False
+
+    def _call(self, event: str, payload: dict[str, Any], *, timeout: float):
+        if not hasattr(self._socket, "emit"):
+            return self._socket.call(event, payload, timeout=timeout)
+        callback_event = self._socket.eio.create_event()
+        callback_args: list[Any] = []
+
+        def event_callback(*args):
+            callback_args.extend(args)
+            callback_event.set()
+
+        with self._emit_lock:
+            self._socket.emit(event, data=payload, callback=event_callback)
+        if not callback_event.wait(timeout=timeout):
+            raise SocketTimeoutError()
+        if len(callback_args) > 1:
+            return tuple(callback_args)
+        if callback_args:
+            return callback_args[0]
+        return None
 
     def _ensure_connected(self) -> None:
+        with self._state_lock:
+            self._ensure_connected_locked()
+
+    def _ensure_connected_locked(self) -> None:
         if self._socket is not None and self._socket.connected and self._joined.is_set():
             self._authenticated = True
             return
@@ -280,11 +328,12 @@ class AikdaSocketGateway:
         return len(self._seen_ids) > seen_before
 
     def _invalidate_stale_socket(self) -> None:
-        self._socket.disconnect()
-        self._authenticated = False
-        self._joined.clear()
-        self._joined_direct_chatroom_ids.clear()
-        self._reconcile_needed = True
+        with self._state_lock:
+            self._socket.disconnect()
+            self._authenticated = False
+            self._joined.clear()
+            self._joined_direct_chatroom_ids.clear()
+            self._reconcile_needed = True
 
     def _on_message(self, payload: dict[str, Any]) -> None:
         message = payload.get("message")
@@ -295,10 +344,11 @@ class AikdaSocketGateway:
         self._joined.set()
 
     def _on_disconnect(self) -> None:
-        self._authenticated = False
-        self._joined.clear()
-        self._joined_direct_chatroom_ids.clear()
-        self._reconcile_needed = True
+        with self._state_lock:
+            self._authenticated = False
+            self._joined.clear()
+            self._joined_direct_chatroom_ids.clear()
+            self._reconcile_needed = True
 
     def _accept_message(self, chatroom_id: str | None, message: dict[str, Any]) -> None:
         if message.get("sent_by") == self._bot_id:
@@ -384,7 +434,30 @@ def _message_reference(value: Any) -> MessageReference | None:
         width=optional_dimensions["width"],
         height=optional_dimensions["height"],
         blurhash=optional_strings["blurhash"],
+        text=content.get("text") if isinstance(content.get("text"), str) else None,
     )
+
+
+def _reference_payload(reference: MessageReference) -> dict[str, Any]:
+    content: dict[str, Any] = {"type": reference.content_type}
+    if reference.content_type == "text":
+        content["text"] = reference.text or ""
+    else:
+        if reference.image_url is not None:
+            content["url"] = reference.image_url
+        for key, value in (
+            ("alt", reference.alt),
+            ("width", reference.width),
+            ("height", reference.height),
+            ("blurhash", reference.blurhash),
+        ):
+            if value is not None:
+                content[key] = value
+    return {
+        "id": reference.message_id,
+        "sentBy": reference.sender_platform_id,
+        "content": content,
+    }
 
 
 def _socket_client():

@@ -23,6 +23,24 @@ def test_settings_uses_isolated_default_browser_port(monkeypatch):
     assert Settings.from_environment().browser_cdp_port == 19222
 
 
+def test_settings_defaults_outbound_concurrency_to_four(monkeypatch):
+    monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm:x@localhost/dzmm")
+    monkeypatch.setenv("DZMM_CORE_TOKEN", "core-token")
+    monkeypatch.delenv("DZMM_OUTBOUND_CONCURRENCY", raising=False)
+
+    assert Settings.from_environment().outbound_concurrency == 4
+
+
+@pytest.mark.parametrize("value", ["0", "17", "invalid"])
+def test_settings_rejects_invalid_outbound_concurrency(monkeypatch, value):
+    monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm:x@localhost/dzmm")
+    monkeypatch.setenv("DZMM_CORE_TOKEN", "core-token")
+    monkeypatch.setenv("DZMM_OUTBOUND_CONCURRENCY", value)
+
+    with pytest.raises(ValueError, match="DZMM_OUTBOUND_CONCURRENCY"):
+        Settings.from_environment()
+
+
 def test_settings_rejects_empty_secret_and_relative_browser_profile(monkeypatch):
     monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm:x@localhost/dzmm")
     monkeypatch.setenv("DZMM_CORE_TOKEN", "")

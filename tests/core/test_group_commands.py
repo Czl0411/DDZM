@@ -1707,6 +1707,18 @@ def test_help_shows_category_entrypoints_instead_of_all_commands():
     assert "/同意部门" not in reply
 
 
+def test_help_random_event_topic_lists_submission_entrypoints():
+    service, _, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+
+    _receive(service, "help-random-event", "platform-xiaoming", "/帮助 随机事件", received_at)
+
+    reply = _latest_reply(factory)
+    assert "/投稿 随机事件" in reply
+    assert "/我的投稿" in reply
+    assert "/撤回投稿 编号" in reply
+
+
 def test_help_game_topic_links_to_each_game_guide():
     service, _, factory = _service()
     received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)

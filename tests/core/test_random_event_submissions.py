@@ -160,6 +160,72 @@ def _direct(content, platform_id="employee-1", message_id="message-1"):
     )
 
 
+def _legacy_role_capacity_handler(repository):
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    draft = repository.start_random_event_submission(
+        "employee-1", NOW
+    ).submission
+    repository.replace_random_event_submission_content(
+        draft.id,
+        {
+            "scene_name": "失踪的咖啡",
+            "signup_text": "茶水间出事了。",
+            "participant_count": 3,
+            "roles": [{"role": "调查员", "capacity": 1}],
+            "events": [],
+            "_working_role": "嫌疑人",
+        },
+        "role_capacity",
+        NOW,
+    )
+    return handler
+
+
+def test_legacy_role_capacity_resume_defaults_pending_role_to_one(repository):
+    """Fails if resuming an old draft still asks for identity capacity."""
+    handler = _legacy_role_capacity_handler(repository)
+
+    reply = handler.handle(_direct("/投稿 随机事件"))
+
+    draft = repository.active_random_event_submission("employee-1", NOW)
+    assert "还剩 1" in reply.text
+    assert "身份人数" not in reply.text
+    assert draft.current_step == "role_name"
+    assert draft.content["roles"] == [
+        {"role": "调查员", "capacity": 1},
+        {"role": "嫌疑人", "capacity": 1},
+    ]
+
+
+def test_legacy_role_capacity_plain_text_is_used_as_next_role(repository):
+    """Fails if compatibility consumes the player's next role-name message."""
+    handler = _legacy_role_capacity_handler(repository)
+
+    reply = handler.handle(_direct("目击者"))
+
+    draft = repository.active_random_event_submission("employee-1", NOW)
+    assert "事件名称" in reply.text
+    assert draft.current_step == "event_name"
+    assert [item["role"] for item in draft.content["roles"]] == [
+        "调查员", "嫌疑人", "目击者",
+    ]
+    assert all(item["capacity"] == 1 for item in draft.content["roles"])
+
+
+def test_legacy_role_capacity_is_normalized_only_once(repository):
+    """Fails if repeatedly resuming a migrated draft duplicates its pending role."""
+    handler = _legacy_role_capacity_handler(repository)
+
+    handler.handle(_direct("/投稿 随机事件"))
+    handler.handle(_direct("/投稿 随机事件"))
+
+    draft = repository.active_random_event_submission("employee-1", NOW)
+    assert [item["role"] for item in draft.content["roles"]] == [
+        "调查员", "嫌疑人",
+    ]
+
+
 def test_submission_wizard_collects_complete_scene_one_field_at_a_time(repository):
     _employee(repository)
     handler = RandomEventSubmissionHandler(repository)
@@ -213,7 +279,7 @@ def test_submission_wizard_rejects_misordered_variable_braces_immediately(reposi
     handler = RandomEventSubmissionHandler(repository)
     for content in (
         "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "2",
-        "调查员", "2", "现场",
+        "调查员", "嫌疑人", "现场",
     ):
         handler.handle(_direct(content))
 
@@ -268,7 +334,7 @@ def test_submission_confirmation_reports_when_submissions_were_disabled(reposito
     handler = RandomEventSubmissionHandler(repository)
     for content in (
         "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "2",
-        "调查员", "2", "现场", "{调查员}发现空杯。", "/事件完成",
+        "调查员", "嫌疑人", "现场", "{调查员}发现空杯。", "/事件完成",
     ):
         handler.handle(_direct(content))
     settings = repository.get_random_event_settings()
@@ -359,7 +425,7 @@ def test_direct_game_command_does_not_advance_submission_draft(repository):
     assert reply is not None
 
 
-def test_edit_role_refills_role_name_and_capacity(repository):
+def test_edit_role_refills_only_role_name(repository):
     _employee(repository)
     handler = RandomEventSubmissionHandler(repository)
     for content in (
@@ -368,7 +434,7 @@ def test_edit_role_refills_role_name_and_capacity(repository):
         "茶水间出事了。",
         "2",
         "调查员",
-        "2",
+        "嫌疑人",
         "现场",
         "{调查员}发现空杯。",
         "/事件完成",
@@ -377,11 +443,72 @@ def test_edit_role_refills_role_name_and_capacity(repository):
 
     prompt = handler.handle(_direct("/修改身份 1"))
     renamed = handler.handle(_direct("侦探"))
-    next_prompt = handler.handle(_direct("2"))
 
     assert "身份名称" in prompt.text
-    assert "身份人数" in renamed.text
-    assert "事件名称" in next_prompt.text
+    assert "身份人数" not in renamed.text
+    assert "事件名称" in renamed.text
+    draft = repository.active_random_event_submission("employee-1", NOW)
+    assert draft.content["roles"] == [
+        {"role": "侦探", "capacity": 1},
+        {"role": "嫌疑人", "capacity": 1},
+    ]
+
+
+def test_delete_role_returns_to_role_name(repository):
+    """Fails if deleting a role leaves the draft full or enters capacity input."""
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    for content in (
+        "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "2",
+        "调查员", "嫌疑人", "现场", "{调查员}发现空杯。", "/事件完成",
+    ):
+        handler.handle(_direct(content))
+
+    reply = handler.handle(_direct("/删除身份 1"))
+
+    draft = repository.active_random_event_submission("employee-1", NOW)
+    assert "身份名称" in reply.text
+    assert "身份人数" not in reply.text
+    assert draft.current_step == "role_name"
+    assert draft.content["roles"] == [{"role": "嫌疑人", "capacity": 1}]
+    assert draft.content["events"] == []
+
+
+def test_back_from_partially_filled_roles_reopens_last_role(repository):
+    """Fails if backtracking from role names returns to legacy capacity input."""
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    for content in (
+        "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "3", "调查员",
+    ):
+        handler.handle(_direct(content))
+
+    reply = handler.handle(_direct("/上一步"))
+
+    draft = repository.active_random_event_submission("employee-1", NOW)
+    assert "身份名称" in reply.text
+    assert "身份人数" not in reply.text
+    assert draft.current_step == "role_name"
+    assert draft.content["roles"] == []
+
+
+def test_back_from_event_name_reopens_last_role(repository):
+    """Fails if a full role list backtracks into the removed capacity step."""
+    _employee(repository)
+    handler = RandomEventSubmissionHandler(repository)
+    for content in (
+        "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "2",
+        "调查员", "嫌疑人",
+    ):
+        handler.handle(_direct(content))
+
+    reply = handler.handle(_direct("/上一步"))
+
+    draft = repository.active_random_event_submission("employee-1", NOW)
+    assert "身份名称" in reply.text
+    assert "身份人数" not in reply.text
+    assert draft.current_step == "role_name"
+    assert draft.content["roles"] == [{"role": "调查员", "capacity": 1}]
 
 
 def test_back_from_first_role_returns_to_participant_count(repository):
@@ -402,7 +529,7 @@ def test_edit_event_refills_event_name_and_opening(repository):
     handler = RandomEventSubmissionHandler(repository)
     for content in (
         "/投稿 随机事件", "失踪的咖啡", "茶水间出事了。", "2",
-        "调查员", "2", "旧事件", "{调查员}发现空杯。", "/事件完成",
+        "调查员", "嫌疑人", "旧事件", "{调查员}发现空杯。", "/事件完成",
     ):
         handler.handle(_direct(content))
 

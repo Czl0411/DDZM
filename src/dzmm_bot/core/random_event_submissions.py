@@ -1,5 +1,6 @@
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 import re
 
 from dzmm_bot.runtime.contracts import InboundMessage
@@ -64,12 +65,15 @@ class RandomEventSubmissionHandler:
                 return self._reply(message, self._text("/投稿", "disabled", now))
             if result.submission is None or result.direct_chatroom_id is None:
                 raise RuntimeError("投稿草稿启动结果不完整")
+            submission = self._normalize_legacy_role_capacity(
+                result.submission, now
+            )
             prompt = SubmissionReply(
                 (
                     self._text("/投稿", "expired", now) + "\n"
                     if result.status == "expired_started"
                     else ""
-                ) + self._prompt(result.submission),
+                ) + self._prompt(submission),
                 destination_chatroom_id=result.direct_chatroom_id,
                 delivery_kind="direct",
             )
@@ -101,6 +105,7 @@ class RandomEventSubmissionHandler:
             return None
         if command is not None and command not in SUBMISSION_COMMANDS:
             return None
+        draft = self._normalize_legacy_role_capacity(draft, now)
         if command == "/取消投稿":
             data = deepcopy(draft.content)
             data["_cancel_previous_step"] = draft.current_step
@@ -155,6 +160,37 @@ class RandomEventSubmissionHandler:
         if command is not None:
             return self._handle_control(message, draft, command, parts)
         return self._accept_plain_value(message, draft, content)
+
+    def _normalize_legacy_role_capacity(
+        self, draft: RandomEventSubmission, now: datetime
+    ) -> RandomEventSubmission:
+        if draft.current_step != "role_capacity":
+            return draft
+        data = deepcopy(draft.content)
+        roles = data.setdefault("roles", [])
+        for role in roles:
+            role["capacity"] = 1
+        working_role = data.pop("_working_role", None)
+        edit_index = data.pop("_editing_role_index", None)
+        data.pop("_editing_role_original", None)
+        data.pop("_editing_return_step", None)
+        data.pop("_editing_events_original", None)
+        total = int(data.get("participant_count", 0))
+        if (
+            isinstance(working_role, str)
+            and 1 <= len(working_role) <= 32
+            and all(item.get("role") != working_role for item in roles)
+            and len(roles) < total
+        ):
+            role = {"role": working_role, "capacity": 1}
+            if isinstance(edit_index, int) and 0 <= edit_index <= len(roles):
+                roles.insert(edit_index, role)
+            else:
+                roles.append(role)
+        next_step = "event_name" if len(roles) >= total else "role_name"
+        return self._repository.replace_random_event_submission_content(
+            draft.id, data, next_step, now
+        )
 
     def _accept_plain_value(
         self, message: InboundMessage, draft: RandomEventSubmission, value: str
@@ -385,10 +421,8 @@ class RandomEventSubmissionHandler:
                 data["events"] = data.pop("_editing_events_original", [])
                 step = data.pop("_editing_return_step", "role_name")
             elif roles:
-                role = roles.pop()
-                data["_working_role"] = role["role"]
-                data["_editing_role_index"] = len(roles)
-                step = "role_capacity"
+                roles.pop()
+                step = "role_name"
             else:
                 step = "participant_count"
         elif step == "role_capacity":
@@ -402,11 +436,9 @@ class RandomEventSubmissionHandler:
                     data.setdefault("events", []).insert(index, original)
                 step = data.pop("_editing_return_step", "event_controls")
             elif data.get("roles"):
-                role = data["roles"].pop()
-                data["_working_role"] = role["role"]
-                data["_editing_role_index"] = len(data["roles"])
+                data["roles"].pop()
                 data["events"] = []
-                step = "role_capacity"
+                step = "role_name"
         elif step == "event_opening":
             data.pop("_working_event", None)
             step = "event_name"

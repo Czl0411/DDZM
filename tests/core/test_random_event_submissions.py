@@ -122,6 +122,37 @@ def test_submission_confirmation_locks_configured_numeric_values(repository):
         repository.confirm_random_event_submission("employee-1", NOW)
 
 
+def test_submission_accepts_one_role_per_configured_participant(repository):
+    """Fails if valid single-seat submissions remain capped at 20 identities."""
+    _employee(repository)
+    draft = repository.start_random_event_submission(
+        "employee-1", NOW
+    ).submission
+    repository.replace_random_event_submission_content(
+        draft.id,
+        {
+            "scene_name": "二十一人事件",
+            "signup_text": "需要二十一名员工参加。",
+            "participant_count": 21,
+            "roles": [
+                {"role": f"身份{index}", "capacity": 1}
+                for index in range(1, 22)
+            ],
+            "events": [
+                {"name": "开场", "opening_text": "{身份1}第一个抵达现场。"}
+            ],
+        },
+        "preview",
+        NOW,
+    )
+
+    submitted = repository.confirm_random_event_submission("employee-1", NOW)
+
+    assert submitted.status == "pending"
+    assert len(submitted.content["roles"]) == 21
+    assert all(role["capacity"] == 1 for role in submitted.content["roles"])
+
+
 def test_inactive_submission_draft_expires_without_affecting_other_user(repository):
     _employee(repository, "employee-1")
     _employee(repository, "employee-2")

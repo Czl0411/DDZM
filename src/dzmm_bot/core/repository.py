@@ -13371,8 +13371,10 @@ def _validate_random_event_submission_content(
     events = content.get("events")
     if not isinstance(roles, list) or not isinstance(events, list):
         raise ValueError("身份或事件模板无效")
-    if not 1 <= len(roles) <= 20 or not 1 <= len(events) <= 20:
-        raise ValueError("身份和事件模板数量需在 1 至 20 之间")
+    if not 1 <= len(roles) <= participant_count:
+        raise ValueError("身份数量需在 1 至参加人数之间")
+    if not 1 <= len(events) <= 20:
+        raise ValueError("事件模板数量需在 1 至 20 之间")
     if not isinstance(content.get("scene_name"), str) or not isinstance(
         content.get("signup_text"), str
     ):

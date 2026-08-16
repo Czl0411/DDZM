@@ -482,6 +482,35 @@ def test_direct_chat_maintenance_reconnects_after_recovering_a_missed_event():
     assert len(socket.connect_calls) == 2
     assert [item.platform_message_id for item in recovered] == ["m-missed"]
 
+
+def test_failed_unknown_room_does_not_starve_history_reconciliation(gateway):
+    adapter, _, request = gateway
+    request.rooms = [
+        {"data": {"chatroomId": "direct-broken", "chatType": "one_on_one"}},
+    ]
+    adapter.read_new()
+    adapter.maintain_direct_chats()
+    original_request = adapter._request
+
+    def fail_broken_room(procedure, payload=None):
+        if (
+            procedure == "chatroom.getMessages"
+            and payload["chatroomId"] == "direct-broken"
+        ):
+            raise RuntimeError("room unavailable")
+        return original_request(procedure, payload)
+
+    adapter._request = fail_broken_room
+    with pytest.raises(RuntimeError, match="room unavailable"):
+        adapter.maintain_direct_chats()
+
+    adapter.maintain_direct_chats()
+
+    assert request.calls[-1] == (
+        "chatroom.getMessages",
+        {"chatroomId": "room-1"},
+    )
+
 def test_targeted_private_history_recovers_unseen_report_once(gateway):
     adapter, _, request = gateway
     request.messages_by_room = {

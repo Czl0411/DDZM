@@ -109,7 +109,11 @@ class AikdaSocketGateway:
 
         if self._direct_discovery_queue:
             chatroom_id = self._direct_discovery_queue.popleft()
-            _, messages = self._accept_history(chatroom_id)
+            try:
+                _, messages = self._accept_history(chatroom_id)
+            finally:
+                if not self._direct_discovery_queue:
+                    self._next_discovery_at = now + _MAINTENANCE_INTERVAL
             user_id = next(
                 (
                     item.get("sent_by")
@@ -120,8 +124,6 @@ class AikdaSocketGateway:
                 ),
                 None,
             )
-            if not self._direct_discovery_queue:
-                self._next_discovery_at = now + _MAINTENANCE_INTERVAL
             if user_id is None:
                 return []
             self._direct_discovery_seen_users.add(user_id)
@@ -448,7 +450,10 @@ class AikdaSocketGateway:
         return len(self._seen_ids) > seen_before, messages
 
     def _maintain_history_reconciliation(self, now: datetime) -> None:
-        chatroom_id = self._history_reconcile_queue.popleft()
+        with self._state_lock:
+            if not self._history_reconcile_queue:
+                return
+            chatroom_id = self._history_reconcile_queue.popleft()
         recovered, _ = self._accept_history(chatroom_id)
         self._reconcile_cycle_recovered |= recovered
         if self._history_reconcile_queue:

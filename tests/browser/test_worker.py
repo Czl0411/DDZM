@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from time import monotonic, sleep
 from uuid import UUID
 
@@ -46,6 +46,8 @@ class FakeGateway:
     direct_send_started: Event = field(default_factory=Event)
     direct_send_count: int = 0
     direct_send_lock: Lock = field(default_factory=Lock)
+    maintenance_started: Event = field(default_factory=Event)
+    maintenance_release: Event | None = None
 
     def read_new(self, direct_chatroom_ids=()):
         self.read_targets.append(direct_chatroom_ids)
@@ -100,10 +102,19 @@ class FakeGateway:
         return {"url": "https://cdn.example.com/uploaded.png"}
 
     def discover_direct_chats(self):
+        self.maintenance_started.set()
+        if self.maintenance_release is not None:
+            self.maintenance_release.wait(timeout=2)
         return list(self.direct_rooms)
 
     def reconcile_history(self, direct_chatroom_ids=()):
         return []
+
+    def maintain_direct_chats(self, direct_chatroom_ids=()):
+        self.maintenance_started.set()
+        if self.maintenance_release is not None:
+            self.maintenance_release.wait(timeout=2)
+        return list(self.direct_rooms)
 
     def set_message_handler(self, handler):
         self.message_handler = handler
@@ -354,6 +365,21 @@ def test_worker_does_not_wait_for_outbound_socket_send(context):
     worker.run_once()
 
     assert monotonic() - started < 0.1
+
+
+def test_worker_starts_outbound_before_blocked_chat_maintenance(context):
+    worker, gateway, _, _, core, _ = context
+    gateway.maintenance_release = Event()
+    core.pending = [OutboundClaim(OUTBOUND_ID, "in-1", "reply", LEASE)]
+
+    run = Thread(target=worker.run_once)
+    run.start()
+    assert gateway.maintenance_started.wait(timeout=1)
+    try:
+        assert core.confirmed_event.wait(timeout=1)
+    finally:
+        gateway.maintenance_release.set()
+        run.join(timeout=1)
 
 
 def test_worker_runs_daily_jobs_after_submitting_messages(context):

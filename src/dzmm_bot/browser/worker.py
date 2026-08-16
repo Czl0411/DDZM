@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import logging
@@ -73,7 +73,6 @@ class BrowserWorker:
         self._auth_loss_reported = False
         self._auth_backoff = 1
         self._manual_auth_confirmed = False
-        self._last_direct_chat_sync_at: datetime | None = None
         self._inbound_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="dzmm-inbound"
         )
@@ -134,9 +133,9 @@ class BrowserWorker:
             return
 
         gateway = self._ensure_gateway()
+        self._start_outbound_if_idle(gateway)
         self._process_profile_image_cleanup()
         self._process_profile_image_upload(gateway)
-        self._sync_direct_chats(gateway, now)
         if self._listening:
             try:
                 direct_targets = self._core.direct_inbound_chatroom_ids()
@@ -173,7 +172,7 @@ class BrowserWorker:
                     self._clock(),
                 )
 
-        self._start_outbound_if_idle(gateway)
+        self._maintain_direct_chats(gateway, now)
 
     def _process_profile_image_upload(self, gateway: ChatGateway) -> None:
         claim = self._core.claim_profile_image_upload(
@@ -394,21 +393,17 @@ class BrowserWorker:
             text=outbound.reference_text,
         )
 
-    def _sync_direct_chats(self, gateway: ChatGateway, now: datetime) -> None:
-        if (
-            self._last_direct_chat_sync_at is not None
-            and now - self._last_direct_chat_sync_at < timedelta(seconds=30)
-        ):
-            return
+    def _maintain_direct_chats(self, gateway: ChatGateway, now: datetime) -> None:
         try:
-            self._core.sync_direct_chats(gateway.discover_direct_chats(), now)
-            gateway.reconcile_history(self._core.direct_inbound_chatroom_ids())
+            rooms = gateway.maintain_direct_chats(
+                self._core.direct_inbound_chatroom_ids()
+            )
+            if rooms:
+                self._core.sync_direct_chats(rooms, now)
         except NotImplementedError:
             return
         except Exception:
-            _LOGGER.exception("direct chat discovery failed")
-            return
-        self._last_direct_chat_sync_at = now
+            _LOGGER.exception("direct chat maintenance failed")
 
     def _ensure_gateway(self) -> ChatGateway:
         if self._gateway is None:

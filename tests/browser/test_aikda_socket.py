@@ -66,6 +66,7 @@ class FakeRequest:
     def __init__(self, messages=None):
         self.messages = messages or []
         self.messages_by_room = None
+        self.rooms = []
         self.calls = []
         self.profile = {"id": "bot-1"}
 
@@ -74,7 +75,7 @@ class FakeRequest:
         if procedure == "user.getMe":
             return self.profile
         if procedure == "chat.listAll":
-            return {"items": []}
+            return {"items": self.rooms}
         if procedure == "chatroom.getMessages":
             if self.messages_by_room is not None:
                 return {"messages": self.messages_by_room.get(payload["chatroomId"], [])}
@@ -399,6 +400,87 @@ def test_read_new_does_not_poll_history_after_socket_is_connected(gateway):
 
     assert adapter.read_new() == []
     assert request.calls == []
+
+
+def test_direct_chat_maintenance_uses_at_most_one_http_request_per_step(gateway):
+    adapter, _, request = gateway
+    request.messages_by_room = {
+        "room-1": [],
+        "direct-1": [message("dm-1", "employee-1", "/报数 17")],
+        "direct-2": [message("dm-2", "employee-2", "/报数 29")],
+    }
+    adapter.read_new(("direct-1", "direct-2"))
+    request.calls.clear()
+
+    recovered = []
+    for _ in range(4):
+        before = len(request.calls)
+        adapter.maintain_direct_chats(("direct-1", "direct-2"))
+        step_calls = [
+            call
+            for call in request.calls[before:]
+            if call[0] in {"chat.listAll", "chatroom.getMessages"}
+        ]
+        assert len(step_calls) <= 1
+        recovered.extend(adapter.read_new(("direct-1", "direct-2")))
+
+    history_rooms = [
+        payload["chatroomId"]
+        for procedure, payload in request.calls
+        if procedure == "chatroom.getMessages"
+    ]
+    assert history_rooms == ["room-1", "direct-1", "direct-2"]
+    assert [item.platform_message_id for item in recovered] == ["dm-1", "dm-2"]
+
+
+def test_direct_chat_maintenance_discovers_only_unknown_rooms(gateway):
+    adapter, _, request = gateway
+    request.rooms = [
+        {"data": {"chatroomId": "direct-1", "chatType": "one_on_one"}},
+        {"data": {"chatroomId": "direct-2", "chatType": "one_on_one"}},
+        {"data": {"chatroomId": "direct-new", "chatType": "one_on_one"}},
+    ]
+    request.messages_by_room = {
+        "direct-new": [message("dm-new", "employee-new", "你好")],
+    }
+    adapter.read_new(("direct-1", "direct-2"))
+    request.calls.clear()
+
+    assert adapter.maintain_direct_chats(("direct-1", "direct-2")) == []
+    discovered = adapter.maintain_direct_chats(("direct-1", "direct-2"))
+
+    assert discovered == [DirectChatRoom("employee-new", "direct-new")]
+    assert [
+        payload["chatroomId"]
+        for procedure, payload in request.calls
+        if procedure == "chatroom.getMessages"
+    ] == ["direct-new"]
+
+
+def test_direct_chat_maintenance_reconnects_after_recovering_a_missed_event():
+    now = [NOW]
+    socket = FakeSocket()
+    request = FakeRequest()
+    adapter = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "short-lived-token",
+        request=request,
+        socket_factory=lambda: socket,
+        clock=lambda: now[0],
+    )
+
+    adapter.read_new()
+    adapter.maintain_direct_chats()
+    adapter.maintain_direct_chats()
+    request.messages = [message("m-missed", "employee-1", "/帮助")]
+    now[0] += timedelta(seconds=31)
+
+    adapter.maintain_direct_chats()
+    adapter.maintain_direct_chats()
+    recovered = adapter.read_new()
+
+    assert len(socket.connect_calls) == 2
+    assert [item.platform_message_id for item in recovered] == ["m-missed"]
 
 def test_targeted_private_history_recovers_unseen_report_once(gateway):
     adapter, _, request = gateway

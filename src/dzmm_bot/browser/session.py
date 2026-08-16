@@ -25,6 +25,10 @@ class ChatGateway(Protocol):
         self, direct_chatroom_ids: tuple[str, ...] = ()
     ) -> list[InboundMessage]: ...
 
+    def maintain_direct_chats(
+        self, direct_chatroom_ids: tuple[str, ...] = ()
+    ) -> list[DirectChatRoom]: ...
+
     def send(
         self, text: str, *, message_id: str | None = None,
         reference: MessageReference | None = None,
@@ -235,6 +239,11 @@ class _PlaywrightGateway:
         self, direct_chatroom_ids: tuple[str, ...] = ()
     ) -> list[InboundMessage]:
         return self.read_new(direct_chatroom_ids)
+
+    def maintain_direct_chats(
+        self, direct_chatroom_ids: tuple[str, ...] = ()
+    ) -> list[DirectChatRoom]:
+        raise NotImplementedError("direct messages require the Aikda socket gateway")
 
     def send(
         self, text: str, *, message_id: str | None = None,

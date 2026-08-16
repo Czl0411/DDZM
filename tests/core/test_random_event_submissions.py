@@ -162,6 +162,26 @@ def test_submission_daily_limit_preserves_draft_and_resets_next_beijing_day(
     assert submitted.status == "pending"
 
 
+def test_submission_daily_limit_resets_at_beijing_midnight(repository):
+    before_midnight = datetime(2026, 8, 15, 15, 59, 59, tzinfo=UTC)
+    midnight = before_midnight + timedelta(seconds=1)
+    _employee(repository)
+    _preview_submission(repository, now=before_midnight)
+    first = repository.confirm_random_event_submission(
+        "employee-1", before_midnight
+    )
+    repository.withdraw_random_event_submission(
+        "employee-1", first.number, before_midnight
+    )
+
+    _preview_submission(repository, now=midnight)
+    submitted = repository.confirm_random_event_submission(
+        "employee-1", midnight
+    )
+
+    assert submitted.status == "pending"
+
+
 @pytest.mark.parametrize("review_state", ["approved", "rejected"])
 def test_submission_daily_limit_survives_terminal_review_state(
     repository, review_state

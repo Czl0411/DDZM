@@ -185,6 +185,17 @@ def test_lucky_red_packet_reply_templates_are_managed(repository):
     }
 
 
+def test_random_event_submission_daily_limit_template_is_managed(repository):
+    definitions = {
+        template.scenario: template
+        for template in repository.list_reply_templates("/确认投稿")
+    }
+
+    assert definitions["daily_limit"].template == (
+        "你今天已经投稿过一次，请明天再来。"
+    )
+
+
 def test_department_authoritative_context_uses_live_data_and_exact_commands(
     repository, now
 ):

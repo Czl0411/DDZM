@@ -5,7 +5,11 @@ import re
 
 from dzmm_bot.runtime.contracts import InboundMessage
 
-from .repository import CoreRepository, RandomEventSubmission
+from .repository import (
+    CoreRepository,
+    RandomEventSubmission,
+    RandomEventSubmissionDailyLimitError,
+)
 from .reply_templates import render_template, template_definition
 
 
@@ -137,6 +141,11 @@ class RandomEventSubmissionHandler:
             try:
                 submitted = self._repository.confirm_random_event_submission(
                     message.sender_platform_id, now
+                )
+            except RandomEventSubmissionDailyLimitError:
+                return self._reply(
+                    message,
+                    self._text("/确认投稿", "daily_limit", now),
                 )
             except ValueError as error:
                 return self._reply(

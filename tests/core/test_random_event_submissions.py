@@ -252,12 +252,17 @@ def test_daily_jobs_expire_inactive_submission_drafts(repository):
     assert repository.get_random_event_submission(draft.id).status == "expired"
 
 
-def _direct(content, platform_id="employee-1", message_id="message-1"):
+def _direct(
+    content,
+    platform_id="employee-1",
+    message_id="message-1",
+    received_at=NOW,
+):
     return InboundMessage(
         message_id,
         platform_id,
         content,
-        NOW,
+        received_at,
         source_type="direct",
         chatroom_id=f"direct-{platform_id}",
     )
@@ -353,6 +358,27 @@ def test_submission_wizard_collects_complete_scene_one_field_at_a_time(repositor
     assert "/确认投稿" in preview.text
     confirmed = handler.handle(_direct("/确认投稿"))
     assert "已提交审核" in confirmed.text
+
+
+def test_submission_daily_limit_reply_is_exact_and_keeps_preview(repository):
+    first = _pending_submission(repository)
+    repository.withdraw_random_event_submission(
+        "employee-1", first.number, NOW + timedelta(minutes=1)
+    )
+    _preview_submission(repository, now=NOW + timedelta(minutes=2))
+
+    reply = RandomEventSubmissionHandler(repository).handle(
+        _direct(
+            "/确认投稿",
+            received_at=NOW + timedelta(minutes=10),
+        )
+    )
+
+    assert reply.text == "你今天已经投稿过一次，请明天再来。"
+    draft = repository.active_random_event_submission(
+        "employee-1", NOW + timedelta(minutes=10)
+    )
+    assert draft.current_step == "preview"
 
 
 def test_submission_role_names_each_fill_one_seat(repository):

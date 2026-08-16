@@ -5,7 +5,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from dzmm_bot.core.repository import CoreRepository
+from dzmm_bot.core.repository import (
+    CoreRepository,
+    RandomEventSubmissionDailyLimitError,
+)
 from dzmm_bot.core.random_event_submissions import RandomEventSubmissionHandler
 from dzmm_bot.core.commands import GroupCommandHandler
 from dzmm_bot.core.service import CoreService
@@ -32,8 +35,13 @@ def _employee(repository, platform_id="employee-1"):
 
 def _pending_submission(repository, platform_id="employee-1"):
     _employee(repository, platform_id)
-    draft = repository.start_random_event_submission(platform_id, NOW).submission
-    repository.replace_random_event_submission_content(
+    _preview_submission(repository, platform_id)
+    return repository.confirm_random_event_submission(platform_id, NOW)
+
+
+def _preview_submission(repository, platform_id="employee-1", now=NOW):
+    draft = repository.start_random_event_submission(platform_id, now).submission
+    return repository.replace_random_event_submission_content(
         draft.id,
         {
             "scene_name": f"失踪的咖啡-{platform_id}",
@@ -48,9 +56,8 @@ def _pending_submission(repository, platform_id="employee-1"):
             ],
         },
         "preview",
-        NOW,
+        now,
     )
-    return repository.confirm_random_event_submission(platform_id, NOW)
 
 
 def test_submission_start_requires_employee_and_known_direct_chat(repository):
@@ -120,6 +127,71 @@ def test_submission_confirmation_locks_configured_numeric_values(repository):
     ).status == "started"
     with pytest.raises(ValueError, match="待审核"):
         repository.confirm_random_event_submission("employee-1", NOW)
+
+
+def test_submission_daily_limit_preserves_draft_and_resets_next_beijing_day(
+    repository,
+):
+    first = _pending_submission(repository)
+    repository.withdraw_random_event_submission(
+        "employee-1", first.number, NOW + timedelta(minutes=1)
+    )
+    second = _preview_submission(
+        repository, now=NOW + timedelta(minutes=2)
+    )
+
+    with pytest.raises(RandomEventSubmissionDailyLimitError):
+        repository.confirm_random_event_submission(
+            "employee-1", NOW + timedelta(hours=1)
+        )
+
+    unchanged = repository.get_random_event_submission(second.id)
+    assert unchanged.current_step == "preview"
+    assert unchanged.content == second.content
+    assert unchanged.expires_at == second.expires_at
+
+    repository.cancel_random_event_submission(
+        "employee-1", NOW + timedelta(hours=1)
+    )
+    _preview_submission(repository, now=NOW + timedelta(days=1))
+
+    submitted = repository.confirm_random_event_submission(
+        "employee-1", NOW + timedelta(days=1)
+    )
+
+    assert submitted.status == "pending"
+
+
+@pytest.mark.parametrize("review_state", ["approved", "rejected"])
+def test_submission_daily_limit_survives_terminal_review_state(
+    repository, review_state
+):
+    first = _pending_submission(repository)
+    if review_state == "approved":
+        repository.approve_random_event_submission(
+            first.id, "管理员甲", NOW + timedelta(minutes=1)
+        )
+    else:
+        repository.reject_random_event_submission(
+            first.id,
+            "管理员甲",
+            "身份设计不完整",
+            NOW + timedelta(minutes=1),
+        )
+    _preview_submission(repository, now=NOW + timedelta(minutes=2))
+
+    with pytest.raises(RandomEventSubmissionDailyLimitError):
+        repository.confirm_random_event_submission(
+            "employee-1", NOW + timedelta(hours=1)
+        )
+
+
+def test_submission_daily_limit_is_independent_for_different_employees(repository):
+    first = _pending_submission(repository, "employee-1")
+    second = _pending_submission(repository, "employee-2")
+
+    assert first.status == "pending"
+    assert second.status == "pending"
 
 
 def test_submission_accepts_one_role_per_configured_participant(repository):

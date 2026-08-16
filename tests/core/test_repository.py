@@ -21,6 +21,7 @@ from dzmm_bot.core.schema import (
     NumberBombGameRecord,
     NumberBombRoundPlayerRecord,
     NumberBombRoundRecord,
+    RandomEventSubmissionRecord,
     UserRecord,
 )
 from dzmm_bot.core.number_bomb import (
@@ -6813,6 +6814,70 @@ def test_postgres_concurrent_claims_and_upserts_are_atomic(
             executor.map(record_heartbeat, (LoginState.READY, LoginState.AUTH_REQUIRED))
         )
     assert len({heartbeat.id for heartbeat in heartbeats}) == 1
+
+
+def test_postgres_concurrent_submission_confirmations_allow_only_one(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+
+    now = datetime(2026, 8, 16, 12, 0, tzinfo=BEIJING)
+    factory = sessionmaker(
+        create_engine(migrated_postgres_url), expire_on_commit=False
+    )
+    setup_repository = CoreRepository(factory)
+    setup_repository.create_user("submitter", "投稿人", now, 0)
+    setup_repository.upsert_direct_chats(
+        [("submitter", "direct-submitter")], now
+    )
+    draft = setup_repository.start_random_event_submission(
+        "submitter", now
+    ).submission
+    setup_repository.replace_random_event_submission_content(
+        draft.id,
+        {
+            "scene_name": "并发投稿",
+            "signup_text": "测试并发确认。",
+            "participant_count": 2,
+            "roles": [
+                {"role": "甲", "capacity": 1},
+                {"role": "乙", "capacity": 1},
+            ],
+            "events": [{"name": "开始", "opening_text": "{甲}遇见了{乙}。"}],
+        },
+        "preview",
+        now,
+    )
+    barrier = Barrier(2)
+
+    def confirm(repository):
+        barrier.wait()
+        try:
+            return repository.confirm_random_event_submission(
+                "submitter", now
+            ).status
+        except ValueError:
+            return "rejected"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                confirm,
+                (CoreRepository(factory), CoreRepository(factory)),
+            )
+        )
+
+    with factory() as session:
+        submitted_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(RandomEventSubmissionRecord)
+                .where(RandomEventSubmissionRecord.submitted_at.is_not(None))
+            )
+            or 0
+        )
+    assert sorted(results) == ["pending", "rejected"]
+    assert submitted_count == 1
 
 
 def test_postgres_random_event_game_creation_is_serialized(

@@ -12172,8 +12172,17 @@ class CoreRepository:
             first_reply_index = reply_index
             if latest_reply_index is not None and first_reply_index <= latest_reply_index:
                 first_reply_index = latest_reply_index + 1
-            reference = _outbound_reference_snapshot(
-                inbound, destination_chatroom_id
+            uses_bot_group_sender = (
+                self._preserve_long_group_messages
+                and recall_after_seconds is None
+                and destination_chatroom_id is None
+                and delivery_kind == "group"
+                and requires_bot_group_sender(reply)
+            )
+            reference = (
+                {}
+                if uses_bot_group_sender
+                else _outbound_reference_snapshot(inbound, destination_chatroom_id)
             )
             replies = [reply] if self._keeps_group_reply_intact(
                 reply,

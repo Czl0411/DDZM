@@ -365,7 +365,6 @@ class BrowserWorker:
             and outbound.destination_chatroom_id is None
             and outbound.delivery_kind == "group"
             and outbound.recall_after_seconds is None
-            and reference is None
             and requires_bot_group_sender(outbound.text)
         ):
             return self._bot_sender.send_to(self._bot_chatroom_id, outbound.text)

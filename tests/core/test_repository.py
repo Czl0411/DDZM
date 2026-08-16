@@ -5826,8 +5826,17 @@ def test_outbound_reply_preserves_message_below_platform_limits(
     assert [record.reply_index for record in records] == [0]
 
 
-def test_referenced_long_reply_splits_even_when_bot_api_is_enabled(
-    session_factory, inbound
+@pytest.mark.parametrize(
+    ("text", "uses_bot_sender"),
+    [
+        ("字" * 1000, False),
+        ("字" * 1001, True),
+        ("\n".join(f"第{index}行" for index in range(1, 12)), False),
+        ("\n".join(f"第{index}行" for index in range(1, 13)), True),
+    ],
+)
+def test_group_reply_bot_routing_boundaries(
+    session_factory, inbound, text, uses_bot_sender
 ):
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import OutboundRecord
@@ -5837,7 +5846,7 @@ def test_referenced_long_reply_splits_even_when_bot_api_is_enabled(
     )
     stored, _ = repository.accept_inbound(inbound)
 
-    repository.enqueue_outbound(stored.id, "字" * 1001)
+    repository.enqueue_outbound(stored.id, text)
 
     with session_factory() as session:
         records = list(
@@ -5845,8 +5854,10 @@ def test_referenced_long_reply_splits_even_when_bot_api_is_enabled(
                 select(OutboundRecord).order_by(OutboundRecord.reply_index)
             )
         )
-    assert [len(record.text) for record in records] == [1000, 1]
-    assert {record.reference_message_id for record in records} == {"platform-1"}
+    assert [record.text for record in records] == [text]
+    assert [record.reference_message_id for record in records] == [
+        None if uses_bot_sender else "platform-1"
+    ]
 
 
 def test_system_outbound_splits_a_line_over_one_thousand_characters(

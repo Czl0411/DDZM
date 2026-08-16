@@ -749,7 +749,7 @@ def test_worker_uses_bot_api_for_group_replies_over_the_character_limit(context)
     assert gateway.sent == []
 
 
-def test_worker_keeps_referenced_long_reply_on_socket_gateway(context):
+def test_worker_routes_referenced_long_reply_through_bot_without_reply_metadata(context):
     _, gateway, session, desktop, core, _ = context
     bot_sender = FakeBotSender()
     worker = BrowserWorker(
@@ -776,8 +776,8 @@ def test_worker_keeps_referenced_long_reply_on_socket_gateway(context):
     worker.run_once()
 
     assert core.confirmed_event.wait(timeout=1)
-    assert bot_sender.sent_to == []
-    assert gateway.sent == [text]
+    assert bot_sender.sent_to == [("group-1", text)]
+    assert gateway.sent == []
 
 
 def test_worker_keeps_recalled_group_replies_on_the_browser_gateway(context):

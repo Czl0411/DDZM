@@ -397,7 +397,7 @@ def test_worker_confirms_only_after_gateway_send_succeeds(context):
     gateway.send_error = RuntimeError("page unavailable")
 
     worker.run_once()
-    sleep(0.01)
+    next(iter(worker._outbound_futures.values())).result(timeout=1)
     worker.run_once()
 
     assert core.confirmed == []

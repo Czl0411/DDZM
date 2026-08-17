@@ -5557,6 +5557,99 @@ def test_random_event_tipping_timeout_settles_once_after_repository_restart(
     assert any("本场无人打赏" in message for message in messages)
 
 
+def _prepare_random_event_tipping_summary_test(repository, now):
+    repository.create_random_event_scene(
+        "汇总测试场", "报名", ["正式开始。"], 1, 1, [("员工", 3)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "{可选身份}", 15, 5, tipping_duration_seconds=10
+    )
+    for platform_id, name, balance in (
+        ("summary-a", "甲收款", 0),
+        ("summary-b", "乙收款", 0),
+        ("summary-c", "丙零打赏", 0),
+        ("summary-donor-1", "第一位打赏者", 10),
+        ("summary-donor-2", "第二位打赏者", 10),
+    ):
+        repository.create_user(platform_id, name, now, balance)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("summary-a", "员工", now) == "joined"
+    assert repository.join_random_event("summary-b", "员工", now) == "joined"
+    assert repository.join_random_event("summary-c", "员工", now) == "started"
+    assert repository.leave_random_event("summary-a", now) == "left_without_reward"
+    assert repository.leave_random_event("summary-b", now) == "left_without_reward"
+    assert repository.leave_random_event("summary-c", now) == "left_without_reward"
+
+    tips = (
+        ("summary-tip-1", "summary-donor-1", "乙收款", 3, now + timedelta(seconds=1)),
+        ("summary-tip-2", "summary-donor-2", "甲收款", 2, now + timedelta(seconds=2)),
+        ("summary-tip-3", "summary-donor-1", "甲收款", 1, now + timedelta(seconds=3)),
+    )
+    for message_id, sender, recipient, amount, created_at in tips:
+        _accept_tip_inbound(
+            repository,
+            message_id,
+            sender,
+            f"/打赏 {recipient} {amount}",
+            created_at,
+        )
+        assert repository.tip_random_event(
+            sender, recipient, amount, message_id, created_at
+        ).status == "tipped"
+
+
+def test_random_event_tipping_summary_is_deterministic_and_includes_zero_recipients(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _prepare_random_event_tipping_summary_test(repository, now)
+    deadline = repository.random_event_tipping_summary().tipping_deadline
+    assert deadline is not None
+
+    repository.run_random_event_jobs(deadline)
+
+    with session_factory() as session:
+        messages = list(session.scalars(select(OutboundRecord.text)))
+    message = next(
+        text for text in messages if text.startswith("【随机事件打赏结束】")
+    )
+    assert message.index("甲收款：3 摸鱼币") < message.index("乙收款：3 摸鱼币")
+    assert message.index("乙收款：3 摸鱼币") < message.index("丙零打赏：0 摸鱼币")
+    assert message.index("第二位打赏者：2 摸鱼币") < message.index(
+        "第一位打赏者：1 摸鱼币"
+    )
+    assert "第一位打赏者：3 摸鱼币" in message
+    assert "本场无人打赏" not in message
+
+
+def test_forced_random_event_tipping_settlement_uses_same_summary_and_keeps_transfers(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _prepare_random_event_tipping_summary_test(repository, now)
+    summary = repository.random_event_tipping_summary()
+    assert summary.event_id is not None
+
+    assert repository.force_end_gameplay("random_event", summary.event_id, now)
+
+    assert repository.active_random_event_state() is None
+    assert repository.find_user("summary-donor-1").balance == 6
+    assert repository.find_user("summary-donor-2").balance == 8
+    assert repository.find_user("summary-a").balance == 3
+    assert repository.find_user("summary-b").balance == 3
+    with session_factory() as session:
+        messages = list(session.scalars(select(OutboundRecord.text)))
+    assert sum(
+        text.startswith("【随机事件打赏已强制结束】") for text in messages
+    ) == 1
+    assert not any("管理员已强制结束随机事件" in text for text in messages)
+
+
 def _prepare_random_event_tip_test(repository, now, *, duration=120):
     repository.create_random_event_scene(
         "打赏测试场", "报名", ["正式开始。"], 1, 1, [("员工", 2)]

@@ -9853,25 +9853,62 @@ class CoreRepository:
         now: datetime,
         forced: bool = False,
     ) -> None:
-        del forced
         if event.state != "tipping":
             return
         currency = self.get_game_settings().currency_name
-        participant_lines = "\n".join(
-            f"{item.display_name}：0 {currency}"
-            for item in self._random_event_tipping_participants(session, event)
+        participant_rows = list(
+            session.execute(
+                select(RandomEventParticipantRecord, UserRecord)
+                .join(
+                    UserRecord,
+                    UserRecord.id == RandomEventParticipantRecord.user_id,
+                )
+                .where(RandomEventParticipantRecord.event_id == event.id)
+            )
         )
+        sender = aliased(UserRecord)
+        recipient = aliased(UserRecord)
+        tip_rows = list(
+            session.execute(
+                select(RandomEventTipRecord, sender, recipient)
+                .join(sender, sender.id == RandomEventTipRecord.sender_user_id)
+                .join(recipient, recipient.id == RandomEventTipRecord.recipient_user_id)
+                .where(RandomEventTipRecord.event_id == event.id)
+                .order_by(RandomEventTipRecord.created_at, RandomEventTipRecord.id)
+            )
+        )
+        totals: dict[UUID, int] = {}
+        tips_by_recipient: dict[UUID, list[tuple[RandomEventTipRecord, UserRecord]]] = {}
+        for tip, tip_sender, _tip_recipient in tip_rows:
+            totals[tip.recipient_user_id] = (
+                totals.get(tip.recipient_user_id, 0) + tip.amount
+            )
+            tips_by_recipient.setdefault(tip.recipient_user_id, []).append(
+                (tip, tip_sender)
+            )
+        participant_rows.sort(
+            key=lambda row: (-totals.get(row[1].id, 0), row[1].employee_number)
+        )
+        participant_lines: list[str] = []
+        for _participant, user in participant_rows:
+            participant_lines.append(
+                f"{user.display_name}：{totals.get(user.id, 0)} {currency}"
+            )
+            participant_lines.extend(
+                f"  - {tip_sender.display_name}：{tip.amount} {currency}"
+                for tip, tip_sender in tips_by_recipient.get(user.id, ())
+            )
         self._finish_random_event(session, event, "ended", now)
         self.enqueue_system_outbound(
             self._render_reply_template(
                 "/随机事件打赏",
-                "settled",
+                "forced_settled" if forced else "settled",
                 now,
                 {
-                    "{参与者打赏汇总}": participant_lines,
-                    "{无人打赏提示}": "本场无人打赏。",
+                    "{参与者打赏汇总}": "\n".join(participant_lines),
+                    "{无人打赏提示}": "" if tip_rows else "本场无人打赏。",
                 },
-            )
+            ).rstrip()
         )
 
     def last_random_event_reward(self, platform_id: str) -> int:

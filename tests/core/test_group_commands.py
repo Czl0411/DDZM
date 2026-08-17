@@ -698,6 +698,46 @@ def test_board_member_force_end_is_not_blocked_by_random_event_rules():
     assert _latest_reply(factory) == "【随机事件】管理员已强制结束当前游戏。"
 
 
+def test_board_member_force_end_settles_random_event_tipping_phase():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
+    repository.create_user("tipping-board", "打赏董事", now, 0)
+    repository.create_user("tipping-player", "事件玩家", now, 0)
+    with factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        board = session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "tipping-board")
+        )
+        assert board_rank is not None
+        assert board is not None
+        board.rank_id = board_rank.id
+    repository.create_random_event_scene(
+        "强制结算场", "报名", ["正式开始。"], 4, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "可选身份：{可选身份}", 15, 5
+    )
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("tipping-player", "员工", now) == "started"
+    assert repository.leave_random_event("tipping-player", now) == "left_without_reward"
+
+    _receive(
+        service,
+        "board-force-end-tipping",
+        "tipping-board",
+        "/结束游戏",
+        now,
+    )
+
+    assert repository.active_gameplay_summary("tipping-board", now).game_type is None
+    assert _latest_reply(factory).startswith("【随机事件打赏已强制结束】")
+
+
 def test_board_bonus_command_grants_single_and_all_employees():
     from dzmm_bot.core.schema import RankRecord, UserRecord
 

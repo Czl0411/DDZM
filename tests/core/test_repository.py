@@ -3573,6 +3573,7 @@ def test_ai_prompt_orders_authority_before_impressions(repository, session_facto
     assert "短期现实状态必须结合当前北京时间、新旧顺序和本人后续澄清判断" in prompt
     assert "“好了、没事了、刚才开玩笑”等更新覆盖更早消息" in prompt
     assert "没有证据时明确表示最近没有听本人提起，不得补造事实" in prompt
+    assert "共同经历只表示同场参与，不代表关系亲密" in prompt
     assert prompt.index("【规则知识卡】") < prompt.index("【群友认知上下文")
 
 

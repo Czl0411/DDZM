@@ -139,6 +139,7 @@ git commit -m "feat: limit random event submissions to once daily"
 - Modify: `src/dzmm_bot/core/random_event_submissions.py:1-155`
 - Modify: `src/dzmm_bot/core/reply_templates.py:325-350`
 - Modify: `tests/core/test_random_event_submissions.py:260-390`
+- Modify: `tests/core/test_repository.py:80-190`
 
 **Interfaces:**
 - Consumes: `RandomEventSubmissionDailyLimitError` from Task 1.
@@ -193,8 +194,10 @@ Keep every other validation error on the current `invalid_input` path.
 
 ```bash
 PYTHONPATH=src .venv/bin/pytest \
-  tests/core/test_random_event_submissions.py \
-  tests/core/test_reply_templates.py -q
+  tests/core/test_random_event_submissions.py -q
+PYTHONPATH=src .venv/bin/pytest \
+  tests/core/test_repository.py \
+  -k 'random_event_submission or reply_templates_are_managed' -q
 ```
 
 Expected: all tests pass.
@@ -204,7 +207,8 @@ Expected: all tests pass.
 ```bash
 git add src/dzmm_bot/core/random_event_submissions.py \
   src/dzmm_bot/core/reply_templates.py \
-  tests/core/test_random_event_submissions.py
+  tests/core/test_random_event_submissions.py \
+  tests/core/test_repository.py
 git commit -m "feat: explain the daily submission limit"
 ```
 
@@ -224,8 +228,9 @@ git commit -m "feat: explain the daily submission limit"
 ```bash
 PYTHONPATH=src .venv/bin/pytest \
   tests/core/test_random_event_submissions.py \
-  tests/core/test_service.py \
-  tests/core/test_reply_templates.py -q
+  tests/core/test_service.py -q
+PYTHONPATH=src .venv/bin/pytest \
+  tests/core/test_repository.py -k 'random_event_submission or reply_templates_are_managed' -q
 ```
 
 Expected: all tests pass.

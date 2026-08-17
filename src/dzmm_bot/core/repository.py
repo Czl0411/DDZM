@@ -1146,6 +1146,10 @@ class ManualLoginOwnerError(RuntimeError):
     pass
 
 
+class RandomEventSubmissionDailyLimitError(ValueError):
+    pass
+
+
 _COMMAND_DEFINITIONS = (
     ("/入职", "/入职 名字", "登记群成员为摸鱼公司员工"),
     ("/我的物品", "/我的物品", "查看自己持有的物品"),
@@ -1764,6 +1768,20 @@ class CoreRepository:
                     settings.submission_default_event_reward,
                     settings.submission_default_target_rounds,
                 )
+                day_start = now.replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                day_end = day_start + timedelta(days=1)
+                already_submitted = session.scalar(
+                    select(RandomEventSubmissionRecord.id).where(
+                        RandomEventSubmissionRecord.user_id == user.id,
+                        RandomEventSubmissionRecord.id != record.id,
+                        RandomEventSubmissionRecord.submitted_at >= day_start,
+                        RandomEventSubmissionRecord.submitted_at < day_end,
+                    )
+                )
+                if already_submitted is not None:
+                    raise RandomEventSubmissionDailyLimitError()
                 record.status = "pending"
                 record.current_step = "submitted"
                 record.target_rounds = settings.submission_default_target_rounds

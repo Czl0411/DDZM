@@ -344,6 +344,7 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/投稿", "approved", "审核通过通知", "你的随机事件投稿「{场景名称}」已审核通过，获得 {通过奖励} 摸鱼币。", ("{场景名称}", "{通过奖励}", "{日期}")),
     TemplateDefinition("/投稿", "rejected", "审核拒绝通知", "你的随机事件投稿「{场景名称}」未通过审核。原因：{拒绝原因}", ("{场景名称}", "{拒绝原因}", "{日期}")),
     TemplateDefinition("/确认投稿", "incomplete", "投稿未完成", "投稿尚未完成，请继续填写当前项目。", ("{日期}",)),
+    TemplateDefinition("/确认投稿", "daily_limit", "今日投稿次数已用完", "你今天已经投稿过一次，请明天再来。", ("{日期}",)),
     TemplateDefinition("/确认投稿", "submitted", "投稿已提交", "投稿 #{投稿编号} 已提交审核。", ("{投稿编号}", "{日期}")),
     TemplateDefinition("/取消投稿", "confirm", "取消确认", "确认取消当前投稿吗？发送 /确认取消投稿；发送 /上一步 返回。", ("{日期}",)),
     TemplateDefinition("/确认取消投稿", "required", "需要先申请取消", "请先发送 /取消投稿。", ("{日期}",)),

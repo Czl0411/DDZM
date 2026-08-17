@@ -484,7 +484,7 @@ function renderCurrentGameplay(gameplay) {
   const states = {
     signup: "报名中", collecting: "报数中", waiting_continue: "等待继续",
     awaiting_continue: "等待继续", active: "进行中", in_progress: "进行中",
-    waiting_opponent: "等待对手", conflict: "状态冲突",
+    waiting_opponent: "等待对手", tipping: "打赏中", conflict: "状态冲突",
   };
   const participants = gameplay.participants.map((participant) => {
     const number = participant.number == null ? "" : `${participant.number}号 `;
@@ -494,7 +494,7 @@ function renderCurrentGameplay(gameplay) {
   card.innerHTML = `
     <article><span>当前游戏</span><strong>${escapeHtml(names[gameplay.game_type] || gameplay.game_type)}</strong><small>${escapeHtml(states[gameplay.state] || gameplay.state || "未知状态")} · ${escapeHtml(gameplay.game_id)}</small></article>
     <article><span>参与者</span><strong>${gameplay.participants.length} 人</strong><small>${escapeHtml(participants)}</small></article>
-    <article><span>时限与进度</span><strong>${gameplay.skip_enabled ? "可跳过" : "进行中"}</strong><small>${gameplay.signup_deadline ? `报名截止 ${formatHeartbeat(gameplay.signup_deadline)}` : gameplay.next_reminder_at ? `下次提醒 ${formatHeartbeat(gameplay.next_reminder_at)}` : "当前无倒计时"}</small></article>`;
+    <article><span>时限与进度</span><strong>${gameplay.state === "tipping" ? `已打赏 ${gameplay.tip_total} 摸鱼币` : gameplay.skip_enabled ? "可跳过" : "进行中"}</strong><small>${gameplay.tipping_deadline ? `打赏截止 ${formatHeartbeat(gameplay.tipping_deadline)}` : gameplay.signup_deadline ? `报名截止 ${formatHeartbeat(gameplay.signup_deadline)}` : gameplay.next_reminder_at ? `下次提醒 ${formatHeartbeat(gameplay.next_reminder_at)}` : "当前无倒计时"}</small></article>`;
   forceEndCurrentGame.hidden = false;
   forceEndCurrentGame.dataset.gameType = gameplay.game_type;
   forceEndCurrentGame.dataset.gameId = gameplay.game_id;
@@ -507,7 +507,7 @@ async function loadCurrentGameplay() {
 }
 
 function eventStatusLabel(status) {
-  return ({pending: "待开始", signup: "报名中", in_progress: "进行中", ended: "已结束", dissolved: "已解散", skipped: "已跳过"})[status] || status;
+  return ({pending: "待开始", signup: "报名中", in_progress: "进行中", tipping: "打赏中", ended: "已结束", dissolved: "已解散", skipped: "已跳过"})[status] || status;
 }
 
 function formatBeijingInput(value) {
@@ -521,6 +521,7 @@ function renderRandomEventSettings(settings) {
     <article><span>每日固定场次</span><strong>${settings.schedule_times.length} 场</strong><small>${escapeHtml(settings.schedule_times.join(" · "))}（北京时间）</small></article>
     <article><span>报名补充说明</span><strong>已配置</strong><small>${escapeHtml(settings.signup_notice_template)}</small></article>
     <article><span>报名与提醒</span><strong>${settings.signup_timeout_minutes} / ${settings.reminder_interval_minutes} 分钟</strong><small>报名超时 / 未满员提醒</small></article>
+    <article><span>打赏环节</span><strong>${settings.tipping_duration_seconds} 秒</strong><small>最后一名参与者退出后开始</small></article>
     <article><span>期间指令放行</span><strong>${settings.signup_allowed_commands.length} / ${settings.in_progress_allowed_commands.length}</strong><small>报名中 / 进行中</small></article>
     <article><span>玩家投稿</span><strong>${settings.submission_enabled ? "已开放" : "已关闭"}</strong><small>草稿 ${settings.submission_draft_timeout_minutes} 分钟过期 · 最多 ${settings.submission_max_participants} 人 · 通过奖励 ${settings.submission_approval_reward}</small></article>`;
 }
@@ -1045,6 +1046,7 @@ async function openRandomEventSettingsModal() {
   document.querySelector("#random-event-signup-notice").value = settings.signup_notice_template;
   document.querySelector("#random-event-signup-timeout").value = settings.signup_timeout_minutes;
   document.querySelector("#random-event-reminder-interval").value = settings.reminder_interval_minutes;
+  document.querySelector("#random-event-tipping-duration").value = settings.tipping_duration_seconds;
   document.querySelector("#random-event-blocked-message").value = settings.blocked_message;
   document.querySelector("#random-event-submission-enabled").checked = settings.submission_enabled;
   document.querySelector("#random-event-submission-timeout").value = settings.submission_draft_timeout_minutes;
@@ -1110,7 +1112,9 @@ function openRandomEventTimeModal(button) {
 
 async function openRandomEventDetailsModal(scheduleId) {
   const details = await requestGame(`/api/game/random-events/today/${scheduleId}/details`);
-  document.querySelector("#random-event-details-list").innerHTML = details.items.map((detail) => `<article class="data-row"><div><b>${escapeHtml(detail.display_name)}：${escapeHtml(detail.content)}</b><small>${formatHeartbeat(detail.occurred_at)}</small></div></article>`).join("") || '<p class="muted">暂无参与者发言记录。</p>';
+  const dialogueRows = details.items.map((detail) => `<article class="data-row"><div><b>${escapeHtml(detail.display_name)}：${escapeHtml(detail.content)}</b><small>${formatHeartbeat(detail.occurred_at)}</small></div></article>`).join("");
+  const tipRows = details.tips.map((tip) => `<article class="data-row"><div><b>${escapeHtml(tip.sender_display_name)} → ${escapeHtml(tip.recipient_display_name)}：${tip.amount} 摸鱼币</b><small>${formatHeartbeat(tip.created_at)}</small></div></article>`).join("");
+  document.querySelector("#random-event-details-list").innerHTML = `${dialogueRows || '<p class="muted">暂无参与者发言记录。</p>'}<h3>打赏明细</h3>${tipRows || '<p class="muted">暂无打赏记录。</p>'}`;
   randomEventDetailsModal.hidden = false;
 }
 
@@ -2274,6 +2278,7 @@ randomEventSettingsModal.addEventListener("click", async (event) => {
     signup_notice_template: document.querySelector("#random-event-signup-notice").value.trim(),
     signup_timeout_minutes: Number(document.querySelector("#random-event-signup-timeout").value),
     reminder_interval_minutes: Number(document.querySelector("#random-event-reminder-interval").value),
+    tipping_duration_seconds: Number(document.querySelector("#random-event-tipping-duration").value),
     signup_allowed_commands: [...randomEventSettingsModal.querySelectorAll("[data-random-event-signup-command]:checked")].map((input) => input.value),
     in_progress_allowed_commands: [...randomEventSettingsModal.querySelectorAll("[data-random-event-progress-command]:checked")].map((input) => input.value),
     blocked_message: document.querySelector("#random-event-blocked-message").value.trim(),

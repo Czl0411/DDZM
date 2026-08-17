@@ -102,6 +102,18 @@ def test_random_event_tip_command_parses_spaced_name_and_replies_to_source():
     assert repository.find_user("group-tip-donor").balance == 5
     assert repository.find_user("group-tip-target").balance == 5
 
+    current = _receive(
+        service,
+        "group-tip-current",
+        "group-tip-donor",
+        "/当前游戏",
+        now,
+    )
+    current_reply = _replies_for(factory, current.message_id)[0]
+    assert "当前游戏：随机事件" in current_reply
+    assert "状态：打赏中" in current_reply
+    assert "可用指令：/打赏 员工名称 金额" in current_reply
+
 
 def test_random_event_tip_command_reaches_business_validation_before_tipping():
     service, repository, factory = _service()
@@ -1531,7 +1543,7 @@ def test_random_event_uses_the_configured_block_message():
     repository.schedule_random_events(now)
     repository.run_random_event_jobs(now)
 
-    blocked = _receive(service, "blocked", "u1", "/余额", now)
+    blocked = _receive(service, "blocked", "u1", "/打卡", now)
 
     assert _replies_for(factory, blocked.message_id) == ["活动进行中，监事暂不处理。"]
 
@@ -1801,6 +1813,8 @@ def test_help_random_event_topic_lists_submission_entrypoints():
     assert "/投稿 随机事件" in reply
     assert "/我的投稿" in reply
     assert "/撤回投稿 编号" in reply
+    assert "/打赏 员工名称 金额" in reply
+    assert "真实转移" in reply
 
 
 def test_help_game_topic_links_to_each_game_guide():

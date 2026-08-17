@@ -1364,6 +1364,8 @@ def create_app(
             ],
             signup_deadline=summary.signup_deadline,
             next_reminder_at=summary.next_reminder_at,
+            tipping_deadline=summary.tipping_deadline,
+            tip_total=summary.tip_total,
             skip_enabled=summary.skip_enabled,
         )
 
@@ -1436,6 +1438,7 @@ def create_app(
                 request.submission_default_target_rounds,
                 request.submission_default_event_reward,
                 request.submission_approval_reward,
+                request.tipping_duration_seconds,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -2008,7 +2011,16 @@ def create_app(
                 items=[
                     {"display_name": name, "content": content, "occurred_at": occurred_at}
                     for name, content, occurred_at in repository.list_random_event_details(schedule_id)
-                ]
+                ],
+                tips=[
+                    {
+                        "sender_display_name": sender,
+                        "recipient_display_name": recipient,
+                        "amount": amount,
+                        "created_at": created_at,
+                    }
+                    for sender, recipient, amount, created_at in repository.list_random_event_tips(schedule_id)
+                ],
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -2382,6 +2394,7 @@ def _random_event_settings_response(settings) -> RandomEventSettingsResponse:
         submission_default_target_rounds=settings.submission_default_target_rounds,
         submission_default_event_reward=settings.submission_default_event_reward,
         submission_approval_reward=settings.submission_approval_reward,
+        tipping_duration_seconds=settings.tipping_duration_seconds,
     )
 
 

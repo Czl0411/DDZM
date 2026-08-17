@@ -242,6 +242,21 @@ def test_authoritative_context_covers_live_game_topics_without_hidden_deadlines(
     assert "具体引爆" not in blame_context.live_facts_text
 
 
+def test_random_event_authoritative_context_guides_tipping_without_executing(
+    repository, now
+):
+    repository.create_user("random-event-guide", "引导玩家", now, 0)
+
+    context = repository.build_ai_authoritative_context(
+        "random-event-guide", "随机事件怎么打赏", now
+    )
+
+    assert "/打赏 员工名称 金额" in context.commands_text
+    assert "真实转移摸鱼币" in context.live_facts_text
+    assert "不能给自己打赏" in context.live_facts_text
+    assert "不代替执行" in context.live_facts_text
+
+
 def test_number_bomb_authoritative_context_has_public_rules_without_private_values(
     repository, now
 ):

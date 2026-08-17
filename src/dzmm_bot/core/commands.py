@@ -360,6 +360,7 @@ class GroupCommandHandler:
             "waiting_continue": "等待继续",
             "awaiting_continue": "等待继续",
             "in_progress": "进行中",
+            "tipping": "打赏中",
         }.get(summary.state, "进行中")
         role_name = {
             "participant": "参与者",
@@ -1921,6 +1922,7 @@ class GroupCommandHandler:
                 (
                     ("/加入", "/加入 身份：选择身份报名随机事件"),
                     ("/退出", "/退出：退出或结算当前随机事件"),
+                    ("/打赏", "/打赏 员工名称 金额：所有参与者退出后限时开放，真实转移摸鱼币且不能给自己打赏"),
                     ("/投稿", "/投稿 随机事件：进入私聊投稿向导"),
                     ("/我的投稿", "/我的投稿：查看最近投稿状态"),
                     ("/撤回投稿", "/撤回投稿 编号：撤回待审核投稿"),

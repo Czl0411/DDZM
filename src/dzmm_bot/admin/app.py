@@ -1123,6 +1123,7 @@ def create_app(
             "submission_default_target_rounds",
             "submission_default_event_reward",
             "submission_approval_reward",
+            "tipping_duration_seconds",
         )
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")

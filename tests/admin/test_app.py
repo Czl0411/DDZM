@@ -152,6 +152,7 @@ class FakeCore:
             "submission_default_target_rounds": 10,
             "submission_default_event_reward": 6,
             "submission_approval_reward": 10,
+            "tipping_duration_seconds": 120,
         }
     )
     random_event_scenes: list[dict] = field(default_factory=list)
@@ -2134,6 +2135,7 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
             "submission_default_target_rounds": 12,
             "submission_default_event_reward": 7,
             "submission_approval_reward": 11,
+            "tipping_duration_seconds": 180,
         },
     )
     scene = client.post(
@@ -2152,6 +2154,7 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
     assert settings.status_code == 200
     assert settings.json()["version"] == 1
     assert core.random_event_settings["submission_draft_timeout_minutes"] == 45
+    assert core.random_event_settings["tipping_duration_seconds"] == 180
     assert scene.status_code == 201
     assert scene.json()["name"] == "茶水间"
     assert scene.json()["openings"] == ["咖啡机突然发出一声巨响。"]
@@ -2255,10 +2258,16 @@ def test_random_event_scene_modal_uses_split_copy_fields(client):
 
 def test_random_event_settings_modal_exposes_command_permissions(client):
     page = client.get("/").text
+    script = Path("src/dzmm_bot/admin/static/admin.js").read_text()
 
     assert 'id="random-event-blocked-message"' in page
+    assert 'id="random-event-tipping-duration"' in page
     assert 'id="random-event-signup-command-permissions"' in page
     assert 'id="random-event-progress-command-permissions"' in page
+    assert "tipping_duration_seconds" in script
+    assert 'tipping: "打赏中"' in script
+    assert "tipping_deadline" in script
+    assert "tip_total" in script
 
 
 def test_admin_exposes_hide_and_seek_configuration_surface(client):

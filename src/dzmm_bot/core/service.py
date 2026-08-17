@@ -19,7 +19,9 @@ _DIRECT_COMMANDS = {
     "/编辑档案", "/编辑档案形象", "/加入", "/退出", "/开始",
     "/答案", "/继续", "/收手", "/投降", "/跳过", "/结束游戏",
 }
-_RANDOM_EVENT_INDEPENDENT_COMMANDS = {"/发红包", "/抢红包", "/打赏"}
+_RANDOM_EVENT_INDEPENDENT_COMMANDS = {
+    "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏"
+}
 
 
 class CommandHandler(Protocol):

@@ -669,6 +669,8 @@ class ActiveGameplaySummary:
     available_commands: tuple[str, ...] = ()
     signup_deadline: datetime | None = None
     next_reminder_at: datetime | None = None
+    tipping_deadline: datetime | None = None
+    tip_total: int = 0
 
 
 @dataclass(frozen=True)
@@ -686,6 +688,8 @@ class GameplayAdminSummary:
     participants: tuple[GameplayAdminParticipant, ...] = ()
     signup_deadline: datetime | None = None
     next_reminder_at: datetime | None = None
+    tipping_deadline: datetime | None = None
+    tip_total: int = 0
     skip_enabled: bool = False
 
 
@@ -2635,6 +2639,10 @@ class CoreRepository:
         if "random_events" in topic_set:
             settings = self.get_random_event_settings()
             lines.append(f"随机事件时刻：{'、'.join(settings.schedule_times)}；当前状态：{self.active_random_event_state() or '无进行中事件'}")
+            lines.append(
+                f"随机事件打赏：所有参与者退出后开放 {settings.tipping_duration_seconds} 秒；"
+                "使用 /打赏 员工名称 金额，真实转移摸鱼币，不能给自己打赏；AI 只解释并引导发送指令，不代替执行。"
+            )
         if "hide_and_seek" in topic_set:
             settings = self.get_hide_and_seek_settings()
             scenes = self.list_hide_and_seek_scenes_page(1, 100)[0]
@@ -4484,6 +4492,15 @@ class CoreRepository:
                     )
                 )
                 participant = any(user.platform_id == platform_id for _, user in rows)
+                available_commands = (
+                    ("/打赏 员工名称 金额",)
+                    if event.state == "tipping"
+                    else ("/退出",)
+                    if participant
+                    else ("/加入 角色",)
+                    if event.state == "signup"
+                    else ()
+                )
                 active.append(
                     ActiveGameplaySummary(
                         "random_event",
@@ -4491,11 +4508,20 @@ class CoreRepository:
                         event.state,
                         "participant" if participant else "nonparticipant",
                         tuple(user.display_name for _, user in rows),
-                        ("/退出",)
-                        if participant and event.state != "tipping"
-                        else (("/加入 角色",) if event.state == "signup" else ()),
+                        available_commands,
                         event.signup_deadline,
                         event.next_reminder_at,
+                        event.tipping_deadline,
+                        int(
+                            session.scalar(
+                                select(
+                                    func.coalesce(
+                                        func.sum(RandomEventTipRecord.amount), 0
+                                    )
+                                ).where(RandomEventTipRecord.event_id == event.id)
+                            )
+                            or 0
+                        ),
                     )
                 )
 
@@ -4522,6 +4548,8 @@ class CoreRepository:
                 ),
                 signup_deadline=summary.signup_deadline,
                 next_reminder_at=summary.next_reminder_at,
+                tipping_deadline=summary.tipping_deadline,
+                tip_total=summary.tip_total,
             )
         with self._session() as session:
             game = session.get(NumberBombGameRecord, summary.game_id)
@@ -9882,6 +9910,39 @@ class CoreRepository:
                     )
                     .where(RandomEventDetailRecord.event_id == event.id)
                     .order_by(RandomEventDetailRecord.position)
+                )
+            )
+
+    def list_random_event_tips(
+        self, schedule_id: UUID
+    ) -> list[tuple[str, str, int, datetime]]:
+        with self._session() as session:
+            event_id = session.scalar(
+                select(RandomEventRecord.id).where(
+                    RandomEventRecord.schedule_id == schedule_id
+                )
+            )
+            if event_id is None:
+                raise ValueError("随机事件不存在")
+            sender = aliased(UserRecord)
+            recipient = aliased(UserRecord)
+            return list(
+                session.execute(
+                    select(
+                        sender.display_name,
+                        recipient.display_name,
+                        RandomEventTipRecord.amount,
+                        RandomEventTipRecord.created_at,
+                    )
+                    .join(sender, sender.id == RandomEventTipRecord.sender_user_id)
+                    .join(
+                        recipient,
+                        recipient.id == RandomEventTipRecord.recipient_user_id,
+                    )
+                    .where(RandomEventTipRecord.event_id == event_id)
+                    .order_by(
+                        RandomEventTipRecord.created_at, RandomEventTipRecord.id
+                    )
                 )
             )
 

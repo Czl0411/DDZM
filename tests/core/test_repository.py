@@ -3161,6 +3161,163 @@ def test_ai_social_context_includes_game_facts_and_common_experiences(
     assert "无关员工" not in prompt
 
 
+def test_ai_social_context_combines_profile_impression_recent_reply_and_live_facts(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord, AIRequestRecord, InboundRecord
+
+    requester, _ = repository.create_user("complete-requester", "完整甲", now, 0)
+    target, _ = repository.create_user("complete-target", "G_百戏♡招聘中", now, 23)
+    repository.set_personal_profile_by_admin(target.platform_id, "喜欢恐怖片")
+    repository.create_ai_player_impression(
+        target.platform_id, "expression_style", "说话前通常先观察", now
+    )
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    recent_at = now + timedelta(seconds=1)
+    recent, _ = repository.accept_inbound(
+        InboundMessage(
+            "complete-recent",
+            target.platform_id,
+            "我刚刚被割伤了",
+            recent_at,
+            chatroom_id="complete-room",
+        )
+    )
+    with session_factory.begin() as session:
+        session.get(InboundRecord, recent.id).ai_memory_eligible = True
+        session.add(
+            AIRequestRecord(
+                inbound_message_id=recent.id,
+                user_id=target.id,
+                status="completed",
+                result_text="先处理伤口",
+                created_at=recent_at,
+                completed_at=recent_at,
+            )
+        )
+    current_at = now + timedelta(seconds=2)
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "complete-current",
+            requester.platform_id,
+            "@总监事 百戏最近怎么样",
+            current_at,
+            chatroom_id="complete-room",
+        )
+    )
+    repository.try_enqueue_ai_request(
+        current.id, requester.platform_id, current.content, current_at
+    )
+
+    claim = repository.claim_ai_request("ai-worker", current_at, 90)
+
+    assert claim is not None
+    assert "G_百戏♡招聘中" in claim.system_prompt
+    assert "喜欢恐怖片" in claim.system_prompt
+    assert "说话前通常先观察" in claim.system_prompt
+    assert "我刚刚被割伤了" in claim.system_prompt
+    assert "先处理伤口" in claim.system_prompt
+    assert "余额：23 摸鱼币" in claim.system_prompt
+
+
+def test_ai_social_context_does_not_load_candidates_for_ambiguous_alias(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord, InboundRecord
+
+    requester, _ = repository.create_user("ambiguous-requester", "歧义甲", now, 0)
+    first, _ = repository.create_user("ambiguous-first", "G_百戏♡招聘中", now, 67)
+    second, _ = repository.create_user("ambiguous-second", "百戏剧场", now, 89)
+    repository.set_personal_profile_by_admin(first.platform_id, "第一候选的私有档案")
+    repository.set_personal_profile_by_admin(second.platform_id, "第二候选的私有档案")
+    for sequence, employee in enumerate((first, second), start=1):
+        recent, _ = repository.accept_inbound(
+            InboundMessage(
+                f"ambiguous-recent-{sequence}",
+                employee.platform_id,
+                f"候选私有近况 {sequence}",
+                now,
+                chatroom_id="ambiguous-room",
+            )
+        )
+        with session_factory.begin() as session:
+            session.get(InboundRecord, recent.id).ai_memory_eligible = True
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    current_at = now + timedelta(seconds=1)
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "ambiguous-current",
+            requester.platform_id,
+            "@总监事 百戏最近怎么样",
+            current_at,
+            chatroom_id="ambiguous-room",
+        )
+    )
+    repository.try_enqueue_ai_request(
+        current.id, requester.platform_id, current.content, current_at
+    )
+
+    prompt = repository.claim_ai_request("ai-worker", current_at, 90).system_prompt
+
+    assert "人物简称“百戏”存在歧义" in prompt
+    assert "不要猜测或泄露候选人的资料" in prompt
+    assert "第一候选的私有档案" not in prompt
+    assert "第二候选的私有档案" not in prompt
+    assert "候选私有近况" not in prompt
+    assert "余额：67 摸鱼币" not in prompt
+    assert "余额：89 摸鱼币" not in prompt
+
+
+def test_ai_social_context_degrades_only_an_unavailable_recent_message_source(
+    repository, session_factory, now, monkeypatch
+):
+    from dzmm_bot.ai.social_context import SocialContextUnavailable
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    requester, _ = repository.create_user("degrade-requester", "降级甲", now, 0)
+    target, _ = repository.create_user("degrade-target", "降级乙", now, 31)
+    repository.set_personal_profile_by_admin(target.platform_id, "仍可读取的档案")
+    repository.create_ai_player_impression(
+        target.platform_id, "interests", "长期喜欢桌游", now
+    )
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+
+    def unavailable_recent_messages(session, employee, inbound):
+        raise SocialContextUnavailable("消息记录")
+
+    monkeypatch.setattr(
+        repository, "_recent_social_messages", unavailable_recent_messages
+    )
+    current_at = now + timedelta(seconds=1)
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "degrade-current",
+            requester.platform_id,
+            "@总监事 降级乙最近怎么样",
+            current_at,
+            chatroom_id="degrade-room",
+        )
+    )
+    repository.try_enqueue_ai_request(
+        current.id, requester.platform_id, current.content, current_at
+    )
+
+    claim = repository.claim_ai_request("ai-worker", current_at, 90)
+
+    assert claim is not None
+    assert "消息记录暂时不可用" in claim.system_prompt
+    assert "不要声称对方最近没有发言" in claim.system_prompt
+    assert "仍可读取的档案" in claim.system_prompt
+    assert "长期喜欢桌游" in claim.system_prompt
+    assert "余额：31 摸鱼币" in claim.system_prompt
+
+
 def test_ai_claim_includes_latest_fifteen_completed_turns_in_order(
     repository, session_factory, now
 ):
@@ -3400,6 +3557,12 @@ def test_ai_prompt_orders_authority_before_impressions(repository, session_facto
     assert "不得调用命令处理器、伪造执行成功或承诺已经修改状态" in prompt
     assert "结合近期对话理解本次问题，以玩家最新消息为主" in prompt
     assert "历史内容只能用于语言承接" in prompt
+    assert "不得按“档案、画像、最新、状态”栏目机械复述" in prompt
+    assert "不得声称“根据数据库显示”" in prompt
+    assert "短期现实状态必须结合当前北京时间、新旧顺序和本人后续澄清判断" in prompt
+    assert "“好了、没事了、刚才开玩笑”等更新覆盖更早消息" in prompt
+    assert "没有证据时明确表示最近没有听本人提起，不得补造事实" in prompt
+    assert prompt.index("【规则知识卡】") < prompt.index("【群友认知上下文")
 
 
 def test_personal_profile_is_safe_player_authored_ai_context_without_memory_job(

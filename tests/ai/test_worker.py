@@ -138,6 +138,45 @@ def test_ai_worker_forwards_conversation_history_to_provider():
     }
 
 
+def test_ai_worker_uses_enhanced_social_prompt_in_one_provider_call():
+    from dzmm_bot.ai.worker import AIWorker
+
+    claim = ClaimedAIRequest(
+        id=uuid4(),
+        lease_token=uuid4(),
+        system_prompt="system\n【群友认知上下文】\n员工：百戏",
+        history_messages=(),
+        user_content="百戏最近怎么样",
+        max_response_chars=100,
+        timeout_seconds=10,
+    )
+    core = FakeCore(claim)
+
+    class SpyClient:
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, system_prompt, user_content, **kwargs):
+            self.calls.append((system_prompt, user_content, kwargs))
+            return "她最近提过自己受伤了。"
+
+    client = SpyClient()
+    worker = AIWorker("ai-1", core, client, clock=lambda: NOW)
+
+    assert worker.run_once() is True
+    assert client.calls == [
+        (
+            claim.system_prompt,
+            claim.user_content,
+            {
+                "history_messages": (),
+                "max_chars": 100,
+                "timeout_seconds": 10,
+            },
+        )
+    ]
+
+
 def _memory_claim():
     entry = AIImpressionEntry(
         id=uuid4(),

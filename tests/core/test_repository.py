@@ -137,7 +137,14 @@ def test_rename_reply_templates_are_managed(repository):
     assert {
         template.scenario
         for template in repository.list_reply_templates("/修改名称")
-    } == {"usage", "not_joined", "invalid_name", "unchanged", "renamed"}
+    } == {
+        "usage",
+        "not_joined",
+        "invalid_name",
+        "name_taken",
+        "unchanged",
+        "renamed",
+    }
 
 
 def test_board_bonus_reply_templates_are_managed(repository):
@@ -638,7 +645,24 @@ def test_create_user_allocates_permanent_employee_numbers(
         assert session.get(EmployeeNumberCounterRecord, 1).next_number == 4
 
 
-def test_rename_user_changes_only_name_and_allows_duplicates(repository, now):
+def test_create_user_rejects_an_occupied_name_after_platform_lookup(
+    repository, now
+):
+    from dzmm_bot.core.repository import EmployeeNameTakenError
+
+    first, _ = repository.create_user("name-owner", "已占用", now, 10)
+
+    with pytest.raises(EmployeeNameTakenError):
+        repository.create_user("name-conflict", " 已占用 ", now, 0)
+
+    existing, created = repository.create_user(
+        "name-owner", "已占用", now, 99
+    )
+    assert created is False
+    assert existing.id == first.id
+
+
+def test_rename_user_rejects_an_occupied_exact_name(repository, now):
     first, _ = repository.create_user("rename-1", "甲", now, 10)
     repository.create_user("rename-2", "乙", now, 20)
     original = (
@@ -649,15 +673,16 @@ def test_rename_user_changes_only_name_and_allows_duplicates(repository, now):
         first.joined_at,
     )
 
-    renamed = repository.rename_user("rename-1", "  乙  ")
-    unchanged = repository.rename_user("rename-1", "乙")
+    occupied = repository.rename_user("rename-1", " 乙 ")
+    renamed = repository.rename_user("rename-1", "First")
+    case_distinct = repository.rename_user("rename-2", "first")
     stored = repository.find_user("rename-1")
 
+    assert occupied.status == "name_taken"
     assert renamed.status == "renamed"
-    assert (renamed.old_name, renamed.new_name) == ("甲", "乙")
-    assert unchanged.status == "unchanged"
-    assert (unchanged.old_name, unchanged.new_name) == ("乙", "乙")
-    assert stored.display_name == "乙"
+    assert (renamed.old_name, renamed.new_name) == ("甲", "First")
+    assert case_distinct.status == "renamed"
+    assert stored.display_name == "First"
     assert (
         stored.employee_number,
         stored.balance,
@@ -731,14 +756,14 @@ def test_board_bonus_grants_single_employee_and_records_audit(
     }
 
 
-def test_board_bonus_resolves_employee_numbers_and_lists_duplicate_candidates(
+def test_board_bonus_resolves_employee_numbers(
     repository, session_factory, now
 ):
     from dzmm_bot.core.schema import RankRecord, UserRecord
 
     board, _ = repository.create_user("number-board", "董事", now, 0)
-    first, _ = repository.create_user("number-target-1", "同名", now, 0)
-    second, _ = repository.create_user("number-target-2", "同名", now, 0)
+    first, _ = repository.create_user("number-target-1", "目标甲", now, 0)
+    second, _ = repository.create_user("number-target-2", "目标乙", now, 0)
     with session_factory.begin() as session:
         board_rank = session.scalar(
             select(RankRecord).where(RankRecord.is_board.is_(True))
@@ -748,15 +773,12 @@ def test_board_bonus_resolves_employee_numbers_and_lists_duplicate_candidates(
 
     padded = repository.grant_board_bonus("number-board", "#0002", 5, now)
     compact = repository.grant_board_bonus("number-board", "#3", 7, now)
-    ambiguous = repository.grant_board_bonus("number-board", "同名", 9, now)
     missing = repository.grant_board_bonus("number-board", "#9999", 9, now)
 
     assert padded.status == "granted"
-    assert padded.recipient_display_name == "同名"
+    assert padded.recipient_display_name == "目标甲"
     assert compact.status == "granted"
-    assert compact.recipient_display_name == "同名"
-    assert ambiguous.status == "ambiguous_target"
-    assert ambiguous.candidate_labels == ("同名 #0002", "同名 #0003")
+    assert compact.recipient_display_name == "目标乙"
     assert missing.status == "target_not_found"
     assert repository.find_user(first.platform_id).balance == 5
     assert repository.find_user(second.platform_id).balance == 7
@@ -815,7 +837,7 @@ def test_board_bonus_grants_every_employee_before_name_lookup(
     }
 
 
-def test_board_bonus_rejects_unauthorized_ambiguous_missing_and_invalid_grants(
+def test_board_bonus_rejects_unauthorized_missing_and_invalid_grants(
     repository, session_factory, now
 ):
     from dzmm_bot.core.schema import (
@@ -827,8 +849,7 @@ def test_board_bonus_rejects_unauthorized_ambiguous_missing_and_invalid_grants(
 
     board, _ = repository.create_user("board", "董事", now, 0)
     manager, _ = repository.create_user("manager", "负责人", now, 0)
-    repository.create_user("duplicate-1", "同名", now, 0)
-    repository.create_user("duplicate-2", "同名", now, 0)
+    repository.create_user("target", "目标员工", now, 0)
     with session_factory.begin() as session:
         board_rank = session.scalar(
             select(RankRecord).where(RankRecord.is_board.is_(True))
@@ -844,17 +865,14 @@ def test_board_bonus_rejects_unauthorized_ambiguous_missing_and_invalid_grants(
         session.get(UserRecord, board.id).rank_id = board_rank.id
         session.get(UserRecord, manager.id).rank_id = manager_rank.id
 
-    assert repository.grant_board_bonus("missing", "同名", 10, now).status == (
+    assert repository.grant_board_bonus("missing", "目标员工", 10, now).status == (
         "not_joined"
     )
-    assert repository.grant_board_bonus("manager", "同名", 10, now).status == (
+    assert repository.grant_board_bonus("manager", "目标员工", 10, now).status == (
         "not_authorized"
     )
     assert repository.grant_board_bonus("board", "不存在", 10, now).status == (
         "target_not_found"
-    )
-    assert repository.grant_board_bonus("board", "同名", 10, now).status == (
-        "ambiguous_target"
     )
     for amount in (0, -1, 100000):
         assert repository.grant_board_bonus("board", "全部", amount, now).status == (
@@ -1399,10 +1417,12 @@ def test_red_packet_database_rejects_duplicate_claimant(session_factory):
         session.flush()
 
 
-def _prepare_number_bomb_players(repository, now, prefix, count, balance=0):
+def _prepare_number_bomb_players(
+    repository, now, prefix, count, balance=0, name_prefix="玩家"
+):
     platform_ids = [f"{prefix}-p{index}" for index in range(1, count + 1)]
     for index, platform_id in enumerate(platform_ids, 1):
-        repository.create_user(platform_id, f"玩家{index}", now, balance)
+        repository.create_user(platform_id, f"{name_prefix}{index}", now, balance)
     repository.upsert_direct_chats(
         [(platform_id, f"direct-{platform_id}") for platform_id in platform_ids], now
     )
@@ -1839,7 +1859,9 @@ def test_number_bomb_signup_expires_once_but_started_states_never_idle_expire(
     assert repository.number_bomb_game_summary().state is None
 
     active_now = now + timedelta(hours=2)
-    active_players = _prepare_number_bomb_players(repository, active_now, "no-idle", 3)
+    active_players = _prepare_number_bomb_players(
+        repository, active_now, "no-idle", 3, name_prefix="活跃玩家"
+    )
     repository.start_number_bomb_game(active_players[0], active_now)
     repository.join_number_bomb_game(active_players[1], active_now)
     repository.join_number_bomb_game(active_players[2], active_now)
@@ -1946,9 +1968,7 @@ def test_number_bomb_skip_validates_actor_and_all_targets_before_mutation(reposi
     ]
 
 
-def test_number_bomb_skip_accepts_unique_name_and_rejects_duplicate_name(
-    repository, now
-):
+def test_number_bomb_skip_accepts_unique_name(repository, now):
     platform_ids = _prepare_number_bomb_players(repository, now, "skip-name", 4)
     repository.start_number_bomb_game(platform_ids[0], now)
     for platform_id in platform_ids[1:]:
@@ -1963,24 +1983,6 @@ def test_number_bomb_skip_accepts_unique_name_and_rejects_duplicate_name(
     assert result.status == "skipped"
     assert [player.roster_order for player in result.players] == [4]
     repository.end_number_bomb_game(platform_ids[0], now + timedelta(seconds=17))
-
-    duplicate_ids = _prepare_number_bomb_players(repository, now, "skip-duplicate", 4)
-    with repository.transaction():
-        with repository._session() as session:
-            for platform_id in duplicate_ids[1:3]:
-                user = session.scalar(
-                    select(UserRecord).where(UserRecord.platform_id == platform_id)
-                )
-                user.display_name = "同名玩家"
-    repository.start_number_bomb_game(duplicate_ids[0], now)
-    for platform_id in duplicate_ids[1:]:
-        repository.join_number_bomb_game(platform_id, now)
-    repository.start_number_bomb_round(duplicate_ids[0], now)
-    repository.run_number_bomb_jobs(now + timedelta(seconds=15))
-
-    assert repository.skip_number_bomb_players(
-        duplicate_ids[0], ("同名玩家",), now + timedelta(seconds=16)
-    ).status == "ambiguous_target"
 
 
 
@@ -4546,8 +4548,10 @@ def test_department_headcounts_include_nonempty_default_disabled_and_unknown_ran
 ):
     from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
 
-    for platform_id in ("default-1", "default-2", "tech-1", "tech-2", "unknown"):
-        repository.create_user(platform_id, "同名", now, 0)
+    for index, platform_id in enumerate(
+        ("default-1", "default-2", "tech-1", "tech-2", "unknown"), 1
+    ):
+        repository.create_user(platform_id, f"员工{index}", now, 0)
     with session_factory.begin() as session:
         default = session.scalar(
             select(DepartmentRecord).where(DepartmentRecord.is_default.is_(True))
@@ -4642,8 +4646,8 @@ def test_department_headcounts_include_all_highest_rank_members(
     from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
 
     repository.create_user("junior", "初级员工", now, 0)
-    first, _ = repository.create_user("highest-1", "同名", now, 0)
-    second, _ = repository.create_user("highest-2", "同名", now, 0)
+    first, _ = repository.create_user("highest-1", "最高甲", now, 0)
+    second, _ = repository.create_user("highest-2", "最高乙", now, 0)
     with session_factory.begin() as session:
         tech = session.scalar(
             select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
@@ -4667,8 +4671,8 @@ def test_department_headcounts_include_all_highest_rank_members(
     assert headcount is not None
     assert headcount.highest_rank_name == "正式员工"
     assert headcount.highest_rank_members == (
-        DepartmentHighestRankMember("同名", first.employee_number),
-        DepartmentHighestRankMember("同名", second.employee_number),
+        DepartmentHighestRankMember("最高甲", first.employee_number),
+        DepartmentHighestRankMember("最高乙", second.employee_number),
     )
 
 

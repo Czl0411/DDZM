@@ -1146,6 +1146,10 @@ class ManualLoginOwnerError(RuntimeError):
     pass
 
 
+class EmployeeNameTakenError(ValueError):
+    pass
+
+
 _COMMAND_DEFINITIONS = (
     ("/入职", "/入职 名字", "登记群成员为摸鱼公司员工"),
     ("/我的物品", "/我的物品", "查看自己持有的物品"),
@@ -10870,7 +10874,9 @@ class CoreRepository:
             return session.get(UserRecord, UUID(str(user_id)))
 
     @staticmethod
-    def _take_employee_number(session: Session) -> int:
+    def _lock_employee_identity_gate(
+        session: Session,
+    ) -> EmployeeNumberCounterRecord:
         counter = session.scalar(
             select(EmployeeNumberCounterRecord)
             .where(EmployeeNumberCounterRecord.id == 1)
@@ -10886,6 +10892,11 @@ class CoreRepository:
             counter = EmployeeNumberCounterRecord(id=1, next_number=next_number)
             session.add(counter)
             session.flush()
+        return counter
+
+    @classmethod
+    def _take_employee_number(cls, session: Session) -> int:
+        counter = cls._lock_employee_identity_gate(session)
         employee_number = counter.next_number
         counter.next_number += 1
         return employee_number
@@ -10893,6 +10904,7 @@ class CoreRepository:
     def create_user(
         self, platform_id: str, display_name: str, joined_at: datetime, initial_balance: int
     ) -> tuple[UserRecord, bool]:
+        normalized_name = display_name.strip()
         with self.transaction():
             with self._session() as session:
                 default_rank, default_department = self._ensure_organization_defaults(session)
@@ -10901,10 +10913,17 @@ class CoreRepository:
                 )
                 if existing is not None:
                     return existing, False
+                employee_number = self._take_employee_number(session)
+                if session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.display_name == normalized_name
+                    )
+                ) is not None:
+                    raise EmployeeNameTakenError("名称已被占用")
                 record = UserRecord(
                     platform_id=platform_id,
-                    display_name=display_name,
-                    employee_number=self._take_employee_number(session),
+                    display_name=normalized_name,
+                    employee_number=employee_number,
                     balance=0,
                     rank_id=default_rank.id,
                     department_id=default_department.id,
@@ -10921,13 +10940,20 @@ class CoreRepository:
         normalized_name = new_name.strip()
         with self.transaction():
             with self._session() as session:
+                if session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                ) is None:
+                    return RenameEmployeeResult("not_joined")
+                self._lock_employee_identity_gate(session)
                 user = session.scalar(
                     select(UserRecord)
                     .where(UserRecord.platform_id == platform_id)
                     .with_for_update()
                 )
                 if user is None:
-                    return RenameEmployeeResult("not_joined")
+                    raise RuntimeError("员工在改名期间消失")
                 if not 1 <= len(normalized_name) <= 64:
                     return RenameEmployeeResult(
                         "invalid_name", old_name=user.display_name
@@ -10937,6 +10963,15 @@ class CoreRepository:
                         "unchanged",
                         old_name=user.display_name,
                         new_name=user.display_name,
+                    )
+                if session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.display_name == normalized_name,
+                        UserRecord.id != user.id,
+                    )
+                ) is not None:
+                    return RenameEmployeeResult(
+                        "name_taken", old_name=user.display_name
                     )
                 old_name = user.display_name
                 user.display_name = normalized_name

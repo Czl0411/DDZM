@@ -173,17 +173,29 @@ def test_join_registers_employee_with_zero_balance_and_beijing_timestamp():
     assert "#0001" not in _replies_for(factory, balance.message_id)[0]
 
 
-def test_rename_command_allows_duplicate_names_and_preserves_employee_number():
+def test_join_and_rename_commands_reject_occupied_names():
     service, repository, factory = _service()
     now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
     repository.create_user("rename-1", "甲", now, 10)
     repository.create_user("rename-2", "乙", now, 20)
 
-    renamed = _receive(service, "rename-success", "rename-1", "/修改名称 乙", now)
+    join_conflict = _receive(
+        service, "join-conflict", "rename-3", "/入职 乙", now
+    )
+    rename_conflict = _receive(
+        service, "rename-conflict", "rename-1", "/修改名称 乙", now
+    )
+    existing_platform = _receive(
+        service, "join-existing", "rename-1", "/入职 乙", now
+    )
 
-    assert _replies_for(factory, renamed.message_id) == ["名称已修改：甲 → 乙。"]
+    assert _replies_for(factory, join_conflict.message_id) == ["名称已被占用。"]
+    assert _replies_for(factory, rename_conflict.message_id) == ["名称已被占用。"]
+    assert _replies_for(factory, existing_platform.message_id) == [
+        "甲已经在职，当前余额：10 摸鱼币。"
+    ]
     employee = repository.find_user("rename-1")
-    assert employee.display_name == "乙"
+    assert employee.display_name == "甲"
     assert employee.employee_number == 1
     assert employee.balance == 10
 
@@ -649,15 +661,14 @@ def test_board_bonus_all_target_precedes_name_lookup_and_is_idempotent():
     }
 
 
-def test_board_bonus_command_rejects_nonboard_missing_and_ambiguous_targets():
+def test_board_bonus_command_rejects_nonboard_and_missing_targets():
     from dzmm_bot.core.schema import RankRecord, UserRecord
 
     service, repository, factory = _service()
     now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
     board, _ = repository.create_user("board", "董事", now, 0)
     manager, _ = repository.create_user("manager", "负责人", now, 0)
-    repository.create_user("duplicate-1", "同名", now, 0)
-    repository.create_user("duplicate-2", "同名", now, 0)
+    repository.create_user("target", "目标员工", now, 0)
     with factory.begin() as session:
         board_rank = session.scalar(
             select(RankRecord).where(RankRecord.is_board.is_(True))
@@ -673,20 +684,15 @@ def test_board_bonus_command_rejects_nonboard_missing_and_ambiguous_targets():
         session.get(UserRecord, board.id).rank_id = board_rank.id
         session.get(UserRecord, manager.id).rank_id = manager_rank.id
 
-    _receive(service, "unauthorized-bonus", "manager", "/发奖金 同名 10", now)
+    _receive(service, "unauthorized-bonus", "manager", "/发奖金 目标员工 10", now)
     assert _latest_reply(factory) == "只有核心董事会成员可以发放奖金。"
     _receive(service, "missing-bonus", "board", "/发奖金 不存在 10", now)
     assert _latest_reply(factory) == "未找到该员工，请检查员工名。"
-    _receive(service, "ambiguous-bonus", "board", "/发奖金 同名 10", now)
-    assert _latest_reply(factory) == (
-        "存在多名同名员工：同名 #0003、同名 #0004。请使用工号后重试。"
-    )
     assert all(user.balance == 0 for user in repository.list_users())
 
     _receive(service, "numbered-bonus", "board", "/发奖金 #0003 10", now)
-    assert _latest_reply(factory) == "【奖金】董事向同名发放 10 摸鱼币。"
-    assert repository.find_user("duplicate-1").balance == 10
-    assert repository.find_user("duplicate-2").balance == 0
+    assert _latest_reply(factory) == "【奖金】董事向目标员工发放 10 摸鱼币。"
+    assert repository.find_user("target").balance == 10
 
 
 @pytest.mark.parametrize(
@@ -1171,14 +1177,14 @@ def test_department_headcount_commands_show_totals_and_rank_counts_only():
     ]
 
 
-def test_department_headcount_shows_numbers_only_for_tied_duplicate_names():
+def test_department_headcount_shows_all_tied_highest_rank_members():
     from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
 
     service, repository, factory = _service()
     now = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
     repository.create_user("viewer", "查询人", now, 0)
-    first, _ = repository.create_user("highest-1", "同名", now, 0)
-    second, _ = repository.create_user("highest-2", "同名", now, 0)
+    repository.create_user("highest-1", "最高甲", now, 0)
+    repository.create_user("highest-2", "最高乙", now, 0)
     with factory.begin() as session:
         tech = session.scalar(
             select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
@@ -1200,10 +1206,7 @@ def test_department_headcount_shows_numbers_only_for_tied_duplicate_names():
     result = _receive(service, "duplicate-heads", "viewer", "/部门人数", now)
     reply = _replies_for(factory, result.message_id)[0]
 
-    assert (
-        f"最高职位者：正式员工 同名 #{first.employee_number:04d}、"
-        f"同名 #{second.employee_number:04d}"
-    ) in reply
+    assert "最高职位者：正式员工 最高甲、最高乙" in reply
     assert "查询人 #" not in reply
 
 

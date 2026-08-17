@@ -8,6 +8,7 @@ from .reply_templates import render_template, template_definition
 from .repository import (
     BlameGameResult,
     CoreRepository,
+    EmployeeNameTakenError,
     blame_settlement_template_values,
     format_employee_number,
     undercover_settlement_template_values,
@@ -381,9 +382,15 @@ class GroupCommandHandler:
         if len(parts) != 2 or not parts[1].strip():
             return self._reply("/入职", "missing_name", received_at)
         settings = self._repository.get_game_settings()
-        employee, created = self._repository.create_user(
-            platform_id, parts[1].strip(), received_at, settings.onboarding_bonus
-        )
+        try:
+            employee, created = self._repository.create_user(
+                platform_id,
+                parts[1].strip(),
+                received_at,
+                settings.onboarding_bonus,
+            )
+        except EmployeeNameTakenError:
+            return self._reply("/入职", "name_taken", received_at)
         if not created:
             return self._reply(
                 "/入职",

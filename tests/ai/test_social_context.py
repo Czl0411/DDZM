@@ -41,6 +41,13 @@ def test_resolve_people_accepts_only_unique_aliases():
     assert ambiguous.ambiguous_aliases == ("百戏",)
 
 
+def test_resolve_people_prefers_a_longer_unique_alias_over_its_ambiguous_prefix():
+    result = resolve_people("百戏剧最近怎么样", EMPLOYEES, "speaker")
+
+    assert [item.platform_id for item in result.people] == ["speaker", "other"]
+    assert result.ambiguous_aliases == ()
+
+
 def test_resolve_people_can_return_multiple_referenced_employees():
     result = resolve_people("#0015 和百戏剧场最近怎么了", EMPLOYEES, "speaker")
 

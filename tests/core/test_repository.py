@@ -3168,6 +3168,7 @@ def test_ai_social_context_includes_game_facts_and_common_experiences(
 
     assert "谁是卧底：参与 4，胜 2，负 1" in prompt
     assert "共同经历：谁是卧底；共同甲=win；共同乙=ended" in prompt
+    assert prompt.count("共同经历：谁是卧底；共同甲=win；共同乙=ended") == 1
     assert "无关员工" not in prompt
 
 

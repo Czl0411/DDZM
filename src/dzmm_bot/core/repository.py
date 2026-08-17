@@ -3612,7 +3612,7 @@ class CoreRepository:
                 unavailable_sources.append(str(error))
                 shared_activity_lines = ()
             social_people: list[SocialPersonContext] = []
-            for employee in resolution.people:
+            for employee_index, employee in enumerate(resolution.people):
                 employee_record = session.get(UserRecord, employee.user_id)
                 if employee_record is None:
                     continue
@@ -3655,7 +3655,7 @@ class CoreRepository:
                         ),
                         record_fact_lines=(
                             *record_fact_lines,
-                            *shared_activity_lines,
+                            *(shared_activity_lines if employee_index == 0 else ()),
                         ),
                     )
                 )

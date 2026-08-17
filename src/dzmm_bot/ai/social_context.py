@@ -88,15 +88,20 @@ def resolve_people(
             alias_owners.setdefault(alias, []).append(employee)
 
     ambiguous: list[str] = []
+    protected_spans = list(exact_spans)
     for alias in sorted(alias_owners, key=lambda item: (-len(item), item)):
         occurrences = tuple(re.finditer(re.escape(alias), normalized_content))
-        if not any(
-            not _inside_exact_span(match.span(), exact_spans) for match in occurrences
-        ):
+        unmatched_occurrences = tuple(
+            match
+            for match in occurrences
+            if not _inside_exact_span(match.span(), protected_spans)
+        )
+        if not unmatched_occurrences:
             continue
         owners = alias_owners[alias]
         if len(owners) == 1:
             matched_platform_ids.add(owners[0].platform_id)
+            protected_spans.extend(match.span() for match in unmatched_occurrences)
         elif not any(alias in existing for existing in ambiguous):
             ambiguous.append(alias)
 
@@ -191,9 +196,7 @@ def _employee_aliases(display_name: str) -> set[str]:
 
     aliases: set[str] = set()
     for segment in segments:
-        for start in range(len(segment)):
-            for end in range(start + 2, len(segment) + 1):
-                aliases.add(segment[start:end])
+        aliases.update(segment[:end] for end in range(2, len(segment) + 1))
     return aliases
 
 

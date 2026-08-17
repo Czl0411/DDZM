@@ -705,6 +705,8 @@ class GameplaySummaryResponse(ApiModel):
     participants: list[GameplayParticipantResponse] = Field(default_factory=list)
     signup_deadline: AwareDatetime | None = None
     next_reminder_at: AwareDatetime | None = None
+    tipping_deadline: AwareDatetime | None = None
+    tip_total: int = 0
     skip_enabled: bool = False
 
 
@@ -722,6 +724,7 @@ class RandomEventSettingsResponse(ApiModel):
     submission_default_target_rounds: int = Field(default=10, ge=1, le=999)
     submission_default_event_reward: int = Field(default=6, ge=0, le=999)
     submission_approval_reward: int = Field(default=10, ge=0, le=999)
+    tipping_duration_seconds: int = Field(default=120, ge=10, le=3600)
 
 
 class SetRandomEventSettingsRequest(RandomEventSettingsResponse):
@@ -731,6 +734,7 @@ class SetRandomEventSettingsRequest(RandomEventSettingsResponse):
     submission_default_target_rounds: int | None = Field(default=None, ge=1, le=999)
     submission_default_event_reward: int | None = Field(default=None, ge=0, le=999)
     submission_approval_reward: int | None = Field(default=None, ge=0, le=999)
+    tipping_duration_seconds: int | None = Field(default=None, ge=10, le=3600)
 
 
 class HideAndSeekSettingsResponse(ApiModel):
@@ -957,8 +961,16 @@ class RandomEventDetailResponse(ApiModel):
     occurred_at: datetime
 
 
+class RandomEventTipDetailResponse(ApiModel):
+    sender_display_name: str
+    recipient_display_name: str
+    amount: int
+    created_at: datetime
+
+
 class RandomEventDetailsResponse(ApiModel):
     items: list[RandomEventDetailResponse]
+    tips: list[RandomEventTipDetailResponse] = Field(default_factory=list)
 
 
 class RescheduleRandomEventRequest(ApiModel):

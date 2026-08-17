@@ -444,6 +444,47 @@ def test_service_uses_random_event_block_message_for_unwrapped_observer(session_
     assert inbound.ai_memory_eligible is False
 
 
+def test_service_allows_ordinary_chat_during_random_event_tipping(session_factory):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import BEIJING, InboundRecord, OutboundRecord
+    from dzmm_bot.core.service import CoreService
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository = CoreRepository(session_factory)
+    repository.create_random_event_scene(
+        "茶水间", "快点加入吧。", ["正式开始。"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "{可选身份}", 15, 5, tipping_duration_seconds=120
+    )
+    repository.create_user("tipping-chat", "聊天玩家", now, 0)
+    schedule = repository.schedule_random_events(now)[0]
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("tipping-chat", "员工", now) == "started"
+    assert repository.leave_random_event("tipping-chat", now) == "left_without_reward"
+    service = CoreService(repository)
+
+    result = service.receive_inbound(
+        InboundMessage(
+            "tipping-ordinary-chat",
+            "tipping-chat",
+            "剧情结束后正常聊天",
+            now + timedelta(seconds=1),
+        )
+    )
+
+    with session_factory() as session:
+        inbound = session.get(InboundRecord, result.message_id)
+        reply = session.scalar(
+            select(OutboundRecord).where(
+                OutboundRecord.inbound_message_id == result.message_id
+            )
+        )
+    assert reply is None
+    assert inbound.ai_memory_eligible is True
+    assert repository.list_random_event_details(schedule.id) == []
+
+
 def test_red_packet_commands_bypass_active_random_event_gate(session_factory):
     from random import Random
 

@@ -113,6 +113,7 @@ from .schema import (
     RandomEventDetailRecord,
     RandomEventRecord,
     RandomEventParticipantRecord,
+    RandomEventTipRecord,
     RandomEventSeatRecord,
     RandomEventSceneRecord,
     RandomEventSceneOpeningRecord,
@@ -159,6 +160,8 @@ _BALANCE_SOURCE_LABELS = {
     "profile_edit": "编辑个人档案",
     "profile_image_edit": "编辑档案形象",
     "random_event": "随机事件奖励",
+    "random_event_tip_out": "随机事件打赏支出",
+    "random_event_tip_in": "随机事件打赏收入",
     "hide_and_seek": "摸鱼躲猫猫报名",
     "hide_and_seek_win": "摸鱼躲猫猫获胜",
     "hide_and_seek_penalty": "摸鱼躲猫猫处罚",
@@ -208,6 +211,7 @@ _DEFAULT_RANDOM_EVENT_SUBMISSION_MAX_PARTICIPANTS = 99
 _DEFAULT_RANDOM_EVENT_SUBMISSION_TARGET_ROUNDS = 10
 _DEFAULT_RANDOM_EVENT_SUBMISSION_EVENT_REWARD = 6
 _DEFAULT_RANDOM_EVENT_SUBMISSION_APPROVAL_REWARD = 10
+_DEFAULT_RANDOM_EVENT_TIPPING_DURATION_SECONDS = 120
 _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
     {
         "/入职", "/我的物品", "/打卡", "/余额", "/我", "/编辑档案", "/编辑档案形象", "/我的档案", "/商店", "/帮助", "/当前游戏",
@@ -217,7 +221,7 @@ _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
         "/职位", "/晋升", "/晋升申请列表",
         "/同意", "/全部同意", "/拒绝", "/全部拒绝",
         "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏",
-        "/甩锅游戏", "/甩锅", "/退出甩锅",
+        "/甩锅游戏", "/甩锅", "/退出甩锅", "/打赏",
     }
 )
 _DEFAULT_HIDE_AND_SEEK_ENTRY_FEE = 1
@@ -434,6 +438,34 @@ class RandomEventSettings:
     submission_default_target_rounds: int
     submission_default_event_reward: int
     submission_approval_reward: int
+    tipping_duration_seconds: int
+
+
+@dataclass(frozen=True)
+class RandomEventTippingParticipant:
+    display_name: str
+    employee_number: int
+    base_reward: int
+
+
+@dataclass(frozen=True)
+class RandomEventTippingSummary:
+    state: str | None
+    event_id: UUID | None = None
+    scene_name: str | None = None
+    tipping_started_at: datetime | None = None
+    tipping_deadline: datetime | None = None
+    participants: tuple[RandomEventTippingParticipant, ...] = ()
+
+
+@dataclass(frozen=True)
+class RandomEventTipResult:
+    status: str
+    sender_display_name: str | None = None
+    recipient_display_name: str | None = None
+    amount: int = 0
+    sender_balance: int | None = None
+    recipient_balance: int | None = None
 
 
 @dataclass(frozen=True)
@@ -637,6 +669,8 @@ class ActiveGameplaySummary:
     available_commands: tuple[str, ...] = ()
     signup_deadline: datetime | None = None
     next_reminder_at: datetime | None = None
+    tipping_deadline: datetime | None = None
+    tip_total: int = 0
 
 
 @dataclass(frozen=True)
@@ -654,6 +688,8 @@ class GameplayAdminSummary:
     participants: tuple[GameplayAdminParticipant, ...] = ()
     signup_deadline: datetime | None = None
     next_reminder_at: datetime | None = None
+    tipping_deadline: datetime | None = None
+    tip_total: int = 0
     skip_enabled: bool = False
 
 
@@ -1150,6 +1186,10 @@ class RandomEventSubmissionDailyLimitError(ValueError):
     pass
 
 
+class EmployeeNameTakenError(ValueError):
+    pass
+
+
 _COMMAND_DEFINITIONS = (
     ("/入职", "/入职 名字", "登记群成员为摸鱼公司员工"),
     ("/我的物品", "/我的物品", "查看自己持有的物品"),
@@ -1162,6 +1202,7 @@ _COMMAND_DEFINITIONS = (
     ("/发奖金", "/发奖金 员工名 金额；/发奖金 全部 金额", "核心董事会向单个或全部员工发放系统奖金"),
     ("/发红包", "/发红包 人数 总金额", "使用自己的摸鱼币发出随机运气红包"),
     ("/抢红包", "/抢红包", "领取当前随机运气红包"),
+    ("/打赏", "/打赏 员工名称 金额", "在随机事件打赏阶段向参与者转移摸鱼币"),
     ("/我", "/我；/me", "查看余额、今日活跃度和今日收益"),
     ("/商店", "/商店", "查看当前上架物品"),
     ("/帮助", "/帮助", "查看当前可用指令"),
@@ -1482,6 +1523,7 @@ class CoreRepository:
                     signup_allowed_commands=list(_DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS),
                     in_progress_allowed_commands=list(_DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS),
                     blocked_message=_DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE,
+                    tipping_duration_seconds=_DEFAULT_RANDOM_EVENT_TIPPING_DURATION_SECONDS,
                 )
                 session.add(record)
                 session.flush()
@@ -1502,6 +1544,7 @@ class CoreRepository:
         submission_default_target_rounds: int | None = None,
         submission_default_event_reward: int | None = None,
         submission_approval_reward: int | None = None,
+        tipping_duration_seconds: int | None = None,
     ) -> RandomEventSettings:
         if not isinstance(schedule_times, list) or not schedule_times:
             raise ValueError("每日固定场次至少需要一个时间")
@@ -1531,6 +1574,7 @@ class CoreRepository:
                     signup_allowed_commands=list(_DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS),
                     in_progress_allowed_commands=list(_DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS),
                     blocked_message=_DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE,
+                    tipping_duration_seconds=_DEFAULT_RANDOM_EVENT_TIPPING_DURATION_SECONDS,
                 )
                 session.add(record)
             signup_allowed_commands = _validate_random_event_allowed_commands(
@@ -1565,6 +1609,12 @@ class CoreRepository:
                     or not minimum <= value <= maximum
                 ):
                     raise ValueError(f"{label}需在 {minimum} 至 {maximum} 之间")
+            if tipping_duration_seconds is not None and (
+                isinstance(tipping_duration_seconds, bool)
+                or not isinstance(tipping_duration_seconds, int)
+                or not 10 <= tipping_duration_seconds <= 3600
+            ):
+                raise ValueError("打赏时长需在 10 至 3600 秒之间")
             record.schedule_times = normalized_times
             record.signup_notice_template = signup_notice_template
             record.signup_timeout_minutes = signup_timeout_minutes
@@ -1583,6 +1633,8 @@ class CoreRepository:
                 record.submission_default_event_reward = submission_default_event_reward
             if submission_approval_reward is not None:
                 record.submission_approval_reward = submission_approval_reward
+            if tipping_duration_seconds is not None:
+                record.tipping_duration_seconds = tipping_duration_seconds
             session.flush()
             return _random_event_settings(record)
 
@@ -2301,7 +2353,7 @@ class CoreRepository:
                 .where(
                     RandomEventParticipantRecord.user_id == user_id,
                     RandomEventParticipantRecord.left_at.is_(None),
-                    RandomEventRecord.state.in_(("signup", "in_progress")),
+                    RandomEventRecord.state.in_(("signup", "in_progress", "tipping")),
                 ),
                 select(UndercoverSessionMemberRecord.id)
                 .join(
@@ -2605,6 +2657,10 @@ class CoreRepository:
         if "random_events" in topic_set:
             settings = self.get_random_event_settings()
             lines.append(f"随机事件时刻：{'、'.join(settings.schedule_times)}；当前状态：{self.active_random_event_state() or '无进行中事件'}")
+            lines.append(
+                f"随机事件打赏：所有参与者退出后开放 {settings.tipping_duration_seconds} 秒；"
+                "使用 /打赏 员工名称 金额，真实转移摸鱼币，不能给自己打赏；AI 只解释并引导发送指令，不代替执行。"
+            )
         if "hide_and_seek" in topic_set:
             settings = self.get_hide_and_seek_settings()
             scenes = self.list_hide_and_seek_scenes_page(1, 100)[0]
@@ -4433,22 +4489,36 @@ class CoreRepository:
 
             event = session.scalar(
                 select(RandomEventRecord)
-                .where(RandomEventRecord.state.in_(("signup", "in_progress")))
+                .where(RandomEventRecord.state.in_(("signup", "in_progress", "tipping")))
                 .order_by(RandomEventRecord.started_at)
             )
             if event is not None:
+                participant_query = (
+                    select(RandomEventParticipantRecord, UserRecord)
+                    .join(UserRecord, UserRecord.id == RandomEventParticipantRecord.user_id)
+                    .where(RandomEventParticipantRecord.event_id == event.id)
+                )
+                if event.state != "tipping":
+                    participant_query = participant_query.where(
+                        RandomEventParticipantRecord.left_at.is_(None)
+                    )
                 rows = list(
                     session.execute(
-                        select(RandomEventParticipantRecord, UserRecord)
-                        .join(UserRecord, UserRecord.id == RandomEventParticipantRecord.user_id)
-                        .where(
-                            RandomEventParticipantRecord.event_id == event.id,
-                            RandomEventParticipantRecord.left_at.is_(None),
+                        participant_query.order_by(
+                            RandomEventParticipantRecord.joined_at
                         )
-                        .order_by(RandomEventParticipantRecord.joined_at)
                     )
                 )
                 participant = any(user.platform_id == platform_id for _, user in rows)
+                available_commands = (
+                    ("/打赏 员工名称 金额",)
+                    if event.state == "tipping"
+                    else ("/退出",)
+                    if participant
+                    else ("/加入 角色",)
+                    if event.state == "signup"
+                    else ()
+                )
                 active.append(
                     ActiveGameplaySummary(
                         "random_event",
@@ -4456,11 +4526,20 @@ class CoreRepository:
                         event.state,
                         "participant" if participant else "nonparticipant",
                         tuple(user.display_name for _, user in rows),
-                        ("/退出",)
-                        if participant
-                        else (("/加入 角色",) if event.state == "signup" else ()),
+                        available_commands,
                         event.signup_deadline,
                         event.next_reminder_at,
+                        event.tipping_deadline,
+                        int(
+                            session.scalar(
+                                select(
+                                    func.coalesce(
+                                        func.sum(RandomEventTipRecord.amount), 0
+                                    )
+                                ).where(RandomEventTipRecord.event_id == event.id)
+                            )
+                            or 0
+                        ),
                     )
                 )
 
@@ -4487,6 +4566,8 @@ class CoreRepository:
                 ),
                 signup_deadline=summary.signup_deadline,
                 next_reminder_at=summary.next_reminder_at,
+                tipping_deadline=summary.tipping_deadline,
+                tip_total=summary.tip_total,
             )
         with self._session() as session:
             game = session.get(NumberBombGameRecord, summary.game_id)
@@ -4618,7 +4699,10 @@ class CoreRepository:
                         ended = True
                 else:
                     event = session.get(RandomEventRecord, game_id, with_for_update=True)
-                    if event is not None and event.state in {"signup", "in_progress"}:
+                    if event is not None and event.state in {"signup", "in_progress", "tipping"}:
+                        if event.state == "tipping":
+                            self._settle_random_event_tipping(session, event, now, forced=True)
+                            return True
                         event.state = "cancelled"
                         event.ended_at = now
                         event.next_reminder_at = None
@@ -8981,7 +9065,7 @@ class CoreRepository:
                 select(RandomEventScheduleRecord)
                 .join(RandomEventRecord, RandomEventRecord.schedule_id == RandomEventScheduleRecord.id)
                 .where(
-                    RandomEventRecord.state.in_(("signup", "in_progress")),
+                    RandomEventRecord.state.in_(("signup", "in_progress", "tipping")),
                     RandomEventScheduleRecord.event_date < now.date(),
                 )
                 .order_by(RandomEventScheduleRecord.scheduled_at)
@@ -9312,11 +9396,19 @@ class CoreRepository:
                 self.schedule_random_events(now)
                 active = session.scalar(
                     select(RandomEventRecord)
-                    .where(RandomEventRecord.state.in_(("signup", "in_progress")))
+                    .where(RandomEventRecord.state.in_(("signup", "in_progress", "tipping")))
                     .order_by(RandomEventRecord.started_at)
                     .with_for_update()
                 )
-                if active is not None and active.state == "signup":
+                if (
+                    active is not None
+                    and active.state == "tipping"
+                    and active.tipping_deadline is not None
+                    and active.tipping_deadline <= now
+                ):
+                    self._settle_random_event_tipping(session, active, now)
+                    active = None
+                elif active is not None and active.state == "signup":
                     if active.signup_deadline <= now:
                         self._finish_random_event(session, active, "dissolved", now)
                         self.enqueue_system_outbound(
@@ -9483,6 +9575,8 @@ class CoreRepository:
             event = self._active_random_event(session)
             if event is None:
                 return "none"
+            if event.state == "tipping":
+                return "none"
             if event.state != "in_progress":
                 return (
                     "observer_valid"
@@ -9556,8 +9650,286 @@ class CoreRepository:
                         or 0
                     )
                     if remaining == 0:
-                        self._finish_random_event(session, event, "ended", now)
+                        settings = self.get_random_event_settings()
+                        event.state = "tipping"
+                        event.tipping_started_at = now
+                        event.tipping_deadline = now + timedelta(
+                            seconds=settings.tipping_duration_seconds
+                        )
+                        event.next_reminder_at = None
+                        schedule = session.get(
+                            RandomEventScheduleRecord, event.schedule_id
+                        )
+                        if schedule is not None:
+                            schedule.status = "tipping"
+                        participants = self._random_event_tipping_participants(
+                            session, event
+                        )
+                        currency = self.get_game_settings().currency_name
+                        participant_lines = "\n".join(
+                            f"{item.display_name}：基础奖励 {item.base_reward} {currency}"
+                            for item in participants
+                        )
+                        self.enqueue_system_outbound(
+                            self._render_reply_template(
+                                "/随机事件打赏",
+                                "opened",
+                                now,
+                                {
+                                    "{场景名称}": event.scene_name,
+                                    "{打赏秒数}": str(
+                                        settings.tipping_duration_seconds
+                                    ),
+                                    "{参与者与基础奖励列表}": participant_lines,
+                                },
+                            )
+                        )
                 return result
+
+    def random_event_tipping_summary(self) -> RandomEventTippingSummary:
+        with self._session() as session:
+            event = session.scalar(
+                select(RandomEventRecord)
+                .where(RandomEventRecord.tipping_started_at.is_not(None))
+                .order_by(RandomEventRecord.started_at.desc())
+                .limit(1)
+            )
+            if event is None:
+                return RandomEventTippingSummary(None)
+            return RandomEventTippingSummary(
+                state=event.state,
+                event_id=event.id,
+                scene_name=event.scene_name,
+                tipping_started_at=event.tipping_started_at,
+                tipping_deadline=event.tipping_deadline,
+                participants=self._random_event_tipping_participants(session, event),
+            )
+
+    def tip_random_event(
+        self,
+        platform_id: str,
+        recipient_name: str,
+        amount: int,
+        platform_message_id: str,
+        now: datetime,
+    ) -> RandomEventTipResult:
+        now = now.astimezone(BEIJING)
+        recipient_name = recipient_name.strip()
+        with self.transaction():
+            with self._session() as session:
+                inbound = session.scalar(
+                    select(InboundRecord).where(
+                        InboundRecord.platform_message_id == platform_message_id
+                    )
+                )
+                if inbound is None:
+                    return RandomEventTipResult("inbound_not_found")
+                existing = self._random_event_tip_result_for_inbound(
+                    session, inbound.id
+                )
+                if existing is not None:
+                    return existing
+                sender_id = session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                if sender_id is None:
+                    return RandomEventTipResult("not_joined")
+                if (
+                    isinstance(amount, bool)
+                    or not isinstance(amount, int)
+                    or amount <= 0
+                ):
+                    return RandomEventTipResult("invalid_amount")
+                event = session.scalar(
+                    select(RandomEventRecord)
+                    .where(RandomEventRecord.state == "tipping")
+                    .order_by(RandomEventRecord.started_at)
+                    .with_for_update()
+                )
+                if event is None:
+                    return RandomEventTipResult("no_tipping_event")
+                if event.tipping_deadline is None or now >= event.tipping_deadline:
+                    self._settle_random_event_tipping(session, event, now)
+                    return RandomEventTipResult("expired")
+                existing = self._random_event_tip_result_for_inbound(
+                    session, inbound.id
+                )
+                if existing is not None:
+                    return existing
+                recipient_id = session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.display_name == recipient_name
+                    )
+                )
+                if recipient_id is None:
+                    return RandomEventTipResult("recipient_not_found")
+                if session.scalar(
+                    select(RandomEventParticipantRecord.id).where(
+                        RandomEventParticipantRecord.event_id == event.id,
+                        RandomEventParticipantRecord.user_id == recipient_id,
+                    )
+                ) is None:
+                    return RandomEventTipResult("recipient_not_participant")
+                if sender_id == recipient_id:
+                    return RandomEventTipResult("self_tip")
+                locked_users = list(
+                    session.scalars(
+                        select(UserRecord)
+                        .where(UserRecord.id.in_((sender_id, recipient_id)))
+                        .order_by(UserRecord.id)
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    )
+                )
+                users = {user.id: user for user in locked_users}
+                sender = users.get(sender_id)
+                recipient = users.get(recipient_id)
+                if sender is None or recipient is None:
+                    raise RuntimeError("打赏员工在交易期间消失")
+                if sender.balance < amount:
+                    return RandomEventTipResult(
+                        "insufficient_balance",
+                        sender_display_name=sender.display_name,
+                        recipient_display_name=recipient.display_name,
+                        amount=amount,
+                        sender_balance=sender.balance,
+                        recipient_balance=recipient.balance,
+                    )
+                self._apply_balance_change(
+                    sender, -amount, "random_event_tip_out", now
+                )
+                self._apply_balance_change(
+                    recipient, amount, "random_event_tip_in", now
+                )
+                session.add(
+                    RandomEventTipRecord(
+                        event_id=event.id,
+                        sender_user_id=sender.id,
+                        recipient_user_id=recipient.id,
+                        amount=amount,
+                        inbound_message_id=inbound.id,
+                        created_at=now,
+                    )
+                )
+                session.flush()
+                return RandomEventTipResult(
+                    "tipped",
+                    sender_display_name=sender.display_name,
+                    recipient_display_name=recipient.display_name,
+                    amount=amount,
+                    sender_balance=sender.balance,
+                    recipient_balance=recipient.balance,
+                )
+
+    def _random_event_tip_result_for_inbound(
+        self, session: Session, inbound_id: UUID
+    ) -> RandomEventTipResult | None:
+        sender = aliased(UserRecord)
+        recipient = aliased(UserRecord)
+        row = session.execute(
+            select(RandomEventTipRecord, sender, recipient)
+            .join(sender, sender.id == RandomEventTipRecord.sender_user_id)
+            .join(recipient, recipient.id == RandomEventTipRecord.recipient_user_id)
+            .where(RandomEventTipRecord.inbound_message_id == inbound_id)
+        ).one_or_none()
+        if row is None:
+            return None
+        tip, sender_user, recipient_user = row
+        return RandomEventTipResult(
+            "duplicate",
+            sender_display_name=sender_user.display_name,
+            recipient_display_name=recipient_user.display_name,
+            amount=tip.amount,
+            sender_balance=sender_user.balance,
+            recipient_balance=recipient_user.balance,
+        )
+
+    def _random_event_tipping_participants(
+        self, session: Session, event: RandomEventRecord
+    ) -> tuple[RandomEventTippingParticipant, ...]:
+        rows = session.execute(
+            select(RandomEventParticipantRecord, UserRecord)
+            .join(UserRecord, UserRecord.id == RandomEventParticipantRecord.user_id)
+            .where(RandomEventParticipantRecord.event_id == event.id)
+            .order_by(RandomEventParticipantRecord.joined_at, UserRecord.employee_number)
+        )
+        return tuple(
+            RandomEventTippingParticipant(
+                display_name=user.display_name,
+                employee_number=user.employee_number,
+                base_reward=event.reward if participant.rewarded_at is not None else 0,
+            )
+            for participant, user in rows
+        )
+
+    def _settle_random_event_tipping(
+        self,
+        session: Session,
+        event: RandomEventRecord,
+        now: datetime,
+        forced: bool = False,
+    ) -> None:
+        if event.state != "tipping":
+            return
+        currency = self.get_game_settings().currency_name
+        participant_rows = list(
+            session.execute(
+                select(RandomEventParticipantRecord, UserRecord)
+                .join(
+                    UserRecord,
+                    UserRecord.id == RandomEventParticipantRecord.user_id,
+                )
+                .where(RandomEventParticipantRecord.event_id == event.id)
+            )
+        )
+        sender = aliased(UserRecord)
+        recipient = aliased(UserRecord)
+        tip_rows = list(
+            session.execute(
+                select(RandomEventTipRecord, sender, recipient)
+                .join(sender, sender.id == RandomEventTipRecord.sender_user_id)
+                .join(recipient, recipient.id == RandomEventTipRecord.recipient_user_id)
+                .where(RandomEventTipRecord.event_id == event.id)
+                .order_by(RandomEventTipRecord.created_at, RandomEventTipRecord.id)
+            )
+        )
+        totals: dict[UUID, int] = {}
+        tips_by_recipient: dict[
+            UUID, list[tuple[RandomEventTipRecord, UserRecord]]
+        ] = {}
+        for tip, tip_sender, _tip_recipient in tip_rows:
+            totals[tip.recipient_user_id] = (
+                totals.get(tip.recipient_user_id, 0) + tip.amount
+            )
+            tips_by_recipient.setdefault(tip.recipient_user_id, []).append(
+                (tip, tip_sender)
+            )
+        participant_rows.sort(
+            key=lambda row: (-totals.get(row[1].id, 0), row[1].employee_number)
+        )
+        participant_lines: list[str] = []
+        for _participant, user in participant_rows:
+            participant_lines.append(
+                f"{user.display_name}：{totals.get(user.id, 0)} {currency}"
+            )
+            participant_lines.extend(
+                f"  - {tip_sender.display_name}：{tip.amount} {currency}"
+                for tip, tip_sender in tips_by_recipient.get(user.id, ())
+            )
+        self._finish_random_event(session, event, "ended", now)
+        self.enqueue_system_outbound(
+            self._render_reply_template(
+                "/随机事件打赏",
+                "forced_settled" if forced else "settled",
+                now,
+                {
+                    "{参与者打赏汇总}": "\n".join(participant_lines),
+                    "{无人打赏提示}": "" if tip_rows else "本场无人打赏。",
+                },
+            ).rstrip()
+        )
 
     def last_random_event_reward(self, platform_id: str) -> int:
         with self._session() as session:
@@ -9595,6 +9967,39 @@ class CoreRepository:
                     )
                     .where(RandomEventDetailRecord.event_id == event.id)
                     .order_by(RandomEventDetailRecord.position)
+                )
+            )
+
+    def list_random_event_tips(
+        self, schedule_id: UUID
+    ) -> list[tuple[str, str, int, datetime]]:
+        with self._session() as session:
+            event_id = session.scalar(
+                select(RandomEventRecord.id).where(
+                    RandomEventRecord.schedule_id == schedule_id
+                )
+            )
+            if event_id is None:
+                raise ValueError("随机事件不存在")
+            sender = aliased(UserRecord)
+            recipient = aliased(UserRecord)
+            return list(
+                session.execute(
+                    select(
+                        sender.display_name,
+                        recipient.display_name,
+                        RandomEventTipRecord.amount,
+                        RandomEventTipRecord.created_at,
+                    )
+                    .join(sender, sender.id == RandomEventTipRecord.sender_user_id)
+                    .join(
+                        recipient,
+                        recipient.id == RandomEventTipRecord.recipient_user_id,
+                    )
+                    .where(RandomEventTipRecord.event_id == event_id)
+                    .order_by(
+                        RandomEventTipRecord.created_at, RandomEventTipRecord.id
+                    )
                 )
             )
 
@@ -9704,7 +10109,7 @@ class CoreRepository:
     def _active_random_event(self, session: Session) -> RandomEventRecord | None:
         return session.scalar(
             select(RandomEventRecord)
-            .where(RandomEventRecord.state.in_(("signup", "in_progress")))
+            .where(RandomEventRecord.state.in_(("signup", "in_progress", "tipping")))
             .order_by(RandomEventRecord.started_at)
             .with_for_update()
         )
@@ -9768,6 +10173,7 @@ class CoreRepository:
     ) -> None:
         event.state = state
         event.ended_at = now
+        event.next_reminder_at = None
         schedule = session.get(RandomEventScheduleRecord, event.schedule_id)
         if schedule is not None:
             schedule.status = state
@@ -10888,7 +11294,9 @@ class CoreRepository:
             return session.get(UserRecord, UUID(str(user_id)))
 
     @staticmethod
-    def _take_employee_number(session: Session) -> int:
+    def _lock_employee_identity_gate(
+        session: Session,
+    ) -> EmployeeNumberCounterRecord:
         counter = session.scalar(
             select(EmployeeNumberCounterRecord)
             .where(EmployeeNumberCounterRecord.id == 1)
@@ -10904,6 +11312,11 @@ class CoreRepository:
             counter = EmployeeNumberCounterRecord(id=1, next_number=next_number)
             session.add(counter)
             session.flush()
+        return counter
+
+    @classmethod
+    def _take_employee_number(cls, session: Session) -> int:
+        counter = cls._lock_employee_identity_gate(session)
         employee_number = counter.next_number
         counter.next_number += 1
         return employee_number
@@ -10911,6 +11324,7 @@ class CoreRepository:
     def create_user(
         self, platform_id: str, display_name: str, joined_at: datetime, initial_balance: int
     ) -> tuple[UserRecord, bool]:
+        normalized_name = display_name.strip()
         with self.transaction():
             with self._session() as session:
                 default_rank, default_department = self._ensure_organization_defaults(session)
@@ -10919,10 +11333,17 @@ class CoreRepository:
                 )
                 if existing is not None:
                     return existing, False
+                employee_number = self._take_employee_number(session)
+                if session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.display_name == normalized_name
+                    )
+                ) is not None:
+                    raise EmployeeNameTakenError("名称已被占用")
                 record = UserRecord(
                     platform_id=platform_id,
-                    display_name=display_name,
-                    employee_number=self._take_employee_number(session),
+                    display_name=normalized_name,
+                    employee_number=employee_number,
                     balance=0,
                     rank_id=default_rank.id,
                     department_id=default_department.id,
@@ -10939,13 +11360,20 @@ class CoreRepository:
         normalized_name = new_name.strip()
         with self.transaction():
             with self._session() as session:
+                if session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                ) is None:
+                    return RenameEmployeeResult("not_joined")
+                self._lock_employee_identity_gate(session)
                 user = session.scalar(
                     select(UserRecord)
                     .where(UserRecord.platform_id == platform_id)
                     .with_for_update()
                 )
                 if user is None:
-                    return RenameEmployeeResult("not_joined")
+                    raise RuntimeError("员工在改名期间消失")
                 if not 1 <= len(normalized_name) <= 64:
                     return RenameEmployeeResult(
                         "invalid_name", old_name=user.display_name
@@ -10955,6 +11383,15 @@ class CoreRepository:
                         "unchanged",
                         old_name=user.display_name,
                         new_name=user.display_name,
+                    )
+                if session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.display_name == normalized_name,
+                        UserRecord.id != user.id,
+                    )
+                ) is not None:
+                    return RenameEmployeeResult(
+                        "name_taken", old_name=user.display_name
                     )
                 old_name = user.display_name
                 user.display_name = normalized_name
@@ -12856,6 +13293,7 @@ def _random_event_settings(record: RandomEventSettingsRecord) -> RandomEventSett
         submission_default_target_rounds=record.submission_default_target_rounds,
         submission_default_event_reward=record.submission_default_event_reward,
         submission_approval_reward=record.submission_approval_reward,
+        tipping_duration_seconds=record.tipping_duration_seconds,
     )
 
 

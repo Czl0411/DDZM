@@ -68,6 +68,99 @@ def _replies_for(factory, inbound_id):
         )
 
 
+def _prepare_group_tip_event(repository, now):
+    repository.create_random_event_scene(
+        "打赏命令场", "报名", ["开始"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(
+        ["12:00"], "{可选身份}", 15, 5, tipping_duration_seconds=120
+    )
+    repository.create_user("group-tip-target", "收款 员工", now, 0)
+    repository.create_user("group-tip-donor", "热心员工", now, 10)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("group-tip-target", "员工", now) == "started"
+    assert repository.leave_random_event("group-tip-target", now) == "left_without_reward"
+
+
+def test_random_event_tip_command_parses_spaced_name_and_replies_to_source():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=BEIJING)
+    _prepare_group_tip_event(repository, now)
+
+    result = _receive(
+        service,
+        "group-tip-success",
+        "group-tip-donor",
+        "/打赏 收款 员工 5",
+        now,
+    )
+
+    assert _replies_for(factory, result.message_id) == [
+        "热心员工 向 收款 员工 打赏了 5 摸鱼币。"
+    ]
+    assert repository.find_user("group-tip-donor").balance == 5
+    assert repository.find_user("group-tip-target").balance == 5
+
+    current = _receive(
+        service,
+        "group-tip-current",
+        "group-tip-donor",
+        "/当前游戏",
+        now,
+    )
+    current_reply = _replies_for(factory, current.message_id)[0]
+    assert "当前游戏：随机事件" in current_reply
+    assert "状态：打赏中" in current_reply
+    assert "可用指令：/打赏 员工名称 金额" in current_reply
+
+
+def test_random_event_tip_command_reaches_business_validation_before_tipping():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "进行中场景", "报名", ["开始"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(["12:00"], "{可选身份}", 15, 5)
+    repository.create_user("in-progress-player", "进行中玩家", now, 10)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("in-progress-player", "员工", now) == "started"
+
+    result = _receive(
+        service,
+        "tip-before-phase",
+        "in-progress-player",
+        "/打赏 进行中玩家 1",
+        now,
+    )
+
+    assert _replies_for(factory, result.message_id) == [
+        "当前不在随机事件打赏阶段。"
+    ]
+    assert repository.find_user("in-progress-player").balance == 10
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("/打赏", "请用 /打赏 员工名称 金额。"),
+        ("/打赏 收款 员工", "打赏金额必须是正整数。"),
+        ("/打赏 收款 员工 ０", "打赏金额必须是正整数。"),
+        ("/打赏 收款 员工 -1", "打赏金额必须是正整数。"),
+        ("/打赏 不存在 1", "未找到该员工。"),
+    ],
+)
+def test_random_event_tip_command_reports_validation(content, expected):
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=BEIJING)
+    _prepare_group_tip_event(repository, now)
+
+    _receive(service, f"group-tip-invalid-{content}", "group-tip-donor", content, now)
+
+    assert _latest_reply(factory) == expected
+
+
 def test_lucky_red_packet_commands_create_claim_complete_and_are_idempotent():
     service, repository, factory = _service(red_packet_random=Random(1))
     now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
@@ -173,17 +266,29 @@ def test_join_registers_employee_with_zero_balance_and_beijing_timestamp():
     assert "#0001" not in _replies_for(factory, balance.message_id)[0]
 
 
-def test_rename_command_allows_duplicate_names_and_preserves_employee_number():
+def test_join_and_rename_commands_reject_occupied_names():
     service, repository, factory = _service()
     now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
     repository.create_user("rename-1", "甲", now, 10)
     repository.create_user("rename-2", "乙", now, 20)
 
-    renamed = _receive(service, "rename-success", "rename-1", "/修改名称 乙", now)
+    join_conflict = _receive(
+        service, "join-conflict", "rename-3", "/入职 乙", now
+    )
+    rename_conflict = _receive(
+        service, "rename-conflict", "rename-1", "/修改名称 乙", now
+    )
+    existing_platform = _receive(
+        service, "join-existing", "rename-1", "/入职 乙", now
+    )
 
-    assert _replies_for(factory, renamed.message_id) == ["名称已修改：甲 → 乙。"]
+    assert _replies_for(factory, join_conflict.message_id) == ["名称已被占用。"]
+    assert _replies_for(factory, rename_conflict.message_id) == ["名称已被占用。"]
+    assert _replies_for(factory, existing_platform.message_id) == [
+        "甲已经在职，当前余额：10 摸鱼币。"
+    ]
     employee = repository.find_user("rename-1")
-    assert employee.display_name == "乙"
+    assert employee.display_name == "甲"
     assert employee.employee_number == 1
     assert employee.balance == 10
 
@@ -593,6 +698,46 @@ def test_board_member_force_end_is_not_blocked_by_random_event_rules():
     assert _latest_reply(factory) == "【随机事件】管理员已强制结束当前游戏。"
 
 
+def test_board_member_force_end_settles_random_event_tipping_phase():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
+    repository.create_user("tipping-board", "打赏董事", now, 0)
+    repository.create_user("tipping-player", "事件玩家", now, 0)
+    with factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        board = session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "tipping-board")
+        )
+        assert board_rank is not None
+        assert board is not None
+        board.rank_id = board_rank.id
+    repository.create_random_event_scene(
+        "强制结算场", "报名", ["正式开始。"], 4, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "可选身份：{可选身份}", 15, 5
+    )
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("tipping-player", "员工", now) == "started"
+    assert repository.leave_random_event("tipping-player", now) == "left_without_reward"
+
+    _receive(
+        service,
+        "board-force-end-tipping",
+        "tipping-board",
+        "/结束游戏",
+        now,
+    )
+
+    assert repository.active_gameplay_summary("tipping-board", now).game_type is None
+    assert _latest_reply(factory).startswith("【随机事件打赏已强制结束】")
+
+
 def test_board_bonus_command_grants_single_and_all_employees():
     from dzmm_bot.core.schema import RankRecord, UserRecord
 
@@ -649,15 +794,14 @@ def test_board_bonus_all_target_precedes_name_lookup_and_is_idempotent():
     }
 
 
-def test_board_bonus_command_rejects_nonboard_missing_and_ambiguous_targets():
+def test_board_bonus_command_rejects_nonboard_and_missing_targets():
     from dzmm_bot.core.schema import RankRecord, UserRecord
 
     service, repository, factory = _service()
     now = datetime(2026, 8, 11, 10, 0, tzinfo=BEIJING)
     board, _ = repository.create_user("board", "董事", now, 0)
     manager, _ = repository.create_user("manager", "负责人", now, 0)
-    repository.create_user("duplicate-1", "同名", now, 0)
-    repository.create_user("duplicate-2", "同名", now, 0)
+    repository.create_user("target", "目标员工", now, 0)
     with factory.begin() as session:
         board_rank = session.scalar(
             select(RankRecord).where(RankRecord.is_board.is_(True))
@@ -673,20 +817,15 @@ def test_board_bonus_command_rejects_nonboard_missing_and_ambiguous_targets():
         session.get(UserRecord, board.id).rank_id = board_rank.id
         session.get(UserRecord, manager.id).rank_id = manager_rank.id
 
-    _receive(service, "unauthorized-bonus", "manager", "/发奖金 同名 10", now)
+    _receive(service, "unauthorized-bonus", "manager", "/发奖金 目标员工 10", now)
     assert _latest_reply(factory) == "只有核心董事会成员可以发放奖金。"
     _receive(service, "missing-bonus", "board", "/发奖金 不存在 10", now)
     assert _latest_reply(factory) == "未找到该员工，请检查员工名。"
-    _receive(service, "ambiguous-bonus", "board", "/发奖金 同名 10", now)
-    assert _latest_reply(factory) == (
-        "存在多名同名员工：同名 #0003、同名 #0004。请使用工号后重试。"
-    )
     assert all(user.balance == 0 for user in repository.list_users())
 
     _receive(service, "numbered-bonus", "board", "/发奖金 #0003 10", now)
-    assert _latest_reply(factory) == "【奖金】董事向同名发放 10 摸鱼币。"
-    assert repository.find_user("duplicate-1").balance == 10
-    assert repository.find_user("duplicate-2").balance == 0
+    assert _latest_reply(factory) == "【奖金】董事向目标员工发放 10 摸鱼币。"
+    assert repository.find_user("target").balance == 10
 
 
 @pytest.mark.parametrize(
@@ -1171,14 +1310,14 @@ def test_department_headcount_commands_show_totals_and_rank_counts_only():
     ]
 
 
-def test_department_headcount_shows_numbers_only_for_tied_duplicate_names():
+def test_department_headcount_shows_all_tied_highest_rank_members():
     from dzmm_bot.core.schema import DepartmentRecord, RankRecord, UserRecord
 
     service, repository, factory = _service()
     now = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
     repository.create_user("viewer", "查询人", now, 0)
-    first, _ = repository.create_user("highest-1", "同名", now, 0)
-    second, _ = repository.create_user("highest-2", "同名", now, 0)
+    repository.create_user("highest-1", "最高甲", now, 0)
+    repository.create_user("highest-2", "最高乙", now, 0)
     with factory.begin() as session:
         tech = session.scalar(
             select(DepartmentRecord).where(DepartmentRecord.name == "核心技术部")
@@ -1200,10 +1339,7 @@ def test_department_headcount_shows_numbers_only_for_tied_duplicate_names():
     result = _receive(service, "duplicate-heads", "viewer", "/部门人数", now)
     reply = _replies_for(factory, result.message_id)[0]
 
-    assert (
-        f"最高职位者：正式员工 同名 #{first.employee_number:04d}、"
-        f"同名 #{second.employee_number:04d}"
-    ) in reply
+    assert "最高职位者：正式员工 最高甲、最高乙" in reply
     assert "查询人 #" not in reply
 
 
@@ -1447,7 +1583,7 @@ def test_random_event_uses_the_configured_block_message():
     repository.schedule_random_events(now)
     repository.run_random_event_jobs(now)
 
-    blocked = _receive(service, "blocked", "u1", "/余额", now)
+    blocked = _receive(service, "blocked", "u1", "/打卡", now)
 
     assert _replies_for(factory, blocked.message_id) == ["活动进行中，监事暂不处理。"]
 
@@ -1717,6 +1853,8 @@ def test_help_random_event_topic_lists_submission_entrypoints():
     assert "/投稿 随机事件" in reply
     assert "/我的投稿" in reply
     assert "/撤回投稿 编号" in reply
+    assert "/打赏 员工名称 金额" in reply
+    assert "真实转移" in reply
 
 
 def test_help_game_topic_links_to_each_game_guide():

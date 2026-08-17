@@ -41,12 +41,33 @@ def test_outbound_reference_and_submission_migrations_round_trip(
         Column("text", Text, nullable=False),
     )
     Table("random_event_settings", metadata, Column("id", Integer, primary_key=True))
-    Table("users", metadata, Column("id", Uuid, primary_key=True))
+    Table(
+        "users",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("display_name", String(64), nullable=False),
+        Column("employee_number", Integer, nullable=False),
+    )
+    Table("inbound_messages", metadata, Column("id", Uuid, primary_key=True))
+    random_events = Table(
+        "random_events",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("group_key", String(255), nullable=False),
+        Column("state", String(16), nullable=False),
+    )
     Table("random_event_scenes", metadata, Column("id", Uuid, primary_key=True))
     metadata.create_all(engine)
     group_id = uuid4()
     direct_id = uuid4()
     with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX ux_random_events_one_active_group "
+                "ON random_events (group_key) "
+                "WHERE state IN ('signup', 'in_progress')"
+            )
+        )
         connection.execute(
             outbound.insert(),
             [

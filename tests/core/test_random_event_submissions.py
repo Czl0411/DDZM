@@ -29,7 +29,7 @@ def repository():
 
 
 def _employee(repository, platform_id="employee-1"):
-    repository.create_user(platform_id, "投稿人", NOW, 0)
+    repository.create_user(platform_id, f"投稿人-{platform_id}", NOW, 0)
     repository.upsert_direct_chats([(platform_id, f"direct-{platform_id}")], NOW)
 
 

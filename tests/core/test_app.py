@@ -332,6 +332,8 @@ def test_gameplay_current_hides_numbers_and_force_end_requires_exact_identity(
         "next_reminder_at": (
             NOW.astimezone(ZoneInfo("Asia/Shanghai")) + timedelta(seconds=15)
         ).isoformat(),
+        "tipping_deadline": None,
+        "tip_total": 0,
         "skip_enabled": False,
     }
     assert all(
@@ -895,7 +897,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-            "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/投稿", "/我的投稿", "/撤回投稿", "/上一步", "/取消投稿", "/确认取消投稿", "/确认投稿", "/继续添加", "/事件完成", "/修改身份", "/删除身份", "/修改事件", "/删除事件"
+            "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/投稿", "/我的投稿", "/撤回投稿", "/上一步", "/取消投稿", "/确认取消投稿", "/确认投稿", "/继续添加", "/事件完成", "/修改身份", "/删除身份", "/修改事件", "/删除事件"
             }
     command_records = {record["command"]: record for record in commands.json()}
     for command in ("/部门人数", "/我的部门人数"):
@@ -1818,6 +1820,7 @@ def test_random_event_settings_are_available_through_internal_api(client, header
             "signup_allowed_commands": ["/加入", "/退出", "/打卡"],
             "in_progress_allowed_commands": ["/退出", "/打卡"],
             "blocked_message": "当前有随机事件发生，监事不会处理。",
+            "tipping_duration_seconds": 75,
         },
     )
 
@@ -1825,6 +1828,77 @@ def test_random_event_settings_are_available_through_internal_api(client, header
     assert response.json()["schedule_times"] == ["10:00", "14:00"]
     assert response.json()["signup_allowed_commands"] == ["/加入", "/退出", "/打卡"]
     assert response.json()["in_progress_allowed_commands"] == ["/退出", "/打卡"]
+    assert response.json()["tipping_duration_seconds"] == 75
+    for duration in (9, 3601):
+        invalid = client.patch(
+            "/internal/game/random-events/settings",
+            headers=headers,
+            json={
+                **response.json(),
+                "tipping_duration_seconds": duration,
+            },
+        )
+        assert invalid.status_code == 422
+
+
+def test_random_event_tipping_is_visible_in_gameplay_and_event_details(
+    app_context, headers
+):
+    from dzmm_bot.runtime.contracts import InboundMessage
+
+    repository = app_context.repository
+    now = NOW.astimezone(ZoneInfo("Asia/Shanghai"))
+    repository.create_random_event_scene(
+        "茶水间", "报名", ["正式开始。"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(
+        [now.strftime("%H:%M")],
+        "{可选身份}",
+        15,
+        5,
+        tipping_duration_seconds=120,
+    )
+    repository.create_user("api-tip-target", "接口收款人", now, 0)
+    repository.create_user("api-tip-donor", "接口打赏人", now, 10)
+    schedule = repository.schedule_random_events(now)[0]
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("api-tip-target", "员工", now) == "started"
+    assert repository.leave_random_event("api-tip-target", now) == "left_without_reward"
+    repository.accept_inbound(
+        InboundMessage(
+            "api-tip-message",
+            "api-tip-donor",
+            "/打赏 接口收款人 3",
+            now,
+        )
+    )
+    assert repository.tip_random_event(
+        "api-tip-donor", "接口收款人", 3, "api-tip-message", now
+    ).status == "tipped"
+
+    current = app_context.client.get("/internal/gameplay/current", headers=headers)
+    details = app_context.client.get(
+        f"/internal/game/random-events/today/{schedule.id}/details",
+        headers=headers,
+    )
+
+    assert current.status_code == 200
+    assert current.json()["state"] == "tipping"
+    assert current.json()["tipping_deadline"] == (
+        now + timedelta(seconds=120)
+    ).isoformat()
+    assert current.json()["tip_total"] == 3
+    assert [item["display_name"] for item in current.json()["participants"]] == [
+        "接口收款人"
+    ]
+    assert details.json()["tips"] == [
+        {
+            "sender_display_name": "接口打赏人",
+            "recipient_display_name": "接口收款人",
+            "amount": 3,
+            "created_at": now.isoformat(),
+        }
+    ]
 
 
 def test_random_event_scene_is_created_through_internal_api(client, headers):

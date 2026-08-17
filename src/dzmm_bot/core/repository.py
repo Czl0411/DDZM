@@ -30,6 +30,7 @@ from dzmm_bot.ai.social_context import (
     SocialRecentMessage,
     render_social_context,
     resolve_people,
+    route_person_topics,
 )
 from .ai_knowledge import (
     AIAuthoritativeContext,
@@ -314,6 +315,27 @@ _DEFAULT_AI_PERSONA = "你是摸鱼公司群的美女总监事，说话简短、
 _DEFAULT_AI_SYSTEM_PROMPT = "仅回答当前艾特内容，不执行或裁决系统玩法。"
 _DEFAULT_AI_OVER_LIMIT_REPLY = "今日找总监事聊天的次数已用完，明天再来吧。"
 _DEFAULT_AI_FAILURE_REPLY = "总监事暂时忙碌，请稍后再试。"
+_SOCIAL_ACTIVITY_LABELS = {
+    "number_bomb": "蹦蹦数字炸弹",
+    "undercover": "谁是卧底",
+    "memory_assessment_single": "记忆考核",
+    "memory_assessment_duel": "记忆考核对战",
+    "blame_bomb": "甩锅游戏",
+    "hide_and_seek": "摸鱼躲猫猫",
+    "random_event": "随机事件",
+    "随机事件投稿": "随机事件投稿",
+}
+_SOCIAL_GAME_STATE_LABELS = {
+    "signup": "报名中",
+    "collecting": "报数中",
+    "waiting_continue": "等待继续",
+    "awaiting_continue": "等待继续",
+    "waiting_opponent": "等待对手",
+    "speaking": "发言中",
+    "voting": "投票中",
+    "in_progress": "进行中",
+    "tipping": "打赏中",
+}
 _DEFAULT_AI_MEMORY_GAMEPLAY_GUIDE = (
     "你是摸鱼公司群总监事。玩法、经济和游戏裁定以机器人指令为准；"
     "需要操作时引导玩家使用 /帮助 分类。"
@@ -3579,6 +3601,10 @@ class CoreRepository:
                 )
             )
             resolution = resolve_people(user_content, roster, user.platform_id)
+            social_topics = route_person_topics(user_content)
+            shared_activity_lines = self._shared_activity_lines(
+                session, resolution.people
+            ) if social_topics & {"games", "relationships"} else ()
             social_people: list[SocialPersonContext] = []
             for employee in resolution.people:
                 employee_record = session.get(UserRecord, employee.user_id)
@@ -3605,6 +3631,15 @@ class CoreRepository:
                         ),
                         recent_messages=self._recent_social_messages(
                             session, employee, inbound
+                        ),
+                        system_fact_lines=self._social_system_fact_lines(
+                            session, employee, now
+                        ),
+                        record_fact_lines=(
+                            *self._social_record_fact_lines(
+                                session, employee, social_topics, now
+                            ),
+                            *shared_activity_lines,
                         ),
                     )
                 )
@@ -3756,6 +3791,221 @@ class CoreRepository:
             for inbound, request in reversed(rows)
             if inbound.content.strip()
         )
+
+    def _social_system_fact_lines(
+        self,
+        session: Session,
+        employee: SocialEmployee,
+        now: datetime,
+    ) -> tuple[str, ...]:
+        user = session.get(UserRecord, employee.user_id)
+        if user is None:
+            return ()
+        rank = session.get(RankRecord, user.rank_id) if user.rank_id is not None else None
+        department = (
+            session.get(DepartmentRecord, user.department_id)
+            if user.department_id is not None
+            else None
+        )
+        settings = session.get(GameSettingsRecord, 1)
+        currency_name = (
+            settings.currency_name if settings is not None else _DEFAULT_CURRENCY_NAME
+        )
+        lines = [
+            f"职位：{rank.name if rank is not None else '未分配职位'}",
+            f"部门：{department.name if department is not None else '未分配部门'}",
+            f"余额：{user.balance} {currency_name}",
+        ]
+        item_rows = list(
+            session.execute(
+                select(ItemRecord.name, UserItemRecord.quantity)
+                .join(ItemRecord, ItemRecord.id == UserItemRecord.item_id)
+                .where(
+                    UserItemRecord.user_id == user.id,
+                    UserItemRecord.quantity > 0,
+                )
+                .order_by(ItemRecord.name)
+            )
+        )
+        lines.append(
+            "物品："
+            + (
+                "、".join(f"{name} × {quantity}" for name, quantity in item_rows)
+                if item_rows
+                else "暂无"
+            )
+        )
+        today = now.astimezone(BEIJING).date()
+        checked_in = session.scalar(
+            select(DailyCheckinRecord.id).where(
+                DailyCheckinRecord.user_id == user.id,
+                DailyCheckinRecord.checkin_date == today,
+            )
+        )
+        activity_count = session.scalar(
+            select(DailyActivityRecord.character_count).where(
+                DailyActivityRecord.user_id == user.id,
+                DailyActivityRecord.activity_date == today,
+            )
+        )
+        lines.extend(
+            (
+                f"今日打卡：{'已完成' if checked_in is not None else '未完成'}",
+                f"今日群聊活跃字数：{int(activity_count or 0)}",
+            )
+        )
+        token = self._active_session.set(session)
+        try:
+            gameplay = self.active_gameplay_summary(user.platform_id, now)
+        finally:
+            self._active_session.reset(token)
+        if gameplay.game_type is not None and gameplay.actor_role in {
+            "participant",
+            "candidate",
+        }:
+            game_name = _SOCIAL_ACTIVITY_LABELS.get(
+                gameplay.game_type, gameplay.game_type
+            )
+            state_name = _SOCIAL_GAME_STATE_LABELS.get(
+                gameplay.state or "", gameplay.state or "进行中"
+            )
+            lines.append(f"当前参与：{game_name}（{state_name}）")
+        else:
+            lines.append("当前参与：暂无进行中的游戏或随机事件")
+        return tuple(lines)
+
+    @staticmethod
+    def _social_record_fact_lines(
+        session: Session,
+        employee: SocialEmployee,
+        topics: frozenset[str],
+        now: datetime,
+    ) -> tuple[str, ...]:
+        lines: list[str] = []
+        user = session.get(UserRecord, employee.user_id)
+        if user is None:
+            return ()
+        if "economy" in topics:
+            transactions = list(
+                session.scalars(
+                    select(BalanceTransactionRecord)
+                    .where(
+                        BalanceTransactionRecord.user_id == user.id,
+                        BalanceTransactionRecord.occurred_at <= now,
+                    )
+                    .order_by(
+                        BalanceTransactionRecord.occurred_at.desc(),
+                        BalanceTransactionRecord.id.desc(),
+                    )
+                    .limit(20)
+                )
+            )
+            if transactions:
+                lines.append("最近经济流水（最多 20 条）：")
+                newer_total = 0
+                rendered_desc: list[str] = []
+                for transaction in transactions:
+                    balance_after = user.balance - newer_total
+                    rendered_desc.append(
+                        f"{transaction.occurred_at.astimezone(BEIJING).strftime('%Y-%m-%d %H:%M:%S')} "
+                        f"{balance_source_label(transaction.source)}："
+                        f"变动 {transaction.amount:+d}，余额 {balance_after}"
+                    )
+                    newer_total += transaction.amount
+                lines.extend(reversed(rendered_desc))
+        if "games" in topics:
+            facts = tuple(
+                session.scalars(
+                    select(AIActivityFactRecord)
+                    .where(AIActivityFactRecord.user_id == user.id)
+                    .order_by(AIActivityFactRecord.activity_type)
+                )
+            )
+            if facts:
+                lines.append("游戏与活动记录：")
+                lines.extend(
+                    f"{_SOCIAL_ACTIVITY_LABELS.get(fact.activity_type, fact.activity_type)}："
+                    f"参与 {fact.participation_count}，胜 {fact.win_count}，负 {fact.loss_count}；"
+                    f"最近结果 {fact.last_result}（{fact.last_result_at.astimezone(BEIJING).strftime('%Y-%m-%d %H:%M:%S')}）"
+                    for fact in facts
+                )
+        if "organization" in topics:
+            promotion = session.scalar(
+                select(PromotionRequestRecord)
+                .where(
+                    PromotionRequestRecord.applicant_id == user.id,
+                    PromotionRequestRecord.state == "pending",
+                )
+                .order_by(PromotionRequestRecord.requested_at.desc())
+                .limit(1)
+            )
+            department_request = session.scalar(
+                select(DepartmentRequestRecord)
+                .where(
+                    DepartmentRequestRecord.applicant_id == user.id,
+                    DepartmentRequestRecord.state == "pending",
+                )
+                .order_by(DepartmentRequestRecord.requested_at.desc())
+                .limit(1)
+            )
+            if promotion is not None:
+                target_rank = session.get(RankRecord, promotion.target_rank_id)
+                lines.append(
+                    f"待审核晋升：{target_rank.name if target_rank is not None else '未知职位'}"
+                )
+            if department_request is not None:
+                target_department = session.get(
+                    DepartmentRecord, department_request.target_department_id
+                )
+                lines.append(
+                    "待审核部门调动："
+                    f"{target_department.name if target_department is not None else '未知部门'}"
+                )
+        return tuple(lines)
+
+    @staticmethod
+    def _shared_activity_lines(
+        session: Session,
+        employees: Sequence[SocialEmployee],
+    ) -> tuple[str, ...]:
+        if len(employees) < 2:
+            return ()
+        employee_by_id = {employee.user_id: employee for employee in employees}
+        events = tuple(
+            session.scalars(
+                select(AIActivityEventRecord)
+                .where(AIActivityEventRecord.user_id.in_(employee_by_id))
+                .order_by(
+                    AIActivityEventRecord.occurred_at.desc(),
+                    AIActivityEventRecord.event_key.desc(),
+                )
+                .limit(200)
+            )
+        )
+        grouped: dict[str, list[AIActivityEventRecord]] = {}
+        for event in events:
+            grouped.setdefault(event.event_key.rsplit(":", 1)[0], []).append(event)
+        common = [
+            rows
+            for rows in grouped.values()
+            if len({row.user_id for row in rows}) >= 2
+        ]
+        common.sort(key=lambda rows: max(row.occurred_at for row in rows), reverse=True)
+        lines: list[str] = []
+        for rows in common[:10]:
+            ordered_rows = sorted(
+                rows,
+                key=lambda row: tuple(employee_by_id).index(row.user_id),
+            )
+            game_name = _SOCIAL_ACTIVITY_LABELS.get(
+                ordered_rows[0].activity_type, ordered_rows[0].activity_type
+            )
+            results = "；".join(
+                f"{employee_by_id[row.user_id].display_name}={row.result}"
+                for row in ordered_rows
+            )
+            lines.append(f"共同经历：{game_name}；{results}")
+        return tuple(lines)
 
     def complete_ai_request(
         self,

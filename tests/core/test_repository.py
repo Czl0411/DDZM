@@ -2928,6 +2928,239 @@ def test_ai_social_context_loads_latest_thirty_eligible_messages_and_paired_repl
     )
 
 
+def test_ai_social_context_includes_employee_live_state(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import (
+        AIAssistantSettingsRecord,
+        DailyActivityRecord,
+        DailyCheckinRecord,
+        DepartmentRecord,
+        ItemRecord,
+        RankRecord,
+        UserItemRecord,
+    )
+
+    requester, _ = repository.create_user("state-requester", "状态甲", now, 0)
+    target, _ = repository.create_user("state-target", "状态乙", now, 23)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+        target_row = session.get(UserRecord, target.id)
+        target_row.employee_number = 15
+        target_row.rank_id = session.scalar(
+            select(RankRecord.id).where(RankRecord.name == "主管")
+        )
+        target_row.department_id = session.scalar(
+            select(DepartmentRecord.id).where(DepartmentRecord.name == "摸鱼研究部")
+        )
+        item = ItemRecord(
+            name="咖啡券",
+            description="一杯咖啡",
+            price=2,
+            stock=10,
+            enabled=True,
+            created_at=now,
+        )
+        session.add(item)
+        session.flush()
+        session.add_all(
+            (
+                UserItemRecord(
+                    user_id=target.id,
+                    item_id=item.id,
+                    quantity=2,
+                    created_at=now,
+                ),
+                DailyCheckinRecord(
+                    user_id=target.id,
+                    checkin_date=now.astimezone(BEIJING).date(),
+                    checked_in_at=now,
+                ),
+                DailyActivityRecord(
+                    user_id=target.id,
+                    activity_date=now.astimezone(BEIJING).date(),
+                    character_count=88,
+                ),
+            )
+        )
+    repository.upsert_direct_chats([(target.platform_id, "state-target-direct")], now)
+    repository.start_number_bomb_game(target.platform_id, now)
+
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "state-current",
+            requester.platform_id,
+            "@总监事 状态乙现在怎么样",
+            now + timedelta(seconds=1),
+            chatroom_id="state-room",
+        )
+    )
+    repository.try_enqueue_ai_request(
+        current.id, requester.platform_id, current.content, now + timedelta(seconds=1)
+    )
+
+    prompt = repository.claim_ai_request(
+        "ai-worker", now + timedelta(seconds=1), 90
+    ).system_prompt
+
+    assert "员工：状态乙（#0015）" in prompt
+    assert "职位：主管" in prompt
+    assert "部门：摸鱼研究部" in prompt
+    assert "余额：23 摸鱼币" in prompt
+    assert "物品：咖啡券 × 2" in prompt
+    assert "今日打卡：已完成" in prompt
+    assert "今日群聊活跃字数：88" in prompt
+    assert "当前参与：蹦蹦数字炸弹（报名中）" in prompt
+
+
+def test_ai_social_context_loads_topic_specific_economy_records_only_when_asked(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    requester, _ = repository.create_user("economy-requester", "经济甲", now, 0)
+    target, _ = repository.create_user("economy-target", "经济乙", now, 0)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    for sequence in range(1, 26):
+        repository.record_balance_change(
+            target.id,
+            1,
+            f"测试流水-{sequence}",
+            now + timedelta(seconds=sequence),
+        )
+
+    current_at = now + timedelta(seconds=30)
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "economy-current",
+            requester.platform_id,
+            "@总监事 经济乙最近赚了多少摸鱼币",
+            current_at,
+            chatroom_id="economy-room",
+        )
+    )
+    repository.try_enqueue_ai_request(
+        current.id, requester.platform_id, current.content, current_at
+    )
+
+    prompt = repository.claim_ai_request("ai-worker", current_at, 90).system_prompt
+
+    assert "最近经济流水（最多 20 条）" in prompt
+    assert "测试流水-5" not in prompt
+    assert "测试流水-6" in prompt
+    assert "测试流水-25" in prompt
+    assert "变动 +1，余额 6" in prompt
+    assert "变动 +1，余额 25" in prompt
+
+
+def test_ai_social_context_omits_detailed_ledger_for_unrelated_question(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    requester, _ = repository.create_user("greeting-requester", "问候甲", now, 0)
+    target, _ = repository.create_user("greeting-target", "问候乙", now, 0)
+    repository.record_balance_change(target.id, 3, "不应出现的流水", now)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "greeting-current",
+            requester.platform_id,
+            "@总监事 问候乙你好",
+            now + timedelta(seconds=1),
+            chatroom_id="greeting-room",
+        )
+    )
+    repository.try_enqueue_ai_request(
+        current.id, requester.platform_id, current.content, now + timedelta(seconds=1)
+    )
+
+    prompt = repository.claim_ai_request(
+        "ai-worker", now + timedelta(seconds=1), 90
+    ).system_prompt
+
+    assert "最近经济流水" not in prompt
+    assert "不应出现的流水" not in prompt
+
+
+def test_ai_social_context_includes_game_facts_and_common_experiences(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import (
+        AIAssistantSettingsRecord,
+        AIActivityFactRecord,
+    )
+
+    requester, _ = repository.create_user("shared-requester", "共同甲", now, 0)
+    target, _ = repository.create_user("shared-target", "共同乙", now, 0)
+    unrelated, _ = repository.create_user("shared-other", "无关员工", now, 0)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+        session.add(
+            AIActivityFactRecord(
+                user_id=target.id,
+                activity_type="undercover",
+                participation_count=4,
+                win_count=2,
+                loss_count=1,
+                last_result="ended",
+                last_result_at=now,
+            )
+        )
+        shared_prefix = "undercover:shared-game"
+        session.add_all(
+            (
+                AIActivityEventRecord(
+                    event_key=f"{shared_prefix}:{requester.id}",
+                    user_id=requester.id,
+                    activity_type="undercover",
+                    result="win",
+                    occurred_at=now,
+                ),
+                AIActivityEventRecord(
+                    event_key=f"{shared_prefix}:{target.id}",
+                    user_id=target.id,
+                    activity_type="undercover",
+                    result="ended",
+                    occurred_at=now,
+                ),
+                AIActivityEventRecord(
+                    event_key=f"other-game:{unrelated.id}",
+                    user_id=unrelated.id,
+                    activity_type="undercover",
+                    result="loss",
+                    occurred_at=now,
+                ),
+            )
+        )
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "shared-current",
+            requester.platform_id,
+            "@总监事 共同甲和共同乙一起玩过什么",
+            now + timedelta(seconds=1),
+            chatroom_id="shared-room",
+        )
+    )
+    repository.try_enqueue_ai_request(
+        current.id, requester.platform_id, current.content, now + timedelta(seconds=1)
+    )
+
+    prompt = repository.claim_ai_request(
+        "ai-worker", now + timedelta(seconds=1), 90
+    ).system_prompt
+
+    assert "谁是卧底：参与 4，胜 2，负 1" in prompt
+    assert "共同经历：谁是卧底；共同甲=win；共同乙=ended" in prompt
+    assert "无关员工" not in prompt
+
+
 def test_ai_claim_includes_latest_fifteen_completed_turns_in_order(
     repository, session_factory, now
 ):

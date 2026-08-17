@@ -178,6 +178,9 @@ class RandomEventSettingsRecord(Base):
     submission_approval_reward: Mapped[int] = mapped_column(
         Integer, nullable=False, default=10, server_default="10"
     )
+    tipping_duration_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=120, server_default="120"
+    )
 
 
 class HideAndSeekSettingsRecord(Base):
@@ -910,8 +913,8 @@ class RandomEventRecord(Base):
             "ux_random_events_one_active_group",
             "group_key",
             unique=True,
-            sqlite_where=text("state IN ('signup', 'in_progress')"),
-            postgresql_where=text("state IN ('signup', 'in_progress')"),
+            sqlite_where=text("state IN ('signup', 'in_progress', 'tipping')"),
+            postgresql_where=text("state IN ('signup', 'in_progress', 'tipping')"),
         ),
     )
 
@@ -930,6 +933,8 @@ class RandomEventRecord(Base):
     signup_deadline: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     next_reminder_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     started_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    tipping_started_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    tipping_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     ended_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
 
 
@@ -970,12 +975,36 @@ class RandomEventDetailRecord(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class RandomEventTipRecord(Base):
+    __tablename__ = "random_event_tips"
+    __table_args__ = (
+        Index("ix_random_event_tips_event_id", "event_id"),
+        UniqueConstraint("inbound_message_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_events.id"), nullable=False
+    )
+    sender_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    recipient_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    inbound_message_id: Mapped[UUID] = mapped_column(
+        ForeignKey("inbound_messages.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class UserRecord(Base):
     __tablename__ = "users"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     platform_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    display_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     employee_number: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
     balance: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     profile_text: Mapped[str] = mapped_column(

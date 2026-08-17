@@ -23,6 +23,14 @@ from dzmm_bot.runtime.outbound import (
 )
 
 from dzmm_bot.ai.impressions import AIImpressionOperation, IMPRESSION_CATEGORIES
+from dzmm_bot.ai.social_context import (
+    AISocialContext,
+    SocialEmployee,
+    SocialPersonContext,
+    SocialRecentMessage,
+    render_social_context,
+    resolve_people,
+)
 from .ai_knowledge import (
     AIAuthoritativeContext,
     AIKnowledgeCard,
@@ -3557,6 +3565,56 @@ class CoreRepository:
             history_messages = self._ai_conversation_history(
                 session, record, inbound
             )
+            roster = tuple(
+                SocialEmployee(
+                    employee.id,
+                    employee.platform_id,
+                    employee.display_name,
+                    employee.employee_number,
+                )
+                for employee in session.scalars(
+                    select(UserRecord).order_by(
+                        UserRecord.employee_number, UserRecord.id
+                    )
+                )
+            )
+            resolution = resolve_people(user_content, roster, user.platform_id)
+            social_people: list[SocialPersonContext] = []
+            for employee in resolution.people:
+                employee_record = session.get(UserRecord, employee.user_id)
+                if employee_record is None:
+                    continue
+                employee_impressions = tuple(
+                    session.scalars(
+                        select(AIPlayerImpressionRecord).where(
+                            AIPlayerImpressionRecord.user_id == employee.user_id
+                        )
+                    )
+                )
+                social_people.append(
+                    SocialPersonContext(
+                        employee=employee,
+                        is_requester=employee.platform_id == user.platform_id,
+                        profile_text=employee_record.profile_text,
+                        impression_lines=tuple(
+                            line
+                            for line in _format_player_impressions(
+                                employee_impressions
+                            ).splitlines()
+                            if line and line != "暂无"
+                        ),
+                        recent_messages=self._recent_social_messages(
+                            session, employee, inbound
+                        ),
+                    )
+                )
+            social_context_text = render_social_context(
+                AISocialContext(
+                    people=tuple(social_people),
+                    ambiguous_aliases=resolution.ambiguous_aliases,
+                    current_time=now,
+                )
+            )
             active_token = self._active_session.set(session)
             try:
                 authoritative_context = self.build_ai_authoritative_context(
@@ -3590,6 +3648,7 @@ class CoreRepository:
                     authoritative_context=authoritative_context,
                     player_profile_text=user.profile_text,
                     player_impressions=_format_player_impressions(impressions),
+                    social_context_text=social_context_text,
                 ),
                 history_messages=history_messages,
                 user_content=user_content,
@@ -3652,6 +3711,51 @@ class CoreRepository:
                 )
             )
         return tuple(messages)
+
+    @staticmethod
+    def _recent_social_messages(
+        session: Session,
+        employee: SocialEmployee,
+        current_inbound: InboundRecord,
+    ) -> tuple[SocialRecentMessage, ...]:
+        if current_inbound.source_type != "group" or current_inbound.chatroom_id is None:
+            return ()
+        rows = list(
+            session.execute(
+                select(InboundRecord, AIRequestRecord)
+                .outerjoin(
+                    AIRequestRecord,
+                    and_(
+                        AIRequestRecord.inbound_message_id == InboundRecord.id,
+                        AIRequestRecord.status == "completed",
+                        AIRequestRecord.result_text.is_not(None),
+                        func.length(func.trim(AIRequestRecord.result_text)) > 0,
+                    ),
+                )
+                .where(
+                    InboundRecord.sender_platform_id == employee.platform_id,
+                    InboundRecord.source_type == "group",
+                    InboundRecord.chatroom_id == current_inbound.chatroom_id,
+                    InboundRecord.ai_memory_eligible.is_(True),
+                    InboundRecord.received_at <= current_inbound.received_at,
+                )
+                .order_by(InboundRecord.received_at.desc(), InboundRecord.id.desc())
+                .limit(30)
+            )
+        )
+        return tuple(
+            SocialRecentMessage(
+                content=inbound.content.strip(),
+                received_at=inbound.received_at,
+                ai_reply=(
+                    request.result_text.strip()
+                    if request is not None and request.result_text is not None
+                    else None
+                ),
+            )
+            for inbound, request in reversed(rows)
+            if inbound.content.strip()
+        )
 
     def complete_ai_request(
         self,
@@ -13488,6 +13592,7 @@ def _build_ai_system_prompt(
     authoritative_context: AIAuthoritativeContext,
     player_profile_text: str,
     player_impressions: str,
+    social_context_text: str,
 ) -> str:
     guardrail = (
         "【固定安全边界】\n"
@@ -13507,6 +13612,7 @@ def _build_ai_system_prompt(
             authoritative_context.live_facts_text,
             authoritative_context.commands_text,
             authoritative_context.cards_text,
+            social_context_text,
     ]
     if player_profile_text.strip():
         sections.append(

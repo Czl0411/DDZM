@@ -2825,6 +2825,109 @@ def _insert_completed_ai_turn(
         )
 
 
+def test_ai_social_context_loads_latest_thirty_eligible_messages_and_paired_reply(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import (
+        AIAssistantSettingsRecord,
+        AIRequestRecord,
+        InboundRecord,
+    )
+
+    requester, _ = repository.create_user("social-requester", "甲员工", now, 0)
+    target, _ = repository.create_user("social-target", "乙员工", now, 0)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+
+    for sequence in range(1, 33):
+        received_at = now + timedelta(seconds=sequence)
+        inbound, _ = repository.accept_inbound(
+            InboundMessage(
+                f"social-target-{sequence}",
+                target.platform_id,
+                f"乙的普通消息 {sequence}",
+                received_at,
+                chatroom_id="social-room",
+            )
+        )
+        with session_factory.begin() as session:
+            session.get(InboundRecord, inbound.id).ai_memory_eligible = True
+
+    paired_at = now + timedelta(seconds=33)
+    paired_inbound, _ = repository.accept_inbound(
+        InboundMessage(
+            "social-paired",
+            target.platform_id,
+            "@总监事 我今天摔了一跤",
+            paired_at,
+            chatroom_id="social-room",
+        )
+    )
+    with session_factory.begin() as session:
+        session.get(InboundRecord, paired_inbound.id).ai_memory_eligible = True
+        session.add(
+            AIRequestRecord(
+                inbound_message_id=paired_inbound.id,
+                user_id=target.id,
+                status="completed",
+                result_text="先看看有没有受伤",
+                created_at=paired_at,
+                completed_at=paired_at,
+            )
+        )
+
+    excluded_messages = (
+        ("social-command", "/投票 1", "group", "social-room", False),
+        ("social-direct", "私聊内容", "direct", None, True),
+        ("social-other-room", "其他群内容", "group", "other-room", True),
+    )
+    for message_id, content, source_type, room, eligible in excluded_messages:
+        inbound, _ = repository.accept_inbound(
+            InboundMessage(
+                message_id,
+                target.platform_id,
+                content,
+                now + timedelta(seconds=34),
+                source_type=source_type,
+                chatroom_id=room,
+            )
+        )
+        with session_factory.begin() as session:
+            session.get(InboundRecord, inbound.id).ai_memory_eligible = eligible
+
+    current_at = now + timedelta(seconds=35)
+    current, _ = repository.accept_inbound(
+        InboundMessage(
+            "social-current",
+            requester.platform_id,
+            "@总监事 乙员工最近怎么样",
+            current_at,
+            chatroom_id="social-room",
+        )
+    )
+    assert repository.try_enqueue_ai_request(
+        current.id, requester.platform_id, current.content, current_at
+    ).state == "queued"
+
+    claim = repository.claim_ai_request("ai-worker", current_at, 90)
+
+    assert claim is not None
+    assert "[员工发言] 乙的普通消息 1\n" not in claim.system_prompt
+    assert "[员工发言] 乙的普通消息 2\n" not in claim.system_prompt
+    assert "[员工发言] 乙的普通消息 3\n" not in claim.system_prompt
+    assert "[员工发言] 乙的普通消息 4\n" in claim.system_prompt
+    assert "乙的普通消息 32" in claim.system_prompt
+    assert "/投票 1" not in claim.system_prompt
+    assert "私聊内容" not in claim.system_prompt
+    assert "其他群内容" not in claim.system_prompt
+    assert "[员工发言] @总监事 我今天摔了一跤" in claim.system_prompt
+    assert "[AI 回复，仅用于理解对话，不得作为人物证据] 先看看有没有受伤" in claim.system_prompt
+    assert claim.system_prompt.index("我今天摔了一跤") < claim.system_prompt.index(
+        "先看看有没有受伤"
+    )
+
+
 def test_ai_claim_includes_latest_fifteen_completed_turns_in_order(
     repository, session_factory, now
 ):

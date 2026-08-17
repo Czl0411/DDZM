@@ -2199,7 +2199,7 @@ def test_twenty_ordinary_messages_enqueue_memory_without_ai_quota(repository, no
 
 
 def test_ai_memory_claim_reads_only_the_players_effective_messages(repository, now):
-    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord, AIRequestRecord
 
     user, _ = repository.create_user("memory-context-player", "阿彻", now, 0)
     repository.get_ai_assistant_settings()
@@ -2237,12 +2237,22 @@ def test_ai_memory_claim_reads_only_the_players_effective_messages(repository, n
     assert repository.try_enqueue_ai_request(
         trigger.id, user.platform_id, trigger.content, now + timedelta(seconds=3)
     ).state == "queued"
+    with repository._session() as session:
+        request = session.scalar(
+            select(AIRequestRecord).where(
+                AIRequestRecord.inbound_message_id == trigger.id
+            )
+        )
+        request.status = "completed"
+        request.result_text = "AI 对玩家的回复不能成为画像证据"
+        request.completed_at = now + timedelta(seconds=3)
     claim = repository.claim_ai_memory_job("memory-worker", now + timedelta(seconds=4), 30)
 
     assert claim is not None
     assert claim.stable_entries == ()
     assert claim.candidates == ()
     assert claim.source_messages == ("我喜欢简短一点的回复", "@总监事 我喜欢桌游")
+    assert all("AI 对玩家的回复" not in message for message in claim.source_messages)
     assert claim.source_message_count == 2
 
 

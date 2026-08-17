@@ -53,3 +53,7 @@ def test_render_impression_prompt_names_ids_and_prohibited_inferences():
     assert "reinforce_candidate 只能包含 action、candidate_id" in prompt
     assert "weaken_entry 只能包含 action、entry_id" in prompt
     assert "不得使用 id 字段代替 candidate_id 或 entry_id" in prompt
+    assert "可以记录玩家本人明确表达或多次表现出的稳定交往事实" in prompt
+    assert "迟到、受伤、摔跤、临时情绪属于短期状态，不得进入稳定画像" in prompt
+    assert "AI 回复不得作为玩家证据" in prompt
+    assert "不得推断第三方的人格" in prompt

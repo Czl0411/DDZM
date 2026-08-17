@@ -9878,7 +9878,9 @@ class CoreRepository:
             )
         )
         totals: dict[UUID, int] = {}
-        tips_by_recipient: dict[UUID, list[tuple[RandomEventTipRecord, UserRecord]]] = {}
+        tips_by_recipient: dict[
+            UUID, list[tuple[RandomEventTipRecord, UserRecord]]
+        ] = {}
         for tip, tip_sender, _tip_recipient in tip_rows:
             totals[tip.recipient_user_id] = (
                 totals.get(tip.recipient_user_id, 0) + tip.amount

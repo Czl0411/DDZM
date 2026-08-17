@@ -5446,6 +5446,102 @@ def test_random_event_lifecycle_rewards_only_completed_participant(
     assert repository.list_ai_activity_facts("u2")[0].last_result == "loss"
 
 
+def test_random_event_last_exit_opens_tipping_with_frozen_deadline(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "午休室", "报名", ["正式开始。"], 3, 2, [("员工", 2)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "{可选身份}", 15, 5, tipping_duration_seconds=30
+    )
+    repository.create_user("tip-first", "小明", now, 0)
+    repository.create_user("tip-second", "小红", now, 0)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("tip-first", "员工", now) == "joined"
+    assert repository.join_random_event("tip-second", "员工", now) == "started"
+    repository.record_random_event_round("tip-first", now, "第一轮")
+    repository.record_random_event_round("tip-first", now, "第二轮")
+
+    assert repository.leave_random_event("tip-first", now) == "rewarded"
+    assert repository.active_random_event_state() == "in_progress"
+    opened_at = now + timedelta(seconds=5)
+    assert repository.leave_random_event("tip-second", opened_at) == "left_without_reward"
+
+    summary = repository.random_event_tipping_summary()
+    assert summary.state == "tipping"
+    assert summary.tipping_started_at == opened_at
+    assert summary.tipping_deadline == opened_at + timedelta(seconds=30)
+    assert [(item.display_name, item.base_reward) for item in summary.participants] == [
+        ("小明", 3),
+        ("小红", 0),
+    ]
+    repository.set_random_event_settings(
+        ["10:00"], "{可选身份}", 15, 5, tipping_duration_seconds=90
+    )
+    assert repository.random_event_tipping_summary().tipping_deadline == (
+        opened_at + timedelta(seconds=30)
+    )
+    assert repository.classify_random_event_message("tip-first", "正常聊天") == "none"
+    assert repository.record_random_event_round("tip-first", opened_at, "正常聊天") == "none"
+    assert repository.start_hide_and_seek("tip-first", opened_at).status == (
+        "random_event_active"
+    )
+    with session_factory() as session:
+        messages = list(session.scalars(select(OutboundRecord.text)))
+    assert sum("进入打赏环节（30 秒）" in message for message in messages) == 1
+    assert any("小明：基础奖励 3 摸鱼币" in message for message in messages)
+    assert any("小红：基础奖励 0 摸鱼币" in message for message in messages)
+
+
+@pytest.mark.parametrize("duration", [9, 3601])
+def test_random_event_tipping_duration_rejects_out_of_range(repository, duration):
+    with pytest.raises(ValueError, match="打赏时长"):
+        repository.set_random_event_settings(
+            ["10:00"], "{可选身份}", 15, 5, tipping_duration_seconds=duration
+        )
+
+
+def test_random_event_tipping_timeout_settles_once_after_repository_restart(
+    repository, session_factory
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import OutboundRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "会议室", "报名", ["正式开始。"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "{可选身份}", 15, 5, tipping_duration_seconds=10
+    )
+    repository.create_user("timeout-player", "超时玩家", now, 0)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("timeout-player", "员工", now) == "started"
+    assert repository.leave_random_event("timeout-player", now) == "left_without_reward"
+    deadline = repository.random_event_tipping_summary().tipping_deadline
+    assert deadline is not None
+
+    restarted = CoreRepository(session_factory)
+    restarted.run_random_event_jobs(deadline - timedelta(microseconds=1))
+    assert restarted.active_random_event_state() == "tipping"
+    restarted.run_random_event_jobs(deadline)
+    restarted.run_random_event_jobs(deadline + timedelta(seconds=1))
+
+    assert restarted.active_random_event_state() is None
+    assert restarted.random_event_tipping_summary().state == "ended"
+    with session_factory() as session:
+        messages = list(session.scalars(select(OutboundRecord.text)))
+    assert sum(message.startswith("【随机事件打赏结束】") for message in messages) == 1
+    assert any("超时玩家：0 摸鱼币" in message for message in messages)
+    assert any("本场无人打赏" in message for message in messages)
+
+
 def test_random_event_signup_exit_does_not_create_an_activity_fact(repository):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_random_event_scene(

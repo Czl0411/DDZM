@@ -109,6 +109,10 @@ class CoreService:
             )
             board_force_end = profile is not None and profile.rank.is_board
             if event_state is not None:
+                ordinary_tipping_message = (
+                    event_state == "tipping"
+                    and not message.content.lstrip().startswith("/")
+                )
                 if (
                     not independent_command
                     and event_message_status in {"participant", "observer_valid"}
@@ -124,6 +128,7 @@ class CoreService:
                 if (
                     not board_force_end
                     and not independent_command
+                    and not ordinary_tipping_message
                     and not _allows_random_event_command(
                         message.content, event_state, settings
                     )

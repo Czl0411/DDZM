@@ -113,6 +113,7 @@ from .schema import (
     RandomEventDetailRecord,
     RandomEventRecord,
     RandomEventParticipantRecord,
+    RandomEventTipRecord,
     RandomEventSeatRecord,
     RandomEventSceneRecord,
     RandomEventSceneOpeningRecord,
@@ -159,6 +160,8 @@ _BALANCE_SOURCE_LABELS = {
     "profile_edit": "编辑个人档案",
     "profile_image_edit": "编辑档案形象",
     "random_event": "随机事件奖励",
+    "random_event_tip_out": "随机事件打赏支出",
+    "random_event_tip_in": "随机事件打赏收入",
     "hide_and_seek": "摸鱼躲猫猫报名",
     "hide_and_seek_win": "摸鱼躲猫猫获胜",
     "hide_and_seek_penalty": "摸鱼躲猫猫处罚",
@@ -218,7 +221,7 @@ _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
         "/职位", "/晋升", "/晋升申请列表",
         "/同意", "/全部同意", "/拒绝", "/全部拒绝",
         "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏",
-        "/甩锅游戏", "/甩锅", "/退出甩锅",
+        "/甩锅游戏", "/甩锅", "/退出甩锅", "/打赏",
     }
 )
 _DEFAULT_HIDE_AND_SEEK_ENTRY_FEE = 1
@@ -453,6 +456,16 @@ class RandomEventTippingSummary:
     tipping_started_at: datetime | None = None
     tipping_deadline: datetime | None = None
     participants: tuple[RandomEventTippingParticipant, ...] = ()
+
+
+@dataclass(frozen=True)
+class RandomEventTipResult:
+    status: str
+    sender_display_name: str | None = None
+    recipient_display_name: str | None = None
+    amount: int = 0
+    sender_balance: int | None = None
+    recipient_balance: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1181,6 +1194,7 @@ _COMMAND_DEFINITIONS = (
     ("/发奖金", "/发奖金 员工名 金额；/发奖金 全部 金额", "核心董事会向单个或全部员工发放系统奖金"),
     ("/发红包", "/发红包 人数 总金额", "使用自己的摸鱼币发出随机运气红包"),
     ("/抢红包", "/抢红包", "领取当前随机运气红包"),
+    ("/打赏", "/打赏 员工名称 金额", "在随机事件打赏阶段向参与者转移摸鱼币"),
     ("/我", "/我；/me", "查看余额、今日活跃度和今日收益"),
     ("/商店", "/商店", "查看当前上架物品"),
     ("/帮助", "/帮助", "查看当前可用指令"),
@@ -9644,6 +9658,147 @@ class CoreRepository:
                 tipping_deadline=event.tipping_deadline,
                 participants=self._random_event_tipping_participants(session, event),
             )
+
+    def tip_random_event(
+        self,
+        platform_id: str,
+        recipient_name: str,
+        amount: int,
+        platform_message_id: str,
+        now: datetime,
+    ) -> RandomEventTipResult:
+        now = now.astimezone(BEIJING)
+        recipient_name = recipient_name.strip()
+        with self.transaction():
+            with self._session() as session:
+                inbound = session.scalar(
+                    select(InboundRecord).where(
+                        InboundRecord.platform_message_id == platform_message_id
+                    )
+                )
+                if inbound is None:
+                    return RandomEventTipResult("inbound_not_found")
+                existing = self._random_event_tip_result_for_inbound(
+                    session, inbound.id
+                )
+                if existing is not None:
+                    return existing
+                sender_id = session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                if sender_id is None:
+                    return RandomEventTipResult("not_joined")
+                if (
+                    isinstance(amount, bool)
+                    or not isinstance(amount, int)
+                    or amount <= 0
+                ):
+                    return RandomEventTipResult("invalid_amount")
+                event = session.scalar(
+                    select(RandomEventRecord)
+                    .where(RandomEventRecord.state == "tipping")
+                    .order_by(RandomEventRecord.started_at)
+                    .with_for_update()
+                )
+                if event is None:
+                    return RandomEventTipResult("no_tipping_event")
+                if event.tipping_deadline is None or now >= event.tipping_deadline:
+                    self._settle_random_event_tipping(session, event, now)
+                    return RandomEventTipResult("expired")
+                existing = self._random_event_tip_result_for_inbound(
+                    session, inbound.id
+                )
+                if existing is not None:
+                    return existing
+                recipient_id = session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.display_name == recipient_name
+                    )
+                )
+                if recipient_id is None:
+                    return RandomEventTipResult("recipient_not_found")
+                if session.scalar(
+                    select(RandomEventParticipantRecord.id).where(
+                        RandomEventParticipantRecord.event_id == event.id,
+                        RandomEventParticipantRecord.user_id == recipient_id,
+                    )
+                ) is None:
+                    return RandomEventTipResult("recipient_not_participant")
+                if sender_id == recipient_id:
+                    return RandomEventTipResult("self_tip")
+                locked_users = list(
+                    session.scalars(
+                        select(UserRecord)
+                        .where(UserRecord.id.in_((sender_id, recipient_id)))
+                        .order_by(UserRecord.id)
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    )
+                )
+                users = {user.id: user for user in locked_users}
+                sender = users.get(sender_id)
+                recipient = users.get(recipient_id)
+                if sender is None or recipient is None:
+                    raise RuntimeError("打赏员工在交易期间消失")
+                if sender.balance < amount:
+                    return RandomEventTipResult(
+                        "insufficient_balance",
+                        sender_display_name=sender.display_name,
+                        recipient_display_name=recipient.display_name,
+                        amount=amount,
+                        sender_balance=sender.balance,
+                        recipient_balance=recipient.balance,
+                    )
+                self._apply_balance_change(
+                    sender, -amount, "random_event_tip_out", now
+                )
+                self._apply_balance_change(
+                    recipient, amount, "random_event_tip_in", now
+                )
+                session.add(
+                    RandomEventTipRecord(
+                        event_id=event.id,
+                        sender_user_id=sender.id,
+                        recipient_user_id=recipient.id,
+                        amount=amount,
+                        inbound_message_id=inbound.id,
+                        created_at=now,
+                    )
+                )
+                session.flush()
+                return RandomEventTipResult(
+                    "tipped",
+                    sender_display_name=sender.display_name,
+                    recipient_display_name=recipient.display_name,
+                    amount=amount,
+                    sender_balance=sender.balance,
+                    recipient_balance=recipient.balance,
+                )
+
+    def _random_event_tip_result_for_inbound(
+        self, session: Session, inbound_id: UUID
+    ) -> RandomEventTipResult | None:
+        sender = aliased(UserRecord)
+        recipient = aliased(UserRecord)
+        row = session.execute(
+            select(RandomEventTipRecord, sender, recipient)
+            .join(sender, sender.id == RandomEventTipRecord.sender_user_id)
+            .join(recipient, recipient.id == RandomEventTipRecord.recipient_user_id)
+            .where(RandomEventTipRecord.inbound_message_id == inbound_id)
+        ).one_or_none()
+        if row is None:
+            return None
+        tip, sender_user, recipient_user = row
+        return RandomEventTipResult(
+            "duplicate",
+            sender_display_name=sender_user.display_name,
+            recipient_display_name=recipient_user.display_name,
+            amount=tip.amount,
+            sender_balance=sender_user.balance,
+            recipient_balance=recipient_user.balance,
+        )
 
     def _random_event_tipping_participants(
         self, session: Session, event: RandomEventRecord

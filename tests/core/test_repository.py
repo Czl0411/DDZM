@@ -5542,6 +5542,173 @@ def test_random_event_tipping_timeout_settles_once_after_repository_restart(
     assert any("本场无人打赏" in message for message in messages)
 
 
+def _prepare_random_event_tip_test(repository, now, *, duration=120):
+    repository.create_random_event_scene(
+        "打赏测试场", "报名", ["正式开始。"], 1, 1, [("员工", 2)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "{可选身份}", 15, 5, tipping_duration_seconds=duration
+    )
+    repository.create_user("tip-target-1", "收款员工", now, 0)
+    repository.create_user("tip-target-2", "提前退出员工", now, 0)
+    repository.create_user("tip-donor", "打赏员工", now, 10)
+    repository.create_user("tip-outsider", "非参与员工", now, 0)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("tip-target-1", "员工", now) == "joined"
+    assert repository.join_random_event("tip-target-2", "员工", now) == "started"
+    repository.record_random_event_round("tip-target-1", now, "完成一轮")
+    assert repository.leave_random_event("tip-target-1", now) == "rewarded"
+    assert repository.leave_random_event("tip-target-2", now) == "left_without_reward"
+
+
+def _accept_tip_inbound(repository, message_id, sender, content, now):
+    inbound, inserted = repository.accept_inbound(
+        InboundMessage(message_id, sender, content, now)
+    )
+    assert inserted is True
+    return inbound
+
+
+def test_random_event_tip_transfers_real_balance_and_is_idempotent(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import BalanceTransactionRecord, RandomEventTipRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _prepare_random_event_tip_test(repository, now)
+    inbound = _accept_tip_inbound(
+        repository, "tip-success-1", "tip-donor", "/打赏 收款员工 5", now
+    )
+
+    first = repository.tip_random_event(
+        "tip-donor", "收款员工", 5, "tip-success-1", now
+    )
+    duplicate = repository.tip_random_event(
+        "tip-donor", "收款员工", 5, "tip-success-1", now
+    )
+
+    assert first.status == "tipped"
+    assert (first.sender_display_name, first.recipient_display_name) == (
+        "打赏员工",
+        "收款员工",
+    )
+    assert (first.sender_balance, first.recipient_balance) == (5, 6)
+    assert duplicate.status == "duplicate"
+    assert repository.find_user("tip-donor").balance == 5
+    assert repository.find_user("tip-target-1").balance == 6
+    with session_factory() as session:
+        tips = list(session.scalars(select(RandomEventTipRecord)))
+        transactions = list(
+            session.scalars(
+                select(BalanceTransactionRecord).where(
+                    BalanceTransactionRecord.source.in_(
+                        ("random_event_tip_out", "random_event_tip_in")
+                    )
+                )
+            )
+        )
+    assert len(tips) == 1
+    assert tips[0].inbound_message_id == inbound.id
+    assert [(row.amount, row.source) for row in transactions] == [
+        (-5, "random_event_tip_out"),
+        (5, "random_event_tip_in"),
+    ]
+
+    _accept_tip_inbound(
+        repository, "tip-success-2", "tip-donor", "/打赏 提前退出员工 2", now
+    )
+    second = repository.tip_random_event(
+        "tip-donor", "提前退出员工", 2, "tip-success-2", now
+    )
+    assert second.status == "tipped"
+    assert repository.find_user("tip-donor").balance == 3
+    assert repository.find_user("tip-target-2").balance == 2
+
+
+def test_random_event_tip_rejections_do_not_change_balance(repository, session_factory):
+    from dzmm_bot.core.schema import BalanceTransactionRecord, RandomEventTipRecord
+
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _prepare_random_event_tip_test(repository, now)
+    cases = [
+        ("reject-not-joined", "missing", "收款员工", 1, "not_joined"),
+        ("reject-invalid", "tip-donor", "收款员工", 0, "invalid_amount"),
+        ("reject-missing", "tip-donor", "不存在", 1, "recipient_not_found"),
+        (
+            "reject-outsider",
+            "tip-donor",
+            "非参与员工",
+            1,
+            "recipient_not_participant",
+        ),
+        ("reject-self", "tip-target-1", "收款员工", 1, "self_tip"),
+        ("reject-poor", "tip-donor", "收款员工", 11, "insufficient_balance"),
+    ]
+    for message_id, sender, recipient, amount, expected in cases:
+        _accept_tip_inbound(
+            repository,
+            message_id,
+            sender,
+            f"/打赏 {recipient} {amount}",
+            now,
+        )
+        result = repository.tip_random_event(
+            sender, recipient, amount, message_id, now
+        )
+        assert result.status == expected
+
+    assert repository.find_user("tip-donor").balance == 10
+    assert repository.find_user("tip-target-1").balance == 1
+    assert repository.find_user("tip-target-2").balance == 0
+    with session_factory() as session:
+        assert session.scalar(select(func.count(RandomEventTipRecord.id))) == 0
+        assert session.scalar(
+            select(func.count(BalanceTransactionRecord.id)).where(
+                BalanceTransactionRecord.source.in_(
+                    ("random_event_tip_out", "random_event_tip_in")
+                )
+            )
+        ) == 0
+
+
+def test_random_event_tip_rejects_missing_or_expired_tipping_phase(repository):
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    repository.create_user("phase-donor", "阶段打赏者", now, 10)
+    _accept_tip_inbound(
+        repository, "tip-no-phase", "phase-donor", "/打赏 不存在 1", now
+    )
+    assert repository.tip_random_event(
+        "phase-donor", "不存在", 1, "tip-no-phase", now
+    ).status == "no_tipping_event"
+
+    repository.create_random_event_scene(
+        "超时场", "报名", ["开始"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "{可选身份}", 15, 5, tipping_duration_seconds=10
+    )
+    repository.create_user("phase-target", "阶段收款者", now, 0)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("phase-target", "员工", now) == "started"
+    assert repository.leave_random_event("phase-target", now) == "left_without_reward"
+    deadline = repository.random_event_tipping_summary().tipping_deadline
+    assert deadline is not None
+    _accept_tip_inbound(
+        repository,
+        "tip-expired",
+        "phase-donor",
+        "/打赏 阶段收款者 1",
+        deadline,
+    )
+    assert repository.tip_random_event(
+        "phase-donor", "阶段收款者", 1, "tip-expired", deadline
+    ).status == "expired"
+    assert repository.find_user("phase-donor").balance == 10
+    assert repository.find_user("phase-target").balance == 0
+
+
 def test_random_event_signup_exit_does_not_create_an_activity_fact(repository):
     now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
     repository.create_random_event_scene(
@@ -6959,6 +7126,152 @@ def test_postgres_random_event_game_creation_is_serialized(
         ("signup", "random_event_active"),
     }
     assert not (random_event_active and memory_game_active)
+
+
+def test_postgres_random_event_tips_cannot_overdraw_sender(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+
+    engine = create_engine(migrated_postgres_url)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    setup = CoreRepository(factory)
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _prepare_random_event_tip_test(setup, now)
+    _accept_tip_inbound(setup, "concurrent-tip-1", "tip-donor", "/打赏 收款员工 7", now)
+    _accept_tip_inbound(
+        setup,
+        "concurrent-tip-2",
+        "tip-donor",
+        "/打赏 提前退出员工 7",
+        now,
+    )
+    barrier = Barrier(2)
+
+    def submit(message_id, recipient):
+        barrier.wait()
+        return CoreRepository(factory).tip_random_event(
+            "tip-donor", recipient, 7, message_id, now
+        ).status
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = list(
+            executor.map(
+                lambda item: submit(*item),
+                (
+                    ("concurrent-tip-1", "收款员工"),
+                    ("concurrent-tip-2", "提前退出员工"),
+                ),
+            )
+        )
+
+    assert sorted(statuses) == ["insufficient_balance", "tipped"]
+    assert setup.find_user("tip-donor").balance == 3
+    engine.dispose()
+
+
+def test_postgres_random_event_opposite_tips_finish_without_deadlock(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+
+    engine = create_engine(migrated_postgres_url)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    setup = CoreRepository(factory)
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _prepare_random_event_tip_test(setup, now)
+    first = setup.find_user("tip-target-1")
+    second = setup.find_user("tip-target-2")
+    setup.record_balance_change(first.id, 10, "test_fund", now)
+    setup.record_balance_change(second.id, 10, "test_fund", now)
+    _accept_tip_inbound(
+        setup,
+        "opposite-tip-1",
+        "tip-target-1",
+        "/打赏 提前退出员工 2",
+        now,
+    )
+    _accept_tip_inbound(
+        setup,
+        "opposite-tip-2",
+        "tip-target-2",
+        "/打赏 收款员工 3",
+        now,
+    )
+    barrier = Barrier(2)
+
+    def submit(sender, recipient, amount, message_id):
+        barrier.wait()
+        return CoreRepository(factory).tip_random_event(
+            sender, recipient, amount, message_id, now
+        ).status
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = (
+            executor.submit(
+                submit,
+                "tip-target-1",
+                "提前退出员工",
+                2,
+                "opposite-tip-1",
+            ),
+            executor.submit(
+                submit,
+                "tip-target-2",
+                "收款员工",
+                3,
+                "opposite-tip-2",
+            ),
+        )
+        statuses = [future.result(timeout=10) for future in futures]
+
+    assert statuses == ["tipped", "tipped"]
+    engine.dispose()
+
+
+def test_postgres_random_event_tip_race_with_deadline_never_transfers_after_end(
+    migrated_postgres_url,
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import RandomEventTipRecord
+
+    engine = create_engine(migrated_postgres_url)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    setup = CoreRepository(factory)
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=BEIJING)
+    _prepare_random_event_tip_test(setup, now, duration=10)
+    deadline = setup.random_event_tipping_summary().tipping_deadline
+    assert deadline is not None
+    _accept_tip_inbound(
+        setup,
+        "deadline-tip",
+        "tip-donor",
+        "/打赏 收款员工 5",
+        deadline,
+    )
+    barrier = Barrier(2)
+
+    def submit_tip():
+        barrier.wait()
+        return CoreRepository(factory).tip_random_event(
+            "tip-donor", "收款员工", 5, "deadline-tip", deadline
+        ).status
+
+    def settle():
+        barrier.wait()
+        CoreRepository(factory).run_random_event_jobs(deadline)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        tip_future = executor.submit(submit_tip)
+        settle_future = executor.submit(settle)
+        status = tip_future.result(timeout=10)
+        settle_future.result(timeout=10)
+
+    assert status in {"expired", "no_tipping_event"}
+    assert setup.find_user("tip-donor").balance == 10
+    with factory() as session:
+        assert session.scalar(select(func.count(RandomEventTipRecord.id))) == 0
+    engine.dispose()
 
 
 def test_postgres_blame_transfers_from_same_holder_are_serialized(

@@ -18,7 +18,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
+    "/入职", "/我的物品", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/蹦蹦数字炸弹", "/报数", "/跳过",
 }
 
 
@@ -61,6 +61,8 @@ class GroupCommandHandler:
             return self._red_packet_create(message, content, received_at)
         if command == "/抢红包":
             return self._red_packet_claim(message, received_at)
+        if command == "/打赏":
+            return self._random_event_tip(message, content, received_at)
         if command == "/当前游戏":
             return self._current_game(message.sender_platform_id, received_at)
         if command == "/入职":
@@ -1592,6 +1594,64 @@ class GroupCommandHandler:
 
     def _event_reward(self, platform_id: str) -> int:
         return self._repository.last_random_event_reward(platform_id)
+
+    def _random_event_tip(
+        self, message: InboundMessage, content: str, received_at
+    ) -> str:
+        payload = content[len("/打赏") :].strip()
+        if not payload:
+            return self._reply("/打赏", "usage", received_at)
+        parts = payload.rsplit(maxsplit=1)
+        if (
+            len(parts) != 2
+            or not parts[0].strip()
+            or not parts[1].isascii()
+            or not parts[1].isdigit()
+            or int(parts[1]) <= 0
+        ):
+            return self._reply("/打赏", "invalid_amount", received_at)
+        result = self._repository.tip_random_event(
+            message.sender_platform_id,
+            parts[0].strip(),
+            int(parts[1]),
+            message.platform_message_id,
+            received_at,
+        )
+        currency = self._repository.get_game_settings().currency_name
+        if result.status in {"tipped", "duplicate"}:
+            return self._reply(
+                "/打赏",
+                "tipped",
+                received_at,
+                {
+                    "{打赏者}": result.sender_display_name or "",
+                    "{收款人}": result.recipient_display_name or "",
+                    "{金额}": result.amount,
+                    "{货币}": currency,
+                },
+            )
+        if result.status == "insufficient_balance":
+            return self._reply(
+                "/打赏",
+                result.status,
+                received_at,
+                {"{余额}": result.sender_balance or 0, "{货币}": currency},
+            )
+        scenario = (
+            result.status
+            if result.status
+            in {
+                "not_joined",
+                "no_tipping_event",
+                "expired",
+                "invalid_amount",
+                "recipient_not_found",
+                "recipient_not_participant",
+                "self_tip",
+            }
+            else "failed"
+        )
+        return self._reply("/打赏", scenario, received_at)
 
     def _hide_and_seek(self, platform_id: str, content: str, received_at) -> str | list[str]:
         parts = content.split()

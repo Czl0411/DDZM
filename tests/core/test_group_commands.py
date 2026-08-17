@@ -68,6 +68,87 @@ def _replies_for(factory, inbound_id):
         )
 
 
+def _prepare_group_tip_event(repository, now):
+    repository.create_random_event_scene(
+        "打赏命令场", "报名", ["开始"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(
+        ["12:00"], "{可选身份}", 15, 5, tipping_duration_seconds=120
+    )
+    repository.create_user("group-tip-target", "收款 员工", now, 0)
+    repository.create_user("group-tip-donor", "热心员工", now, 10)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("group-tip-target", "员工", now) == "started"
+    assert repository.leave_random_event("group-tip-target", now) == "left_without_reward"
+
+
+def test_random_event_tip_command_parses_spaced_name_and_replies_to_source():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=BEIJING)
+    _prepare_group_tip_event(repository, now)
+
+    result = _receive(
+        service,
+        "group-tip-success",
+        "group-tip-donor",
+        "/打赏 收款 员工 5",
+        now,
+    )
+
+    assert _replies_for(factory, result.message_id) == [
+        "热心员工 向 收款 员工 打赏了 5 摸鱼币。"
+    ]
+    assert repository.find_user("group-tip-donor").balance == 5
+    assert repository.find_user("group-tip-target").balance == 5
+
+
+def test_random_event_tip_command_reaches_business_validation_before_tipping():
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=BEIJING)
+    repository.create_random_event_scene(
+        "进行中场景", "报名", ["开始"], 1, 1, [("员工", 1)]
+    )
+    repository.set_random_event_settings(["12:00"], "{可选身份}", 15, 5)
+    repository.create_user("in-progress-player", "进行中玩家", now, 10)
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    assert repository.join_random_event("in-progress-player", "员工", now) == "started"
+
+    result = _receive(
+        service,
+        "tip-before-phase",
+        "in-progress-player",
+        "/打赏 进行中玩家 1",
+        now,
+    )
+
+    assert _replies_for(factory, result.message_id) == [
+        "当前不在随机事件打赏阶段。"
+    ]
+    assert repository.find_user("in-progress-player").balance == 10
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("/打赏", "请用 /打赏 员工名称 金额。"),
+        ("/打赏 收款 员工", "打赏金额必须是正整数。"),
+        ("/打赏 收款 员工 ０", "打赏金额必须是正整数。"),
+        ("/打赏 收款 员工 -1", "打赏金额必须是正整数。"),
+        ("/打赏 不存在 1", "未找到该员工。"),
+    ],
+)
+def test_random_event_tip_command_reports_validation(content, expected):
+    service, repository, factory = _service()
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=BEIJING)
+    _prepare_group_tip_event(repository, now)
+
+    _receive(service, f"group-tip-invalid-{content}", "group-tip-donor", content, now)
+
+    assert _latest_reply(factory) == expected
+
+
 def test_lucky_red_packet_commands_create_claim_complete_and_are_idempotent():
     service, repository, factory = _service(red_packet_random=Random(1))
     now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)

@@ -4295,6 +4295,7 @@ class GroupCommandHandler:
         "limit": "draft_limit",
         "not_joined": "not_joined",
         "closed": "closed",
+        "not_on_sale": "not_on_sale",
         "disabled": "disabled",
     }
 
@@ -4302,6 +4303,7 @@ class GroupCommandHandler:
         "bought": "bought",
         "disabled": "disabled",
         "closed": "closed",
+        "not_on_sale": "not_on_sale",
         "not_joined": "not_joined",
         "daily_limit": "daily_limit",
         "round_full": "round_full",

@@ -248,10 +248,26 @@ def test_purchase_is_rejected_after_close():
         "m1",
         "p1",
         "/购买彩票 机选",
-        datetime(2026, 9, 14, 21, 55, tzinfo=BEIJING),
+        datetime(2026, 9, 14, 21, 30, tzinfo=BEIJING),
     )
 
     assert "停售" in _reply(factory)
+
+
+def test_next_round_says_when_it_will_open():
+    service, repository, factory, group, _ = _setup()
+    repository.draw_company_lottery_round(DRAW_AT)
+
+    _send(
+        service,
+        group,
+        "m1",
+        "p1",
+        "/购买彩票 机选",
+        datetime(2026, 9, 14, 22, 1, tzinfo=BEIJING),
+    )
+
+    assert _reply(factory) == "今日已停售，下一期将于明日 00:00 开卖。"
 
 
 def test_first_round_seeds_the_pool_so_the_head_prize_pays_out():
@@ -418,5 +434,5 @@ def test_my_tickets_shows_the_prize_after_the_draw():
     _send(service, group, "m2", "p1", "/我的彩票", DRAW_AT)
 
     text = _reply(factory)
-    assert "+100" in text
-    assert "累计中奖 100 摸鱼币" in text
+    assert "+102" in text
+    assert "累计中奖 102 摸鱼币" in text

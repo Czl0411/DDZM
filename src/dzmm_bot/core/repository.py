@@ -71,6 +71,7 @@ from .company_lottery import (
     new_salt,
     quick_tickets,
     round_timing,
+    sale_status,
     settle_round,
     should_notify_close,
     total_combinations,
@@ -27901,8 +27902,13 @@ class CoreRepository:
                     )
                     .with_for_update()
                 )
-                if round_row is None or round_row.close_at <= now:
+                if round_row is None:
                     return CompanyLotteryDraftResult(status="closed")
+                sale = sale_status(
+                    now=now, close_at=round_row.close_at, draw_at=round_row.draw_at
+                )
+                if sale != "open":
+                    return CompanyLotteryDraftResult(status=sale)
                 rules = _company_lottery_round_settings(round_row, settings)
 
                 user = session.scalar(
@@ -28088,6 +28094,11 @@ class CoreRepository:
                 round_row = session.get(CompanyLotteryRoundRecord, draft.round_id)
                 if round_row is None:
                     return CompanyLotteryDraftResult(status="no_draft")
+                sale = sale_status(
+                    now=now, close_at=round_row.close_at, draw_at=round_row.draw_at
+                )
+                if sale != "open":
+                    return CompanyLotteryDraftResult(status=sale)
                 rules = _company_lottery_round_settings(round_row, settings)
 
                 entries = list(draft.tickets)
@@ -28602,10 +28613,17 @@ class CoreRepository:
                     )
                     .with_for_update()
                 )
-                if round_row is None or round_row.close_at <= now:
+                if round_row is None:
                     return CompanyLotteryPurchaseResult(
                         status="closed",
-                        close_at=None if round_row is None else round_row.close_at,
+                        close_at=None,
+                    )
+                sale = sale_status(
+                    now=now, close_at=round_row.close_at, draw_at=round_row.draw_at
+                )
+                if sale != "open":
+                    return CompanyLotteryPurchaseResult(
+                        status=sale, close_at=round_row.close_at
                     )
                 rules = _company_lottery_round_settings(round_row, settings)
 
@@ -29033,7 +29051,7 @@ def _render_lottery_draw(result: CompanyLotteryDrawResult) -> str:
     if result.next_round_number is None:
         lines.append("公司双色球已暂停，待后台重新启用")
     else:
-        lines.append(f"第 {result.next_round_number} 期已开卖 → /购买彩票 机选")
+        lines.append(f"第 {result.next_round_number} 期已开启，明日 00:00 开卖 → /购买彩票 机选")
     return "\n".join(lines)
 
 

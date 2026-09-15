@@ -64,9 +64,9 @@ def test_win_rate_matches_design():
 
 
 def test_expected_return_matches_design():
-    assert expected_return(DEFAULT_PRIZES) == Decimal(1_495) / Decimal(1_260)
+    assert expected_return(DEFAULT_PRIZES) == Decimal(2_365) / Decimal(1_260)
     assert expected_return(DEFAULT_PRIZES) == pytest.approx(
-        Decimal("1.186508"), abs=1e-6
+        Decimal("1.876984"), abs=1e-6
     )
 
 
@@ -164,9 +164,10 @@ def test_settle_round_pours_every_ticket_into_the_pool():
 
 
 def test_settle_round_reaches_steady_state_overflow():
-    """奖池满额时，100 → 164 的稳态每期溢出 24 摸鱼币。"""
+    """自定义 200 奖池满额时，100 → 164 的稳态每期溢出 24 摸鱼币。"""
     settlement = settle_round(
-        pool_opening=164, sales=60, winners=[], prizes=DEFAULT_PRIZES
+        pool_opening=164, sales=60, winners=[], prizes=DEFAULT_PRIZES,
+        pool_ceiling=200,
     )
 
     assert settlement.overflow == 24
@@ -176,7 +177,8 @@ def test_settle_round_reaches_steady_state_overflow():
 
 def test_settle_round_caps_the_pool_and_diverts_the_excess():
     settlement = settle_round(
-        pool_opening=200, sales=100, winners=[], prizes=DEFAULT_PRIZES
+        pool_opening=200, sales=100, winners=[], prizes=DEFAULT_PRIZES,
+        pool_ceiling=200,
     )
 
     assert settlement.overflow == 100
@@ -191,10 +193,10 @@ def test_settle_round_merges_multiple_winning_tickets_per_employee():
         prizes=DEFAULT_PRIZES,
     )
 
-    assert settlement.per_user == {"u1": 30}
-    assert settlement.payable == 30
+    assert settlement.per_user == {"u1": 40}
+    assert settlement.payable == 40
     assert settlement.haircut is None
-    assert settlement.paid_total == 30
+    assert settlement.paid_total == 40
 
 
 def test_settle_round_caps_after_merging_per_employee():
@@ -203,6 +205,7 @@ def test_settle_round_caps_after_merging_per_employee():
         sales=100,
         winners=[("u1", PrizeTier.HEAD), ("u1", PrizeTier.HEAD)],
         prizes=DEFAULT_PRIZES,
+        per_person_cap=100,
     )
 
     assert settlement.per_user == {"u1": 100}
@@ -216,10 +219,11 @@ def test_settle_round_gives_each_employee_their_own_cap():
         sales=100,
         winners=[("u1", PrizeTier.HEAD), ("u2", PrizeTier.HEAD)],
         prizes=DEFAULT_PRIZES,
+        per_person_cap=500,
     )
 
-    assert settlement.per_user == {"u1": 100, "u2": 100}
-    assert settlement.payable == 200
+    assert settlement.per_user == {"u1": 500, "u2": 500}
+    assert settlement.payable == 1_000
     assert settlement.capped_users == ()
 
 
@@ -232,8 +236,8 @@ def test_settle_round_haircuts_when_the_pool_is_short():
     )
 
     assert settlement.pool_available == 50
-    assert settlement.payable == 100
-    assert settlement.haircut == Decimal("0.5000")
+    assert settlement.payable == 500
+    assert settlement.haircut == Decimal("0.1000")
     assert settlement.paid_total == 50
     assert settlement.pool_closing == 0
 
@@ -245,6 +249,7 @@ def test_settle_round_haircuts_after_capping():
         sales=60,
         winners=[("u1", PrizeTier.HEAD), ("u1", PrizeTier.HEAD)],
         prizes=DEFAULT_PRIZES,
+        per_person_cap=100,
     )
 
     assert settlement.per_user == {"u1": 100}
@@ -272,7 +277,8 @@ def test_settle_round_pool_recovers_after_a_head_prize():
 
     for winners in ([("u1", PrizeTier.HEAD)], [], [], [], []):
         settlement = settle_round(
-            pool_opening=pool, sales=60, winners=winners, prizes=DEFAULT_PRIZES
+            pool_opening=pool, sales=60, winners=winners, prizes=DEFAULT_PRIZES,
+            pool_ceiling=200, per_person_cap=100,
         )
         pool = settlement.pool_closing
         trail.append(pool)
@@ -326,22 +332,22 @@ def test_round_timing_rolls_over_to_tomorrow():
     now = datetime(2026, 9, 14, 23, 0, tzinfo=BEIJING)
 
     close_at, draw_at = round_timing(
-        now=now, draw_hour=22, draw_minute=0, close_offset_minutes=10
+        now=now, draw_hour=22, draw_minute=0, close_offset_minutes=30
     )
 
     assert draw_at == datetime(2026, 9, 15, 22, 0, tzinfo=BEIJING)
-    assert close_at == datetime(2026, 9, 15, 21, 50, tzinfo=BEIJING)
+    assert close_at == datetime(2026, 9, 15, 21, 30, tzinfo=BEIJING)
 
 
 def test_round_timing_keeps_today_when_draw_is_ahead():
     now = datetime(2026, 9, 14, 20, 0, tzinfo=BEIJING)
 
     close_at, draw_at = round_timing(
-        now=now, draw_hour=22, draw_minute=0, close_offset_minutes=10
+        now=now, draw_hour=22, draw_minute=0, close_offset_minutes=30
     )
 
     assert draw_at == datetime(2026, 9, 14, 22, 0, tzinfo=BEIJING)
-    assert close_at == datetime(2026, 9, 14, 21, 50, tzinfo=BEIJING)
+    assert close_at == datetime(2026, 9, 14, 21, 30, tzinfo=BEIJING)
 
 
 def test_should_notify_close_only_inside_window_and_when_idle():

@@ -577,6 +577,7 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/购买彩票", "not_joined", "未入职", "请先用 /入职 名字 加入摸鱼公司。", ("{日期}",)),
     TemplateDefinition("/购买彩票", "disabled", "玩法关闭", "本群暂未开放公司双色球。", ("{日期}",)),
     TemplateDefinition("/购买彩票", "closed", "已停售", "本期已于 {截止时刻} 停售，下一期开卖后可以再买。", ("{截止时刻}", "{日期}")),
+    TemplateDefinition("/购买彩票", "not_on_sale", "明日开售", "今日已停售，下一期将于明日 00:00 开卖。", ("{日期}",)),
     TemplateDefinition(
         "/购买彩票",
         "bought",

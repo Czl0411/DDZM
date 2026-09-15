@@ -3008,17 +3008,17 @@ class CompanyLotterySettingsRecord(Base):
     blue_pool: Mapped[int] = mapped_column(Integer, default=6, nullable=False)
 
     ticket_price: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
-    head_prize: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
-    second_prize: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
-    third_prize: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
+    head_prize: Mapped[int] = mapped_column(Integer, default=500, nullable=False)
+    second_prize: Mapped[int] = mapped_column(Integer, default=120, nullable=False)
+    third_prize: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     fourth_prize: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
     fifth_prize: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
-    pool_ceiling: Mapped[int] = mapped_column(Integer, default=200, nullable=False)
+    pool_ceiling: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
     pool_seed: Mapped[int] = mapped_column(
         Integer, default=100, server_default="100", nullable=False
     )
-    per_person_cap: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    per_person_cap: Mapped[int] = mapped_column(Integer, default=500, nullable=False)
     max_tickets_per_day: Mapped[int] = mapped_column(
         Integer, default=5, server_default="5", nullable=False
     )
@@ -3029,7 +3029,7 @@ class CompanyLotterySettingsRecord(Base):
     draw_hour: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
     draw_minute: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     close_offset_minutes: Mapped[int] = mapped_column(
-        Integer, default=10, server_default="10", nullable=False
+        Integer, default=30, server_default="30", nullable=False
     )
     notify_offset_minutes: Mapped[int] = mapped_column(
         Integer, default=5, server_default="5", nullable=False

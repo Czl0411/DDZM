@@ -72,11 +72,14 @@ def test_company_lottery_migration_seeds_pool_and_settings(tmp_path, monkeypatch
     assert row["red_count"] == 4
     assert row["blue_pool"] == 6
     assert row["ticket_price"] == 2
-    assert row["head_prize"] == 100
-    assert row["pool_ceiling"] == 200
+    assert row["head_prize"] == 500
+    assert row["second_prize"] == 120
+    assert row["third_prize"] == 20
+    assert row["pool_ceiling"] == 1000
     assert row["pool_seed"] == 100
-    assert row["per_person_cap"] == 100
+    assert row["per_person_cap"] == 500
     assert row["max_tickets_per_day"] == 5
+    assert row["close_offset_minutes"] == 30
     assert row["welfare_per_person"] == 1
 
     ledger = Table("company_lottery_pool_ledger", MetaData(), autoload_with=engine)

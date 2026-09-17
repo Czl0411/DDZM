@@ -98,11 +98,11 @@ def test_catalog_hides_adult_items_until_group_switch_is_enabled(
 ) -> None:
     repository, factory = setup_repository
 
-    assert len(repository.list_shop_items()) == 9
+    assert len(repository.list_shop_items()) == 10
     with factory.begin() as session:
         session.get(GroupChatRecord, PRIMARY_GROUP_CHAT_ID).adult_shop_enabled = True
 
-    assert len(repository.list_shop_items()) == 22
+    assert len(repository.list_shop_items()) == 23
 
 
 def test_purchase_is_atomic_numbered_and_idempotent(setup_repository, now) -> None:
@@ -186,6 +186,42 @@ def test_purchase_enforces_shared_daily_limit_rank_stock_and_adult_switch(
             now,
         ).status
         == "out_of_stock"
+    )
+
+
+def test_event_ad_slot_is_limited_to_one_purchase_per_day(
+    setup_repository, now
+) -> None:
+    repository, _ = setup_repository
+    repository.create_user("ad-buyer", "广告作者", now, 100)
+    item_number = _number(repository, "event_ad_slot")
+
+    first = repository.purchase_shop_item(
+        _inbound(repository, "ad-buyer", now),
+        "ad-buyer",
+        item_number,
+        PRIMARY_GROUP_CHAT_ID,
+        now,
+    )
+    second = repository.purchase_shop_item(
+        _inbound(repository, "ad-buyer", now),
+        "ad-buyer",
+        item_number,
+        PRIMARY_GROUP_CHAT_ID,
+        now,
+    )
+
+    assert first.status == "purchased"
+    assert second.status == "daily_limit"
+    assert (
+        repository.purchase_shop_item(
+            _inbound(repository, "ad-buyer", now + timedelta(days=1)),
+            "ad-buyer",
+            item_number,
+            PRIMARY_GROUP_CHAT_ID,
+            now + timedelta(days=1),
+        ).status
+        == "purchased"
     )
 
 

@@ -118,6 +118,13 @@ from .memory_guild_match import (
     render_guild_round_result,
     render_guild_series_ready,
 )
+from .random_event_vote import (
+    break_tie,
+    pick_tiered,
+    tally,
+    tiered_pool,
+    top_candidates,
+)
 from .shop_cards import SYSTEM_SHOP_ITEMS, adult_item, item_by_key, purchase_category
 from .red_packet import RandomSource, generate_red_packet_allocation
 from .texas_holdem import (
@@ -259,6 +266,11 @@ from .schema import (
     RandomEventSceneOpeningRecord,
     RandomEventSceneSeatRecord,
     RandomEventSettingsRecord,
+    RandomEventAdSlotRecord,
+    RandomEventAdSlotDraftRecord,
+    RandomEventPollRecord,
+    RandomEventPollCandidateRecord,
+    RandomEventPollVoteRecord,
     RandomEventSubmissionCounterRecord,
     RandomEventSubmissionRecord,
     DepartmentRecord,
@@ -563,8 +575,9 @@ def company_story_novel_resource_id(value: str | None) -> str | None:
         return None
     match = _COMPANY_STORY_NOVEL_URL_PATTERN.fullmatch(value.strip())
     return None if match is None else match.group(1).lower()
-_DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS = ("/加入", "/退出")
-_DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS = ("/退出",)
+_RANDOM_EVENT_AD_SLOT_DRAFT_TIMEOUT_MINUTES = 15
+_DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS = ("/加入", "/退出", "/事件投票", "/事件投票情况")
+_DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS = ("/退出", "/事件投票", "/事件投票情况")
 _DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE = "当前有随机事件发生，监事不会处理。"
 _DEFAULT_RANDOM_EVENT_SUBMISSION_TIMEOUT_MINUTES = 30
 _DEFAULT_RANDOM_EVENT_SUBMISSION_MAX_PARTICIPANTS = 99
@@ -573,6 +586,12 @@ _DEFAULT_RANDOM_EVENT_SUBMISSION_EVENT_REWARD = 6
 _DEFAULT_RANDOM_EVENT_GLOBAL_COMPLETION_REWARD = 6
 _DEFAULT_RANDOM_EVENT_SUBMISSION_APPROVAL_REWARD = 10
 _DEFAULT_RANDOM_EVENT_TIPPING_DURATION_SECONDS = 120
+# 与 schema.py 的列默认值保持一致；新建设置行时显式落值，免得校验读到未 flush 的 None
+_DEFAULT_RANDOM_EVENT_VOTE_CLOSE_OFFSET_MINUTES = 10
+_DEFAULT_RANDOM_EVENT_VOTE_BROADCAST_INTERVAL_MINUTES = 30
+_DEFAULT_RANDOM_EVENT_VOTE_RANDOM_CANDIDATES = 3
+_DEFAULT_RANDOM_EVENT_VOTE_AD_SLOT_LIMIT = 1
+_DEFAULT_RANDOM_EVENT_VOTE_FALLBACK_MINUTES = 30
 _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
     {
         "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/我", "/编辑档案", "/编辑档案形象", "/我的档案", "/商店", "/帮助", "/当前游戏",
@@ -583,6 +602,7 @@ _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
         "/同意", "/全部同意", "/拒绝", "/全部拒绝",
         "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏",
         "/甩锅游戏", "/甩锅", "/退出甩锅", "/打赏",
+        "/事件投票", "/事件投票情况",
     }
 )
 _DEFAULT_HIDE_AND_SEEK_ENTRY_FEE = 1
@@ -795,6 +815,13 @@ class RandomEventSettings:
     global_completion_reward: int
     submission_approval_reward: int
     tipping_duration_seconds: int
+    vote_enabled: bool
+    vote_close_offset_minutes: int
+    vote_broadcast_interval_minutes: int
+    vote_random_candidates: int
+    vote_ad_slot_limit: int
+    vote_fallback_minutes: int
+    vote_allow_change: bool
 
 
 @dataclass(frozen=True)
@@ -822,6 +849,96 @@ class RandomEventTipResult:
     amount: int = 0
     sender_balance: int | None = None
     recipient_balance: int | None = None
+
+
+@dataclass(frozen=True)
+class RandomEventPollCandidate:
+    id: UUID
+    position: int
+    source: str
+    vacant: bool
+    scene_name: str | None
+    event_name: str | None
+    seat_summary: str | None
+    reward: int | None
+    target_rounds: int | None
+    author_name: str | None = None
+    votes: int = 0
+
+
+@dataclass(frozen=True)
+class RandomEventPollView:
+    id: UUID
+    status: str
+    group_chat_id: UUID
+    schedule_id: UUID
+    scheduled_at: datetime
+    opened_at: datetime
+    closes_at: datetime
+    candidates: tuple[RandomEventPollCandidate, ...]
+    total_votes: int = 0
+    my_position: int | None = None
+    fallback_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class RandomEventVoteResult:
+    status: str
+    view: RandomEventPollView | None = None
+    position: int | None = None
+
+
+@dataclass(frozen=True)
+class RandomEventAdSlotWork:
+    position: int
+    scene_id: UUID
+    scene_name: str
+
+
+@dataclass(frozen=True)
+class RandomEventAdSlotDraftResult:
+    status: str
+    direct_chatroom_id: str | None = None
+    works: tuple[RandomEventAdSlotWork, ...] = ()
+    selected: RandomEventAdSlotWork | None = None
+
+
+@dataclass(frozen=True)
+class RandomEventPollReportCandidate:
+    position: int
+    source: str
+    vacant: bool
+    scene_name: str | None
+    event_name: str | None
+    seat_summary: str | None
+    reward: int | None
+    target_rounds: int | None
+    votes: int
+    voters: tuple[str, ...] = ()
+    author_name: str | None = None
+
+
+@dataclass(frozen=True)
+class RandomEventPollReport:
+    id: UUID
+    status: str
+    group_name: str
+    scheduled_at: datetime
+    opened_at: datetime
+    closes_at: datetime
+    closed_at: datetime | None
+    winner_position: int | None
+    fallback_reason: str | None
+    total_votes: int
+    candidates: tuple[RandomEventPollReportCandidate, ...]
+
+
+@dataclass(frozen=True)
+class RandomEventPollCloseResult:
+    status: str
+    view: RandomEventPollView | None = None
+    position: int | None = None
+    fallback_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2021,6 +2138,8 @@ _COMMAND_DEFINITIONS = (
     ("/发红包", "/发红包 人数 总金额", "使用自己的摸鱼币发出随机运气红包"),
     ("/抢红包", "/抢红包", "领取当前随机运气红包"),
     ("/打赏", "/打赏 员工名称 金额", "在随机事件打赏阶段向参与者转移摸鱼币"),
+    ("/事件投票", "/事件投票 序号", "给全公司的下一场随机事件投一票（每人一票，可改票）"),
+    ("/事件投票情况", "/事件投票情况", "查看本期随机事件投票的当前票型"),
     ("/我", "/我；/me", "查看余额、今日活跃度和今日收益"),
     ("/商店", "/商店", "查看当前上架物品"),
     ("/帮助", "/帮助", "查看当前可用指令"),
@@ -3182,6 +3301,15 @@ class CoreRepository:
                     in_progress_allowed_commands=list(_DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS),
                     blocked_message=_DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE,
                     tipping_duration_seconds=_DEFAULT_RANDOM_EVENT_TIPPING_DURATION_SECONDS,
+                    vote_close_offset_minutes=(
+                        _DEFAULT_RANDOM_EVENT_VOTE_CLOSE_OFFSET_MINUTES
+                    ),
+                    vote_broadcast_interval_minutes=(
+                        _DEFAULT_RANDOM_EVENT_VOTE_BROADCAST_INTERVAL_MINUTES
+                    ),
+                    vote_random_candidates=_DEFAULT_RANDOM_EVENT_VOTE_RANDOM_CANDIDATES,
+                    vote_ad_slot_limit=_DEFAULT_RANDOM_EVENT_VOTE_AD_SLOT_LIMIT,
+                    vote_fallback_minutes=_DEFAULT_RANDOM_EVENT_VOTE_FALLBACK_MINUTES,
                 )
                 session.add(record)
                 session.flush()
@@ -3204,6 +3332,13 @@ class CoreRepository:
         global_completion_reward: int | None = None,
         submission_approval_reward: int | None = None,
         tipping_duration_seconds: int | None = None,
+        vote_enabled: bool | None = None,
+        vote_close_offset_minutes: int | None = None,
+        vote_broadcast_interval_minutes: int | None = None,
+        vote_random_candidates: int | None = None,
+        vote_ad_slot_limit: int | None = None,
+        vote_fallback_minutes: int | None = None,
+        vote_allow_change: bool | None = None,
     ) -> RandomEventSettings:
         if not isinstance(schedule_times, list) or not schedule_times:
             raise ValueError("每日固定场次至少需要一个时间")
@@ -3234,6 +3369,15 @@ class CoreRepository:
                     in_progress_allowed_commands=list(_DEFAULT_RANDOM_EVENT_IN_PROGRESS_ALLOWED_COMMANDS),
                     blocked_message=_DEFAULT_RANDOM_EVENT_BLOCKED_MESSAGE,
                     tipping_duration_seconds=_DEFAULT_RANDOM_EVENT_TIPPING_DURATION_SECONDS,
+                    vote_close_offset_minutes=(
+                        _DEFAULT_RANDOM_EVENT_VOTE_CLOSE_OFFSET_MINUTES
+                    ),
+                    vote_broadcast_interval_minutes=(
+                        _DEFAULT_RANDOM_EVENT_VOTE_BROADCAST_INTERVAL_MINUTES
+                    ),
+                    vote_random_candidates=_DEFAULT_RANDOM_EVENT_VOTE_RANDOM_CANDIDATES,
+                    vote_ad_slot_limit=_DEFAULT_RANDOM_EVENT_VOTE_AD_SLOT_LIMIT,
+                    vote_fallback_minutes=_DEFAULT_RANDOM_EVENT_VOTE_FALLBACK_MINUTES,
                 )
                 session.add(record)
             signup_allowed_commands = _validate_random_event_allowed_commands(
@@ -3297,6 +3441,60 @@ class CoreRepository:
                 record.submission_approval_reward = submission_approval_reward
             if tipping_duration_seconds is not None:
                 record.tipping_duration_seconds = tipping_duration_seconds
+            vote_numbers = (
+                ("截止提前量", vote_close_offset_minutes, 1, 720),
+                ("播报间隔", vote_broadcast_interval_minutes, 1, 720),
+                ("随机候选数", vote_random_candidates, 1, 5),
+                ("广告位上限", vote_ad_slot_limit, 0, 2),
+                ("兜底开投窗口", vote_fallback_minutes, 1, 720),
+            )
+            for label, value, minimum, maximum in vote_numbers:
+                if value is not None and (
+                    isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or not minimum <= value <= maximum
+                ):
+                    raise ValueError(f"投票{label}需在 {minimum} 至 {maximum} 之间")
+            # 交叉校验：截止提前量必须小于兜底开投窗口，否则"开投窗口不够"
+            # 时既开不了投也来不及兜底，投票会静默卡死（或者刚开就过期）。
+            # 放在任何赋值之前，免得被拒绝的请求留下一半改动。
+            close_offset = (
+                record.vote_close_offset_minutes
+                if vote_close_offset_minutes is None
+                else vote_close_offset_minutes
+            )
+            fallback_minutes = (
+                record.vote_fallback_minutes
+                if vote_fallback_minutes is None
+                else vote_fallback_minutes
+            )
+            if (
+                fallback_minutes is not None
+                and close_offset is not None
+                and fallback_minutes <= close_offset
+            ):
+                raise ValueError(
+                    "投票兜底开投窗口必须大于截止提前量，否则来不及兜底"
+                )
+            for flag, name in (
+                (vote_enabled, "vote_enabled"),
+                (vote_allow_change, "vote_allow_change"),
+            ):
+                if flag is not None and not isinstance(flag, bool):
+                    raise ValueError(f"{name} 必须是布尔值")
+            if vote_enabled is not None:
+                record.vote_enabled = vote_enabled
+            if vote_allow_change is not None:
+                record.vote_allow_change = vote_allow_change
+            for value, name in (
+                (vote_close_offset_minutes, "vote_close_offset_minutes"),
+                (vote_broadcast_interval_minutes, "vote_broadcast_interval_minutes"),
+                (vote_random_candidates, "vote_random_candidates"),
+                (vote_ad_slot_limit, "vote_ad_slot_limit"),
+                (vote_fallback_minutes, "vote_fallback_minutes"),
+            ):
+                if value is not None:
+                    setattr(record, name, value)
             session.flush()
             return _random_event_settings(record)
 
@@ -20680,8 +20878,13 @@ class CoreRepository:
         if daily is not None and daily.count > 0:
             daily.count -= 1
 
-    def schedule_random_events(self, now: datetime) -> list[RandomEventSchedule]:
+    def schedule_random_events(
+        self, now: datetime, *, day: date | None = None
+    ) -> list[RandomEventSchedule]:
         now = now.astimezone(BEIJING)
+        # `day` 只给"跨天开投"用：投票必须提前开，而每天第一场的那一行要等到
+        # 它自己到点才被创建——所以得能提前把第二天排出来（见 `_open_due_random_event_poll`）。
+        day = now.date() if day is None else day
         settings = self.get_random_event_settings()
         with self._session() as session:
             group_ids = tuple(
@@ -20704,14 +20907,18 @@ class CoreRepository:
                         select(RandomEventScheduleRecord)
                         .where(
                             RandomEventScheduleRecord.group_chat_id == group_chat_id,
-                            RandomEventScheduleRecord.event_date == now.date(),
+                            RandomEventScheduleRecord.event_date == day,
                         )
                         .order_by(RandomEventScheduleRecord.scheduled_at)
                     )
                 )
                 if existing:
                     for record in existing:
-                        if record.status == "pending" and record.scene_name is None:
+                        if (
+                            record.status == "pending"
+                            and record.scene_name is None
+                            and not settings.vote_enabled
+                        ):
                             self._fill_random_event_schedule_snapshot(session, record)
                     records.extend(existing)
                     continue
@@ -20720,6 +20927,9 @@ class CoreRepository:
                     if minute is None:
                         raise RuntimeError("random event schedule disappeared")
                     scheduled_at = now.replace(
+                        year=day.year,
+                        month=day.month,
+                        day=day.day,
                         hour=minute // 60,
                         minute=minute % 60,
                         second=0,
@@ -20727,7 +20937,7 @@ class CoreRepository:
                     )
                     record = RandomEventScheduleRecord(
                         group_chat_id=group_chat_id,
-                        event_date=now.date(),
+                        event_date=day,
                         scheduled_at=scheduled_at,
                         status=(
                             "skipped"
@@ -20736,7 +20946,8 @@ class CoreRepository:
                         ),
                     )
                     session.add(record)
-                    self._fill_random_event_schedule_snapshot(session, record)
+                    if not settings.vote_enabled:
+                        self._fill_random_event_schedule_snapshot(session, record)
                     records.append(record)
             session.flush()
             return [_random_event_schedule(record) for record in records]
@@ -20883,6 +21094,20 @@ class CoreRepository:
                     raise ValueError("随机事件不存在")
                 if record.event_date != now.date() or record.status != "pending":
                     raise ValueError("仅待开始事件可以调整")
+                poll = session.scalar(
+                    select(RandomEventPollRecord)
+                    .where(
+                        RandomEventPollRecord.target_schedule_id == record.id,
+                        RandomEventPollRecord.status == "open",
+                    )
+                    .with_for_update()
+                )
+                if poll is not None:
+                    closes_at = scheduled_at - timedelta(
+                        minutes=self.get_random_event_settings().vote_close_offset_minutes
+                    )
+                    if closes_at <= now:
+                        raise ValueError("改期后的投票截止时间已过，无法调整")
                 conflict = session.scalar(
                     select(RandomEventScheduleRecord).where(
                         RandomEventScheduleRecord.group_chat_id == record.group_chat_id,
@@ -20898,6 +21123,8 @@ class CoreRepository:
                     session.flush()
                 record.scheduled_at = scheduled_at
                 record.pre_notice_sent_at = None
+                if poll is not None:
+                    poll.closes_at = closes_at
                 session.flush()
                 return _random_event_schedule(record)
 
@@ -21190,6 +21417,8 @@ class CoreRepository:
             with self._session() as session:
                 self._lock_gameplay_gate(session)
                 self.schedule_random_events(now)
+                # 投票必须排在预告之前：截止（T−10）与预告（T−5）可能落在同一个 tick。
+                self._run_random_event_vote_jobs(session, now)
                 group_ids = tuple(
                     session.scalars(
                         select(RandomEventScheduleRecord.group_chat_id)
@@ -21982,6 +22211,1292 @@ class CoreRepository:
                     )
                 )
             )
+
+    # ------------------------------------------------- 随机事件·下一场投票
+
+    def create_random_event_poll(
+        self, now: datetime
+    ) -> RandomEventPollView | None:
+        """为"下一个待开始场次"建投票；已有开放中的投票就直接返回那一份。
+
+        候选严格沿用既有随机逻辑（`tiered_pool` 用的就是
+        `_fill_random_event_schedule_snapshot` 那套三档优先），只是抽 3 个不同的
+        场景，并额外留一个"事件广告卡"位（没人买时 `vacant`）。
+        """
+        now = now.astimezone(BEIJING)
+        settings = self.get_random_event_settings()
+        if not settings.vote_enabled:
+            return None
+        with self.transaction():
+            with self._session() as session:
+                open_poll = session.scalar(
+                    select(RandomEventPollRecord)
+                    .where(RandomEventPollRecord.status == "open")
+                    .order_by(RandomEventPollRecord.closes_at)
+                )
+                if open_poll is not None:
+                    return self._random_event_poll_view(session, open_poll)
+                schedule = self._next_votable_schedule(session, now)
+                if schedule is None:
+                    return None
+                record = self._open_random_event_poll(session, settings, schedule, now)
+                if record is None:
+                    return None
+                return self._random_event_poll_view(session, record)
+
+    def random_event_poll_view(
+        self, platform_id: str | None = None
+    ) -> RandomEventPollView | None:
+        """当前投票：优先开放中的，否则最近一份。"""
+        with self._session() as session:
+            poll = session.scalar(
+                select(RandomEventPollRecord)
+                .where(RandomEventPollRecord.status == "open")
+                .order_by(RandomEventPollRecord.closes_at)
+            )
+            if poll is None:
+                poll = session.scalar(
+                    select(RandomEventPollRecord)
+                    .order_by(RandomEventPollRecord.created_at.desc())
+                    .limit(1)
+                )
+            if poll is None:
+                return None
+            return self._random_event_poll_view(session, poll, platform_id)
+
+    def cast_random_event_vote(
+        self, platform_id: str, position: int, now: datetime
+    ) -> RandomEventVoteResult:
+        """每人一票、可改票；空着的广告位不能被投。"""
+        now = now.astimezone(BEIJING)
+        settings = self.get_random_event_settings()
+        with self.transaction():
+            with self._session() as session:
+                if not settings.vote_enabled:
+                    return RandomEventVoteResult("disabled")
+                poll = self._open_random_event_poll_record(session)
+                if poll is None:
+                    return RandomEventVoteResult("no_poll")
+                if poll.closes_at <= now:
+                    return RandomEventVoteResult("closed")
+                candidate = session.scalar(
+                    select(RandomEventPollCandidateRecord).where(
+                        RandomEventPollCandidateRecord.poll_id == poll.id,
+                        RandomEventPollCandidateRecord.position == position,
+                    )
+                )
+                if candidate is None:
+                    return RandomEventVoteResult("no_candidate")
+                if candidate.vacant:
+                    return RandomEventVoteResult("vacant")
+                user_id = session.scalar(
+                    select(UserRecord.id).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                if user_id is None:
+                    return RandomEventVoteResult("not_joined")
+                vote = session.scalar(
+                    select(RandomEventPollVoteRecord).where(
+                        RandomEventPollVoteRecord.poll_id == poll.id,
+                        RandomEventPollVoteRecord.user_id == user_id,
+                    )
+                )
+                if vote is None:
+                    session.add(
+                        RandomEventPollVoteRecord(
+                            poll_id=poll.id,
+                            user_id=user_id,
+                            candidate_id=candidate.id,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                elif not settings.vote_allow_change:
+                    return RandomEventVoteResult(
+                        "already_voted",
+                        self._random_event_poll_view(session, poll, platform_id),
+                        position,
+                    )
+                else:
+                    vote.candidate_id = candidate.id
+                    vote.updated_at = now
+                session.flush()
+                return RandomEventVoteResult(
+                    "recorded" if vote is None else "changed",
+                    self._random_event_poll_view(session, poll, platform_id),
+                    position,
+                )
+
+    # ------------------------------------------------- 随机事件·事件广告卡
+
+    def start_random_event_ad_slot(
+        self, platform_id: str, item_number: int, now: datetime
+    ) -> RandomEventAdSlotDraftResult:
+        """`/使用 事件广告卡`：校验前置条件并开出私聊向导草稿（此时不消耗卡）。"""
+        now = now.astimezone(BEIJING)
+        settings = self.get_random_event_settings()
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if user is None:
+                    return RandomEventAdSlotDraftResult("not_joined")
+                direct_chatroom_id = session.scalar(
+                    select(DirectChatRecord.chatroom_id).where(
+                        DirectChatRecord.platform_user_id == platform_id
+                    )
+                )
+                if direct_chatroom_id is None:
+                    return RandomEventAdSlotDraftResult("direct_chat_required")
+                item = session.scalar(
+                    select(ItemRecord).where(
+                        ItemRecord.public_number == item_number,
+                        ItemRecord.system_key == "event_ad_slot",
+                    )
+                )
+                # 拒绝提示要发在私聊（设计 §3.3），所以把房间号一并带出
+                if item is None or item.effect_type != "event_ad_slot":
+                    return RandomEventAdSlotDraftResult(
+                        "item_missing", direct_chatroom_id=direct_chatroom_id
+                    )
+                poll = self._open_random_event_poll_record(session)
+                if poll is None or poll.closes_at <= now:
+                    return RandomEventAdSlotDraftResult(
+                        "no_poll", direct_chatroom_id=direct_chatroom_id
+                    )
+                if not settings.vote_enabled:
+                    return RandomEventAdSlotDraftResult(
+                        "disabled", direct_chatroom_id=direct_chatroom_id
+                    )
+                works = self._random_event_ad_slot_works(session, user.id)
+                if not works:
+                    return RandomEventAdSlotDraftResult(
+                        "no_works", direct_chatroom_id=direct_chatroom_id
+                    )
+
+                draft = session.scalar(
+                    select(RandomEventAdSlotDraftRecord).where(
+                        RandomEventAdSlotDraftRecord.user_id == user.id
+                    )
+                )
+                if draft is None:
+                    draft = RandomEventAdSlotDraftRecord(
+                        user_id=user.id,
+                        item_id=item.id,
+                        poll_id=poll.id,
+                        current_step="pick_event",
+                        created_at=now,
+                        updated_at=now,
+                        last_activity_at=now,
+                        expires_at=now
+                        + timedelta(
+                            minutes=_RANDOM_EVENT_AD_SLOT_DRAFT_TIMEOUT_MINUTES
+                        ),
+                    )
+                    session.add(draft)
+                else:
+                    draft.item_id = item.id
+                    draft.poll_id = poll.id
+                    draft.current_step = "pick_event"
+                    draft.scene_id = None
+                    draft.updated_at = now
+                    draft.last_activity_at = now
+                    draft.expires_at = now + timedelta(
+                        minutes=_RANDOM_EVENT_AD_SLOT_DRAFT_TIMEOUT_MINUTES
+                    )
+                session.flush()
+                return RandomEventAdSlotDraftResult(
+                    "started",
+                    direct_chatroom_id=direct_chatroom_id,
+                    works=works,
+                )
+
+    def random_event_ad_slot_draft_step(
+        self, platform_id: str, now: datetime
+    ) -> str | None:
+        """有草稿就返回当前步骤；草稿已过期返回 `expired`（要提示，不能静默吞掉）。"""
+        now = now.astimezone(BEIJING)
+        with self._session() as session:
+            user_id = session.scalar(
+                select(UserRecord.id).where(UserRecord.platform_id == platform_id)
+            )
+            if user_id is None:
+                return None
+            draft = session.scalar(
+                select(RandomEventAdSlotDraftRecord).where(
+                    RandomEventAdSlotDraftRecord.user_id == user_id
+                )
+            )
+            if draft is None:
+                return None
+            if draft.expires_at <= now:
+                session.delete(draft)
+                session.flush()
+                return "expired"
+            return draft.current_step
+
+    def consume_random_event_ad_slot_draft(
+        self, platform_id: str, content: str, now: datetime
+    ) -> RandomEventAdSlotDraftResult:
+        """私聊向导：`/选择 序号` 选作品，`/确认广告位` 真正占位并消耗卡。"""
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                draft = self._active_random_event_ad_slot_draft(
+                    session, platform_id, now
+                )
+                if draft is None:
+                    return RandomEventAdSlotDraftResult("no_draft")
+                user = session.get(UserRecord, draft.user_id)
+                if user is None:
+                    return RandomEventAdSlotDraftResult("not_joined")
+                works = self._random_event_ad_slot_works(session, user.id)
+                command, _, argument = content.strip().partition(" ")
+                argument = argument.strip()
+
+                if command == "/选择":
+                    if not argument.isdigit():
+                        return RandomEventAdSlotDraftResult(
+                            "pick_usage", works=works
+                        )
+                    selected = next(
+                        (
+                            work
+                            for work in works
+                            if work.position == int(argument)
+                        ),
+                        None,
+                    )
+                    if selected is None:
+                        return RandomEventAdSlotDraftResult(
+                            "pick_missing", works=works
+                        )
+                    draft.scene_id = selected.scene_id
+                    draft.current_step = "confirm"
+                    draft.updated_at = now
+                    draft.last_activity_at = now
+                    draft.expires_at = now + timedelta(
+                        minutes=_RANDOM_EVENT_AD_SLOT_DRAFT_TIMEOUT_MINUTES
+                    )
+                    session.flush()
+                    return RandomEventAdSlotDraftResult(
+                        "picked", works=works, selected=selected
+                    )
+
+                if command == "/确认广告位":
+                    if draft.current_step != "confirm" or draft.scene_id is None:
+                        return RandomEventAdSlotDraftResult(
+                            "pick_required", works=works
+                        )
+                    return self._confirm_random_event_ad_slot(
+                        session, draft, user, works, now
+                    )
+
+                return RandomEventAdSlotDraftResult("unknown", works=works)
+
+    def _random_event_ad_slot_works(
+        self, session: Session, user_id: UUID
+    ) -> tuple[RandomEventAdSlotWork, ...]:
+        """作者已审核通过的作品，按投稿编号排序后给出 1..N 的序号。"""
+        rows = session.execute(
+            select(
+                RandomEventSubmissionRecord.scene_id,
+                RandomEventSceneRecord.name,
+            )
+            .join(
+                RandomEventSceneRecord,
+                RandomEventSceneRecord.id == RandomEventSubmissionRecord.scene_id,
+            )
+            .where(
+                RandomEventSubmissionRecord.user_id == user_id,
+                RandomEventSubmissionRecord.status == "approved",
+                RandomEventSubmissionRecord.scene_id.is_not(None),
+            )
+            .order_by(RandomEventSubmissionRecord.number)
+        ).all()
+        return tuple(
+            RandomEventAdSlotWork(
+                position=index, scene_id=scene_id, scene_name=name
+            )
+            for index, (scene_id, name) in enumerate(rows, start=1)
+        )
+
+    def _active_random_event_ad_slot_draft(
+        self, session: Session, platform_id: str, now: datetime
+    ) -> RandomEventAdSlotDraftRecord | None:
+        user_id = session.scalar(
+            select(UserRecord.id).where(UserRecord.platform_id == platform_id)
+        )
+        if user_id is None:
+            return None
+        draft = session.scalar(
+            select(RandomEventAdSlotDraftRecord).where(
+                RandomEventAdSlotDraftRecord.user_id == user_id
+            )
+        )
+        if draft is None:
+            return None
+        if draft.expires_at <= now:
+            session.delete(draft)
+            session.flush()
+            return None
+        return draft
+
+    def _confirm_random_event_ad_slot(
+        self,
+        session: Session,
+        draft: RandomEventAdSlotDraftRecord,
+        user: UserRecord,
+        works: tuple[RandomEventAdSlotWork, ...],
+        now: datetime,
+    ) -> RandomEventAdSlotDraftResult:
+        """占位：把选中的作品填进投票的广告位，并消耗掉这张卡。
+
+        所有校验都在**改动任何行之前**跑完——库存不足、上限为 `0`、投票被关掉都必须
+        原样返回、什么都不留下，否则会出现"位子被占、卡没扣"的白送。
+        """
+        settings = self.get_random_event_settings()
+        if not settings.vote_enabled:
+            return RandomEventAdSlotDraftResult("disabled", works=works)
+        if settings.vote_ad_slot_limit < 1:
+            return RandomEventAdSlotDraftResult("slot_disabled", works=works)
+        # 锁住这一期，避免两个作者同时确认同一个广告位、各扣一张卡
+        poll = session.scalar(
+            select(RandomEventPollRecord)
+            .where(RandomEventPollRecord.id == draft.poll_id)
+            .with_for_update()
+        )
+        if (
+            poll is None
+            or poll.status != "open"
+            or poll.closes_at <= now
+        ):
+            return RandomEventAdSlotDraftResult("poll_closed", works=works)
+        candidates = list(
+            session.scalars(
+                select(RandomEventPollCandidateRecord)
+                .where(RandomEventPollCandidateRecord.poll_id == poll.id)
+                .order_by(RandomEventPollCandidateRecord.position)
+            )
+        )
+        taken = [
+            candidate
+            for candidate in candidates
+            if candidate.source == "ad_slot" and not candidate.vacant
+        ]
+        if len(taken) >= settings.vote_ad_slot_limit:
+            return RandomEventAdSlotDraftResult("slot_taken", works=works)
+        if any(
+            candidate.scene_id == draft.scene_id for candidate in candidates
+        ):
+            return RandomEventAdSlotDraftResult("scene_taken", works=works)
+        vacancy = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.vacant and candidate.source == "ad_slot"
+            ),
+            None,
+        )
+        if vacancy is None:
+            return RandomEventAdSlotDraftResult("slot_taken", works=works)
+
+        scene = session.get(RandomEventSceneRecord, draft.scene_id)
+        templates = list(
+            session.scalars(
+                select(RandomEventSceneOpeningRecord)
+                .where(RandomEventSceneOpeningRecord.scene_id == draft.scene_id)
+                .order_by(RandomEventSceneOpeningRecord.position)
+            )
+        )
+        if scene is None or not templates:
+            return RandomEventAdSlotDraftResult("scene_unavailable", works=works)
+        inventory = session.scalar(
+            select(UserItemRecord)
+            .where(
+                UserItemRecord.user_id == user.id,
+                UserItemRecord.item_id == draft.item_id,
+            )
+            .with_for_update()
+        )
+        if inventory is None or inventory.quantity < 1:
+            return RandomEventAdSlotDraftResult("item_missing", works=works)
+
+        # —— 到这里才动数据：先扣卡，再填位、落记录、删草稿 ——
+        inventory.quantity -= 1
+        template = templates[randbelow(len(templates))]
+        seats = list(
+            session.scalars(
+                select(RandomEventSceneSeatRecord)
+                .where(RandomEventSceneSeatRecord.scene_id == scene.id)
+                .order_by(RandomEventSceneSeatRecord.role)
+            )
+        )
+        seat_summary = _random_event_seat_summary(
+            [(seat.role, seat.capacity) for seat in seats]
+        )
+        if len(seats) > 2 or len(seat_summary) > 24:
+            seat_summary = f"{sum(seat.capacity for seat in seats)} 人"
+        vacancy.vacant = False
+        vacancy.scene_id = scene.id
+        vacancy.template_id = template.id
+        vacancy.scene_name = scene.name
+        vacancy.event_name = template.name
+        vacancy.seat_summary = seat_summary
+        vacancy.reward = scene.reward
+        vacancy.target_rounds = scene.target_rounds
+        vacancy.author_name = user.display_name
+        session.add(
+            RandomEventAdSlotRecord(
+                user_id=user.id,
+                scene_id=scene.id,
+                item_id=draft.item_id,
+                poll_id=poll.id,
+                candidate_id=vacancy.id,
+                status="consumed",
+                created_at=now,
+            )
+        )
+        session.delete(draft)
+        session.flush()
+        selected = next(
+            (work for work in works if work.scene_id == scene.id), None
+        )
+        self._random_event_announce(
+            _render_random_event_ad_slot_filled(
+                self._random_event_poll_view(session, poll),
+                user.display_name,
+                vacancy.position,
+            )
+        )
+        return RandomEventAdSlotDraftResult(
+            "consumed",
+            works=works,
+            selected=selected,
+        )
+
+    def random_event_poll_report(self) -> RandomEventPollReport | None:
+        """后台用的投票详情：候选、票数、投票人名单与广告位来源。"""
+        with self._session() as session:
+            poll = self._open_random_event_poll_record(session)
+            if poll is None:
+                poll = session.scalar(
+                    select(RandomEventPollRecord)
+                    .order_by(RandomEventPollRecord.created_at.desc())
+                    .limit(1)
+                )
+            if poll is None:
+                return None
+            schedule = session.get(
+                RandomEventScheduleRecord, poll.target_schedule_id
+            )
+            group_name = ""
+            if schedule is not None:
+                group = session.get(GroupChatRecord, schedule.group_chat_id)
+                group_name = "" if group is None else group.name
+            rows = list(
+                session.scalars(
+                    select(RandomEventPollCandidateRecord)
+                    .where(RandomEventPollCandidateRecord.poll_id == poll.id)
+                    .order_by(RandomEventPollCandidateRecord.position)
+                )
+            )
+            pairs = session.execute(
+                select(RandomEventPollVoteRecord, UserRecord)
+                .join(
+                    UserRecord,
+                    UserRecord.id == RandomEventPollVoteRecord.user_id,
+                )
+                .where(RandomEventPollVoteRecord.poll_id == poll.id)
+                .order_by(UserRecord.employee_number)
+            ).all()
+            by_candidate: dict[UUID, list[str]] = {}
+            for vote, user in pairs:
+                by_candidate.setdefault(vote.candidate_id, []).append(
+                    user.display_name
+                )
+            winner_position = None
+            if poll.winner_candidate_id is not None:
+                winner = next(
+                    (row for row in rows if row.id == poll.winner_candidate_id),
+                    None,
+                )
+                winner_position = None if winner is None else winner.position
+            return RandomEventPollReport(
+                id=poll.id,
+                status=poll.status,
+                group_name=group_name,
+                scheduled_at=(
+                    poll.closes_at if schedule is None else schedule.scheduled_at
+                ),
+                opened_at=poll.opened_at,
+                closes_at=poll.closes_at,
+                closed_at=poll.closed_at,
+                winner_position=winner_position,
+                fallback_reason=poll.fallback_reason,
+                total_votes=len(pairs),
+                candidates=tuple(
+                    RandomEventPollReportCandidate(
+                        position=row.position,
+                        source=row.source,
+                        vacant=row.vacant,
+                        scene_name=row.scene_name,
+                        event_name=row.event_name,
+                        seat_summary=row.seat_summary,
+                        reward=row.reward,
+                        target_rounds=row.target_rounds,
+                        votes=len(by_candidate.get(row.id, ())),
+                        voters=tuple(by_candidate.get(row.id, ())),
+                        author_name=row.author_name,
+                    )
+                    for row in rows
+                ),
+            )
+
+    def cancel_random_event_poll(self, now: datetime) -> str:
+        """后台作废当前投票。"""
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                poll = self._open_random_event_poll_record(session)
+                if poll is None:
+                    return "no_poll"
+                self._cancel_random_event_poll(
+                    session,
+                    poll,
+                    now,
+                    text="【事件投票】管理员取消了本期投票。",
+                )
+                return "cancelled"
+
+    def close_random_event_poll(
+        self,
+        now: datetime,
+        *,
+        winner_position: int | None = None,
+        force: bool = False,
+    ) -> RandomEventPollCloseResult:
+        """截止定稿：票高者按现有方式冻结进目标场次，场次保持 `pending`。
+
+        后台兜底有两种用法：`force=True` 立刻截止；`winner_position` 手动指定当选者
+        （同时也不受截止时刻限制，甚至可以改判一份已经定稿、但场次还没开始的投票）。
+        """
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                poll = self._open_random_event_poll_record(session)
+                if poll is None:
+                    if winner_position is None:
+                        return RandomEventPollCloseResult("no_poll")
+                    poll = self._latest_random_event_poll_record(session)
+                    if poll is None or poll.status != "closed":
+                        # 只有"已定稿、场次还没开演"的期次可以改判；
+                        # 作废的期次复活等于把公告过的作废静默翻案。
+                        return RandomEventPollCloseResult("no_poll")
+                    target = session.get(
+                        RandomEventScheduleRecord, poll.target_schedule_id
+                    )
+                    if target is None or target.status != "pending":
+                        return RandomEventPollCloseResult("no_poll")
+                elif (
+                    winner_position is None
+                    and not force
+                    and poll.closes_at > now
+                ):
+                    return RandomEventPollCloseResult("not_due")
+                schedule = session.get(
+                    RandomEventScheduleRecord, poll.target_schedule_id
+                )
+                if schedule is None:
+                    return RandomEventPollCloseResult("no_schedule")
+                if schedule.status != "pending":
+                    # 场次已经开演（或已作废），再定稿也没有意义
+                    return RandomEventPollCloseResult("no_poll")
+                candidates = list(
+                    session.scalars(
+                        select(RandomEventPollCandidateRecord)
+                        .where(RandomEventPollCandidateRecord.poll_id == poll.id)
+                        .order_by(RandomEventPollCandidateRecord.position)
+                    )
+                )
+                votable = [
+                    candidate
+                    for candidate in candidates
+                    if not candidate.vacant and candidate.scene_id is not None
+                ]
+                if not votable:
+                    poll.status = "cancelled"
+                    poll.closed_at = now
+                    self._random_event_announce(
+                        _render_random_event_vote_no_candidates()
+                    )
+                    return RandomEventPollCloseResult("no_candidates")
+
+                if winner_position is not None:
+                    winner = next(
+                        (
+                            candidate
+                            for candidate in votable
+                            if candidate.position == winner_position
+                        ),
+                        None,
+                    )
+                    if winner is None:
+                        return RandomEventPollCloseResult("no_candidate")
+                    fallback: str | None = "manual"
+                else:
+                    counts = tally(
+                        [candidate.id for candidate in votable],
+                        [
+                            vote.candidate_id
+                            for vote in session.scalars(
+                                select(RandomEventPollVoteRecord).where(
+                                    RandomEventPollVoteRecord.poll_id == poll.id
+                                )
+                            )
+                        ],
+                    )
+                    leaders = top_candidates(counts)
+                    by_id = {candidate.id: candidate for candidate in votable}
+                    if not leaders:
+                        winner = votable[randbelow(len(votable))]
+                        fallback = "no_votes"
+                    elif len(leaders) == 1:
+                        winner = by_id[leaders[0]]
+                        fallback = None
+                    else:
+                        decided, fallback = break_tie(
+                            leaders,
+                            performances=self._random_event_performances(
+                                session, votable
+                            ),
+                            authored_at=self._random_event_authored_at(
+                                session, votable
+                            ),
+                            randbelow=randbelow,
+                        )
+                        winner = by_id[decided]
+
+                scene = session.get(RandomEventSceneRecord, winner.scene_id)
+                template = (
+                    None
+                    if winner.template_id is None
+                    else session.get(
+                        RandomEventSceneOpeningRecord, winner.template_id
+                    )
+                )
+                if scene is None or template is None:
+                    # 定稿前赢家场景被删、或模板被清空：不能装作定稿成功，否则场次
+                    # 还是空的，T−5 预告会随机抽另一个场景——"选了却不演"且无告警。
+                    # 先退到还有票的其他候选，实在不行才回退旧随机路径。
+                    fallback = "scene_missing"
+                    for other in votable:
+                        if other.id == winner.id:
+                            continue
+                        other_scene = session.get(
+                            RandomEventSceneRecord, other.scene_id
+                        )
+                        other_template = (
+                            None
+                            if other.template_id is None
+                            else session.get(
+                                RandomEventSceneOpeningRecord, other.template_id
+                            )
+                        )
+                        if other_scene is not None and other_template is not None:
+                            winner, scene, template = (
+                                other,
+                                other_scene,
+                                other_template,
+                            )
+                            break
+                if scene is not None and template is not None:
+                    seats = list(
+                        session.scalars(
+                            select(RandomEventSceneSeatRecord)
+                            .where(
+                                RandomEventSceneSeatRecord.scene_id == winner.scene_id
+                            )
+                            .order_by(RandomEventSceneSeatRecord.role)
+                        )
+                    )
+                    self._set_random_event_schedule_snapshot(
+                        session, schedule, scene, template, seats
+                    )
+                else:
+                    # 候选全军覆没：至少别让场次空着，走旧随机路径并如实标注。
+                    # 这时演的不是任何一个候选，所以不能把赢家记为候选人，否则
+                    # 后台报表和公告都会指着一段没上演的节目。
+                    fallback = "scene_gone"
+                    winner = None
+                    self._fill_random_event_schedule_snapshot(session, schedule)
+                poll.status = "closed"
+                poll.closed_at = now
+                poll.winner_candidate_id = None if winner is None else winner.id
+                poll.fallback_reason = fallback
+                session.flush()
+                return RandomEventPollCloseResult(
+                    "closed",
+                    self._random_event_poll_view(session, poll),
+                    None if winner is None else winner.position,
+                    fallback,
+                )
+
+    def _open_random_event_poll_record(
+        self, session: Session
+    ) -> RandomEventPollRecord | None:
+        return session.scalar(
+            select(RandomEventPollRecord)
+            .where(RandomEventPollRecord.status == "open")
+            .order_by(RandomEventPollRecord.closes_at)
+        )
+
+    def _latest_random_event_poll_record(
+        self, session: Session
+    ) -> RandomEventPollRecord | None:
+        return session.scalar(
+            select(RandomEventPollRecord)
+            .order_by(RandomEventPollRecord.created_at.desc())
+            .limit(1)
+        )
+
+    def _run_random_event_vote_jobs(self, session: Session, now: datetime) -> None:
+        """投票的四段：开投、周期播报、到点定稿、目标丢了就顺延。
+
+        每段都靠落库字段做幂等（`status` / `last_tally_at`），所以 Worker
+        每秒跑一次也不会重复播报。`announced_at` 只作留痕，不参与判定。
+        """
+        settings = self.get_random_event_settings()
+        if not settings.vote_enabled:
+            # 关掉开关不能只掐掉定稿：那份还开着的投票要立刻作废，否则它会一直
+            # 挂着可投、可买广告位，直到原定截止时刻才被顺延或作废。
+            open_poll = self._open_random_event_poll_record(session)
+            if open_poll is not None:
+                self._cancel_random_event_poll(session, open_poll, now)
+            return
+        poll = self._open_random_event_poll_record(session)
+        if poll is not None and self._random_event_poll_target_lost(session, poll):
+            poll = self._carry_over_random_event_poll(session, poll, settings, now)
+        if poll is None:
+            poll = self._open_due_random_event_poll(session, settings, now)
+            if poll is None:
+                return
+            self._random_event_announce(
+                _render_random_event_vote_open(
+                    self._random_event_poll_view(session, poll)
+                )
+            )
+            poll.announced_at = now
+            poll.last_tally_at = now
+            session.flush()
+            return
+        if poll.closes_at <= now:
+            result = self.close_random_event_poll(now)
+            if result.status == "closed":
+                self._random_event_announce(
+                    _render_random_event_vote_result(
+                        result.view, result.position, result.fallback_reason
+                    )
+                )
+            return
+        if self._random_event_tally_due(poll, settings, now):
+            self._random_event_announce(
+                _render_random_event_vote_tally(
+                    self._random_event_poll_view(session, poll)
+                )
+            )
+            poll.last_tally_at = now
+            session.flush()
+
+    def _open_due_random_event_poll(
+        self,
+        session: Session,
+        settings: RandomEventSettings,
+        now: datetime,
+    ) -> RandomEventPollRecord | None:
+        """该开投了吗：默认等上一场结束；离下一场不足兜底窗口就强行开投。"""
+        schedule = self._next_votable_schedule(session, now)
+        if schedule is None:
+            schedule = self._open_cross_day_random_event_poll(
+                session, settings, now
+            )
+        if schedule is None:
+            return None
+        closes_at = schedule.scheduled_at - timedelta(
+            minutes=settings.vote_close_offset_minutes
+        )
+        if closes_at <= now:
+            # 来不及投票了，交给开演时的旧随机路径兜底
+            return None
+        active = self._active_random_event(session, schedule.group_chat_id)
+        if active is not None and schedule.scheduled_at - now > timedelta(
+            minutes=settings.vote_fallback_minutes
+        ):
+            return None
+        if (
+            self._previous_pending_random_event_schedule(session, schedule)
+            is not None
+            and schedule.scheduled_at - now
+            > timedelta(minutes=settings.vote_fallback_minutes)
+        ):
+            # 上一场还挂着"待开始"就先不开下一场的投票：开投的时机是**上一场
+            # 打赏结束**，不是"上一场投票截止"（上一场投票在它开场前 10 分钟
+            # 就截止了）。离得太近（兜底窗口内）才不管上一场，先开起来。
+            return None
+        return self._open_random_event_poll(session, settings, schedule, now)
+
+    def _previous_pending_random_event_schedule(
+        self, session: Session, schedule: RandomEventScheduleRecord
+    ) -> RandomEventScheduleRecord | None:
+        """比目标更早、还没演完（仍是 `pending`）的那一场。"""
+        return session.scalar(
+            select(RandomEventScheduleRecord)
+            .where(
+                RandomEventScheduleRecord.group_chat_id == schedule.group_chat_id,
+                RandomEventScheduleRecord.status == "pending",
+                RandomEventScheduleRecord.id != schedule.id,
+                RandomEventScheduleRecord.scheduled_at < schedule.scheduled_at,
+            )
+            .order_by(RandomEventScheduleRecord.scheduled_at.desc())
+            .limit(1)
+        )
+
+    def _open_cross_day_random_event_poll(
+        self,
+        session: Session,
+        settings: RandomEventSettings,
+        now: datetime,
+    ) -> RandomEventScheduleRecord | None:
+        """今天的场次都开过了，就把**次日第一场**先排出来，好让它也有投票。
+
+        每天第一场（默认 `00:00`）那一行要等到它自己到点才被创建，而投票必须
+        提前 `截止提前量` 分钟开投——不提前排出来，它永远轮不到投票，直接掉进
+        开演时的旧随机路径。这里只认"次日第一场"：后面的场次照旧等上一场结束
+        再开投，免得当天最后一份投票刚定稿就把次日的第二场也开出来。
+        """
+        minutes = [
+            minute
+            for minute in (
+                _event_time_minutes(value) for value in settings.schedule_times
+            )
+            if minute is not None
+        ]
+        if not minutes:
+            return None
+        first, last = min(minutes), max(minutes)
+        if now < now.replace(
+            hour=last // 60, minute=last % 60, second=0, microsecond=0
+        ):
+            # 今天还有场次没到点，走正常节奏
+            return None
+        tomorrow = now.date() + timedelta(days=1)
+        self.schedule_random_events(now, day=tomorrow)
+        candidate = self._next_votable_schedule(session, now)
+        if candidate is None or candidate.event_date != tomorrow:
+            return None
+        if (candidate.scheduled_at.hour, candidate.scheduled_at.minute) != (
+            first // 60,
+            first % 60,
+        ):
+            return None
+        return candidate
+
+    def _random_event_poll_target_lost(
+        self, session: Session, poll: RandomEventPollRecord
+    ) -> bool:
+        schedule = session.get(RandomEventScheduleRecord, poll.target_schedule_id)
+        return (
+            schedule is None
+            or schedule.status != "pending"
+            or schedule.scene_name is not None
+        )
+
+    def _carry_over_random_event_poll(
+        self,
+        session: Session,
+        poll: RandomEventPollRecord,
+        settings: RandomEventSettings,
+        now: datetime,
+    ) -> RandomEventPollRecord | None:
+        """目标场次被跳过/取消时，把这份投票顺延到再下一个场次，票与广告位都保留。"""
+        schedule = self._next_votable_schedule(session, now)
+        if schedule is None:
+            return self._cancel_random_event_poll(session, poll, now)
+        closes_at = schedule.scheduled_at - timedelta(
+            minutes=settings.vote_close_offset_minutes
+        )
+        if closes_at <= now:
+            return self._cancel_random_event_poll(session, poll, now)
+        poll.target_schedule_id = schedule.id
+        poll.closes_at = closes_at
+        poll.last_tally_at = now
+        session.flush()
+        self._random_event_announce(
+            _render_random_event_vote_carryover(
+                self._random_event_poll_view(session, poll)
+            )
+        )
+        return poll
+
+    def _cancel_random_event_poll(
+        self,
+        session: Session,
+        poll: RandomEventPollRecord,
+        now: datetime,
+        *,
+        text: str | None = None,
+    ) -> None:
+        poll.status = "cancelled"
+        poll.closed_at = now
+        session.flush()
+        self._random_event_announce(text or _render_random_event_vote_cancelled())
+        return None
+
+    def _random_event_tally_due(
+        self,
+        poll: RandomEventPollRecord,
+        settings: RandomEventSettings,
+        now: datetime,
+    ) -> bool:
+        """播报间隔自适应：不短于配置值，也不让一个窗口播超过 6 次。"""
+        window = poll.closes_at - poll.opened_at
+        interval = timedelta(minutes=settings.vote_broadcast_interval_minutes)
+        adaptive = window / 6
+        if adaptive > interval:
+            interval = adaptive
+        last = poll.last_tally_at or poll.opened_at
+        return now - last >= interval
+
+    def _random_event_announce(self, text: str) -> int:
+        """把投票公告广播到允许公告的已监听群；与彩票公告同一套过滤条件。"""
+        delivered = 0
+        for group in self.list_group_chats():
+            if not group.listening_enabled or not group.announcements_enabled:
+                continue
+            destination = self.group_chat_destination(group.id)
+            if destination is None:
+                continue
+            self.enqueue_system_outbound(
+                text,
+                group_chat_id=group.id,
+                destination_chatroom_id=destination,
+            )
+            delivered += 1
+        return delivered
+
+    def _next_votable_schedule(
+        self, session: Session, now: datetime
+    ) -> RandomEventScheduleRecord | None:
+        """最早的那个"还没定稿、也还没建过投票"的待开始场次。"""
+        rows = list(
+            session.scalars(
+                select(RandomEventScheduleRecord)
+                .join(
+                    GroupChatRecord,
+                    GroupChatRecord.id == RandomEventScheduleRecord.group_chat_id,
+                )
+                .where(
+                    RandomEventScheduleRecord.status == "pending",
+                    RandomEventScheduleRecord.scene_name.is_(None),
+                    RandomEventScheduleRecord.scheduled_at > now,
+                    GroupChatRecord.deleted_at.is_(None),
+                    GroupChatRecord.listening_enabled.is_(True),
+                    GroupChatRecord.random_events_enabled.is_(True),
+                )
+                .order_by(RandomEventScheduleRecord.scheduled_at)
+            )
+        )
+        polled = set(
+            session.scalars(select(RandomEventPollRecord.target_schedule_id))
+        )
+        for row in rows:
+            if row.id not in polled:
+                return row
+        return None
+
+    def _random_event_scene_pool(
+        self, session: Session, schedule: RandomEventScheduleRecord
+    ) -> tuple[list[RandomEventSceneRecord], set[str], set[str]]:
+        """与 `_fill_random_event_schedule_snapshot` 逐字一致的选池口径。"""
+        scenes = list(
+            session.scalars(
+                select(RandomEventSceneRecord).where(
+                    RandomEventSceneRecord.enabled.is_(True)
+                )
+            )
+        )
+        performed = {
+            name
+            for name in session.scalars(
+                select(RandomEventRecord.scene_name).distinct()
+            )
+            if name is not None
+        }
+        planned = {
+            name
+            for name in session.scalars(
+                select(RandomEventScheduleRecord.scene_name).where(
+                    RandomEventScheduleRecord.event_date == schedule.event_date,
+                    RandomEventScheduleRecord.id != schedule.id,
+                    RandomEventScheduleRecord.scene_name.is_not(None),
+                )
+            )
+            if name is not None
+        }
+        return scenes, performed, planned
+
+    def _open_random_event_poll(
+        self,
+        session: Session,
+        settings: RandomEventSettings,
+        schedule: RandomEventScheduleRecord,
+        now: datetime,
+    ) -> RandomEventPollRecord | None:
+        scenes, performed, planned = self._random_event_scene_pool(session, schedule)
+        with_templates = set(
+            session.scalars(select(RandomEventSceneOpeningRecord.scene_id))
+        )
+        scenes = [scene for scene in scenes if scene.id in with_templates]
+        names = tiered_pool(
+            [scene.name for scene in scenes],
+            performed=performed,
+            planned=planned,
+        )
+        chosen = pick_tiered(names, settings.vote_random_candidates, randbelow)
+        if not chosen:
+            return None
+        by_name = {scene.name: scene for scene in scenes}
+        authors = self._random_event_scene_authors(
+            session, [scene.id for scene in scenes]
+        )
+
+        closes_at = schedule.scheduled_at - timedelta(
+            minutes=settings.vote_close_offset_minutes
+        )
+        if closes_at <= now:
+            # 已经来不及投票，别建一份刚出生就过期的投票
+            return None
+
+        poll = RandomEventPollRecord(
+            target_schedule_id=schedule.id,
+            status="open",
+            opened_at=now,
+            closes_at=closes_at,
+            created_at=now,
+        )
+        session.add(poll)
+        session.flush()
+
+        position = 0
+        for name in chosen:
+            scene = by_name[name]
+            templates = list(
+                session.scalars(
+                    select(RandomEventSceneOpeningRecord)
+                    .where(RandomEventSceneOpeningRecord.scene_id == scene.id)
+                    .order_by(RandomEventSceneOpeningRecord.position)
+                )
+            )
+            if not templates:
+                continue
+            template = templates[randbelow(len(templates))]
+            seats = list(
+                session.scalars(
+                    select(RandomEventSceneSeatRecord)
+                    .where(RandomEventSceneSeatRecord.scene_id == scene.id)
+                    .order_by(RandomEventSceneSeatRecord.role)
+                )
+            )
+            position += 1
+            seat_summary = _random_event_seat_summary(
+                [(seat.role, seat.capacity) for seat in seats]
+            )
+            if len(seats) > 2 or len(seat_summary) > 24:
+                # 公告是一行一个候选，身份太长就只报人数，避免被拆成多条消息
+                seat_summary = f"{sum(seat.capacity for seat in seats)} 人"
+            session.add(
+                RandomEventPollCandidateRecord(
+                    poll_id=poll.id,
+                    position=position,
+                    source="random",
+                    scene_id=scene.id,
+                    template_id=template.id,
+                    scene_name=scene.name,
+                    event_name=template.name,
+                    seat_summary=seat_summary,
+                    reward=scene.reward,
+                    target_rounds=scene.target_rounds,
+                    author_name=authors.get(scene.id, "官方"),
+                    vacant=False,
+                    created_at=now,
+                )
+            )
+        # 广告位要按配置给足：只建一个的话，上限设成 2 以上时第二位作者
+        # 永远撞"已被占用"，配置就是摆设。
+        for _ in range(settings.vote_ad_slot_limit):
+            position += 1
+            session.add(
+                RandomEventPollCandidateRecord(
+                    poll_id=poll.id,
+                    position=position,
+                    source="ad_slot",
+                    vacant=True,
+                    created_at=now,
+                )
+            )
+        session.flush()
+        return poll
+
+    def _random_event_scene_authors(
+        self, session: Session, scene_ids: list[UUID]
+    ) -> dict[UUID, str]:
+        """场景 → 投稿人昵称；后台自建场景没有投稿记录，显示「官方」。"""
+        if not scene_ids:
+            return {}
+        rows = session.execute(
+            select(
+                RandomEventSubmissionRecord.scene_id,
+                UserRecord.display_name,
+            )
+            .join(
+                UserRecord,
+                UserRecord.id == RandomEventSubmissionRecord.user_id,
+            )
+            .where(RandomEventSubmissionRecord.scene_id.in_(scene_ids))
+            .order_by(RandomEventSubmissionRecord.number)
+        ).all()
+        found = {scene_id: name for scene_id, name in rows}
+        return {scene_id: found.get(scene_id, "官方") for scene_id in scene_ids}
+
+    def _random_event_poll_view(
+        self,
+        session: Session,
+        poll: RandomEventPollRecord,
+        platform_id: str | None = None,
+    ) -> RandomEventPollView:
+        schedule = session.get(RandomEventScheduleRecord, poll.target_schedule_id)
+        rows = list(
+            session.scalars(
+                select(RandomEventPollCandidateRecord)
+                .where(RandomEventPollCandidateRecord.poll_id == poll.id)
+                .order_by(RandomEventPollCandidateRecord.position)
+            )
+        )
+        votes = list(
+            session.scalars(
+                select(RandomEventPollVoteRecord).where(
+                    RandomEventPollVoteRecord.poll_id == poll.id
+                )
+            )
+        )
+        counts = tally([row.id for row in rows], [vote.candidate_id for vote in votes])
+        my_position = None
+        if platform_id is not None:
+            user_id = session.scalar(
+                select(UserRecord.id).where(UserRecord.platform_id == platform_id)
+            )
+            if user_id is not None:
+                mine = next(
+                    (vote for vote in votes if vote.user_id == user_id), None
+                )
+                if mine is not None:
+                    matched = next(
+                        (row for row in rows if row.id == mine.candidate_id), None
+                    )
+                    my_position = None if matched is None else matched.position
+        return RandomEventPollView(
+            id=poll.id,
+            status=poll.status,
+            group_chat_id=(
+                PRIMARY_GROUP_CHAT_ID if schedule is None else schedule.group_chat_id
+            ),
+            schedule_id=poll.target_schedule_id,
+            scheduled_at=poll.closes_at if schedule is None else schedule.scheduled_at,
+            opened_at=poll.opened_at,
+            closes_at=poll.closes_at,
+            candidates=tuple(
+                RandomEventPollCandidate(
+                    id=row.id,
+                    position=row.position,
+                    source=row.source,
+                    vacant=row.vacant,
+                    scene_name=row.scene_name,
+                    event_name=row.event_name,
+                    seat_summary=row.seat_summary,
+                    reward=row.reward,
+                    target_rounds=row.target_rounds,
+                    author_name=row.author_name,
+                    votes=counts.get(row.id, 0),
+                )
+                for row in rows
+            ),
+            total_votes=len(votes),
+            my_position=my_position,
+            fallback_reason=poll.fallback_reason,
+        )
+
+    def _random_event_performances(
+        self,
+        session: Session,
+        candidates: list[RandomEventPollCandidateRecord],
+    ) -> dict[UUID, int]:
+        """每个候选的"演出次数"：只数已经结束的场次。"""
+        counts = dict(
+            session.execute(
+                select(
+                    RandomEventRecord.scene_name,
+                    func.count(RandomEventRecord.id),
+                )
+                .where(RandomEventRecord.ended_at.is_not(None))
+                .group_by(RandomEventRecord.scene_name)
+            ).all()
+        )
+        return {
+            candidate.id: int(counts.get(candidate.scene_name, 0))
+            for candidate in candidates
+        }
+
+    def _random_event_authored_at(
+        self,
+        session: Session,
+        candidates: list[RandomEventPollCandidateRecord],
+    ) -> dict[UUID, datetime]:
+        """平票第二级的"投稿时间"：有投稿用 submitted_at，自建场景退化为创建时间。"""
+        scene_ids = [
+            candidate.scene_id
+            for candidate in candidates
+            if candidate.scene_id is not None
+        ]
+        scenes = {
+            scene.id: scene
+            for scene in session.scalars(
+                select(RandomEventSceneRecord).where(
+                    RandomEventSceneRecord.id.in_(scene_ids)
+                )
+            )
+        }
+        submitted = dict(
+            session.execute(
+                select(
+                    RandomEventSubmissionRecord.scene_id,
+                    func.max(RandomEventSubmissionRecord.submitted_at),
+                )
+                .where(RandomEventSubmissionRecord.scene_id.in_(scene_ids))
+                .group_by(RandomEventSubmissionRecord.scene_id)
+            ).all()
+        )
+        authored: dict[UUID, datetime] = {}
+        for candidate in candidates:
+            scene = scenes.get(candidate.scene_id)
+            fallback = (
+                scene.created_at
+                if scene is not None
+                else datetime(1970, 1, 1, tzinfo=BEIJING)
+            )
+            authored[candidate.id] = submitted.get(candidate.scene_id) or fallback
+        return authored
 
     def _fill_random_event_schedule_snapshot(
         self, session: Session, schedule: RandomEventScheduleRecord
@@ -25122,7 +26637,11 @@ class CoreRepository:
                         )
                         .with_for_update()
                     )
-                    limit = 2 if category == "gift" else 3
+                    limit = {
+                        "gift": 2,
+                        "scratch": 3,
+                        "event_ad_slot": 1,
+                    }[category]
                     if usage is not None and usage.count >= limit:
                         return ShopPurchaseResult("daily_limit", view, user.balance)
                     if usage is None:
@@ -25295,6 +26814,9 @@ class CoreRepository:
                     else:
                         bonus.multiplayer_total += 1
                     result = {"reward": 1}
+                elif item.effect_type == "event_ad_slot":
+                    # 真正的消耗发生在 `/确认广告位`；这里只告诉命令层去开向导
+                    return ShopUseResult("event_ad_slot_required", view)
                 else:
                     return ShopUseResult("unsupported", view)
                 inventory.quantity -= 1
@@ -29111,6 +30633,13 @@ def _random_event_settings(record: RandomEventSettingsRecord) -> RandomEventSett
         global_completion_reward=record.global_completion_reward,
         submission_approval_reward=record.submission_approval_reward,
         tipping_duration_seconds=record.tipping_duration_seconds,
+        vote_enabled=record.vote_enabled,
+        vote_close_offset_minutes=record.vote_close_offset_minutes,
+        vote_broadcast_interval_minutes=record.vote_broadcast_interval_minutes,
+        vote_random_candidates=record.vote_random_candidates,
+        vote_ad_slot_limit=record.vote_ad_slot_limit,
+        vote_fallback_minutes=record.vote_fallback_minutes,
+        vote_allow_change=record.vote_allow_change,
     )
 
 
@@ -29600,6 +31129,116 @@ def _render_random_event_signup_notice(
     return (
         template.replace("{可选身份}", open_seats)
         .replace("{报名截止分钟}", str(signup_timeout_minutes))
+    )
+
+
+def _short_author_name(name: str | None) -> str:
+    """候选行里的作者署名：太长会撑爆"一行一个候选"，截断到 8 字。"""
+    if not name:
+        return "官方"
+    return name if len(name) <= 8 else f"{name[:8]}…"
+
+
+def _render_random_event_vote_candidate(candidate) -> str:
+    if candidate.vacant:
+        return f"{candidate.position}. 📣 事件广告卡招商中"
+    parts = [f"{candidate.position}. 《{candidate.scene_name}》"]
+    parts.append(f"by {_short_author_name(candidate.author_name)}")
+    if candidate.seat_summary:
+        parts.append(candidate.seat_summary)
+    if candidate.reward is not None:
+        parts.append(f"奖{candidate.reward}")
+    return " ".join(parts)
+
+
+def _render_random_event_vote_open(view: RandomEventPollView) -> str:
+    lines = [
+        f"【事件投票】{view.scheduled_at.strftime('%H:%M')} 那场演什么？"
+        f"（{view.closes_at.strftime('%H:%M')} 截止）"
+    ]
+    lines.extend(
+        _render_random_event_vote_candidate(candidate)
+        for candidate in view.candidates
+    )
+    lines.append("回复 /事件投票 序号")
+    return "\n".join(lines)
+
+
+def _render_random_event_vote_tally(view: RandomEventPollView) -> str:
+    lines = [
+        f"【事件投票·票型】{view.total_votes} 人已投，"
+        f"{view.closes_at.strftime('%H:%M')} 截止"
+    ]
+    for candidate in view.candidates:
+        if candidate.vacant:
+            lines.append(f"{candidate.position}. 📣 事件广告卡招商中")
+        else:
+            lines.append(
+                f"{candidate.position}. 《{candidate.scene_name}》 "
+                f"{candidate.votes} 票"
+            )
+    lines.append("回复 /事件投票 序号")
+    return "\n".join(lines)
+
+
+def _render_random_event_vote_result(
+    view: RandomEventPollView | None,
+    position: int | None,
+    fallback_reason: str | None,
+) -> str:
+    if view is None or position is None:
+        if fallback_reason == "scene_gone":
+            # 候选全废、改走旧随机路径：这时演的不是任何一个候选，报候选名就是撒谎
+            return "【事件投票·结果】候选节目均已失效，那场改由随机安排。"
+        return "【事件投票·结果】本期没有产生结果。"
+    winner = next(
+        (row for row in view.candidates if row.position == position), None
+    )
+    label = {
+        "no_votes": "（无人投票，随机选定）",
+        "tie": "（平票，按演出次数与投稿时间裁定）",
+        "tie_perf": "（平票，按演出次数少者当选）",
+        "tie_time": "（平票，按投稿时间早者当选）",
+        "tie_random": "（平票，演出次数与投稿时间都相同，随机选出）",
+        "manual": "（管理员指定）",
+        "scene_missing": "（原定节目已失效，改由候补顶上）",
+    }.get(fallback_reason or "", "")
+    scene_name = "未命名" if winner is None else winner.scene_name
+    return (
+        f"【事件投票·结果】{view.scheduled_at.strftime('%H:%M')} 那场演"
+        f"《{scene_name}》{label}"
+    )
+
+
+def _render_random_event_vote_carryover(view: RandomEventPollView) -> str:
+    return (
+        f"【事件投票】上一场没能开成，本期顺延到 "
+        f"{view.scheduled_at.strftime('%H:%M')} 那场。\n"
+        f"已经投过的票保留，{view.closes_at.strftime('%H:%M')} 截止。"
+    )
+
+
+def _render_random_event_vote_cancelled() -> str:
+    return "【事件投票】没有可以顺延的场次了，本期投票作废。"
+
+
+def _render_random_event_vote_no_candidates() -> str:
+    return "【事件投票】本期没有可用的候选节目，投票作废。"
+
+
+def _render_random_event_ad_slot_filled(
+    view: RandomEventPollView, author: str, position: int
+) -> str:
+    """广告卡生效公告：与投票公告同过滤条件，广播到所有符合条件的群。"""
+    candidate = next(
+        (row for row in view.candidates if row.position == position), None
+    )
+    scene_name = "未命名" if candidate is None else candidate.scene_name
+    return (
+        "【事件广告卡】\n"
+        f"{author} 把《{scene_name}》放进了 "
+        f"{view.scheduled_at.strftime('%H:%M')} 那场的广告位。\n"
+        f"回复 /事件投票 {position} 支持它"
     )
 
 

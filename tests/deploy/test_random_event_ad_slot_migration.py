@@ -150,7 +150,7 @@ def test_event_ad_slot_item_is_defined():
 
     item = item_by_key("event_ad_slot")
 
-    assert item.name == "事件广告卡"
+    assert item.name == "优选投稿卡"
     assert item.effect_type == "event_ad_slot"
     assert item.price > 0
     assert item.minimum_rank_order is None

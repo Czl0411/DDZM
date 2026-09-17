@@ -1266,10 +1266,10 @@ function renderRandomEventVote(poll) {
   const statusLabel = {open: "投票中", closed: "已定稿", cancelled: "已作废"}[poll.status] || poll.status;
   const rows = poll.candidates.map((candidate) => {
     const label = candidate.vacant
-      ? "📣 事件广告卡招商中"
+      ? "✨ 优选投稿位待定"
       : `《${escapeHtml(candidate.scene_name || "")}》 by ${escapeHtml(candidate.author_name || "官方")}${candidate.seat_summary ? " " + escapeHtml(candidate.seat_summary) : ""}${candidate.reward === null || candidate.reward === undefined ? "" : " 奖" + candidate.reward}`;
     const voters = candidate.voters.length ? candidate.voters.map(escapeHtml).join("、") : "—";
-    const source = candidate.source === "ad_slot" ? "广告卡" : "随机";
+    const source = candidate.source === "ad_slot" ? "优选投稿" : "随机";
     return `<tr><td>${candidate.position}</td><td>${label}</td><td>${candidate.votes}</td><td>${voters}</td><td>${source}</td></tr>`;
   }).join("");
   const winner = poll.winner_position ? `第 ${poll.winner_position} 号` : "尚未定稿";

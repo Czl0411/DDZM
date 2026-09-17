@@ -2142,10 +2142,10 @@ class GroupCommandHandler:
             if draft.status != "started":
                 return self._reply("/使用", f"ad_slot_{draft.status}", received_at)
             return (
-                "请选择要锁定广告位的场次：\n"
+                "请选择要锁定优选投稿位的场次：\n"
                 + "\n".join(
                     f"{slot.position}. {slot.scheduled_at.strftime('%H:%M')}"
-                    f"｜广告位 {slot.taken}/{slot.limit}"
+                    f"｜优选投稿位 {slot.taken}/{slot.limit}"
                     for slot in draft.schedules
                 )
                 + "\n回复 /选择 场次序号。"
@@ -3407,10 +3407,10 @@ class GroupCommandHandler:
             group_chat_id, received_at
         )
         if not slots:
-            return "今天没有可锁定广告位的后续随机事件场次。"
+            return "今天没有可锁定优选投稿位的后续随机事件场次。"
         return "【随机事件时间表】\n" + "\n".join(
             f"{slot.position}. {slot.scheduled_at.strftime('%H:%M')}"
-            f"｜广告位 {slot.taken}/{slot.limit}"
+            f"｜优选投稿位 {slot.taken}/{slot.limit}"
             for slot in slots
         )
 
@@ -3421,7 +3421,7 @@ class GroupCommandHandler:
         ]
         for candidate in view.candidates:
             if candidate.vacant:
-                lines.append(f"{candidate.position}. 📣 事件广告卡招商中")
+                lines.append(f"{candidate.position}. ✨ 优选投稿位待定")
             else:
                 lines.append(
                     f"{candidate.position}. 《{candidate.scene_name}》 "
@@ -4144,8 +4144,8 @@ class GroupCommandHandler:
                     ("/投稿", "/投稿 随机事件：进入私聊投稿向导"),
                     ("/我的投稿", "/我的投稿：查看最近投稿状态"),
                     ("/撤回投稿", "/撤回投稿 编号：撤回待审核投稿"),
-                    ("/随机事件时间表", "/随机事件时间表：查看今天后续场次与广告位余量"),
-                    ("/使用", "/使用 广告卡编号：在群内选择场次和已审核投稿，确认后锁定广告位"),
+                    ("/随机事件时间表", "/随机事件时间表：查看今天后续场次与优选投稿位余量"),
+                    ("/使用", "/使用 优选投稿卡编号：在群内选择场次和已审核投稿，确认后锁定优选投稿位"),
                 ),
             ),
             "摸鱼躲藏": (

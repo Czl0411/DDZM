@@ -172,8 +172,8 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition(
         "/使用",
         "ad_slot_started",
-        "广告卡向导已发送",
-        "事件广告卡向导已通过私聊发送。",
+        "优选投稿卡向导已发送",
+        "优选投稿卡向导已通过私聊发送。",
         ("{日期}",),
     ),
     TemplateDefinition(
@@ -194,7 +194,7 @@ TEMPLATE_DEFINITIONS = (
         "/使用",
         "ad_slot_no_schedules",
         "没有可选场次",
-        "今天没有可锁定广告位的后续随机事件场次。",
+        "今天没有可锁定优选投稿位的后续随机事件场次。",
         ("{日期}",),
     ),
     TemplateDefinition(
@@ -222,7 +222,7 @@ TEMPLATE_DEFINITIONS = (
         "/使用",
         "ad_slot_item_missing",
         "商品不可用",
-        "这张事件广告卡当前不可用。",
+        "这张优选投稿卡当前不可用。",
         ("{日期}",),
     ),
     TemplateDefinition(
@@ -266,8 +266,8 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition(
         "/事件投票",
         "vacant",
-        "广告位招商中",
-        "这个位置还在招商中（事件广告卡），换一个候选吧。",
+        "优选投稿位待定",
+        "这个优选投稿位暂未放入作品，换一个候选吧。",
         ("{日期}",),
     ),
     TemplateDefinition(

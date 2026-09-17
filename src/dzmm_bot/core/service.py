@@ -31,7 +31,8 @@ _DIRECT_COMMANDS = {
 }
 _RANDOM_EVENT_INDEPENDENT_COMMANDS = {
     "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏",
-    "/随机事件时间表", "/使用", "/选择", "/下一页", "/确认广告位",
+    "/随机事件时间表", "/使用", "/选择", "/下一页", "/确认优选投稿",
+    "/确认广告位",
     "/取消使用",
 }
 
@@ -135,6 +136,7 @@ class CoreService:
                 )
                 if ad_slot_step is not None and command in {
                     "/选择",
+                    "/确认优选投稿",
                     "/确认广告位",
                     "/取消使用",
                 }:
@@ -351,7 +353,7 @@ class CoreService:
                 message.sender_platform_id, message.received_at
             )
             if ad_slot_step is not None and command in {
-                "/选择", "/下一页", "/确认广告位", "/取消使用",
+                "/选择", "/下一页", "/确认优选投稿", "/确认广告位", "/取消使用",
             }:
                 reply = self._random_event_ad_slot_reply(
                     self._repository.consume_random_event_ad_slot_draft(
@@ -520,7 +522,7 @@ class CoreService:
 
     @staticmethod
     def _random_event_ad_slot_reply(result) -> str:
-        """广告卡群内向导的回执；每条拒绝都要说清楚原因。"""
+        """优选投稿卡群内向导的回执；每条拒绝都要说清楚原因。"""
         def works_page() -> str:
             start = (result.work_page - 1) * 5
             page = result.works[start:start + 5]
@@ -543,16 +545,16 @@ class CoreService:
             time_label = "该场" if schedule is None else schedule.scheduled_at.strftime("%H:%M")
             return (
                 f"已选中{name}，将锁定到 {time_label} 场。"
-                "回复 /确认广告位 提交，提交后才会消耗这张卡。"
+                "回复 /确认优选投稿 提交，提交后才会消耗这张卡。"
             )
         if result.status == "consumed":
             work = result.selected
             name = "这件作品" if work is None else f"《{work.scene_name}》"
             schedule = result.selected_schedule
             time_label = "该场" if schedule is None else schedule.scheduled_at.strftime("%H:%M")
-            return f"✅ {name}已锁定 {time_label} 场的广告位。"
+            return f"✅ {name}已锁定 {time_label} 场的优选投稿位。"
         if result.status == "cancelled":
-            return "已取消广告卡向导，这张卡未消耗。"
+            return "已取消优选投稿卡向导，这张卡未消耗。"
         return {
             "pick_usage": "请用 /选择 序号 继续。",
             "pick_missing": "没有这个序号，看看上面的列表。",
@@ -560,18 +562,18 @@ class CoreService:
             "schedule_missing": "没有这个场次序号，看看上面的时间表。",
             "schedule_required": "请先用 /选择 场次序号。",
             "last_page": "已经是最后一页了。",
-            "no_draft": "广告卡向导已经结束了，请重新发送 /使用 商品编号。",
+            "no_draft": "优选投稿卡向导已经结束了，请重新发送 /使用 商品编号。",
             "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
             "poll_closed": "本期投票已经截止了，这张卡留着下次用。",
             "schedule_closed": "这个场次已经不能锁定了，这张卡留着下次用。",
-            "slot_taken": "这个场次的广告位已经满了，这张卡留着下次用。",
-            "already_reserved": "你已经锁定过这场的广告位了，这张卡留着下次用。",
+            "slot_taken": "这个场次的优选投稿位已经满了，这张卡留着下次用。",
+            "already_reserved": "你已经锁定过这场的优选投稿位了，这张卡留着下次用。",
             "scene_taken": "这件作品已经在候选列表里了，换一件吧。",
             "scene_unavailable": "这件作品暂时不能使用，换一件吧。",
-            "slot_disabled": "本期没有开放广告位，这张卡留着下次用。",
-            "item_missing": "这张事件广告卡当前不可用。",
+            "slot_disabled": "本期没有开放优选投稿位，这张卡留着下次用。",
+            "item_missing": "这张优选投稿卡当前不可用。",
             "disabled": "随机事件投票当前没有开启。",
-        }.get(result.status, "这条消息没看懂，回复 /选择 序号 或 /确认广告位。")
+        }.get(result.status, "这条消息没看懂，回复 /选择 序号 或 /确认优选投稿。")
 
     @staticmethod
     def _performance_draft_reply(result):

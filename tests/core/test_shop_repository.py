@@ -225,6 +225,25 @@ def test_event_ad_slot_is_limited_to_one_purchase_per_day(
     )
 
 
+def test_catalog_renames_the_existing_event_ad_slot(setup_repository) -> None:
+    repository, factory = setup_repository
+    repository.list_active_items()
+    with factory.begin() as session:
+        item = session.scalar(
+            select(ItemRecord).where(ItemRecord.system_key == "event_ad_slot")
+        )
+        item.name = "事件广告卡"
+        item.description = "旧说明"
+
+    item = next(
+        item for item in repository.list_shop_items()
+        if item.system_key == "event_ad_slot"
+    )
+
+    assert item.name == "优选投稿卡"
+    assert "优选投稿位" in item.description
+
+
 def test_ordinary_cards_apply_effects_and_keep_generic_item(
     setup_repository, now
 ) -> None:

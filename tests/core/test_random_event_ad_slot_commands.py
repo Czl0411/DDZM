@@ -282,7 +282,7 @@ def test_use_without_a_future_schedule_keeps_the_card(harness):
 
     _send(service, group, "author", f"/使用 {number}")
 
-    assert "没有可锁定广告位" in _reply(factory)
+    assert "没有可锁定优选投稿位" in _reply(factory)
     assert _card_count(repository) == 1
 
 
@@ -308,7 +308,7 @@ def test_use_does_not_require_a_direct_room(harness):
 
     _send(service, group, "author", f"/使用 {number}")
 
-    assert "请选择要锁定广告位的场次" in _reply(factory)
+    assert "请选择要锁定优选投稿位的场次" in _reply(factory)
     assert _card_count(repository) == 1
 
 
@@ -355,7 +355,7 @@ def test_the_second_author_is_rejected_after_the_slot_is_taken(harness):
 
     number = _buy_cards(repository, 1, "other")
     _send(service, group, "other", f"/使用 {number}")
-    assert "没有可锁定广告位" in _reply(factory)
+    assert "没有可锁定优选投稿位" in _reply(factory)
     assert _card_count(repository, "other") == 1
 
 
@@ -368,7 +368,7 @@ def test_wizard_picks_a_work_and_consumes_the_card(harness):
     assert "作者作品" not in {c.scene_name for c in view.candidates}
 
     _send(service, group, "author", f"/使用 {number}")
-    assert "请选择要锁定广告位的场次" in _reply(factory)
+    assert "请选择要锁定优选投稿位的场次" in _reply(factory)
 
     _send(service, group, "author", "/选择 1")
     assert "作者作品" in _reply(factory)
@@ -377,9 +377,9 @@ def test_wizard_picks_a_work_and_consumes_the_card(harness):
     _send(service, group, "author", "/选择 1")
     assert "已选中" in _reply(factory)
 
-    _send(service, group, "author", "/确认广告位")
+    _send(service, group, "author", "/确认优选投稿")
 
-    assert "已锁定 19:20 场的广告位" in _reply(factory)
+    assert "已锁定 19:20 场的优选投稿位" in _reply(factory)
     assert _card_count(repository) == 0
     candidate = _slot_candidate(repository)
     assert candidate.vacant is False
@@ -431,7 +431,7 @@ def test_cancelling_the_ad_slot_wizard_keeps_the_card(harness):
     _send(service, group, "author", f"/使用 {number}")
     _send(service, group, "author", "/取消使用")
 
-    assert "已取消广告卡向导" in _reply(factory)
+    assert "已取消优选投稿卡向导" in _reply(factory)
     assert _card_count(repository) == 1
     assert repository.random_event_ad_slot_draft_step("author", NOW) is None
 
@@ -449,7 +449,7 @@ def test_filling_the_slot_announces_it(harness):
     repository.consume_random_event_ad_slot_draft("author", "/确认广告位", NOW)
 
     text = _reply(factory)
-    assert "【事件广告卡】" in text
+    assert "【优选投稿】" in text
     assert "作者作品" in text
     assert "/事件投票" in text
 
@@ -657,7 +657,7 @@ def test_a_refusal_is_answered_in_the_group(harness):
 
     _send(service, group, "author", f"/使用 {number}")
 
-    assert "没有可锁定广告位" in (_reply(factory, group.chatroom_id) or "")
+    assert "没有可锁定优选投稿位" in (_reply(factory, group.chatroom_id) or "")
     assert _reply(factory, "direct-author") is None
 
 
@@ -717,7 +717,7 @@ def test_ad_card_reserves_a_selected_future_schedule_with_paginated_works(harnes
     number = _buy_cards(repository, 1)
 
     _send(service, group, "author", f"/使用 {number}")
-    assert "请选择要锁定广告位的场次" in _reply(factory)
+    assert "请选择要锁定优选投稿位的场次" in _reply(factory)
     assert first_at.strftime("%H:%M") in _reply(factory)
     assert selected_at.strftime("%H:%M") in _reply(factory)
 

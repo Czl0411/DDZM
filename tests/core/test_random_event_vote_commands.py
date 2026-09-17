@@ -196,7 +196,7 @@ def test_vote_command_rejects_the_vacant_slot():
 
     _send(service, group, "m1", "p1", "/事件投票 4")
 
-    assert "招商中" in _reply(factory)
+    assert "优选投稿位暂未放入作品" in _reply(factory)
     assert repository.random_event_poll_view("p1").my_position is None
 
 
@@ -231,7 +231,7 @@ def test_vote_command_lists_the_tally():
     text = _reply(factory)
     assert "2 票" in text
     assert "1 票" in text
-    assert "招商中" in text
+    assert "优选投稿位待定" in text
     assert "你投的是 1 号" in text
 
 

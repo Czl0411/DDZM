@@ -2152,7 +2152,7 @@ _COMMAND_DEFINITIONS = (
     ("/打赏", "/打赏 员工名称 金额", "在随机事件打赏阶段向参与者转移摸鱼币"),
     ("/事件投票", "/事件投票 序号", "给全公司的下一场随机事件投一票（每人一票，可改票）"),
     ("/事件投票情况", "/事件投票情况", "查看本期随机事件投票的当前票型"),
-    ("/随机事件时间表", "/随机事件时间表", "查看今天后续随机事件场次与广告位余量"),
+    ("/随机事件时间表", "/随机事件时间表", "查看今天后续随机事件场次与优选投稿位余量"),
     ("/我", "/我；/me", "查看余额、今日活跃度和今日收益"),
     ("/商店", "/商店", "查看当前上架物品"),
     ("/帮助", "/帮助", "查看当前可用指令"),
@@ -3459,7 +3459,7 @@ class CoreRepository:
                 ("截止提前量", vote_close_offset_minutes, 1, 720),
                 ("播报间隔", vote_broadcast_interval_minutes, 1, 720),
                 ("随机候选数", vote_random_candidates, 1, 5),
-                ("广告位上限", vote_ad_slot_limit, 0, 3),
+                ("优选投稿位上限", vote_ad_slot_limit, 0, 3),
                 ("兜底开投窗口", vote_fallback_minutes, 1, 720),
             )
             for label, value, minimum, maximum in vote_numbers:
@@ -22588,7 +22588,7 @@ class CoreRepository:
                         work_page=draft.work_page,
                     )
 
-                if command == "/确认广告位":
+                if command in {"/确认优选投稿", "/确认广告位"}:
                     if draft.current_step != "confirm" or draft.scene_id is None:
                         return RandomEventAdSlotDraftResult(
                             "pick_required", works=works
@@ -26757,13 +26757,21 @@ class CoreRepository:
         return int(session.scalar(select(func.max(ItemRecord.public_number))) or 0) + 1
 
     def _ensure_shop_catalog(self, session: Session) -> None:
-        existing_keys = set(
-            session.scalars(
-                select(ItemRecord.system_key).where(ItemRecord.system_key.is_not(None))
+        existing_items = {
+            record.system_key: record
+            for record in session.scalars(
+                select(ItemRecord).where(ItemRecord.system_key.is_not(None))
             )
-        )
+        }
+        existing_keys = set(existing_items)
+        event_ad_slot = existing_items.get("event_ad_slot")
+        if event_ad_slot is not None and event_ad_slot.name == "事件广告卡":
+            definition = item_by_key("event_ad_slot")
+            event_ad_slot.name = definition.name
+            event_ad_slot.description = definition.description
         missing = [item for item in SYSTEM_SHOP_ITEMS if item.key not in existing_keys]
         if not missing:
+            session.flush()
             return
         existing_names = {
             record.name: record
@@ -31474,7 +31482,7 @@ def _short_author_name(name: str | None) -> str:
 
 def _render_random_event_vote_candidate(candidate) -> str:
     if candidate.vacant:
-        return f"{candidate.position}. 📣 事件广告卡招商中"
+        return f"{candidate.position}. ✨ 优选投稿位待定"
     parts = [f"{candidate.position}. 《{candidate.scene_name}》"]
     parts.append(f"by {_short_author_name(candidate.author_name)}")
     if candidate.seat_summary:
@@ -31504,7 +31512,7 @@ def _render_random_event_vote_tally(view: RandomEventPollView) -> str:
     ]
     for candidate in view.candidates:
         if candidate.vacant:
-            lines.append(f"{candidate.position}. 📣 事件广告卡招商中")
+            lines.append(f"{candidate.position}. ✨ 优选投稿位待定")
         else:
             lines.append(
                 f"{candidate.position}. 《{candidate.scene_name}》 "
@@ -31562,15 +31570,15 @@ def _render_random_event_vote_no_candidates() -> str:
 def _render_random_event_ad_slot_filled(
     view: RandomEventPollView, author: str, position: int
 ) -> str:
-    """广告卡生效公告：与投票公告同过滤条件，广播到所有符合条件的群。"""
+    """优选投稿生效公告：与投票公告同过滤条件，广播到所有符合条件的群。"""
     candidate = next(
         (row for row in view.candidates if row.position == position), None
     )
     scene_name = "未命名" if candidate is None else candidate.scene_name
     return (
-        "【事件广告卡】\n"
+        "【优选投稿】\n"
         f"{author} 把《{scene_name}》放进了 "
-        f"{view.scheduled_at.strftime('%H:%M')} 那场的广告位。\n"
+        f"{view.scheduled_at.strftime('%H:%M')} 那场的优选投稿位。\n"
         f"回复 /事件投票 {position} 支持它"
     )
 

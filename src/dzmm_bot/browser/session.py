@@ -95,6 +95,7 @@ class BrowserSession:
         cdp_port: int = 19222,
         playwright_factory: Callable | None = None,
         socket_factory: Callable | None = None,
+        ignored_sender_ids: tuple[str, ...] = (),
     ) -> None:
         if cdp_port != 19222:
             raise ValueError("browser CDP port must be the isolated port 19222")
@@ -104,6 +105,7 @@ class BrowserSession:
         self.cdp_port = cdp_port
         self._playwright_factory = playwright_factory or _start_playwright
         self._socket_factory = socket_factory
+        self._ignored_sender_ids = ignored_sender_ids
         self._playwright = None
         self._context = None
         self._gateway = None
@@ -185,6 +187,7 @@ class BrowserSession:
             upload=self._upload_image,
             cookie_provider=self._cookies,
             socket_factory=self._socket_factory,
+            ignored_sender_ids=self._ignored_sender_ids,
         )
 
     def _token(self) -> str:

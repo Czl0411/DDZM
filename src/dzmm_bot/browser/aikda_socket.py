@@ -45,6 +45,7 @@ class AikdaSocketGateway:
         upload: Callable[[Path, str, str], dict[str, Any]] | None = None,
         cookie_provider: Callable[[], str] | None = None,
         socket_factory: Callable[[], Any] | None = None,
+        ignored_sender_ids: tuple[str, ...] = (),
         clock: Callable[[], datetime] = lambda: datetime.now(ZoneInfo("Asia/Shanghai")),
     ) -> None:
         parsed = urlsplit(chat_url)
@@ -59,6 +60,9 @@ class AikdaSocketGateway:
         self._upload = upload
         self._cookie_provider = cookie_provider
         self._socket_factory = socket_factory or _socket_client
+        self._ignored_sender_ids = frozenset(
+            sender_id for sender_id in ignored_sender_ids if sender_id
+        )
         self._clock = clock
         self._owner_thread_id = get_ident()
         self._socket = None
@@ -508,7 +512,9 @@ class AikdaSocketGateway:
             self._joined_direct_chatroom_ids.clear()
 
     def _accept_message(self, chatroom_id: str | None, message: dict[str, Any]) -> None:
-        if message.get("sent_by") == self._bot_id:
+        if message.get("sent_by") == self._bot_id or message.get(
+            "sent_by"
+        ) in self._ignored_sender_ids:
             return
         content = message.get("content")
         message_id = message.get("message_id")

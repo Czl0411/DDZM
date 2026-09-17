@@ -29614,9 +29614,37 @@ class CoreRepository:
         )
 
     def own_company_lottery_bets(
-        self, platform_id: str, limit: int = 20
+        self,
+        platform_id: str,
+        limit: int = 20,
+        *,
+        drawn_only: bool = False,
+        round_number: int | None = None,
     ) -> CompanyLotteryHistory:
         with self._session() as session:
+            selected_round_number = round_number
+            if drawn_only and selected_round_number is None:
+                selected_round_number = session.scalar(
+                    select(CompanyLotteryRoundRecord.round_number)
+                    .join(
+                        CompanyLotteryBetRecord,
+                        CompanyLotteryBetRecord.round_id == CompanyLotteryRoundRecord.id,
+                    )
+                    .join(UserRecord, UserRecord.id == CompanyLotteryBetRecord.user_id)
+                    .where(
+                        UserRecord.platform_id == platform_id,
+                        CompanyLotteryRoundRecord.state == "drawn",
+                    )
+                    .order_by(CompanyLotteryRoundRecord.round_number.desc())
+                    .limit(1)
+                )
+            bet_filters = [UserRecord.platform_id == platform_id]
+            if drawn_only:
+                bet_filters.append(CompanyLotteryRoundRecord.state == "drawn")
+            if drawn_only and selected_round_number is not None:
+                bet_filters.append(
+                    CompanyLotteryRoundRecord.round_number == selected_round_number
+                )
             rows = session.execute(
                 select(CompanyLotteryBetRecord, CompanyLotteryRoundRecord.round_number)
                 .join(
@@ -29624,7 +29652,7 @@ class CoreRepository:
                     CompanyLotteryRoundRecord.id == CompanyLotteryBetRecord.round_id,
                 )
                 .join(UserRecord, UserRecord.id == CompanyLotteryBetRecord.user_id)
-                .where(UserRecord.platform_id == platform_id)
+                .where(*bet_filters)
                 .order_by(CompanyLotteryBetRecord.created_at.desc())
                 .limit(limit)
             ).all()
@@ -29646,17 +29674,26 @@ class CoreRepository:
                 for bet, round_number in rows
             )
 
+            total_filters = [UserRecord.platform_id == platform_id]
+            if drawn_only:
+                total_filters.append(CompanyLotteryRoundRecord.state == "drawn")
             totals = session.execute(
                 select(
                     func.coalesce(func.sum(CompanyLotteryBetRecord.cost), 0),
                     func.coalesce(func.sum(CompanyLotteryBetRecord.prize_amount), 0),
                 )
+                .join(
+                    CompanyLotteryRoundRecord,
+                    CompanyLotteryRoundRecord.id == CompanyLotteryBetRecord.round_id,
+                )
                 .join(UserRecord, UserRecord.id == CompanyLotteryBetRecord.user_id)
-                .where(UserRecord.platform_id == platform_id)
+                .where(*total_filters)
             ).one()
 
             return CompanyLotteryHistory(
-                bets=views, total_cost=int(totals[0]), total_prize=int(totals[1])
+                bets=views,
+                total_cost=int(totals[0]),
+                total_prize=int(totals[1]),
             )
 
     # ------------------------------------------------------- 公司双色球·购票草稿

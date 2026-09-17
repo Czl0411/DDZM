@@ -4312,7 +4312,7 @@ class GroupCommandHandler:
                     ("/购买彩票", "/购买彩票 N 注：进入逐注填写，手选与「机选」可以混用"),
                     ("/确认彩票", "/确认彩票：一次性扣款并提交草稿里的全部号码"),
                     ("/取消彩票", "/取消彩票：放弃草稿，不扣款"),
-                    ("/我的彩票", "/我的彩票：查看本人近期投注、累计投入、累计中奖与净收益"),
+                    ("/我的彩票", "/我的彩票 [期号]：查看最近一期或指定已开奖期的投注；下方为已开奖期累计统计"),
                     ("/彩票验证", "/彩票验证 期号：查看已开奖期次的号码、盐与承诺哈希"),
                     ("/彩票", "规则：每注 2 摸鱼币，每人每个自然日最多 5 注，同一期同一组号码只能买一次；开奖前 10 分钟停售，22:00 开奖"),
                     ("/彩票", "奖级：一等奖 100、二等奖 50、三等奖 15、四等奖 5、五等奖 1；任意中奖概率 26.59%，每注长期期望返回约 1.19 摸鱼币"),
@@ -4506,11 +4506,46 @@ class GroupCommandHandler:
             )
 
         if command == "/我的彩票":
+            parts = content.split()
+            if len(parts) > 2 or (
+                len(parts) == 2 and not parts[1].lstrip("#").isdigit()
+            ):
+                return self._reply("/我的彩票", "usage", received_at)
+            round_number = (
+                None if len(parts) == 1 else int(parts[1].lstrip("#"))
+            )
+            if round_number is not None:
+                view = self._repository.company_lottery_round_by_number(round_number)
+                if view is None:
+                    return self._reply(
+                        "/我的彩票", "not_found", received_at,
+                        {"{期号}": round_number},
+                    )
+                if view.state != "drawn":
+                    return self._reply(
+                        "/我的彩票", "not_drawn", received_at,
+                        {"{期号}": round_number},
+                    )
             history = self._repository.own_company_lottery_bets(
-                message.sender_platform_id
+                message.sender_platform_id,
+                drawn_only=True,
+                round_number=round_number,
             )
             if not history.bets:
-                return self._reply("/我的彩票", "empty", received_at)
+                if round_number is not None:
+                    return self._reply(
+                        "/我的彩票", "not_bought", received_at,
+                        {"{期号}": round_number},
+                    )
+                return self._reply(
+                    "/我的彩票",
+                    "empty"
+                    if not self._repository.own_company_lottery_bets(
+                        message.sender_platform_id
+                    ).bets
+                    else "no_drawn",
+                    received_at,
+                )
             return self._reply(
                 "/我的彩票",
                 "shown",

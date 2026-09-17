@@ -802,6 +802,11 @@ TEMPLATE_DEFINITIONS = (
         ("{记录}", "{累计投入}", "{累计中奖}", "{净收益}", "{货币}", "{日期}"),
     ),
     TemplateDefinition("/我的彩票", "empty", "还没有记录", "你还没有买过彩票。", ("{日期}",)),
+    TemplateDefinition("/我的彩票", "no_drawn", "暂无已开奖记录", "你暂无已开奖的彩票记录。", ("{日期}",)),
+    TemplateDefinition("/我的彩票", "usage", "格式错误", "格式：/我的彩票 [期号]", ("{日期}",)),
+    TemplateDefinition("/我的彩票", "not_found", "期次不存在", "没有找到第 {期号} 期彩票。", ("{期号}", "{日期}")),
+    TemplateDefinition("/我的彩票", "not_drawn", "尚未开奖", "第 {期号} 期尚未开奖，开奖后再查询。", ("{期号}", "{日期}")),
+    TemplateDefinition("/我的彩票", "not_bought", "未购买", "你没有购买第 {期号} 期彩票。", ("{期号}", "{日期}")),
     TemplateDefinition("/我的彩票", "group_only", "仅限群聊", "请回到群里查看彩票记录。", ("{日期}",)),
     TemplateDefinition(
         "/彩票验证",

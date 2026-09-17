@@ -10,6 +10,7 @@ from dzmm_bot.core.schema import (
     Base,
     GroupChatRecord,
     PRIMARY_GROUP_CHAT_ID,
+    RandomEventAdSlotRecord,
     RandomEventPollCandidateRecord,
     RandomEventPollRecord,
     RandomEventPollVoteRecord,
@@ -199,6 +200,59 @@ def schedule_row(session) -> RandomEventScheduleRecord:
 
 def test_random_event_vote_is_disabled_by_default(repository):
     assert repository.get_random_event_settings().vote_enabled is False
+
+
+def test_enabling_vote_releases_unopened_prefilled_future_schedules(
+    repository, seeded
+):
+    repository.set_random_event_settings(
+        ["20:00"], "{可选身份}", 15, 5, vote_enabled=False
+    )
+    with seeded.begin() as session:
+        released = add_schedule(session, scene_name="旧随机场次")
+        released.event_name = "旧场景事件"
+        released.signup_text = "旧报名"
+        released.signup_notice_template = "旧报名公告"
+        released.formal_opening_text = "旧开场"
+        released.reward = 6
+        released.target_rounds = 3
+        released.seats = [{"role": "主持", "capacity": 1}]
+        protected = add_schedule(
+            session, when=TARGET_AT + timedelta(hours=1), scene_name="已预告场次"
+        )
+        protected.pre_notice_sent_at = NOW
+        reserved = add_schedule(
+            session, when=TARGET_AT + timedelta(hours=2), scene_name="广告已占用场次"
+        )
+        session.add(
+            RandomEventAdSlotRecord(
+                user_id=uuid4(),
+                scene_id=uuid4(),
+                item_id=uuid4(),
+                schedule_id=reserved.id,
+                status="consumed",
+                created_at=NOW,
+            )
+        )
+
+    repository.set_random_event_settings(
+        ["20:00"], "{可选身份}", 15, 5, vote_enabled=True, now=NOW
+    )
+
+    with seeded() as session:
+        refreshed_released = session.get(RandomEventScheduleRecord, released.id)
+        refreshed_protected = session.get(RandomEventScheduleRecord, protected.id)
+        refreshed_reserved = session.get(RandomEventScheduleRecord, reserved.id)
+        assert refreshed_released.scene_name is None
+        assert refreshed_released.event_name is None
+        assert refreshed_released.signup_text is None
+        assert refreshed_released.signup_notice_template is None
+        assert refreshed_released.formal_opening_text is None
+        assert refreshed_released.reward is None
+        assert refreshed_released.target_rounds is None
+        assert refreshed_released.seats is None
+        assert refreshed_protected.scene_name == "已预告场次"
+        assert refreshed_reserved.scene_name == "广告已占用场次"
 
 
 def test_create_poll_picks_three_distinct_scenes_plus_a_vacant_slot(

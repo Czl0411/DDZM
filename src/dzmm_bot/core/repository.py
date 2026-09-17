@@ -164,6 +164,7 @@ from .schema import (
     AuditEventRecord,
     BalanceTransactionRecord,
     BEIJING,
+    beijing_now,
     BlameGameDailyStartRecord,
     BlameGameDurationRuleRecord,
     BlameGamePlayerRecord,
@@ -3351,6 +3352,7 @@ class CoreRepository:
         vote_ad_slot_limit: int | None = None,
         vote_fallback_minutes: int | None = None,
         vote_allow_change: bool | None = None,
+        now: datetime | None = None,
     ) -> RandomEventSettings:
         if not isinstance(schedule_times, list) or not schedule_times:
             raise ValueError("每日固定场次至少需要一个时间")
@@ -3494,8 +3496,13 @@ class CoreRepository:
             ):
                 if flag is not None and not isinstance(flag, bool):
                     raise ValueError(f"{name} 必须是布尔值")
+            enabling_vote = vote_enabled is True and not record.vote_enabled
             if vote_enabled is not None:
                 record.vote_enabled = vote_enabled
+            if enabling_vote:
+                self._release_unopened_prefilled_random_event_schedules(
+                    session, (now or beijing_now()).astimezone(BEIJING)
+                )
             if vote_allow_change is not None:
                 record.vote_allow_change = vote_allow_change
             for value, name in (
@@ -3509,6 +3516,40 @@ class CoreRepository:
                     setattr(record, name, value)
             session.flush()
             return _random_event_settings(record)
+
+    def _release_unopened_prefilled_random_event_schedules(
+        self, session: Session, now: datetime
+    ) -> None:
+        """开启投票时，释放当日尚未公告的旧随机预填场次。"""
+        protected_schedule_ids = set(
+            session.scalars(select(RandomEventPollRecord.target_schedule_id))
+        ) | set(
+            session.scalars(
+                select(RandomEventAdSlotRecord.schedule_id).where(
+                    RandomEventAdSlotRecord.status == "consumed"
+                )
+            )
+        ) | set(session.scalars(select(RandomEventRecord.schedule_id)))
+        schedules = session.scalars(
+            select(RandomEventScheduleRecord).where(
+                RandomEventScheduleRecord.event_date == now.date(),
+                RandomEventScheduleRecord.status == "pending",
+                RandomEventScheduleRecord.scheduled_at > now,
+                RandomEventScheduleRecord.pre_notice_sent_at.is_(None),
+                RandomEventScheduleRecord.scene_name.is_not(None),
+            )
+        )
+        for schedule in schedules:
+            if schedule.id in protected_schedule_ids:
+                continue
+            schedule.scene_name = None
+            schedule.event_name = None
+            schedule.signup_text = None
+            schedule.signup_notice_template = None
+            schedule.formal_opening_text = None
+            schedule.reward = None
+            schedule.target_rounds = None
+            schedule.seats = None
 
     def start_random_event_submission(
         self, platform_id: str, now: datetime

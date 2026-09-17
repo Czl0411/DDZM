@@ -1425,7 +1425,7 @@ class RandomEventSettingsResponse(ApiModel):
     vote_close_offset_minutes: int = Field(default=10, ge=1, le=720)
     vote_broadcast_interval_minutes: int = Field(default=30, ge=1, le=720)
     vote_random_candidates: int = Field(default=3, ge=1, le=5)
-    vote_ad_slot_limit: int = Field(default=1, ge=0, le=2)
+    vote_ad_slot_limit: int = Field(default=3, ge=0, le=3)
     vote_fallback_minutes: int = Field(default=30, ge=1, le=720)
     vote_allow_change: bool = True
 
@@ -1443,7 +1443,7 @@ class SetRandomEventSettingsRequest(RandomEventSettingsResponse):
     vote_close_offset_minutes: int | None = Field(default=None, ge=1, le=720)
     vote_broadcast_interval_minutes: int | None = Field(default=None, ge=1, le=720)
     vote_random_candidates: int | None = Field(default=None, ge=1, le=5)
-    vote_ad_slot_limit: int | None = Field(default=None, ge=0, le=2)
+    vote_ad_slot_limit: int | None = Field(default=None, ge=0, le=3)
     vote_fallback_minutes: int | None = Field(default=None, ge=1, le=720)
     vote_allow_change: bool | None = None
 

@@ -30,7 +30,9 @@ _DIRECT_COMMANDS = {
     "/事件投票", "/事件投票情况",
 }
 _RANDOM_EVENT_INDEPENDENT_COMMANDS = {
-    "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏"
+    "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏",
+    "/随机事件时间表", "/使用", "/选择", "/下一页", "/确认广告位",
+    "/取消使用",
 }
 
 
@@ -134,12 +136,14 @@ class CoreService:
                 if ad_slot_step is not None and command in {
                     "/选择",
                     "/确认广告位",
+                    "/取消使用",
                 }:
                     direct_reply = self._random_event_ad_slot_reply(
                         self._repository.consume_random_event_ad_slot_draft(
                             message.sender_platform_id,
                             message.content,
                             message.received_at,
+                            guided_by_schedule=False,
                         )
                     )
                 elif draft_step is not None and (
@@ -343,11 +347,28 @@ class CoreService:
                         ),
                     )
                     return ReceiveResult(stored.id, True)
+            ad_slot_step = self._repository.random_event_ad_slot_draft_step(
+                message.sender_platform_id, message.received_at
+            )
+            if ad_slot_step is not None and command in {
+                "/选择", "/下一页", "/确认广告位", "/取消使用",
+            }:
+                reply = self._random_event_ad_slot_reply(
+                    self._repository.consume_random_event_ad_slot_draft(
+                        message.sender_platform_id,
+                        message.content,
+                        message.received_at,
+                        guided_by_schedule=True,
+                    )
+                )
+            else:
+                reply = None
             had_active_game_context = self._repository.user_has_active_game_context(
                 message.sender_platform_id,
                 None if group_context is None else group_context.group_chat_id,
             )
-            reply = self._command_handler.handle(message)
+            if reply is None:
+                reply = self._command_handler.handle(message)
             if isinstance(reply, list):
                 replies.extend(
                     item if isinstance(item, CommandReply) else CommandReply(item)
@@ -499,25 +520,52 @@ class CoreService:
 
     @staticmethod
     def _random_event_ad_slot_reply(result) -> str:
-        """广告卡私聊向导的回执；每条拒绝都要说清楚原因。"""
+        """广告卡群内向导的回执；每条拒绝都要说清楚原因。"""
+        def works_page() -> str:
+            start = (result.work_page - 1) * 5
+            page = result.works[start:start + 5]
+            return "\n".join(
+                f"{work.position}. 《{work.scene_name}》" for work in page
+            )
+
+        if result.status in {"schedule_picked", "page"}:
+            schedule = result.selected_schedule
+            time_label = "该场" if schedule is None else schedule.scheduled_at.strftime("%H:%M")
+            suffix = "\n回复 /下一页 查看更多。" if result.work_page * 5 < len(result.works) else ""
+            return (
+                f"已选择 {time_label} 场。请选择要投放的已审核投稿：\n"
+                f"{works_page()}\n回复 /选择 投稿序号。{suffix}"
+            )
         if result.status == "picked":
             work = result.selected
             name = "这件作品" if work is None else f"《{work.scene_name}》"
+            schedule = result.selected_schedule
+            time_label = "该场" if schedule is None else schedule.scheduled_at.strftime("%H:%M")
             return (
-                f"已选中{name}。回复 /确认广告位 提交，提交后才会消耗这张卡。"
+                f"已选中{name}，将锁定到 {time_label} 场。"
+                "回复 /确认广告位 提交，提交后才会消耗这张卡。"
             )
         if result.status == "consumed":
             work = result.selected
             name = "这件作品" if work is None else f"《{work.scene_name}》"
-            return f"✅ {name}已放进本期投票的广告位，公告已发到各群。"
+            schedule = result.selected_schedule
+            time_label = "该场" if schedule is None else schedule.scheduled_at.strftime("%H:%M")
+            return f"✅ {name}已锁定 {time_label} 场的广告位。"
+        if result.status == "cancelled":
+            return "已取消广告卡向导，这张卡未消耗。"
         return {
-            "pick_usage": "请用 /选择 序号 选一件作品。",
-            "pick_missing": "没有这个序号，看看上面的作品列表。",
-            "pick_required": "请先用 /选择 序号 选一件作品。",
-            "no_draft": "广告卡向导已经结束了，请回群重新发送 /使用 商品编号。",
+            "pick_usage": "请用 /选择 序号 继续。",
+            "pick_missing": "没有这个序号，看看上面的列表。",
+            "pick_required": "请先选择场次和投稿。",
+            "schedule_missing": "没有这个场次序号，看看上面的时间表。",
+            "schedule_required": "请先用 /选择 场次序号。",
+            "last_page": "已经是最后一页了。",
+            "no_draft": "广告卡向导已经结束了，请重新发送 /使用 商品编号。",
             "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
             "poll_closed": "本期投票已经截止了，这张卡留着下次用。",
-            "slot_taken": "本期的广告位已经被占用了，这张卡留着下次用。",
+            "schedule_closed": "这个场次已经不能锁定了，这张卡留着下次用。",
+            "slot_taken": "这个场次的广告位已经满了，这张卡留着下次用。",
+            "already_reserved": "你已经锁定过这场的广告位了，这张卡留着下次用。",
             "scene_taken": "这件作品已经在候选列表里了，换一件吧。",
             "scene_unavailable": "这件作品暂时不能使用，换一件吧。",
             "slot_disabled": "本期没有开放广告位，这张卡留着下次用。",

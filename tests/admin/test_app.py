@@ -3032,6 +3032,13 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
             "global_completion_reward": 10,
             "submission_approval_reward": 11,
             "tipping_duration_seconds": 180,
+            "vote_enabled": True,
+            "vote_close_offset_minutes": 15,
+            "vote_broadcast_interval_minutes": 45,
+            "vote_random_candidates": 4,
+            "vote_ad_slot_limit": 2,
+            "vote_fallback_minutes": 20,
+            "vote_allow_change": False,
         },
     )
     scene = client.post(
@@ -3052,6 +3059,13 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
     assert core.random_event_settings["submission_draft_timeout_minutes"] == 45
     assert core.random_event_settings["global_completion_reward"] == 10
     assert core.random_event_settings["tipping_duration_seconds"] == 180
+    assert core.random_event_settings["vote_enabled"] is True
+    assert core.random_event_settings["vote_close_offset_minutes"] == 15
+    assert core.random_event_settings["vote_broadcast_interval_minutes"] == 45
+    assert core.random_event_settings["vote_random_candidates"] == 4
+    assert core.random_event_settings["vote_ad_slot_limit"] == 2
+    assert core.random_event_settings["vote_fallback_minutes"] == 20
+    assert core.random_event_settings["vote_allow_change"] is False
     assert scene.status_code == 201
     assert scene.json()["name"] == "茶水间"
     assert scene.json()["openings"] == ["咖啡机突然发出一声巨响。"]

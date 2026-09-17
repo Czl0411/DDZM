@@ -273,7 +273,7 @@ def _slot_candidate(repository):
 
 # ------------------------------------------------------------------ 拒绝路径
 
-def test_use_without_a_poll_keeps_the_card(harness):
+def test_use_without_a_future_schedule_keeps_the_card(harness):
     service, repository, factory, group = harness
     with factory.begin() as session:
         scene = _add_scenes(session, ("作者作品",))[0]
@@ -282,7 +282,7 @@ def test_use_without_a_poll_keeps_the_card(harness):
 
     _send(service, group, "author", f"/使用 {number}")
 
-    assert "没有正在征集" in _reply(factory)
+    assert "没有可锁定广告位" in _reply(factory)
     assert _card_count(repository) == 1
 
 
@@ -297,7 +297,7 @@ def test_use_without_any_approved_work_keeps_the_card(harness):
     assert _card_count(repository) == 1
 
 
-def test_use_without_a_direct_room_keeps_the_card(harness):
+def test_use_does_not_require_a_direct_room(harness):
     from dzmm_bot.core.schema import DirectChatRecord
 
     service, repository, factory, group = harness
@@ -308,7 +308,7 @@ def test_use_without_a_direct_room_keeps_the_card(harness):
 
     _send(service, group, "author", f"/使用 {number}")
 
-    assert "请先私聊总监事" in _reply(factory)
+    assert "请选择要锁定广告位的场次" in _reply(factory)
     assert _card_count(repository) == 1
 
 
@@ -338,6 +338,9 @@ def test_use_rejects_a_work_that_is_already_a_candidate(harness):
 
 def test_the_second_author_is_rejected_after_the_slot_is_taken(harness):
     service, repository, factory, group = harness
+    repository.set_random_event_settings(
+        ["20:00"], "{可选身份}", 15, 5, vote_ad_slot_limit=1
+    )
     _open_poll(repository, factory, others=("甲", "乙", "丙", "丁"), approve_other=True)
     number = _buy_cards(repository, 1, "author")
     _send(service, group, "author", f"/使用 {number}")
@@ -352,12 +355,7 @@ def test_the_second_author_is_rejected_after_the_slot_is_taken(harness):
 
     number = _buy_cards(repository, 1, "other")
     _send(service, group, "other", f"/使用 {number}")
-    repository.consume_random_event_ad_slot_draft("other", "/选择 1", NOW)
-    result = repository.consume_random_event_ad_slot_draft(
-        "other", "/确认广告位", NOW
-    )
-
-    assert result.status == "slot_taken"
+    assert "没有可锁定广告位" in _reply(factory)
     assert _card_count(repository, "other") == 1
 
 
@@ -370,15 +368,18 @@ def test_wizard_picks_a_work_and_consumes_the_card(harness):
     assert "作者作品" not in {c.scene_name for c in view.candidates}
 
     _send(service, group, "author", f"/使用 {number}")
+    assert "请选择要锁定广告位的场次" in _reply(factory)
+
+    _send(service, group, "author", "/选择 1")
     assert "作者作品" in _reply(factory)
     assert _card_count(repository) == 1
 
-    _send(service, group, "author", "/选择 1", direct=True)
+    _send(service, group, "author", "/选择 1")
     assert "已选中" in _reply(factory)
 
-    _send(service, group, "author", "/确认广告位", direct=True)
+    _send(service, group, "author", "/确认广告位")
 
-    assert "已放进本期投票的广告位" in _reply(factory)
+    assert "已锁定 19:20 场的广告位" in _reply(factory)
     assert _card_count(repository) == 0
     candidate = _slot_candidate(repository)
     assert candidate.vacant is False
@@ -391,11 +392,11 @@ def test_wizard_rejects_a_bad_pick(harness):
     number = _buy_cards(repository, 1)
     _send(service, group, "author", f"/使用 {number}")
 
-    _send(service, group, "author", "/选择 9", direct=True)
-    assert "没有这个序号" in _reply(factory)
+    _send(service, group, "author", "/选择 9")
+    assert "没有这个场次序号" in _reply(factory)
 
-    _send(service, group, "author", "/确认广告位", direct=True)
-    assert "请先用 /选择" in _reply(factory)
+    _send(service, group, "author", "/确认广告位")
+    assert "请先选择场次" in _reply(factory)
     assert _card_count(repository) == 1
 
 
@@ -416,6 +417,23 @@ def test_draft_expires_without_consuming_the_card(harness):
 
     assert "向导已经结束" in _reply(factory)
     assert _card_count(repository) == 1
+
+
+def test_cancelling_the_ad_slot_wizard_keeps_the_card(harness):
+    """取消向导只能删除草稿，不能扣掉尚未确认的广告卡。"""
+    service, repository, factory, group = harness
+    with factory.begin() as session:
+        scene = _add_scenes(session, ("作者作品",))[0]
+        _approve(session, scene)
+        _schedule(session, repository, when=TARGET_AT)
+    number = _buy_cards(repository, 1)
+
+    _send(service, group, "author", f"/使用 {number}")
+    _send(service, group, "author", "/取消使用")
+
+    assert "已取消广告卡向导" in _reply(factory)
+    assert _card_count(repository) == 1
+    assert repository.random_event_ad_slot_draft_step("author", NOW) is None
 
 
 # ------------------------------------------------------------------ 生效
@@ -502,6 +520,44 @@ def test_carry_over_keeps_the_filled_slot(harness):
     )
     assert filled.vacant is False
     assert filled.scene_name == "作者作品"
+
+
+def test_cancelled_unopened_schedule_carries_its_ad_reservation_forward(harness):
+    """场次取消时，尚未开投的广告预留必须自动顺延而不是直接丢失。"""
+    from dzmm_bot.core.schema import RandomEventAdSlotRecord, RandomEventScheduleRecord
+
+    service, repository, factory, group = harness
+    selected_at = NOW + timedelta(minutes=30)
+    next_at = NOW + timedelta(hours=2)
+    with factory.begin() as session:
+        scene = _add_scenes(session, ("作者作品",))[0]
+        _approve(session, scene)
+        _schedule(session, repository, when=selected_at)
+        _schedule(session, repository, when=next_at)
+    number = _buy_cards(repository, 1)
+    _send(service, group, "author", f"/使用 {number}")
+    _send(service, group, "author", "/选择 1")
+    _send(service, group, "author", "/选择 1")
+    _send(service, group, "author", "/确认广告位")
+
+    with factory.begin() as session:
+        selected = session.scalar(
+            select(RandomEventScheduleRecord).where(
+                RandomEventScheduleRecord.scheduled_at == selected_at
+            )
+        )
+        selected.status = "skipped"
+
+    repository.run_random_event_jobs(NOW + timedelta(minutes=5))
+
+    with repository._session() as session:
+        reservation = session.scalar(select(RandomEventAdSlotRecord))
+        next_schedule = session.scalar(
+            select(RandomEventScheduleRecord).where(
+                RandomEventScheduleRecord.scheduled_at == next_at
+            )
+        )
+    assert reservation.schedule_id == next_schedule.id
 
 # ------------------------------------------------------------ 审计发现的漏洞
 
@@ -591,8 +647,8 @@ def test_confirm_is_refused_when_voting_is_turned_off(harness):
     assert _slot_candidate(repository).vacant is True
 
 
-def test_a_refusal_is_answered_in_the_direct_chat(harness):
-    """设计 §3.3：广告卡的拒绝提示写在私聊，不在群里刷屏。"""
+def test_a_refusal_is_answered_in_the_group(harness):
+    """广告卡向导已改为群内完成，拒绝提示也应该留在群内。"""
     service, repository, factory, group = harness
     with factory.begin() as session:
         scene = _add_scenes(session, ("作者作品",))[0]
@@ -601,8 +657,8 @@ def test_a_refusal_is_answered_in_the_direct_chat(harness):
 
     _send(service, group, "author", f"/使用 {number}")
 
-    assert "没有正在征集" in (_reply(factory, "direct-author") or "")
-    assert "没有正在征集" not in (_reply(factory, group.chatroom_id) or "")
+    assert "没有可锁定广告位" in (_reply(factory, group.chatroom_id) or "")
+    assert _reply(factory, "direct-author") is None
 
 
 def test_two_ad_slots_let_two_authors_in(harness):
@@ -643,3 +699,77 @@ def test_two_ad_slots_let_two_authors_in(harness):
     assert all(not candidate.vacant for candidate in slots)
     assert _card_count(repository, "author") == 0
     assert _card_count(repository, "other") == 0
+
+
+def test_ad_card_reserves_a_selected_future_schedule_with_paginated_works(harness):
+    """广告卡必须先选未来场次，再从每页五条的作品中锁定一篇。"""
+    from dzmm_bot.core.schema import RandomEventAdSlotRecord, RandomEventScheduleRecord
+
+    service, repository, factory, group = harness
+    first_at = NOW + timedelta(minutes=40)
+    selected_at = NOW + timedelta(minutes=80)
+    with factory.begin() as session:
+        works = _add_scenes(session, tuple(f"作品{index}" for index in range(1, 7)))
+        for index, scene in enumerate(works, start=1):
+            _approve(session, scene, number=index)
+        _schedule(session, repository, when=first_at)
+        _schedule(session, repository, when=selected_at)
+    number = _buy_cards(repository, 1)
+
+    _send(service, group, "author", f"/使用 {number}")
+    assert "请选择要锁定广告位的场次" in _reply(factory)
+    assert first_at.strftime("%H:%M") in _reply(factory)
+    assert selected_at.strftime("%H:%M") in _reply(factory)
+
+    _send(service, group, "author", "/选择 2")
+    assert "1. 《作品1》" in _reply(factory)
+    assert "5. 《作品5》" in _reply(factory)
+    assert "作品6" not in _reply(factory)
+
+    _send(service, group, "author", "/下一页")
+    assert "6. 《作品6》" in _reply(factory)
+
+    _send(service, group, "author", "/选择 6")
+    _send(service, group, "author", "/确认广告位")
+
+    assert "已锁定" in _reply(factory)
+    assert _card_count(repository) == 0
+    with repository._session() as session:
+        reservation = session.scalar(select(RandomEventAdSlotRecord))
+        schedule = session.scalar(
+            select(RandomEventScheduleRecord).where(
+                RandomEventScheduleRecord.scheduled_at == selected_at
+            )
+        )
+    assert reservation.schedule_id == schedule.id
+
+
+def test_three_reserved_ads_join_three_system_candidates_when_voting_opens(harness):
+    """每场固定三张广告卡，加上三张系统候选，开投时总计六项。"""
+    service, repository, factory, group = harness
+    repository.create_user("third", "作者丙", NOW, 100)
+    with factory.begin() as session:
+        ads = _add_scenes(session, ("广告甲", "广告乙", "广告丙"))
+        _add_scenes(session, ("系统甲", "系统乙", "系统丙"))
+        _approve(session, ads[0], platform_id="author", number=1)
+        _approve(session, ads[1], platform_id="other", number=2)
+        _approve(session, ads[2], platform_id="third", number=3)
+        _schedule(session, repository, when=TARGET_AT)
+
+    for platform_id in ("author", "other", "third"):
+        number = _buy_cards(repository, 1, platform_id)
+        _send(service, group, platform_id, f"/使用 {number}")
+        _send(service, group, platform_id, "/选择 1")
+        _send(service, group, platform_id, "/选择 1")
+        _send(service, group, platform_id, "/确认广告位")
+
+    poll = repository.create_random_event_poll(NOW)
+
+    assert poll is not None
+    assert [(item.position, item.source) for item in poll.candidates] == [
+        (1, "random"), (2, "random"), (3, "random"),
+        (4, "ad_slot"), (5, "ad_slot"), (6, "ad_slot"),
+    ]
+    assert {item.scene_name for item in poll.candidates[3:]} == {
+        "广告甲", "广告乙", "广告丙"
+    }

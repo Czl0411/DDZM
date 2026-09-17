@@ -212,7 +212,7 @@ def test_create_poll_picks_three_distinct_scenes_plus_a_vacant_slot(
     view = repository.create_random_event_poll(NOW)
 
     assert view is not None
-    assert [candidate.position for candidate in view.candidates] == [1, 2, 3, 4]
+    assert [candidate.position for candidate in view.candidates] == [1, 2, 3, 4, 5, 6]
     assert all(not c.vacant for c in view.candidates[:3])
     assert {c.source for c in view.candidates[:3]} == {"random"}
     assert len({c.scene_name for c in view.candidates[:3]}) == 3
@@ -273,7 +273,7 @@ def test_create_poll_is_idempotent(repository, seeded):
 
     assert first.id == second.id
     assert count == 1
-    assert candidates == 4
+    assert candidates == 6
 
 
 def test_poll_keeps_the_target_schedule_pending_until_it_closes(repository, seeded):
@@ -439,7 +439,7 @@ def test_poll_view_reports_the_tally(repository, seeded):
     view = repository.random_event_poll_view("p3")
 
     assert view.total_votes == 3
-    assert [c.votes for c in view.candidates] == [2, 1, 0, 0]
+    assert [c.votes for c in view.candidates] == [2, 1, 0, 0, 0, 0]
     assert view.my_position == 2
 
 
@@ -599,8 +599,8 @@ def test_poll_report_lists_candidates_voters_and_the_ad_slot(repository, seeded)
     assert report.total_votes == 3
     assert report.winner_position is None
     assert report.group_name == "主群聊"
-    assert [candidate.position for candidate in report.candidates] == [1, 2, 3, 4]
-    assert [candidate.votes for candidate in report.candidates] == [2, 1, 0, 0]
+    assert [candidate.position for candidate in report.candidates] == [1, 2, 3, 4, 5, 6]
+    assert [candidate.votes for candidate in report.candidates] == [2, 1, 0, 0, 0, 0]
     assert report.candidates[0].voters == ("小明", "小红")
     assert report.candidates[2].source == "random"
     assert report.candidates[3].vacant is True

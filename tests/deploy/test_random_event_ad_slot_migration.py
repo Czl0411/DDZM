@@ -31,9 +31,30 @@ def migrated_engine(tmp_path, monkeypatch):
     Table("users", metadata, Column("id", Uuid, primary_key=True))
     Table("items", metadata, Column("id", Uuid, primary_key=True))
     Table("random_event_scenes", metadata, Column("id", Uuid, primary_key=True))
-    Table("random_event_settings", metadata, Column("id", Integer, primary_key=True),
-          Column("signup_allowed_commands", JSON),
-          Column("in_progress_allowed_commands", JSON))
+    Table("group_chats", metadata, Column("id", Uuid, primary_key=True))
+    Table(
+        "random_event_schedules",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("group_chat_id", Uuid, nullable=False),
+    )
+    Table(
+        "random_event_polls",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("target_schedule_id", Uuid, nullable=False),
+    )
+    Table(
+        "random_event_poll_candidates", metadata, Column("id", Uuid, primary_key=True)
+    )
+    Table(
+        "random_event_settings",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("signup_allowed_commands", JSON),
+        Column("in_progress_allowed_commands", JSON),
+        Column("vote_ad_slot_limit", Integer),
+    )
     metadata.create_all(engine)
 
     config = Config(str(ROOT / "alembic.ini"))
@@ -59,6 +80,7 @@ def test_ad_slot_migration_links_author_work_and_poll(tmp_path, monkeypatch):
         "user_id",
         "scene_id",
         "item_id",
+        "schedule_id",
         "poll_id",
         "candidate_id",
         "status",
@@ -72,6 +94,8 @@ def test_ad_slot_migration_links_author_work_and_poll(tmp_path, monkeypatch):
     assert {
         "user_id",
         "item_id",
+        "group_chat_id",
+        "schedule_id",
         "poll_id",
         "current_step",
         "scene_id",
@@ -89,15 +113,16 @@ def test_ad_slot_migration_keeps_one_draft_per_author(tmp_path, monkeypatch):
     engine = migrated_engine(tmp_path, monkeypatch)
     statement = text(
         "INSERT INTO random_event_ad_slot_drafts "
-        "(id, user_id, item_id, poll_id, current_step, created_at, updated_at, "
-        "last_activity_at, expires_at) "
-        "VALUES (:id, :user, :item, :poll, 'pick_event', :at, :at, :at, :at)"
+        "(id, user_id, item_id, group_chat_id, schedule_id, current_step, created_at, "
+        "updated_at, last_activity_at, expires_at) "
+        "VALUES (:id, :user, :item, :group, :schedule, 'pick_event', :at, :at, :at, :at)"
     )
     values = {
         "id": "a" * 32,
         "user": "b" * 32,
         "item": "c" * 32,
-        "poll": "d" * 32,
+        "group": "d" * 32,
+        "schedule": "e" * 32,
         "at": "2026-09-15 16:20:00",
     }
 

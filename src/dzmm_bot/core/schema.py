@@ -265,7 +265,7 @@ class RandomEventSettingsRecord(Base):
         Integer, nullable=False, default=3, server_default="3"
     )
     vote_ad_slot_limit: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=1, server_default="1"
+        Integer, nullable=False, default=3, server_default="3"
     )
     vote_fallback_minutes: Mapped[int] = mapped_column(
         Integer, nullable=False, default=30, server_default="30"
@@ -2052,8 +2052,11 @@ class RandomEventAdSlotRecord(Base):
         ForeignKey("random_event_scenes.id"), nullable=False
     )
     item_id: Mapped[UUID] = mapped_column(ForeignKey("items.id"), nullable=False)
-    poll_id: Mapped[UUID] = mapped_column(
-        ForeignKey("random_event_polls.id"), nullable=False
+    schedule_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_event_schedules.id"), nullable=False
+    )
+    poll_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("random_event_polls.id")
     )
     candidate_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("random_event_poll_candidates.id")
@@ -2073,14 +2076,23 @@ class RandomEventAdSlotDraftRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     item_id: Mapped[UUID] = mapped_column(ForeignKey("items.id"), nullable=False)
-    poll_id: Mapped[UUID] = mapped_column(
-        ForeignKey("random_event_polls.id"), nullable=False
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"), nullable=False
+    )
+    schedule_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("random_event_schedules.id")
+    )
+    poll_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("random_event_polls.id")
     )
     current_step: Mapped[str] = mapped_column(
         String(32), default="pick_event", nullable=False
     )
     scene_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("random_event_scenes.id")
+    )
+    work_page: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
     )
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)

@@ -1935,6 +1935,13 @@ def create_app(
             "global_completion_reward",
             "submission_approval_reward",
             "tipping_duration_seconds",
+            "vote_enabled",
+            "vote_close_offset_minutes",
+            "vote_broadcast_interval_minutes",
+            "vote_random_candidates",
+            "vote_ad_slot_limit",
+            "vote_fallback_minutes",
+            "vote_allow_change",
         )
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")

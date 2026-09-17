@@ -192,6 +192,13 @@ TEMPLATE_DEFINITIONS = (
     ),
     TemplateDefinition(
         "/使用",
+        "ad_slot_no_schedules",
+        "没有可选场次",
+        "今天没有可锁定广告位的后续随机事件场次。",
+        ("{日期}",),
+    ),
+    TemplateDefinition(
+        "/使用",
         "ad_slot_disabled",
         "投票已关闭",
         "随机事件投票当前没有开启。",

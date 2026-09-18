@@ -564,6 +564,46 @@ class BrowserWorker:
         platform_message_id = str(outbound.id)
         reference = self._outbound_reference(outbound)
         text = outbound.text
+        if outbound.content_type == "black_history_image":
+            payload = json.loads(text)
+            image_url = payload["image_url"]
+            image_alt = payload.get("image_alt") or "黑历史"
+            failure_text = "这条黑历史图片已经失效，暂时无法查看。"
+            if outbound.destination_chatroom_id is not None:
+                def send_image() -> str:
+                    try:
+                        return gateway.send_image_to(
+                            outbound.destination_chatroom_id,
+                            image_url,
+                            alt=image_alt,
+                            message_id=platform_message_id,
+                            reference=reference,
+                        )
+                    except AikdaMessageRejectedError:
+                        return gateway.send_to(
+                            outbound.destination_chatroom_id,
+                            failure_text,
+                            message_id=platform_message_id,
+                            reference=reference,
+                        )
+                if outbound.delivery_kind == "direct":
+                    return self._send_direct_with_interval(send_image)
+                return self._send_with_main_account_tokens(send_image)
+            def send_group_image() -> str:
+                try:
+                    return gateway.send_image(
+                        image_url,
+                        alt=image_alt,
+                        message_id=platform_message_id,
+                        reference=reference,
+                    )
+                except AikdaMessageRejectedError:
+                    return gateway.send(
+                        failure_text,
+                        message_id=platform_message_id,
+                        reference=reference,
+                    )
+            return self._send_with_main_account_tokens(send_group_image)
         if outbound.content_type == "black_history_card":
             payload = json.loads(text)
             with TemporaryDirectory(prefix="dzmm-black-history-") as directory:

@@ -144,8 +144,13 @@ class GroupCommandHandler:
             if result.entry.content_type == "image" and result.entry.image_url:
                 return [
                     f"翻出了{result.subject.display_name}的一条黑历史。",
-                    CommandReply("", content_type="image", image_url=result.entry.image_url,
-                                 image_alt=result.entry.image_alt or "黑历史"),
+                    CommandReply(
+                        json.dumps({
+                            "image_url": result.entry.image_url,
+                            "image_alt": result.entry.image_alt or "黑历史",
+                        }, ensure_ascii=False),
+                        content_type="black_history_image",
+                    ),
                 ]
             return CommandReply(
                 json.dumps({
@@ -185,7 +190,8 @@ class GroupCommandHandler:
                 return "没有更多黑历史了。" if page > 1 else "你还没有可删除的黑历史。"
             lines = [f"你的黑历史（第 {page} 页，删除每条 5 摸鱼币）："]
             lines.extend(
-                f"#{entry.id} {'[图片]' if entry.content_type == 'image' else (entry.text_content or '')[:30]}"
+                f"#{entry.id} {entry.created_at.astimezone(_BEIJING):%Y-%m-%d} "
+                f"{'[图片]' if entry.content_type == 'image' else (entry.text_content or '')[:30]}"
                 for entry in entries
             )
             if total > page * 5:

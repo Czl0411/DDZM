@@ -13,13 +13,19 @@ html, body {{ margin: 0; background: transparent; font-family: -apple-system, Bl
   "PingFang SC", "Microsoft YaHei", sans-serif; }}
 .card {{ width: 760px; padding: 34px 38px 38px; border: 1px solid #ddd;
   border-radius: 28px; background: #fff; color: #111; }}
-.name {{ font-size: 25px; font-weight: 700; margin-bottom: 30px; }}
+.header {{ display: flex; justify-content: space-between; align-items: center;
+  gap: 24px; margin-bottom: 30px; }}
+.name {{ font-size: 25px; font-weight: 700; }}
 .rank {{ font-weight: 600; color: #555; }}
+.album {{ flex: none; color: #8b8b8b; font-size: 20px; font-weight: 650; }}
 .quote {{ border-left: 5px solid #d9d9d9; padding-left: 22px; font-size: 31px;
   line-height: 1.48; font-weight: 650; overflow-wrap: anywhere; white-space: normal; }}
 </style></head><body>
 <article class="card">
-  <div class="name">@{display_name} <span class="rank">【{rank_name}】</span></div>
+  <div class="header">
+    <div class="name">@{display_name} <span class="rank">【{rank_name}】</span></div>
+    <div class="album">黑历史册</div>
+  </div>
   <div class="quote">{text}</div>
 </article>
 </body></html>"""

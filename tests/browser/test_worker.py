@@ -1090,6 +1090,29 @@ def test_worker_renders_uploads_and_sends_black_history_card(context, monkeypatc
     ]
 
 
+def test_worker_reports_an_expired_black_history_image(context, monkeypatch):
+    worker, gateway, _, _, _, _ = context
+
+    def reject_image(*args, **kwargs):
+        raise AikdaMessageRejectedError("image rejected")
+
+    monkeypatch.setattr(gateway, "send_image_to", reject_image)
+    outbound = OutboundClaim(
+        OUTBOUND_ID,
+        "in-1",
+        '{"image_url":"https://cdn.example.com/gone.png","image_alt":"旧图"}',
+        LEASE,
+        content_type="black_history_image",
+        destination_chatroom_id="group-a",
+    )
+
+    worker._send_outbound(gateway, outbound)
+
+    assert gateway.sent_to == [
+        ("group-a", "这条黑历史图片已经失效，暂时无法查看。")
+    ]
+
+
 def test_worker_reconnects_socket_on_main_loop_after_outbound_timeout(context):
     """Fails if a sender thread closes the shared socket itself."""
     worker, gateway, _, _, core, _ = context

@@ -569,8 +569,8 @@ def test_black_history_image_resends_the_original_image() -> None:
     ))
 
     outbounds = _outbounds_for(factory, result.message_id)
-    assert [item.content_type for item in outbounds] == ["text", "image"]
-    assert outbounds[1].image_url == "https://cdn.example.com/history.png"
+    assert [item.content_type for item in outbounds] == ["text", "black_history_image"]
+    assert json.loads(outbounds[1].text)["image_url"] == "https://cdn.example.com/history.png"
 
 
 def test_private_black_history_next_page_and_delete_feedback() -> None:

@@ -48,6 +48,8 @@ _COMMANDS = {
     "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/跳过", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证", "/事件投票", "/事件投票情况",
 }
 _COMMANDS.add("/随机事件时间表")
+_COMMANDS.add("/q")
+_COMMANDS.update({"/黑历史", "/删除黑历史"})
 
 _LOTTERY_COMMANDS = {
     "/购买彩票",
@@ -104,6 +106,73 @@ class GroupCommandHandler:
             else None
         )
         group_chat_id = None if group is None else group.id
+        if command == "/q":
+            if message.source_type != "group" or group_chat_id is None:
+                return "请在群内回复一条消息后发送 /q。"
+            reference = message.reference
+            if reference is None or reference.content_type not in {"text", "image"}:
+                return "请回复一条文字或图片消息后发送 /q。"
+            text_content = (reference.text or "").strip()
+            if reference.content_type == "text" and not text_content:
+                return "不能记录空消息。"
+            if reference.content_type == "image" and not _valid_image_url(reference.image_url):
+                return "这张图片无法记录。"
+            result = self._repository.record_black_history(
+                message.sender_platform_id, reference.sender_platform_id,
+                group_chat_id, reference.message_id, reference.content_type,
+                text_content or None, reference.image_url, reference.alt, received_at,
+            )
+            if result.status == "recorded":
+                subject = self._repository.find_user(reference.sender_platform_id)
+                return f"已记入{subject.display_name}的黑历史册。"
+            return {
+                "duplicate": "这条已经在黑历史册里了。",
+                "insufficient_balance": "摸鱼币不足，记录黑历史需要 1 摸鱼币。",
+                "not_joined": "消息双方都需要先入职。",
+            }.get(result.status, "记录失败，请稍后再试。")
+        if command == "/黑历史":
+            if message.source_type != "group" or message.reference is None:
+                return "请在群内回复目标员工的一条消息后发送 /黑历史。"
+            result = self._repository.draw_black_history(
+                message.reference.sender_platform_id
+            )
+            if result.status == "not_joined":
+                return "该员工尚未入职。"
+            if result.entry is None or result.subject is None:
+                return "这位员工还没有黑历史。"
+            if result.entry.content_type == "image" and result.entry.image_url:
+                return [
+                    f"翻出了{result.subject.display_name}的一条黑历史。",
+                    CommandReply("", content_type="image", image_url=result.entry.image_url,
+                                 image_alt=result.entry.image_alt or "黑历史"),
+                ]
+            return f"【{result.subject.display_name}的黑历史】\n{result.entry.text_content or '（内容已失效）'}"
+        if command == "/删除黑历史":
+            if message.source_type != "direct":
+                return "请私聊总监事管理自己的黑历史。"
+            parts = content.split(maxsplit=1)
+            if len(parts) == 2 and parts[1].strip().isdigit():
+                status = self._repository.delete_own_black_history(
+                    message.sender_platform_id, int(parts[1].strip()), received_at
+                )
+                return {
+                    "deleted": "黑历史已删除，已扣除 5 摸鱼币。",
+                    "not_found": "未找到这条属于你的黑历史。",
+                    "insufficient_balance": "摸鱼币不足，删除需要 5 摸鱼币。",
+                    "not_joined": "请先入职。",
+                }[status]
+            entries, total = self._repository.list_own_black_history(message.sender_platform_id)
+            if not entries:
+                return "你还没有可删除的黑历史。"
+            lines = ["你的黑历史（删除每条 5 摸鱼币）："]
+            lines.extend(
+                f"#{entry.id} {'[图片]' if entry.content_type == 'image' else (entry.text_content or '')[:30]}"
+                for entry in entries
+            )
+            if total > len(entries):
+                lines.append("发送 /删除黑历史 下一页 查看更多。")
+            lines.append("发送 /删除黑历史 编号 删除。")
+            return "\n".join(lines)
         if command in _LOTTERY_COMMANDS:
             return self._company_lottery(
                 message, command, content, received_at, group_chat_id

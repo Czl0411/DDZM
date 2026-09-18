@@ -497,6 +497,26 @@ def _group_receive(service, message_id, sender, content, now, chatroom_id):
     )
 
 
+def test_q_records_the_replied_employee_message() -> None:
+    service, repository, factory = _service()
+    now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=black-history-command", now
+    )
+    repository.create_user("recorder", "记录者", now, 1)
+    repository.create_user("subject", "当事人", now, 0)
+
+    service.receive_inbound(
+        InboundMessage(
+            "q-command", "recorder", "/q", now, source_type="group",
+            chatroom_id=group.chatroom_id,
+            reference=MessageReference("source-q", "subject", "text", text="原话"),
+        )
+    )
+
+    assert _latest_reply(factory) == "已记入当事人的黑历史册。"
+
+
 def _direct_receive(service, message_id, sender, content, now, chatroom_id):
     return service.receive_inbound(
         InboundMessage(

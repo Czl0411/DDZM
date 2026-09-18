@@ -367,6 +367,13 @@ class BlackHistoryRecordResult:
 
 
 @dataclass(frozen=True)
+class BlackHistoryDrawResult:
+    status: str
+    entry: BlackHistoryEntryRecord | None = None
+    subject: UserRecord | None = None
+
+
+@dataclass(frozen=True)
 class ShopInventoryItem:
     public_number: int
     name: str
@@ -2160,6 +2167,9 @@ _COMMAND_DEFINITIONS = (
     ("/事件投票", "/事件投票 序号", "给全公司的下一场随机事件投一票（每人一票，可改票）"),
     ("/事件投票情况", "/事件投票情况", "查看本期随机事件投票的当前票型"),
     ("/随机事件时间表", "/随机事件时间表", "查看今天后续随机事件场次与优选投稿位余量"),
+    ("/q", "回复消息 /q", "花 1 摸鱼币将一条群聊消息记入对应员工的黑历史册"),
+    ("/黑历史", "回复消息 /黑历史", "免费随机翻出被回复员工的一条黑历史"),
+    ("/删除黑历史", "/删除黑历史 [编号]（仅私聊）", "查看或删除自己的黑历史"),
     ("/我", "/我；/me", "查看余额、今日活跃度和今日收益"),
     ("/商店", "/商店", "查看当前上架物品"),
     ("/帮助", "/帮助", "查看当前可用指令"),
@@ -25365,6 +25375,57 @@ class CoreRepository:
                 session.add(entry)
                 session.flush()
                 return BlackHistoryRecordResult("recorded", entry.id)
+
+    def draw_black_history(
+        self, subject_platform_id: str
+    ) -> BlackHistoryDrawResult:
+        with self._session() as session:
+            subject = session.scalar(select(UserRecord).where(
+                UserRecord.platform_id == subject_platform_id
+            ))
+            if subject is None:
+                return BlackHistoryDrawResult("not_joined")
+            entry = session.scalar(select(BlackHistoryEntryRecord).where(
+                BlackHistoryEntryRecord.subject_user_id == subject.id
+            ).order_by(func.random()).limit(1))
+            return BlackHistoryDrawResult(
+                "shown" if entry is not None else "empty", entry, subject
+            )
+
+    def list_own_black_history(
+        self, platform_id: str, page: int = 1, page_size: int = 5
+    ) -> tuple[tuple[BlackHistoryEntryRecord, ...], int]:
+        with self._session() as session:
+            user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
+            if user is None:
+                return (), 0
+            total = session.scalar(select(func.count()).select_from(BlackHistoryEntryRecord).where(
+                BlackHistoryEntryRecord.subject_user_id == user.id
+            )) or 0
+            entries = tuple(session.scalars(select(BlackHistoryEntryRecord).where(
+                BlackHistoryEntryRecord.subject_user_id == user.id
+            ).order_by(BlackHistoryEntryRecord.id.desc()).offset((page - 1) * page_size).limit(page_size)))
+            return entries, int(total)
+
+    def delete_own_black_history(
+        self, platform_id: str, entry_id: int, now: datetime
+    ) -> str:
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id).with_for_update())
+                if user is None:
+                    return "not_joined"
+                entry = session.scalar(select(BlackHistoryEntryRecord).where(
+                    BlackHistoryEntryRecord.id == entry_id,
+                    BlackHistoryEntryRecord.subject_user_id == user.id,
+                ).with_for_update())
+                if entry is None:
+                    return "not_found"
+                if user.balance < 5:
+                    return "insufficient_balance"
+                self._apply_balance_change(user, -5, "black_history_delete", now)
+                session.delete(entry)
+                return "deleted"
 
     @staticmethod
     def _lock_employee_identity_gate(

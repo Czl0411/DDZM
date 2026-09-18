@@ -49,6 +49,8 @@ _DIRECT_ENTRY_COMMANDS = {
     "/取消公演预约",
     "/延期",
     "/公司的故事集",
+    "/删除黑历史",
+    "/下一页",
 }
 _OUTBOUND_BATCH_SIZE = 20
 _OUTBOUND_BATCH_BUDGET_SECONDS = 2.0

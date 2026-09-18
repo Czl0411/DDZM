@@ -582,6 +582,22 @@ def test_worker_dispatches_the_random_event_submission_entry_from_a_new_direct_r
     assert core.submitted_ids == ["new-submission"]
 
 
+@pytest.mark.parametrize("content", ("/删除黑历史", "/下一页"))
+def test_worker_dispatches_black_history_management_from_a_new_direct_room(
+    context, content,
+):
+    worker, gateway, _, _, core, _ = context
+    worker.run_once()
+
+    gateway.message_handler(InboundMessage(
+        f"black-history-{content}", "new-user", content, NOW,
+        source_type="direct", chatroom_id="new-direct",
+    ))
+
+    assert core.submitted_event.wait(timeout=1)
+    assert core.submitted_ids == [f"black-history-{content}"]
+
+
 @pytest.mark.parametrize(
     "content",
     (

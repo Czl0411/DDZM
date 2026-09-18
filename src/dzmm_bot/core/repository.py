@@ -288,6 +288,7 @@ from .schema import (
     RedPacketShareRecord,
     AdultCardParticipantRecord,
     AdultCardSessionRecord,
+    BlackHistoryEntryRecord,
     ShopCommonSenseStateRecord,
     ShopDailyBonusRecord,
     ShopItemUseRecord,
@@ -357,6 +358,12 @@ class ShopCatalogItem:
     system_key: str | None
     effect_type: str | None
     minimum_rank_order: int | None
+
+
+@dataclass(frozen=True)
+class BlackHistoryRecordResult:
+    status: str
+    entry_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -25318,6 +25325,46 @@ class CoreRepository:
     def find_user_by_id(self, user_id: UUID | str) -> UserRecord | None:
         with self._session() as session:
             return session.get(UserRecord, UUID(str(user_id)))
+
+    def record_black_history(
+        self, recorder_platform_id: str, subject_platform_id: str,
+        group_chat_id: UUID, source_platform_message_id: str, content_type: str,
+        text_content: str | None, image_url: str | None, image_alt: str | None,
+        now: datetime,
+    ) -> BlackHistoryRecordResult:
+        with self.transaction():
+            with self._session() as session:
+                recorder = session.scalar(select(UserRecord).where(
+                    UserRecord.platform_id == recorder_platform_id
+                ).with_for_update())
+                subject = session.scalar(select(UserRecord).where(
+                    UserRecord.platform_id == subject_platform_id
+                ))
+                if recorder is None or subject is None:
+                    return BlackHistoryRecordResult("not_joined")
+                existing = session.scalar(select(BlackHistoryEntryRecord).where(
+                    BlackHistoryEntryRecord.group_chat_id == group_chat_id,
+                    BlackHistoryEntryRecord.source_platform_message_id == source_platform_message_id,
+                ))
+                if existing is not None:
+                    return BlackHistoryRecordResult("duplicate", existing.id)
+                if recorder.balance < 1:
+                    return BlackHistoryRecordResult("insufficient_balance")
+                entry = BlackHistoryEntryRecord(
+                    subject_user_id=subject.id,
+                    recorder_user_id=recorder.id,
+                    group_chat_id=group_chat_id,
+                    source_platform_message_id=source_platform_message_id,
+                    content_type=content_type,
+                    text_content=text_content,
+                    image_url=image_url,
+                    image_alt=image_alt,
+                    created_at=now,
+                )
+                self._apply_balance_change(recorder, -1, "black_history_record", now)
+                session.add(entry)
+                session.flush()
+                return BlackHistoryRecordResult("recorded", entry.id)
 
     @staticmethod
     def _lock_employee_identity_gate(

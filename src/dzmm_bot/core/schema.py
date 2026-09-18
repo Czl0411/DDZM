@@ -2313,6 +2313,25 @@ class UserRecord(Base):
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class BlackHistoryEntryRecord(Base):
+    __tablename__ = "black_history_entries"
+    __table_args__ = (
+        UniqueConstraint("group_chat_id", "source_platform_message_id"),
+        Index("ix_black_history_entries_subject_id", "subject_user_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    subject_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    recorder_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    source_platform_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    text_content: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    image_alt: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class ProfileImageUploadRecord(Base):
     __tablename__ = "profile_image_uploads"
     __table_args__ = (

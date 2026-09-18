@@ -3,7 +3,9 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
 from math import ceil
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from zoneinfo import ZoneInfo
+import json
 import logging
 from threading import Event, Lock
 from time import monotonic as default_monotonic, sleep as default_sleep
@@ -23,6 +25,7 @@ from dzmm_bot.runtime.contracts import (
 from dzmm_bot.runtime.outbound import group_message_chunks
 
 from .bot_api import DzmmBotSendError
+from .black_history_card import render_black_history_card
 from .core_client import CorePort, OutboundClaim, WorkerCommand
 from .aikda_socket import AikdaAuthenticationError, AikdaMessageRejectedError
 from .session import BrowserSession, ChatGateway
@@ -561,6 +564,34 @@ class BrowserWorker:
         platform_message_id = str(outbound.id)
         reference = self._outbound_reference(outbound)
         text = outbound.text
+        if outbound.content_type == "black_history_card":
+            payload = json.loads(text)
+            with TemporaryDirectory(prefix="dzmm-black-history-") as directory:
+                path = Path(directory) / "card.png"
+                render_black_history_card(payload, path)
+                upload = gateway.upload_image(path, "image/png")
+                image_url = upload.get("url")
+                if not isinstance(image_url, str) or not image_url:
+                    raise RuntimeError("black history card upload missing URL")
+                if outbound.destination_chatroom_id is not None:
+                    send_image = lambda: gateway.send_image_to(
+                        outbound.destination_chatroom_id,
+                        image_url,
+                        alt="黑历史",
+                        message_id=platform_message_id,
+                        reference=reference,
+                    )
+                    if outbound.delivery_kind == "direct":
+                        return self._send_direct_with_interval(send_image)
+                    return self._send_with_main_account_tokens(send_image)
+                return self._send_with_main_account_tokens(
+                    lambda: gateway.send_image(
+                        image_url,
+                        alt="黑历史",
+                        message_id=platform_message_id,
+                        reference=reference,
+                    )
+                )
         if outbound.content_type == "novel":
             if outbound.destination_chatroom_id is not None:
                 send_share = lambda: gateway.send_share_to(

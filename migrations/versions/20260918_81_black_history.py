@@ -31,8 +31,15 @@ def upgrade() -> None:
         "ix_black_history_entries_subject_id", "black_history_entries",
         ["subject_user_id", "id"],
     )
+    op.create_table(
+        "black_history_delete_drafts",
+        sa.Column("user_id", sa.Uuid(), sa.ForeignKey("users.id"), primary_key=True),
+        sa.Column("page", sa.Integer(), nullable=False, server_default="1"),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    )
 
 
 def downgrade() -> None:
+    op.drop_table("black_history_delete_drafts")
     op.drop_index("ix_black_history_entries_subject_id", table_name="black_history_entries")
     op.drop_table("black_history_entries")

@@ -2332,6 +2332,14 @@ class BlackHistoryEntryRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class BlackHistoryDeleteDraftRecord(Base):
+    __tablename__ = "black_history_delete_drafts"
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    page: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class ProfileImageUploadRecord(Base):
     __tablename__ = "profile_image_uploads"
     __table_args__ = (

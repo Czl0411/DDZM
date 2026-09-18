@@ -289,6 +289,7 @@ from .schema import (
     AdultCardParticipantRecord,
     AdultCardSessionRecord,
     BlackHistoryEntryRecord,
+    BlackHistoryDeleteDraftRecord,
     ShopCommonSenseStateRecord,
     ShopDailyBonusRecord,
     ShopItemUseRecord,
@@ -371,6 +372,13 @@ class BlackHistoryDrawResult:
     status: str
     entry: BlackHistoryEntryRecord | None = None
     subject: UserRecord | None = None
+    subject_rank_name: str = "员工"
+
+
+@dataclass(frozen=True)
+class BlackHistoryDeleteResult:
+    status: str
+    remaining_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -492,6 +500,8 @@ _BALANCE_SOURCE_LABELS = {
     "promotion": "职位晋升",
     "profile_edit": "编辑个人档案",
     "profile_image_edit": "编辑档案形象",
+    "black_history_record": "记录黑历史",
+    "black_history_delete": "删除黑历史",
     "random_event": "随机事件奖励",
     "random_event_tip_out": "随机事件打赏支出",
     "random_event_tip_in": "随机事件打赏收入",
@@ -2170,6 +2180,7 @@ _COMMAND_DEFINITIONS = (
     ("/q", "回复消息 /q", "花 1 摸鱼币将一条群聊消息记入对应员工的黑历史册"),
     ("/黑历史", "回复消息 /黑历史", "免费随机翻出被回复员工的一条黑历史"),
     ("/删除黑历史", "/删除黑历史 [编号]（仅私聊）", "查看或删除自己的黑历史"),
+    ("/下一页", "/下一页（仅私聊）", "继续当前私聊分页操作"),
     ("/我", "/我；/me", "查看余额、今日活跃度和今日收益"),
     ("/商店", "/商店", "查看当前上架物品"),
     ("/帮助", "/帮助", "查看当前可用指令"),
@@ -25388,8 +25399,10 @@ class CoreRepository:
             entry = session.scalar(select(BlackHistoryEntryRecord).where(
                 BlackHistoryEntryRecord.subject_user_id == subject.id
             ).order_by(func.random()).limit(1))
+            rank = session.get(RankRecord, subject.rank_id) if subject.rank_id else None
             return BlackHistoryDrawResult(
-                "shown" if entry is not None else "empty", entry, subject
+                "shown" if entry is not None else "empty", entry, subject,
+                rank.name if rank is not None else "员工",
             )
 
     def list_own_black_history(
@@ -25407,25 +25420,59 @@ class CoreRepository:
             ).order_by(BlackHistoryEntryRecord.id.desc()).offset((page - 1) * page_size).limit(page_size)))
             return entries, int(total)
 
+    def black_history_delete_page(self, platform_id: str, next_page: bool, now: datetime) -> int:
+        with self._session() as session:
+            user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
+            if user is None:
+                return 1
+            total = session.scalar(select(func.count()).select_from(BlackHistoryEntryRecord).where(
+                BlackHistoryEntryRecord.subject_user_id == user.id
+            )) or 0
+            last_page = max(1, (int(total) + 4) // 5)
+            draft = session.get(BlackHistoryDeleteDraftRecord, user.id)
+            if draft is None:
+                draft = BlackHistoryDeleteDraftRecord(user_id=user.id, page=1, updated_at=now)
+                session.add(draft)
+            elif next_page:
+                draft.page = min(draft.page + 1, last_page)
+                draft.updated_at = now
+            else:
+                draft.page = 1
+                draft.updated_at = now
+            session.flush()
+            return draft.page
+
+    def has_black_history_delete_draft(self, platform_id: str) -> bool:
+        with self._session() as session:
+            user_id = session.scalar(select(UserRecord.id).where(
+                UserRecord.platform_id == platform_id
+            ))
+            return user_id is not None and session.get(
+                BlackHistoryDeleteDraftRecord, user_id
+            ) is not None
+
     def delete_own_black_history(
         self, platform_id: str, entry_id: int, now: datetime
-    ) -> str:
+    ) -> BlackHistoryDeleteResult:
         with self.transaction():
             with self._session() as session:
                 user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id).with_for_update())
                 if user is None:
-                    return "not_joined"
+                    return BlackHistoryDeleteResult("not_joined")
                 entry = session.scalar(select(BlackHistoryEntryRecord).where(
                     BlackHistoryEntryRecord.id == entry_id,
                     BlackHistoryEntryRecord.subject_user_id == user.id,
                 ).with_for_update())
                 if entry is None:
-                    return "not_found"
+                    return BlackHistoryDeleteResult("not_found")
                 if user.balance < 5:
-                    return "insufficient_balance"
+                    return BlackHistoryDeleteResult("insufficient_balance")
                 self._apply_balance_change(user, -5, "black_history_delete", now)
                 session.delete(entry)
-                return "deleted"
+                remaining = session.scalar(select(func.count()).select_from(
+                    BlackHistoryEntryRecord
+                ).where(BlackHistoryEntryRecord.subject_user_id == user.id)) or 0
+                return BlackHistoryDeleteResult("deleted", int(remaining))
 
     @staticmethod
     def _lock_employee_identity_gate(

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+import json
 from random import Random
 from zoneinfo import ZoneInfo
 
@@ -515,6 +516,87 @@ def test_q_records_the_replied_employee_message() -> None:
     )
 
     assert _latest_reply(factory) == "已记入当事人的黑历史册。"
+
+
+def test_black_history_text_is_queued_as_an_image_card() -> None:
+    service, repository, factory = _service()
+    now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=black-history-card", now
+    )
+    repository.create_user("recorder", "记录者", now, 1)
+    repository.create_user("subject", "当事人", now, 0)
+    service.receive_inbound(InboundMessage(
+        "q-card", "recorder", "/q", now, source_type="group",
+        chatroom_id=group.chatroom_id,
+        reference=MessageReference("source-card", "subject", "text", text="原话"),
+    ))
+
+    result = service.receive_inbound(InboundMessage(
+        "draw-card", "recorder", "/黑历史", now, source_type="group",
+        chatroom_id=group.chatroom_id,
+        reference=MessageReference("target-card", "subject", "text", text="随便一条"),
+    ))
+
+    outbound = _outbounds_for(factory, result.message_id)[0]
+    assert outbound.content_type == "black_history_card"
+    assert json.loads(outbound.text) == {
+        "display_name": "当事人", "rank_name": "实习生", "text": "原话"
+    }
+
+
+def test_black_history_image_resends_the_original_image() -> None:
+    service, repository, factory = _service()
+    now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=black-history-image", now
+    )
+    repository.create_user("recorder", "记录者", now, 1)
+    repository.create_user("subject", "当事人", now, 0)
+    service.receive_inbound(InboundMessage(
+        "q-image", "recorder", "/q", now, source_type="group",
+        chatroom_id=group.chatroom_id,
+        reference=MessageReference(
+            "source-image", "subject", "image",
+            image_url="https://cdn.example.com/history.png", alt="旧图",
+        ),
+    ))
+
+    result = service.receive_inbound(InboundMessage(
+        "draw-image", "recorder", "/黑历史", now, source_type="group",
+        chatroom_id=group.chatroom_id,
+        reference=MessageReference("target-image", "subject", "text", text="任意"),
+    ))
+
+    outbounds = _outbounds_for(factory, result.message_id)
+    assert [item.content_type for item in outbounds] == ["text", "image"]
+    assert outbounds[1].image_url == "https://cdn.example.com/history.png"
+
+
+def test_private_black_history_next_page_and_delete_feedback() -> None:
+    service, repository, factory = _service()
+    now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=black-history-pages", now
+    )
+    repository.create_user("owner", "本人", now, 20)
+    for index in range(6):
+        repository.record_black_history(
+            "owner", "owner", group.id, f"source-{index}", "text",
+            f"记录 {index}", None, None, now,
+        )
+
+    _direct_receive(service, "list-1", "owner", "/删除黑历史", now, "direct-owner")
+    second = _direct_receive(service, "list-2", "owner", "/下一页", now, "direct-owner")
+    second_text = _replies_for(factory, second.message_id)[0]
+    assert "第 2 页" in second_text
+    entry_id = repository.list_own_black_history("owner", 2)[0][0].id
+
+    deleted = _direct_receive(
+        service, "delete-1", "owner", f"/删除黑历史 {entry_id}", now, "direct-owner"
+    )
+
+    assert "剩余 5 条" in _replies_for(factory, deleted.message_id)[0]
 
 
 def _direct_receive(service, message_id, sender, content, now, chatroom_id):

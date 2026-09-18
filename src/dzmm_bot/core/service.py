@@ -29,6 +29,7 @@ _DIRECT_COMMANDS = {
     # 投票是全公司对"下一场演什么"的表决，私聊也要给一句「回群里投」
     "/事件投票", "/事件投票情况",
     "/删除黑历史",
+    "/下一页",
 }
 _RANDOM_EVENT_INDEPENDENT_COMMANDS = {
     "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏",
@@ -137,6 +138,7 @@ class CoreService:
                 )
                 if ad_slot_step is not None and command in {
                     "/选择",
+                    "/下一页",
                     "/确认优选投稿",
                     "/确认广告位",
                     "/取消使用",

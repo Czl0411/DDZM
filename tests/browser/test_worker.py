@@ -38,6 +38,7 @@ class FakeGateway:
     sent_to: list[tuple[str, str]] = field(default_factory=list)
     sent_shares: list[tuple[str, str, str]] = field(default_factory=list)
     sent_images: list[tuple[str, str]] = field(default_factory=list)
+    sent_images_to: list[tuple[str, str, str]] = field(default_factory=list)
     uploaded_images: list[tuple[str, str]] = field(default_factory=list)
     upload_error: Exception | None = None
     retracted: list[str] = field(default_factory=list)
@@ -132,7 +133,10 @@ class FakeGateway:
         self, chatroom_id, image_url, *, alt="image", message_id=None,
         reference=None,
     ):
-        raise AssertionError("unexpected targeted image")
+        self.sent_message_ids.append(message_id)
+        self.sent_references.append(reference)
+        self.sent_images_to.append((chatroom_id, image_url, alt))
+        return f"target-image-{len(self.sent_images_to)}"
 
     def upload_image(self, path, mime_type):
         if self.upload_error is not None:
@@ -1053,6 +1057,37 @@ def test_worker_sends_novel_outbound_as_a_share_card(context):
         ("direct-a", "novel", "66408bb3-60a0-40e1-a434-ee40efee4d27")
     ]
     assert gateway.sent_to == []
+
+
+def test_worker_renders_uploads_and_sends_black_history_card(context, monkeypatch):
+    worker, gateway, _, _, _, _ = context
+    rendered = []
+
+    def fake_render(payload, output_path):
+        rendered.append(payload)
+        output_path.write_bytes(b"png")
+
+    monkeypatch.setattr(
+        "dzmm_bot.browser.worker.render_black_history_card", fake_render
+    )
+    outbound = OutboundClaim(
+        OUTBOUND_ID,
+        "in-1",
+        '{"display_name":"当事人","rank_name":"实习生","text":"原话"}',
+        LEASE,
+        content_type="black_history_card",
+        destination_chatroom_id="group-a",
+    )
+
+    worker._send_outbound(gateway, outbound)
+
+    assert rendered == [
+        {"display_name": "当事人", "rank_name": "实习生", "text": "原话"}
+    ]
+    assert gateway.uploaded_images[0][1] == "image/png"
+    assert gateway.sent_images_to == [
+        ("group-a", "https://cdn.example.com/uploaded.png", "黑历史")
+    ]
 
 
 def test_worker_reconnects_socket_on_main_loop_after_outbound_timeout(context):

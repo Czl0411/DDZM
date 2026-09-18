@@ -1,4 +1,5 @@
 from collections import Counter
+import json
 import re
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
@@ -49,7 +50,7 @@ _COMMANDS = {
 }
 _COMMANDS.add("/随机事件时间表")
 _COMMANDS.add("/q")
-_COMMANDS.update({"/黑历史", "/删除黑历史"})
+_COMMANDS.update({"/黑历史", "/删除黑历史", "/下一页"})
 
 _LOTTERY_COMMANDS = {
     "/购买彩票",
@@ -146,31 +147,49 @@ class GroupCommandHandler:
                     CommandReply("", content_type="image", image_url=result.entry.image_url,
                                  image_alt=result.entry.image_alt or "黑历史"),
                 ]
-            return f"【{result.subject.display_name}的黑历史】\n{result.entry.text_content or '（内容已失效）'}"
-        if command == "/删除黑历史":
+            return CommandReply(
+                json.dumps({
+                    "display_name": result.subject.display_name,
+                    "rank_name": result.subject_rank_name,
+                    "text": result.entry.text_content or "（内容已失效）",
+                }, ensure_ascii=False),
+                content_type="black_history_card",
+            )
+        if command in {"/删除黑历史", "/下一页"}:
             if message.source_type != "direct":
                 return "请私聊总监事管理自己的黑历史。"
             parts = content.split(maxsplit=1)
-            if len(parts) == 2 and parts[1].strip().isdigit():
-                status = self._repository.delete_own_black_history(
+            if command == "/下一页" and not self._repository.has_black_history_delete_draft(
+                message.sender_platform_id
+            ):
+                return "当前没有可翻页的黑历史列表，请先发送 /删除黑历史。"
+            if command == "/删除黑历史" and len(parts) == 2 and parts[1].strip().isdigit():
+                result = self._repository.delete_own_black_history(
                     message.sender_platform_id, int(parts[1].strip()), received_at
                 )
+                if result.status == "deleted":
+                    return f"黑历史已删除，已扣除 5 摸鱼币。剩余 {result.remaining_count} 条。"
                 return {
-                    "deleted": "黑历史已删除，已扣除 5 摸鱼币。",
                     "not_found": "未找到这条属于你的黑历史。",
                     "insufficient_balance": "摸鱼币不足，删除需要 5 摸鱼币。",
                     "not_joined": "请先入职。",
-                }[status]
-            entries, total = self._repository.list_own_black_history(message.sender_platform_id)
+                }[result.status]
+            next_page = command == "/下一页" or (
+                len(parts) == 2 and parts[1].strip() == "下一页"
+            )
+            page = self._repository.black_history_delete_page(
+                message.sender_platform_id, next_page, received_at
+            )
+            entries, total = self._repository.list_own_black_history(message.sender_platform_id, page)
             if not entries:
-                return "你还没有可删除的黑历史。"
-            lines = ["你的黑历史（删除每条 5 摸鱼币）："]
+                return "没有更多黑历史了。" if page > 1 else "你还没有可删除的黑历史。"
+            lines = [f"你的黑历史（第 {page} 页，删除每条 5 摸鱼币）："]
             lines.extend(
                 f"#{entry.id} {'[图片]' if entry.content_type == 'image' else (entry.text_content or '')[:30]}"
                 for entry in entries
             )
-            if total > len(entries):
-                lines.append("发送 /删除黑历史 下一页 查看更多。")
+            if total > page * 5:
+                lines.append("发送 /下一页 查看更多。")
             lines.append("发送 /删除黑历史 编号 删除。")
             return "\n".join(lines)
         if command in _LOTTERY_COMMANDS:

@@ -2,10 +2,13 @@ import base64
 from datetime import datetime
 import json
 from pathlib import Path
+from threading import get_ident
 from time import time
 from typing import Callable, Protocol
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
+
+import httpx
 
 from dzmm_bot.runtime.contracts import (
     GroupChatTarget,
@@ -110,6 +113,8 @@ class BrowserSession:
         self._context = None
         self._gateway = None
         self._attached = False
+        self._context_thread_id: int | None = None
+        self._upload_cookie_header = ""
         self._group_targets: tuple[GroupChatTarget, ...] = ()
         self._group_targets_configured = False
 
@@ -180,6 +185,8 @@ class BrowserSession:
     def _new_gateway(self) -> ChatGateway:
         if self.chat_url is None:
             return _PlaywrightGateway(self._context, self.login_url)
+        self._context_thread_id = get_ident()
+        self._upload_cookie_header = self._cookies()
         return AikdaSocketGateway(
             self.chat_url,
             token_provider=self._token,
@@ -251,6 +258,8 @@ class BrowserSession:
     def _upload_image(
         self, path: Path, mime_type: str, chatroom_id: str
     ) -> dict:
+        if get_ident() != self._context_thread_id:
+            return self._upload_image_http(path, mime_type, chatroom_id)
         response = self._context.request.post(
             f"{_origin(self.chat_url)}/api/trpc/chatroom.uploadImage",
             multipart={
@@ -264,6 +273,25 @@ class BrowserSession:
         )
         if not response.ok:
             raise RuntimeError("Aikda image upload failed")
+        body = response.json()
+        return body.get("result", {}).get("data", {}).get("json", body)
+
+    def _upload_image_http(
+        self, path: Path, mime_type: str, chatroom_id: str
+    ) -> dict:
+        origin = _origin(self.chat_url)
+        response = httpx.post(
+            f"{origin}/api/trpc/chatroom.uploadImage",
+            headers={
+                "Cookie": self._upload_cookie_header,
+                "Origin": origin,
+                "Referer": self.chat_url,
+            },
+            files={"file": (path.name, path.read_bytes(), mime_type)},
+            data={"chatroomId": chatroom_id},
+            timeout=90.0,
+        )
+        response.raise_for_status()
         body = response.json()
         return body.get("result", {}).get("data", {}).get("json", body)
 

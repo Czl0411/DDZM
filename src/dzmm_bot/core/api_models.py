@@ -262,7 +262,7 @@ class OutboundClaimResponse(ApiModel):
     inbound_message_id: UUID | None
     group_chat_id: UUID | None
     text: str
-    content_type: Literal["text", "image", "novel"]
+    content_type: Literal["text", "image", "novel", "history_card", "history_image"]
     image_url: str | None
     image_alt: str | None
     lease_token: UUID

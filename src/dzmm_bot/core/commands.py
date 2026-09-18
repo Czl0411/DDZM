@@ -149,7 +149,7 @@ class GroupCommandHandler:
                             "image_url": result.entry.image_url,
                             "image_alt": result.entry.image_alt or "黑历史",
                         }, ensure_ascii=False),
-                        content_type="black_history_image",
+                        content_type="history_image",
                     ),
                 ]
             return CommandReply(
@@ -158,7 +158,7 @@ class GroupCommandHandler:
                     "rank_name": result.subject_rank_name,
                     "text": result.entry.text_content or "（内容已失效）",
                 }, ensure_ascii=False),
-                content_type="black_history_card",
+                content_type="history_card",
             )
         if command in {"/删除黑历史", "/下一页"}:
             if message.source_type != "direct":

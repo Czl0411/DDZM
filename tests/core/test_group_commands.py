@@ -539,7 +539,7 @@ def test_black_history_text_is_queued_as_an_image_card() -> None:
     ))
 
     outbound = _outbounds_for(factory, result.message_id)[0]
-    assert outbound.content_type == "black_history_card"
+    assert outbound.content_type == "history_card"
     assert json.loads(outbound.text) == {
         "display_name": "当事人", "rank_name": "实习生", "text": "原话"
     }
@@ -569,7 +569,7 @@ def test_black_history_image_resends_the_original_image() -> None:
     ))
 
     outbounds = _outbounds_for(factory, result.message_id)
-    assert [item.content_type for item in outbounds] == ["text", "black_history_image"]
+    assert [item.content_type for item in outbounds] == ["text", "history_image"]
     assert json.loads(outbounds[1].text)["image_url"] == "https://cdn.example.com/history.png"
 
 

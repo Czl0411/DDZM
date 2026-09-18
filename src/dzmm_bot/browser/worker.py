@@ -564,7 +564,7 @@ class BrowserWorker:
         platform_message_id = str(outbound.id)
         reference = self._outbound_reference(outbound)
         text = outbound.text
-        if outbound.content_type == "black_history_image":
+        if outbound.content_type == "history_image":
             payload = json.loads(text)
             image_url = payload["image_url"]
             image_alt = payload.get("image_alt") or "黑历史"
@@ -579,7 +579,9 @@ class BrowserWorker:
                             message_id=platform_message_id,
                             reference=reference,
                         )
-                    except AikdaMessageRejectedError:
+                    except AikdaMessageRejectedError as error:
+                        if "请稍后再试" in str(error):
+                            raise
                         return gateway.send_to(
                             outbound.destination_chatroom_id,
                             failure_text,
@@ -597,14 +599,16 @@ class BrowserWorker:
                         message_id=platform_message_id,
                         reference=reference,
                     )
-                except AikdaMessageRejectedError:
+                except AikdaMessageRejectedError as error:
+                    if "请稍后再试" in str(error):
+                        raise
                     return gateway.send(
                         failure_text,
                         message_id=platform_message_id,
                         reference=reference,
                     )
             return self._send_with_main_account_tokens(send_group_image)
-        if outbound.content_type == "black_history_card":
+        if outbound.content_type == "history_card":
             payload = json.loads(text)
             with TemporaryDirectory(prefix="dzmm-black-history-") as directory:
                 path = Path(directory) / "card.png"

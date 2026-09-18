@@ -5,6 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from dzmm_bot.core.repository import CoreRepository
+from dzmm_bot.core.api_models import OutboundClaimResponse
 from dzmm_bot.core.schema import Base
 
 
@@ -58,3 +59,31 @@ def test_delete_only_removes_own_entry_and_only_charges_on_success(repository, n
     assert deleted.status == "deleted"
     assert deleted.remaining_count == 0
     assert repository.find_user("other").balance == 4
+
+
+@pytest.mark.parametrize("content_type", ["history_card", "history_image"])
+def test_black_history_outbound_types_fit_storage_and_claim_api(content_type, now) -> None:
+    assert len(content_type) <= 16
+    claim = OutboundClaimResponse(
+        id="00000000-0000-0000-0000-000000000001",
+        inbound_message_id=None,
+        group_chat_id=None,
+        text="{}",
+        content_type=content_type,
+        image_url=None,
+        image_alt=None,
+        lease_token="00000000-0000-0000-0000-000000000002",
+        lease_expires_at=now,
+        attempt_count=1,
+        destination_chatroom_id="group-a",
+        delivery_key="group-a",
+        delivery_kind="group",
+        reference_message_id=None,
+        reference_sender_platform_id=None,
+        reference_content_type=None,
+        reference_text=None,
+        recall_after_seconds=None,
+        is_dark_market_list=False,
+        dark_market_list_query_sender_name=None,
+    )
+    assert claim.content_type == content_type

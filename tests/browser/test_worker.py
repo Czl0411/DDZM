@@ -1075,7 +1075,7 @@ def test_worker_renders_uploads_and_sends_black_history_card(context, monkeypatc
         "in-1",
         '{"display_name":"当事人","rank_name":"实习生","text":"原话"}',
         LEASE,
-        content_type="black_history_card",
+        content_type="history_card",
         destination_chatroom_id="group-a",
     )
 
@@ -1102,7 +1102,7 @@ def test_worker_reports_an_expired_black_history_image(context, monkeypatch):
         "in-1",
         '{"image_url":"https://cdn.example.com/gone.png","image_alt":"旧图"}',
         LEASE,
-        content_type="black_history_image",
+        content_type="history_image",
         destination_chatroom_id="group-a",
     )
 
@@ -1111,6 +1111,28 @@ def test_worker_reports_an_expired_black_history_image(context, monkeypatch):
     assert gateway.sent_to == [
         ("group-a", "这条黑历史图片已经失效，暂时无法查看。")
     ]
+
+
+def test_worker_keeps_retryable_black_history_image_rejections(context, monkeypatch):
+    worker, gateway, _, _, _, _ = context
+
+    def reject_image(*args, **kwargs):
+        raise AikdaMessageRejectedError("消息发送失败，请稍后再试")
+
+    monkeypatch.setattr(gateway, "send_image_to", reject_image)
+    outbound = OutboundClaim(
+        OUTBOUND_ID,
+        "in-1",
+        '{"image_url":"https://cdn.example.com/image.png","image_alt":"旧图"}',
+        LEASE,
+        content_type="history_image",
+        destination_chatroom_id="group-a",
+    )
+
+    with pytest.raises(AikdaMessageRejectedError, match="请稍后再试"):
+        worker._send_outbound(gateway, outbound)
+
+    assert gateway.sent_to == []
 
 
 def test_worker_reconnects_socket_on_main_loop_after_outbound_timeout(context):

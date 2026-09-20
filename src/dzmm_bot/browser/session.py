@@ -298,11 +298,13 @@ class BrowserSession:
     def _cookies(self) -> str:
         origin = _origin(self.chat_url)
         cookies = self._context.cookies([origin])
-        return "; ".join(
+        cookie_header = "; ".join(
             f"{cookie['name']}={cookie['value']}"
             for cookie in cookies
             if cookie.get("name") and cookie.get("value")
         )
+        self._upload_cookie_header = cookie_header
+        return cookie_header
 
     def _active_page(self):
         return next(

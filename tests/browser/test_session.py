@@ -495,6 +495,55 @@ def test_configured_session_uploads_image_from_outbound_thread(tmp_path, monkeyp
     )]
 
 
+def test_outbound_upload_uses_cookie_refreshed_during_socket_reconnect(
+    tmp_path, monkeypatch,
+):
+    page = FakePage("https://chat.example/chat?c=group-1")
+    page.evaluate = lambda script, arg=None: (
+        "short-lived-token"
+        if "api/auth/token" in script
+        else {"id": "bot-1"}
+        if arg["procedure"] == "user.getMe"
+        else {"messages": []}
+    )
+    context = FakeContext(
+        page.url,
+        cookies=[{"name": "session", "value": "expired-session"}],
+    )
+    context.pages = [page]
+    socket = FakeSocket()
+    session = BrowserSession(
+        tmp_path / "profile",
+        "https://chat.example/login",
+        chat_url="https://chat.example/chat?c=group-1",
+        playwright_factory=lambda: FakePlaywright(FakeChromium(context)),
+        socket_factory=lambda: socket,
+    )
+    image_path = tmp_path / "history-card.png"
+    image_path.write_bytes(b"raw-image")
+    http_calls = []
+
+    def fake_post(url, **kwargs):
+        http_calls.append((url, kwargs))
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={"url": "https://cdn.example/history-card.png"},
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    gateway = session.start_headless()
+    assert gateway.is_authenticated()
+    context._cookies = [{"name": "session", "value": "refreshed-session"}]
+    gateway.close()
+    assert gateway.is_authenticated()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(gateway.upload_image, image_path, "image/png").result()
+
+    assert http_calls[0][1]["headers"]["Cookie"] == "session=refreshed-session"
+
+
 def test_configured_session_forwards_browser_cookies_to_socket_handshake(tmp_path):
     """Fails if the server Socket.IO client omits the authenticated browser session."""
     page = FakePage("https://chat.example/chat?c=group-1")

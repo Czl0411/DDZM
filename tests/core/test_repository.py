@@ -10680,6 +10680,61 @@ def test_activity_settlement_is_once_and_negative_does_not_reduce_today_income(
     assert repository.find_user("u1").balance == -3
 
 
+def test_activity_settlement_scan_runs_once_per_day(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import BEIJING
+
+    yesterday = datetime(2026, 8, 5, 23, 59, tzinfo=BEIJING)
+    today = datetime(2026, 8, 6, 0, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", yesterday, 0)
+    repository.record_activity("u1", yesterday, "一二三四五六七八九十")
+    repository.run_daily_jobs(today)
+    activity_scans = []
+
+    def capture_activity_scan(execute_state):
+        if execute_state.is_select and "FROM daily_activities" in str(
+            execute_state.statement
+        ):
+            activity_scans.append(execute_state.statement)
+
+    event.listen(session_factory.class_, "do_orm_execute", capture_activity_scan)
+    try:
+        repository.run_daily_jobs(today + timedelta(minutes=1))
+    finally:
+        event.remove(session_factory.class_, "do_orm_execute", capture_activity_scan)
+
+    assert activity_scans == []
+
+
+def test_activity_settlement_restart_skips_conflict_inserts(
+    repository, session_factory
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import BEIJING
+
+    yesterday = datetime(2026, 8, 5, 23, 59, tzinfo=BEIJING)
+    today = datetime(2026, 8, 6, 0, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", yesterday, 0)
+    repository.record_activity("u1", yesterday, "一二三四五六七八九十")
+    repository.run_daily_jobs(today)
+    settlement_inserts = []
+
+    def capture_settlement_insert(execute_state):
+        if execute_state.is_insert and "activity_reward_settlements" in str(
+            execute_state.statement
+        ):
+            settlement_inserts.append(execute_state.statement)
+
+    event.listen(session_factory.class_, "do_orm_execute", capture_settlement_insert)
+    try:
+        CoreRepository(session_factory).run_daily_jobs(today + timedelta(minutes=1))
+    finally:
+        event.remove(session_factory.class_, "do_orm_execute", capture_settlement_insert)
+
+    assert settlement_inserts == []
+
+
 def test_due_income_report_is_queued_once_and_empty_slot_is_skipped(repository, now):
     from dzmm_bot.core.schema import BEIJING
 

@@ -2515,6 +2515,7 @@ class CoreRepository:
             f"core_repository_session_{id(self)}", default=None
         )
         self._current_day_history_backfilled: date | None = None
+        self._activity_rewards_settled_on: date | None = None
 
     def bootstrap_primary_group(
         self, chat_url: str, now: datetime
@@ -24399,6 +24400,9 @@ class CoreRepository:
     def run_daily_jobs(self, now: datetime) -> None:
         now = now.astimezone(BEIJING)
         should_backfill = self._current_day_history_backfilled != now.date()
+        should_settle_activity_rewards = (
+            self._activity_rewards_settled_on != now.date()
+        )
         self.run_performance_jobs(now)
         self.run_dark_market_jobs(now)
         self.run_shop_card_jobs(now)
@@ -24530,7 +24534,8 @@ class CoreRepository:
                     )
             self.expire_random_event_submission_drafts(now)
             self._settle_weekly_attendance_rewards(now)
-            self._settle_activity_rewards(now)
+            if should_settle_activity_rewards:
+                self._settle_activity_rewards(now)
             self._enqueue_due_income_reports(now)
             self.run_undercover_jobs(now)
             for group_chat_id in group_ids:
@@ -24554,6 +24559,8 @@ class CoreRepository:
             self.run_random_event_jobs(now)
         if should_backfill:
             self._current_day_history_backfilled = now.date()
+        if should_settle_activity_rewards:
+            self._activity_rewards_settled_on = now.date()
 
     def _backfill_current_day_history(self, now: datetime) -> None:
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -24640,10 +24647,16 @@ class CoreRepository:
     def _settle_activity_rewards(self, now: datetime) -> None:
         settings = self.get_activity_settings()
         with self._session() as session:
+            already_settled = exists().where(
+                ActivityRewardSettlementRecord.user_id == DailyActivityRecord.user_id,
+                ActivityRewardSettlementRecord.activity_date
+                == DailyActivityRecord.activity_date,
+            )
             activities = list(
                 session.scalars(
                     select(DailyActivityRecord).where(
-                        DailyActivityRecord.activity_date < now.date()
+                        DailyActivityRecord.activity_date < now.date(),
+                        ~already_settled,
                     )
                 )
             )

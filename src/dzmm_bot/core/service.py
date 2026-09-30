@@ -533,29 +533,44 @@ class CoreService:
                 f"{work.position}. 《{work.scene_name}》" for work in page
             )
 
+        def schedule_label(schedule) -> str:
+            if schedule is None:
+                return "该场"
+            return schedule.scheduled_at.strftime("%H:%M")
+
+        def schedule_group_suffix(schedule) -> str:
+            if schedule is None or not schedule.group_name:
+                return ""
+            return f"（{schedule.group_name}）"
+
         if result.status in {"schedule_picked", "page"}:
             schedule = result.selected_schedule
-            time_label = "该场" if schedule is None else schedule.scheduled_at.strftime("%H:%M")
+            time_label = schedule_label(schedule)
             suffix = "\n回复 /下一页 查看更多。" if result.work_page * 5 < len(result.works) else ""
             return (
-                f"已选择 {time_label} 场。请选择要投放的已审核投稿：\n"
+                f"已选择 {time_label} 场{schedule_group_suffix(schedule)}。"
+                "请选择要投放的已审核投稿：\n"
                 f"{works_page()}\n回复 /选择 投稿序号。{suffix}"
             )
         if result.status == "picked":
             work = result.selected
             name = "这件作品" if work is None else f"《{work.scene_name}》"
             schedule = result.selected_schedule
-            time_label = "该场" if schedule is None else schedule.scheduled_at.strftime("%H:%M")
+            time_label = schedule_label(schedule)
             return (
-                f"已选中{name}，将锁定到 {time_label} 场。"
+                f"已选中{name}，将锁定到 {time_label} 场"
+                f"{schedule_group_suffix(schedule)}。"
                 "回复 /确认优选投稿 提交，提交后才会消耗这张卡。"
             )
         if result.status == "consumed":
             work = result.selected
             name = "这件作品" if work is None else f"《{work.scene_name}》"
             schedule = result.selected_schedule
-            time_label = "该场" if schedule is None else schedule.scheduled_at.strftime("%H:%M")
-            return f"✅ {name}已锁定 {time_label} 场的优选投稿位。"
+            time_label = schedule_label(schedule)
+            return (
+                f"✅ {name}已锁定 {time_label} 场的优选投稿位"
+                f"{schedule_group_suffix(schedule)}。"
+            )
         if result.status == "cancelled":
             return "已取消优选投稿卡向导，这张卡未消耗。"
         return {

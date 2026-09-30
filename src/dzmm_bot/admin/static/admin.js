@@ -2178,7 +2178,7 @@ async function loadShop(page = shopPage) {
   shopPage = items.page;
   const filtered = filterList("shop", items.items, (item) => `${item.name} ${item.description}`);
   document.querySelector("#shop-list").innerHTML = filtered.map((item) => `
-    <article class="data-row" data-shop-item="${item.public_number}"><div><b>#${item.public_number} ${escapeHtml(item.name)}</b><label>商品描述<textarea data-item-description maxlength="200" rows="2">${escapeHtml(item.description)}</textarea></label><small>${item.system_key ? `系统效果：${escapeHtml(item.effect_type || "-")}` : "管理员普通商品（无使用效果）"}</small></div><div class="command-actions"><strong>${item.price} ${escapeHtml(settings.currency_name)}</strong><label><input data-item-enabled type="checkbox" ${item.enabled ? "checked" : ""}> 启用</label><label><input data-item-unlimited type="checkbox" ${item.unlimited_stock ? "checked" : ""}> 无限库存</label><input data-item-stock type="number" min="0" max="99999" value="${item.stock}" aria-label="库存"><select data-item-rank aria-label="最低职位"><option value="">不限职位</option>${rankDefinitions.map((rank) => `<option value="${rank.sort_order}" ${item.minimum_rank_order === rank.sort_order ? "selected" : ""}>${escapeHtml(rank.level_label)} ${escapeHtml(rank.name)}</option>`).join("")}</select><button class="secondary" data-save-shop-item type="button">保存</button></div></article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
+    <article class="data-row" data-shop-item="${item.public_number}"><div><b>#${item.public_number} ${escapeHtml(item.name)}</b><label>商品描述<textarea data-item-description maxlength="200" rows="2">${escapeHtml(item.description)}</textarea></label>${item.effect_type === "scratch" ? `<div class="command-actions"><label>最低收益<input data-item-scratch-min type="number" min="0" max="99999" value="${item.scratch_reward_min ?? 0}"></label><label>最高收益<input data-item-scratch-max type="number" min="0" max="99999" value="${item.scratch_reward_max ?? 0}"></label></div>` : ""}<small>${item.system_key ? `系统效果：${escapeHtml(item.effect_type || "-")}` : "管理员普通商品（无使用效果）"}</small></div><div class="command-actions"><strong>${item.price} ${escapeHtml(settings.currency_name)}</strong><label><input data-item-enabled type="checkbox" ${item.enabled ? "checked" : ""}> 启用</label><label><input data-item-unlimited type="checkbox" ${item.unlimited_stock ? "checked" : ""}> 无限库存</label><input data-item-stock type="number" min="0" max="99999" value="${item.stock}" aria-label="库存"><select data-item-rank aria-label="最低职位"><option value="">不限职位</option>${rankDefinitions.map((rank) => `<option value="${rank.sort_order}" ${item.minimum_rank_order === rank.sort_order ? "selected" : ""}>${escapeHtml(rank.level_label)} ${escapeHtml(rank.name)}</option>`).join("")}</select><button class="secondary" data-save-shop-item type="button">保存</button></div></article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
   renderPagination(document.querySelector("#shop-pagination"), items, "件物品", loadShop);
   document.querySelector("#shop-purchase-log").innerHTML = activity.purchases.map((entry) => `
     <article class="data-row"><div><b>${escapeHtml(entry.user_name)} 购买 #${entry.item_number} ${escapeHtml(entry.item_name)}</b><small>${escapeHtml(entry.group_name)} · ${entry.price} 摸鱼币 · ${escapeHtml(entry.created_at)}</small></div></article>`).join("") || "<p class=\"muted\">暂无购买记录。</p>";
@@ -3640,8 +3640,8 @@ randomEventSceneModal.addEventListener("click", async (event) => {
     return;
   }
   const button = event.target;
+  const sceneId = randomEventSceneModal.dataset.sceneId;
   try {
-    const sceneId = randomEventSceneModal.dataset.sceneId;
     await runMutation(button, sceneId ? "保存中…" : "创建中…", async () => {
       const created = await requestGame(
         sceneId ? `/api/game/random-events/scenes/${sceneId}` : "/api/game/random-events/scenes",
@@ -3665,7 +3665,7 @@ randomEventSceneModal.addEventListener("click", async (event) => {
     setResult(
       error.message === "场景名称已存在"
         ? "场景已存在，请直接编辑现有场景。"
-        : `创建失败（${error.message}）`,
+        : `${sceneId ? "保存" : "创建"}失败（${error.message}）`,
       "error",
     );
   }
@@ -4398,6 +4398,11 @@ document.querySelector("#shop-list").addEventListener("click", async (event) => 
     unlimited_stock: row.querySelector("[data-item-unlimited]").checked,
     stock: Number(row.querySelector("[data-item-stock]").value),
   };
+  const scratchMin = row.querySelector("[data-item-scratch-min]");
+  if (scratchMin) {
+    payload.scratch_reward_min = Number(scratchMin.value);
+    payload.scratch_reward_max = Number(row.querySelector("[data-item-scratch-max]").value);
+  }
   try {
     await runMutation(button, "保存中…", async () => {
       await requestGame(`/api/game/items/${row.dataset.shopItem}`, {

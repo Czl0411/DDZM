@@ -2238,7 +2238,8 @@ class GroupCommandHandler:
             return (
                 "请选择要锁定优选投稿位的场次：\n"
                 + "\n".join(
-                    f"{slot.position}. {slot.scheduled_at.strftime('%H:%M')}"
+                    f"{slot.position}. {slot.group_name}｜"
+                    f"{slot.scheduled_at.strftime('%H:%M')}"
                     f"｜优选投稿位 {slot.taken}/{slot.limit}"
                     for slot in draft.schedules
                 )
@@ -3495,17 +3496,39 @@ class GroupCommandHandler:
         )
 
     def _random_event_time_table(self, group_chat_id, received_at) -> str:
-        if group_chat_id is None:
-            return "请在已开启随机事件的群聊中查看时间表。"
-        slots = self._repository.random_event_ad_slot_schedules(
-            group_chat_id, received_at
-        )
-        if not slots:
-            return "今天没有可锁定优选投稿位的后续随机事件场次。"
+        schedules = self._repository.list_today_random_event_schedules(received_at)
+        if not schedules:
+            return "今天没有随机事件场次。"
+        groups = {
+            group.id: group.name
+            for group in self._repository.list_group_chats(include_deleted=True)
+        }
+        available = {
+            slot.schedule_id: slot
+            for slot in self._repository.random_event_ad_slot_schedules(
+                None, received_at
+            )
+        }
+        status_labels = {
+            "pending": "待开始",
+            "signup": "报名中",
+            "in_progress": "进行中",
+            "tipping": "打赏中",
+            "ended": "已结束",
+            "dissolved": "已解散",
+            "skipped": "已跳过",
+        }
         return "【随机事件时间表】\n" + "\n".join(
-            f"{slot.position}. {slot.scheduled_at.strftime('%H:%M')}"
-            f"｜优选投稿位 {slot.taken}/{slot.limit}"
-            for slot in slots
+            f"{schedule.scheduled_at.strftime('%H:%M')}｜"
+            f"{groups.get(schedule.group_chat_id, '未知群聊')}｜"
+            f"{status_labels.get(schedule.status, schedule.status)}"
+            + (
+                f"｜优选投稿位 {available[schedule.id].taken}/"
+                f"{available[schedule.id].limit}"
+                if schedule.id in available
+                else ""
+            )
+            for schedule in schedules
         )
 
     def _random_event_vote_tally(self, view) -> str:
@@ -4238,7 +4261,7 @@ class GroupCommandHandler:
                     ("/投稿", "/投稿 随机事件：进入私聊投稿向导"),
                     ("/我的投稿", "/我的投稿：查看最近投稿状态"),
                     ("/撤回投稿", "/撤回投稿 编号：撤回待审核投稿"),
-                    ("/随机事件时间表", "/随机事件时间表：查看今天后续场次与优选投稿位余量"),
+                    ("/随机事件时间表", "/随机事件时间表：查看全公司今天全部场次与状态"),
                     ("/使用", "/使用 优选投稿卡编号：在群内选择场次和已审核投稿，确认后锁定优选投稿位"),
                 ),
             ),

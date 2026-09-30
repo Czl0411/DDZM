@@ -2774,6 +2774,8 @@ class ItemRecord(Base):
     unlimited_stock: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     system_key: Mapped[str | None] = mapped_column(String(64), unique=True)
     effect_type: Mapped[str | None] = mapped_column(String(32))
+    scratch_reward_min: Mapped[int | None] = mapped_column(Integer)
+    scratch_reward_max: Mapped[int | None] = mapped_column(Integer)
     minimum_rank_order: Mapped[int | None] = mapped_column(Integer)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

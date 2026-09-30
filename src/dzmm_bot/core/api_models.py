@@ -547,6 +547,8 @@ class ItemResponse(ApiModel):
     unlimited_stock: bool
     system_key: str | None
     effect_type: str | None
+    scratch_reward_min: int | None
+    scratch_reward_max: int | None
     minimum_rank_order: int | None
     enabled: bool
 
@@ -580,6 +582,8 @@ class UpdateItemRequest(ApiModel):
     minimum_rank_order: int | None = Field(default=None, ge=1, le=999)
     unlimited_stock: bool
     stock: int = Field(ge=0, le=99999)
+    scratch_reward_min: int | None = Field(default=None, ge=0, le=99999)
+    scratch_reward_max: int | None = Field(default=None, ge=0, le=99999)
 
 
 class ShopPurchaseLogResponse(ApiModel):

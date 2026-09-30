@@ -316,6 +316,44 @@ def test_ordinary_cards_apply_effects_and_keep_generic_item(
     )
 
 
+def test_scratch_card_uses_its_saved_reward_range(setup_repository, now) -> None:
+    repository, _ = setup_repository
+    repository.create_user("scratch-owner", "刮卡者", now, 100)
+    number = _number(repository, "scratch_a")
+
+    repository.update_shop_item(
+        number,
+        description="随机获得 7–7 摸鱼币",
+        enabled=True,
+        minimum_rank_order=None,
+        unlimited_stock=True,
+        stock=0,
+        scratch_reward_min=7,
+        scratch_reward_max=7,
+    )
+    assert (
+        repository.purchase_shop_item(
+            _inbound(repository, "scratch-owner", now),
+            "scratch-owner",
+            number,
+            PRIMARY_GROUP_CHAT_ID,
+            now,
+        ).status
+        == "purchased"
+    )
+
+    result = repository.use_ordinary_shop_item(
+        _inbound(repository, "scratch-owner", now, "/使用"),
+        "scratch-owner",
+        number,
+        PRIMARY_GROUP_CHAT_ID,
+        now,
+    )
+
+    assert result.status == "completed"
+    assert result.reward == 7
+
+
 def test_disabled_owned_system_card_can_still_be_used(setup_repository, now) -> None:
     repository, factory = setup_repository
     repository.create_user("disabled-owner", "停用持有人", now, 100)

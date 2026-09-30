@@ -330,6 +330,81 @@ def test_create_poll_is_idempotent(repository, seeded):
     assert candidates == 6
 
 
+def test_edit_scene_preserves_template_referenced_by_poll(repository, seeded):
+    with seeded.begin() as session:
+        scene = add_scene(session, "旧场景", events=("旧开场",))
+        add_schedule(session)
+
+    poll = repository.create_random_event_poll(NOW)
+    candidate = next(
+        item for item in poll.candidates if item.scene_name == "旧场景"
+    )
+    with seeded() as session:
+        original_template_id = session.get(
+            RandomEventPollCandidateRecord, candidate.id
+        ).template_id
+
+    repository.update_random_event_scene(
+        scene.id,
+        "新场景",
+        "新报名",
+        [{"name": "新事件", "opening_text": "新开场"}],
+        10,
+        5,
+        [("主持", 1)],
+        True,
+    )
+
+    with seeded() as session:
+        stored_candidate = session.get(RandomEventPollCandidateRecord, candidate.id)
+        stored_template = session.get(
+            RandomEventSceneOpeningRecord, original_template_id
+        )
+
+    assert stored_candidate.template_id == original_template_id
+    assert stored_template is not None
+    assert stored_template.name == "新事件"
+    assert stored_template.content == "新开场"
+
+
+def test_edit_scene_rejects_removing_template_referenced_by_poll(
+    repository, seeded, monkeypatch
+):
+    monkeypatch.setattr(
+        "dzmm_bot.core.repository.randbelow", lambda upper_bound: upper_bound - 1
+    )
+    with seeded.begin() as session:
+        scene = add_scene(session, "双事件", events=("保留开场", "被引用开场"))
+        add_schedule(session)
+
+    poll = repository.create_random_event_poll(NOW)
+    candidate = next(
+        item for item in poll.candidates if item.scene_name == "双事件"
+    )
+    with seeded() as session:
+        referenced_template = session.get(
+            RandomEventSceneOpeningRecord,
+            session.get(RandomEventPollCandidateRecord, candidate.id).template_id,
+        )
+    assert referenced_template.position == 2
+
+    with pytest.raises(ValueError, match="已被投票引用的事件模板不能删除"):
+        repository.update_random_event_scene(
+            scene.id,
+            "修改失败的场景",
+            "新报名",
+            [{"name": "保留事件", "opening_text": "保留开场"}],
+            10,
+            5,
+            [("主持", 1)],
+            True,
+        )
+
+    [stored_scene] = repository.list_random_event_scenes()
+    assert stored_scene.name == "双事件"
+    assert stored_scene.openings == ["保留开场", "被引用开场"]
+
+
 def test_poll_keeps_the_target_schedule_pending_until_it_closes(repository, seeded):
     """定稿前场次必须还是 pending 且没有场景——否则旧的随机逻辑会抢先冻住它。"""
     with seeded.begin() as session:

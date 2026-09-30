@@ -927,6 +927,7 @@ class RandomEventAdSlotSchedule:
     scheduled_at: datetime
     taken: int
     limit: int
+    group_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -2176,7 +2177,7 @@ _COMMAND_DEFINITIONS = (
     ("/打赏", "/打赏 员工名称 金额", "在随机事件打赏阶段向参与者转移摸鱼币"),
     ("/事件投票", "/事件投票 序号", "给全公司的下一场随机事件投一票（每人一票，可改票）"),
     ("/事件投票情况", "/事件投票情况", "查看本期随机事件投票的当前票型"),
-    ("/随机事件时间表", "/随机事件时间表", "查看今天后续随机事件场次与优选投稿位余量"),
+    ("/随机事件时间表", "/随机事件时间表", "查看全公司今天全部随机事件场次与状态"),
     ("/q", "回复消息 /q", "花 1 摸鱼币将一条群聊消息记入对应员工的黑历史册"),
     ("/黑历史", "回复消息 /黑历史", "免费随机翻出被回复员工的一条黑历史"),
     ("/删除黑历史", "/删除黑历史 [编号]（仅私聊）", "查看或删除自己的黑历史"),
@@ -21448,9 +21449,12 @@ class CoreRepository:
                     RandomEventSceneSeatRecord.scene_id == scene_id
                 )
             )
-            session.execute(
-                delete(RandomEventSceneOpeningRecord).where(
-                    RandomEventSceneOpeningRecord.scene_id == scene_id
+            existing_openings = list(
+                session.scalars(
+                    select(RandomEventSceneOpeningRecord)
+                    .where(RandomEventSceneOpeningRecord.scene_id == scene_id)
+                    .order_by(RandomEventSceneOpeningRecord.position)
+                    .with_for_update()
                 )
             )
             session.add_all(
@@ -21461,17 +21465,37 @@ class CoreRepository:
                     for rule in rules
                 ]
             )
-            session.add_all(
-                [
-                    RandomEventSceneOpeningRecord(
-                        scene_id=scene_id,
-                        position=position,
-                        name=template.name,
-                        content=template.opening_text,
+            for position, template in enumerate(templates):
+                if position < len(existing_openings):
+                    opening = existing_openings[position]
+                    opening.position = position
+                    opening.name = template.name
+                    opening.content = template.opening_text
+                else:
+                    session.add(
+                        RandomEventSceneOpeningRecord(
+                            scene_id=scene_id,
+                            position=position,
+                            name=template.name,
+                            content=template.opening_text,
+                        )
                     )
-                    for position, template in enumerate(templates)
-                ]
-            )
+            removed_openings = existing_openings[len(templates):]
+            if removed_openings:
+                removed_ids = [opening.id for opening in removed_openings]
+                if session.scalar(
+                    select(RandomEventPollCandidateRecord.id)
+                    .where(
+                        RandomEventPollCandidateRecord.template_id.in_(removed_ids)
+                    )
+                    .limit(1)
+                ) is not None:
+                    raise ValueError("已被投票引用的事件模板不能删除")
+                session.execute(
+                    delete(RandomEventSceneOpeningRecord).where(
+                        RandomEventSceneOpeningRecord.id.in_(removed_ids)
+                    )
+                )
             session.flush()
             return _random_event_scene(record, rules, templates)
 
@@ -22415,7 +22439,7 @@ class CoreRepository:
     def start_random_event_ad_slot(
         self, platform_id: str, item_number: int, group_chat_id: UUID, now: datetime
     ) -> RandomEventAdSlotDraftResult:
-        """`/使用 事件广告卡`：开出场次 → 作品 → 确认的群内向导。"""
+        """`/使用 优选投稿卡`：开出全公司场次 → 作品 → 确认的群内向导。"""
         now = now.astimezone(BEIJING)
         settings = self.get_random_event_settings()
         with self.transaction():
@@ -22436,7 +22460,7 @@ class CoreRepository:
                 if not settings.vote_enabled:
                     return RandomEventAdSlotDraftResult("disabled")
                 schedules = self._random_event_ad_slot_schedules(
-                    session, group_chat_id, now, settings
+                    session, None, now, settings
                 )
                 if not schedules:
                     return RandomEventAdSlotDraftResult("no_schedules")
@@ -22632,7 +22656,7 @@ class CoreRepository:
                 )
 
     def random_event_ad_slot_schedules(
-        self, group_chat_id: UUID, now: datetime
+        self, group_chat_id: UUID | None, now: datetime
     ) -> tuple[RandomEventAdSlotSchedule, ...]:
         now = now.astimezone(BEIJING)
         with self._session() as session:
@@ -22641,26 +22665,42 @@ class CoreRepository:
             )
 
     def _random_event_ad_slot_schedules(
-        self, session: Session, group_chat_id: UUID, now: datetime,
+        self, session: Session, group_chat_id: UUID | None, now: datetime,
         settings: RandomEventSettings,
     ) -> tuple[RandomEventAdSlotSchedule, ...]:
         if not settings.vote_enabled or settings.vote_ad_slot_limit < 1:
             return ()
-        rows = list(session.scalars(
-            select(RandomEventScheduleRecord)
-            .where(
-                RandomEventScheduleRecord.group_chat_id == group_chat_id,
-                RandomEventScheduleRecord.event_date == now.date(),
-                RandomEventScheduleRecord.status == "pending",
-                RandomEventScheduleRecord.scene_name.is_(None),
-                RandomEventScheduleRecord.scheduled_at > now,
+        filters = [
+            RandomEventScheduleRecord.event_date == now.date(),
+            RandomEventScheduleRecord.status == "pending",
+            RandomEventScheduleRecord.scene_name.is_(None),
+            RandomEventScheduleRecord.scheduled_at > now,
+            GroupChatRecord.deleted_at.is_(None),
+            GroupChatRecord.listening_enabled.is_(True),
+            GroupChatRecord.random_events_enabled.is_(True),
+        ]
+        if group_chat_id is not None:
+            filters.append(RandomEventScheduleRecord.group_chat_id == group_chat_id)
+        rows = list(session.execute(
+            select(RandomEventScheduleRecord, GroupChatRecord.name)
+            .join(
+                GroupChatRecord,
+                GroupChatRecord.id == RandomEventScheduleRecord.group_chat_id,
             )
-            .order_by(RandomEventScheduleRecord.scheduled_at)
+            .where(
+                *filters,
+            )
+            .order_by(
+                RandomEventScheduleRecord.scheduled_at,
+                GroupChatRecord.created_at,
+                GroupChatRecord.id,
+            )
         ))
+        schedule_ids = [row.id for row, _ in rows]
         taken_by_schedule = dict(session.execute(
             select(RandomEventAdSlotRecord.schedule_id, func.count())
             .where(
-                RandomEventAdSlotRecord.schedule_id.in_([row.id for row in rows]),
+                RandomEventAdSlotRecord.schedule_id.in_(schedule_ids),
                 RandomEventAdSlotRecord.status == "consumed",
             )
             .group_by(RandomEventAdSlotRecord.schedule_id)
@@ -22668,8 +22708,8 @@ class CoreRepository:
         return tuple(
             RandomEventAdSlotSchedule(index, row.id, row.scheduled_at,
                                       int(taken_by_schedule.get(row.id, 0)),
-                                      settings.vote_ad_slot_limit)
-            for index, row in enumerate(rows, start=1)
+                                      settings.vote_ad_slot_limit, group_name)
+            for index, (row, group_name) in enumerate(rows, start=1)
             if int(taken_by_schedule.get(row.id, 0)) < settings.vote_ad_slot_limit
         )
 
@@ -22682,7 +22722,7 @@ class CoreRepository:
         if draft is None:
             return ()
         return self._random_event_ad_slot_schedules(
-            session, draft.group_chat_id, now, self.get_random_event_settings()
+            session, None, now, self.get_random_event_settings()
         )
 
     def _random_event_ad_slot_schedule(
@@ -22692,7 +22732,7 @@ class CoreRepository:
         if schedule is None:
             return None
         schedules = self._random_event_ad_slot_schedules(
-            session, schedule.group_chat_id, now, self.get_random_event_settings()
+            session, None, now, self.get_random_event_settings()
         )
         return next((item for item in schedules if item.schedule_id == schedule_id), None)
 
@@ -22889,11 +22929,13 @@ class CoreRepository:
         selected = next(
             (work for work in works if work.scene_id == scene.id), None
         )
+        group = session.get(GroupChatRecord, schedule.group_chat_id)
         return RandomEventAdSlotDraftResult(
             "consumed", works=works, selected=selected,
             selected_schedule=RandomEventAdSlotSchedule(
                 0, schedule.id, schedule.scheduled_at, len(reservations) + 1,
                 settings.vote_ad_slot_limit,
+                "" if group is None else group.name,
             ),
         )
 
@@ -26971,6 +27013,8 @@ class CoreRepository:
             record.effect_type = definition.effect_type
             record.price = definition.price
             record.description = definition.description
+            if definition.reward_range is not None:
+                record.scratch_reward_min, record.scratch_reward_max = definition.reward_range
             record.minimum_rank_order = definition.minimum_rank_order
             record.unlimited_stock = True
         session.flush()
@@ -27256,8 +27300,10 @@ class CoreRepository:
                         "target_display_name": target.display_name,
                     }
                 elif item.effect_type == "scratch":
-                    definition = item_by_key(item.system_key or "")
-                    low, high = definition.reward_range or (0, 0)
+                    low = item.scratch_reward_min
+                    high = item.scratch_reward_max
+                    if low is None or high is None:
+                        raise RuntimeError("刮刮卡奖励区间未配置")
                     reward = low + self._shop_random.randrange(high - low + 1)
                     self._apply_balance_change(user, reward, "shop_scratch", now)
                     result = {"reward": reward}
@@ -28508,6 +28554,8 @@ class CoreRepository:
         minimum_rank_order: int | None,
         unlimited_stock: bool,
         stock: int,
+        scratch_reward_min: int | None = None,
+        scratch_reward_max: int | None = None,
     ) -> ItemRecord:
         description = description.strip()
         if not 1 <= len(description) <= 200:
@@ -28531,6 +28579,19 @@ class CoreRepository:
                 item.minimum_rank_order = minimum_rank_order
                 item.unlimited_stock = unlimited_stock
                 item.stock = stock
+                if item.effect_type == "scratch":
+                    if scratch_reward_min is None and scratch_reward_max is None:
+                        pass
+                    elif (
+                        scratch_reward_min is None
+                        or scratch_reward_max is None
+                        or scratch_reward_min < 0
+                        or scratch_reward_max < scratch_reward_min
+                    ):
+                        raise ValueError("刮刮卡奖励区间无效")
+                    else:
+                        item.scratch_reward_min = scratch_reward_min
+                        item.scratch_reward_max = scratch_reward_max
                 session.flush()
                 return item
 

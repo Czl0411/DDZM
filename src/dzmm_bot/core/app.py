@@ -1387,6 +1387,8 @@ def create_app(
                 minimum_rank_order=request.minimum_rank_order,
                 unlimited_stock=request.unlimited_stock,
                 stock=request.stock,
+                scratch_reward_min=request.scratch_reward_min,
+                scratch_reward_max=request.scratch_reward_max,
             )
         except LookupError as error:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(error))
@@ -3487,6 +3489,8 @@ def _item_response(record) -> ItemResponse:
         unlimited_stock=record.unlimited_stock,
         system_key=record.system_key,
         effect_type=record.effect_type,
+        scratch_reward_min=record.scratch_reward_min,
+        scratch_reward_max=record.scratch_reward_max,
         minimum_rank_order=record.minimum_rank_order,
         enabled=record.enabled,
     )

@@ -1862,6 +1862,29 @@ def test_manual_login_api_allows_one_operator_and_any_cancellation(client, heade
     assert client.get("/internal/admin/login/lease", headers=headers).json() is None
 
 
+def test_game_management_updates_scratch_card_reward_range(client, headers):
+    items = client.get("/internal/game/items", headers=headers).json()["items"]
+    scratch = next(item for item in items if item["system_key"] == "scratch_a")
+
+    response = client.patch(
+        f"/internal/game/items/{scratch['public_number']}",
+        headers=headers,
+        json={
+            "description": "随机获得 7–7 摸鱼币",
+            "enabled": True,
+            "minimum_rank_order": None,
+            "unlimited_stock": True,
+            "stock": 0,
+            "scratch_reward_min": 7,
+            "scratch_reward_max": 7,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["scratch_reward_min"] == 7
+    assert response.json()["scratch_reward_max"] == 7
+
+
 def test_game_management_lists_commands_employees_and_shop_items(client, headers):
     commands = client.get("/internal/game/commands", headers=headers)
     disabled = client.patch(

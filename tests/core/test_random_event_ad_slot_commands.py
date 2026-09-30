@@ -108,12 +108,16 @@ def _approve(session, scene, *, platform_id="author", number=1):
     session.flush()
 
 
-def _schedule(session, repository, *, when, scene_name=None):
+def _schedule(session, repository, *, when, scene_name=None, group_chat_id=None):
     from dzmm_bot.core.schema import RandomEventScheduleRecord
 
     session.add(
         RandomEventScheduleRecord(
-            group_chat_id=repository.list_group_chats()[0].id,
+            group_chat_id=(
+                repository.list_group_chats()[0].id
+                if group_chat_id is None
+                else group_chat_id
+            ),
             event_date=when.date(),
             scheduled_at=when,
             status="pending",
@@ -310,6 +314,114 @@ def test_use_does_not_require_a_direct_room(harness):
 
     assert "请选择要锁定优选投稿位的场次" in _reply(factory)
     assert _card_count(repository) == 1
+
+
+def test_use_in_another_group_lists_companywide_slots_while_an_event_is_active(
+    harness,
+):
+    """任一群的活动都不能把优选卡限制在发指令的群。"""
+    from dzmm_bot.core.schema import RandomEventRecord, RandomEventScheduleRecord
+
+    service, repository, factory, primary = harness
+    other = repository.create_group_chat(
+        "第二群",
+        "https://www.aikda.com/chat?c=ad-slot-other",
+        True,
+        True,
+        True,
+        True,
+        NOW,
+    )
+    with factory.begin() as session:
+        scene = _add_scenes(session, ("作者作品",))[0]
+        _approve(session, scene)
+        active_schedule = RandomEventScheduleRecord(
+            group_chat_id=primary.id,
+            event_date=NOW.date(),
+            scheduled_at=NOW - timedelta(minutes=20),
+            status="in_progress",
+            scene_name="进行中的事件",
+        )
+        session.add(active_schedule)
+        session.flush()
+        session.add(
+            RandomEventRecord(
+                group_chat_id=primary.id,
+                schedule_id=active_schedule.id,
+                group_key=str(primary.id),
+                state="in_progress",
+                scene_name="进行中的事件",
+                event_name="进行中",
+                signup_text="报名",
+                formal_opening_text="开场",
+                reward=10,
+                target_rounds=10,
+                signup_deadline=NOW,
+                started_at=NOW - timedelta(minutes=20),
+            )
+        )
+        _schedule(session, repository, when=TARGET_AT, group_chat_id=primary.id)
+    number = _buy_cards(repository, 1)
+
+    _send(service, other, "author", f"/使用 {number}")
+
+    text = _reply(factory)
+    assert "请选择要锁定优选投稿位的场次" in text
+    assert primary.name in text
+    assert TARGET_AT.strftime("%H:%M") in text
+
+    _send(service, other, "author", "/选择 1")
+    assert f"{TARGET_AT.strftime('%H:%M')} 场（{primary.name}）" in _reply(factory)
+    assert "作者作品" in _reply(factory)
+
+    _send(service, other, "author", "/选择 1")
+    _send(service, other, "author", "/确认优选投稿")
+
+    assert primary.name in _reply(factory)
+    assert _card_count(repository) == 0
+
+
+def test_time_table_from_any_group_lists_the_companys_full_day(harness):
+    """时间表是公司级全天视图，不得复用只查可售优选位的过滤条件。"""
+    from dzmm_bot.core.schema import RandomEventScheduleRecord
+
+    service, repository, factory, primary = harness
+    other = repository.create_group_chat(
+        "第二群",
+        "https://www.aikda.com/chat?c=timetable-other",
+        True,
+        True,
+        True,
+        True,
+        NOW,
+    )
+    morning = NOW.replace(hour=10, minute=0)
+    evening = NOW.replace(hour=20, minute=0)
+    with factory.begin() as session:
+        session.add_all(
+            [
+                RandomEventScheduleRecord(
+                    group_chat_id=primary.id,
+                    event_date=NOW.date(),
+                    scheduled_at=morning,
+                    status="ended",
+                    scene_name="上午事件",
+                ),
+                RandomEventScheduleRecord(
+                    group_chat_id=other.id,
+                    event_date=NOW.date(),
+                    scheduled_at=evening,
+                    status="pending",
+                ),
+            ]
+        )
+
+    _send(service, other, "author", "/随机事件时间表")
+
+    text = _reply(factory)
+    assert "【随机事件时间表】" in text
+    assert "10:00｜主群聊｜已结束" in text
+    assert "20:00｜第二群｜待开始" in text
 
 
 def test_use_rejects_a_work_that_is_already_a_candidate(harness):

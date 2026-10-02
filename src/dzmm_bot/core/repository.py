@@ -12875,6 +12875,23 @@ class CoreRepository:
         )
 
     @staticmethod
+    def _liar_dice_next_active_seat(
+        players: list[tuple[LiarDicePlayerRecord, UserRecord]], after_seat: int
+    ) -> int | None:
+        """座位保持稳定（不清位）：从 after_seat 的下一位起找首个在场座位，可回绕。"""
+        seats = sorted(
+            player.seat_number
+            for player, _ in players
+            if player.seat_number is not None
+        )
+        if not seats:
+            return None
+        for seat in seats:
+            if seat > after_seat:
+                return seat
+        return seats[0]
+
+    @staticmethod
     def _finish_liar_dice_locked(
         game: LiarDiceGameRecord, state: str, reason: str, now: datetime
     ) -> None:
@@ -12936,15 +12953,13 @@ class CoreRepository:
         session: Session,
         game: LiarDiceGameRecord,
         now: datetime,
+        start_seat: int = 1,
     ) -> None:
-        """重摇骰子、开新回合并私聊发骰（dealing 状态，发齐后进 calling）。"""
+        """重摇骰子并私聊发新骰（dealing 状态，发齐后进 calling）。
+
+        座位保持稳定：不清位、不重排，本轮首叫从 start_seat 开始（连续轮转）。
+        """
         players = self._liar_dice_players(session, game.id, ("active",))
-        for player, _ in players:
-            player.seat_number = None
-        session.flush()
-        for seat, (player, _) in enumerate(players, start=1):
-            player.seat_number = seat
-        session.flush()
         wild = roll_wild(self._liar_dice_random)
         round_number = game.round_number + 1
         round_record = LiarDiceRoundRecord(
@@ -12960,7 +12975,7 @@ class CoreRepository:
         game.round_number = round_number
         game.current_call = None
         game.last_caller_user_id = None
-        game.current_seat = 1
+        game.current_seat = start_seat
         game.state = "dealing"
         game.turn_deadline = None
         for player, user in players:
@@ -13009,9 +13024,17 @@ class CoreRepository:
         if round_record is None:
             raise RuntimeError("大话骰子回合不存在")
         game.state = "calling"
-        game.current_seat = 1
         game.turn_deadline = now + timedelta(seconds=LIAR_DICE_TURN_SECONDS)
-        first = players[0][1].display_name
+        first = next(
+            (
+                user.display_name
+                for player, user in players
+                if player.seat_number == game.current_seat
+            ),
+            None,
+        )
+        if first is None:
+            raise RuntimeError("大话骰子首叫玩家不存在")
         wild = round_record.wild_face
         lines = [f"【大话骰子】第 {game.round_number} 轮开始（{len(players)} 人）"]
         lines.append(f"🃏 本轮万能点：{dice_str([wild])}（可顶任何点数）")
@@ -13020,7 +13043,7 @@ class CoreRepository:
             for player, user in players
         )
         lines.append(
-            f"由 1号 {first} 首叫：最少 {len(players)} 个，直接发送“N个X”；"
+            f"由 {game.current_seat}号 {first} 首叫：最少 {len(players)} 个，直接发送“N个X”；"
             "质疑则发 /开骰。超时将自动跳过。"
         )
         self.enqueue_system_outbound(
@@ -13224,7 +13247,7 @@ class CoreRepository:
                 game.signup_deadline = None
                 game.started_at = now
                 game.timeout_streak = 0
-                self._liar_dice_deal_round(session, game, now)
+                self._liar_dice_deal_round(session, game, now, start_seat=1)
                 return self._liar_dice_result_locked(session, game, "dealing")
 
     def liar_dice_call(
@@ -13293,7 +13316,9 @@ class CoreRepository:
                 round_record.last_caller_user_id = actor.id
                 round_record.call_count = call[0]
                 round_record.call_face = call[1]
-                next_seat = caller_seat % len(players) + 1
+                next_seat = self._liar_dice_next_active_seat(players, caller_seat)
+                if next_seat is None:
+                    next_seat = caller_seat
                 game.current_seat = next_seat
                 game.turn_deadline = now + timedelta(seconds=LIAR_DICE_TURN_SECONDS)
                 game.timeout_streak = 0
@@ -13425,14 +13450,21 @@ class CoreRepository:
                         session, game, "not_participant"
                     )
                 self._apply_liar_dice_queued_leaves(session, game.id)
+                self._promote_liar_dice_joiners_locked(session, game.id)
                 players = self._liar_dice_players(session, game.id, ("active",))
                 if len(players) < 2:
                     self._finish_liar_dice_locked(
                         game, "completed", "not_enough_players", now
                     )
                     return self._liar_dice_result_locked(session, game, "completed")
+                # 连续轮转：从开牌者（current_seat）的下一位开始新一轮
+                start_seat = self._liar_dice_next_active_seat(
+                    players, game.current_seat
+                )
+                if start_seat is None:
+                    start_seat = 1
                 game.timeout_streak = 0
-                self._liar_dice_deal_round(session, game, now)
+                self._liar_dice_deal_round(session, game, now, start_seat)
                 return self._liar_dice_result_locked(session, game, "dealing")
 
     def liar_dice_end(
@@ -13667,6 +13699,32 @@ class CoreRepository:
             player.state = "left"
             player.seat_number = None
 
+    def _promote_liar_dice_joiners_locked(
+        self, session: Session, game_id: UUID
+    ) -> None:
+        """对局中/轮间加入的玩家在下一轮生效：排到现有座位的末尾。"""
+        joiners = session.scalars(
+            select(LiarDicePlayerRecord)
+            .where(
+                LiarDicePlayerRecord.game_id == game_id,
+                LiarDicePlayerRecord.state == "signup",
+            )
+            .order_by(LiarDicePlayerRecord.joined_at)
+        )
+        max_seat = session.scalar(
+            select(func.max(LiarDicePlayerRecord.seat_number)).where(
+                LiarDicePlayerRecord.game_id == game_id,
+                LiarDicePlayerRecord.state == "active",
+            )
+        )
+        next_seat = int(max_seat or 0)
+        for player in joiners:
+            next_seat += 1
+            player.state = "active"
+            player.seat_number = next_seat
+            player.left_at = None
+        session.flush()
+
     def run_liar_dice_jobs(
         self, now: datetime, group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID
     ) -> list[str]:
@@ -13699,23 +13757,28 @@ class CoreRepository:
                     game.current_seat = 1
                     return messages
                 current_user = session.get(UserRecord, current.user_id)
-                ordered = sorted(players, key=lambda row: row[0].seat_number or 0)
-                index = next(
-                    (
-                        position
-                        for position, (player, _) in enumerate(ordered)
-                        if player.user_id == current.user_id
-                    ),
-                    0,
+                old_seat = current.seat_number or 1
+                others = sorted(
+                    player.seat_number
+                    for player, _ in players
+                    if player.user_id != current.user_id
+                    and player.seat_number is not None
                 )
-                rotated = ordered[:index] + ordered[index + 1 :] + [ordered[index]]
-                for player, _ in rotated:
-                    player.seat_number = None
-                session.flush()
-                for seat, (player, _) in enumerate(rotated, start=1):
-                    player.seat_number = seat
-                if index == len(players) - 1:
-                    game.current_seat = 1
+                tail = max(
+                    (
+                        player.seat_number
+                        for player, _ in players
+                        if player.seat_number is not None
+                    ),
+                    default=old_seat,
+                ) + 1
+                # 超时者移到队尾（分配新的大座位号），其余人保持原位
+                current.seat_number = tail
+                next_seat = next(
+                    (seat for seat in others if seat > old_seat),
+                    others[0] if others else old_seat,
+                )
+                game.current_seat = next_seat
                 game.timeout_streak = (game.timeout_streak or 0) + 1
                 if game.timeout_streak >= len(players):
                     round_record = self._liar_dice_current_round(session, game.id)
@@ -13730,7 +13793,7 @@ class CoreRepository:
                     return messages
                 game.turn_deadline = now + timedelta(seconds=LIAR_DICE_TURN_SECONDS)
                 next_player = next(
-                    (p for p, _ in rotated if p.seat_number == game.current_seat),
+                    (p for p, _ in players if p.seat_number == game.current_seat),
                     None,
                 )
                 next_user = (

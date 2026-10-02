@@ -90,20 +90,16 @@ def _flush_all_outbound(repository, now):
     raise AssertionError("outbound 队列迟迟不清空")
 
 
-def _seat_platform_id(factory, seat):
+def _seat_map(factory):
     from dzmm_bot.core.schema import LiarDicePlayerRecord, UserRecord
 
     with factory() as session:
-        row = session.execute(
+        rows = session.execute(
             select(LiarDicePlayerRecord, UserRecord)
             .join(UserRecord, UserRecord.id == LiarDicePlayerRecord.user_id)
-            .where(
-                LiarDicePlayerRecord.state == "active",
-                LiarDicePlayerRecord.seat_number == seat,
-            )
-        ).first()
-        assert row is not None, f"seat {seat} 不存在"
-        return row[1].platform_id
+            .where(LiarDicePlayerRecord.state == "active")
+        ).all()
+        return {player.seat_number: user.platform_id for player, user in rows}
 
 
 def _dice_game(repository):
@@ -188,51 +184,61 @@ def test_liar_dice_full_flow():
     game = _dice_game(repository)
     assert game.state == "calling"
     assert game.round_number == 1
+    assert game.current_seat == 1
 
     hands = _hand_texts(factory)
     assert len(hands) == 3
     assert all("你的骰子" in text for text in hands)
 
-    first = _seat_platform_id(factory, 1)
-    _receive(service, "m6", first, "3个3", now)
-    assert "叫 3个3" in _latest_reply(factory)
+    seats = _seat_map(factory)
+    seat1, seat2, seat3 = seats[1], seats[2], seats[3]
 
-    second = _seat_platform_id(factory, 2)
-    _receive(service, "m7", second, "/开骰", now)
+    # 第 1 轮：1号叫数；3号退出（排队，本轮仍打）；2号开牌
+    _receive(service, "m6", seat1, "3个3", now)
+    assert "叫 3个3" in _latest_reply(factory)
+    _receive(service, "m7", seat3, "/退出", now)
+    assert "本轮结束后生效" in _latest_reply(factory)
+    _receive(service, "m8", seat2, "/开骰", now)
     assert "全场骰子" in _latest_reply(factory)
     assert "获得发令权" in _latest_reply(factory)
-    game = _dice_game(repository)
-    assert game.state == "round_end"
+    assert _dice_game(repository).state == "round_end"
 
-    _receive(service, "m8", "user-0", "/大话骰子数据", now)
+    _receive(service, "m9", "user-0", "/大话骰子数据", now)
     assert "大话骰子数据" in _latest_reply(factory)
 
-    _receive(service, "m9", "user-0", "/继续", now)
+    # 第 2 轮：连续轮转——开牌者是 2号，下家本应是 3号，但 3号已退出，回绕到 1号
+    _receive(service, "m10", "user-0", "/继续", now)
     assert "第 2 轮" in _latest_reply(factory)
     _flush_all_outbound(repository, now)
     assert _dice_game(repository).state == "calling"
+    assert _dice_game(repository).current_seat == 1
+    assert len(_hand_texts(factory, since_round=2)) == 2
 
-    # 中途退出：本轮仍参与，下一轮生效
-    _receive(service, "m10", "user-2", "/退出", now)
-    assert "本轮结束后生效" in _latest_reply(factory)
-    assert _dice_game(repository).state == "calling"
-    _receive(service, "m10b", first, "3个2", now)
-    _receive(service, "m10c", second, "/开骰", now)
+    _receive(service, "m11", seat1, "2个1", now)
+    assert "叫 2个1" in _latest_reply(factory)
+    _receive(service, "m12", seat2, "/开骰", now)
     assert _dice_game(repository).state == "round_end"
 
-    _receive(service, "m11", "user-0", "/继续", now)
+    # 已退出者重新加入：下一轮排到末尾（座位 3），并成为轮转起点
+    _receive(service, "m13", seat3, "/加入", now)
+    assert "下一轮开骰时参战" in _latest_reply(factory)
+    _receive(service, "m14", "user-0", "/继续", now)
     assert "第 3 轮" in _latest_reply(factory)
     _flush_all_outbound(repository, now)
-    assert _dice_game(repository).state == "calling"
-    assert len(_hand_texts(factory, since_round=3)) == 2
+    game = _dice_game(repository)
+    assert game.state == "calling"
+    assert game.current_seat == 3
+    assert len(_hand_texts(factory, since_round=3)) == 3
 
-    _receive(service, "m12", "user-1", "/退出", now)
-    third_first = _seat_platform_id(factory, 1)
-    _receive(service, "m12b", third_first, "2个1", now)
-    third_second = _seat_platform_id(factory, 2)
-    _receive(service, "m12c", third_second, "/开骰", now)
+    _receive(service, "m15", seat3, "3个1", now)
+    assert "叫 3个1" in _latest_reply(factory)
+    _receive(service, "m16", seat1, "/开骰", now)
+    assert _dice_game(repository).state == "round_end"
 
-    _receive(service, "m13", "user-0", "/继续", now)
+    # 只剩 1 人时退出 → 直接散局
+    _receive(service, "m17", seat1, "/退出", now)
+    assert "你已退出本局大话骰子" in _latest_reply(factory)
+    _receive(service, "m18", seat2, "/退出", now)
     assert "不足 2 人" in _latest_reply(factory)
     from dzmm_bot.core.schema import LiarDiceGameRecord
 

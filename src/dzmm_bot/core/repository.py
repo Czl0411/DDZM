@@ -1212,6 +1212,16 @@ _DEPARTMENT_ALLOWANCE_RULES = {
     "dept_chat": ("chat", 1),
     "dept_referral": ("referral", 1),
 }
+# kind → 到账通知里的动作词
+_DEPARTMENT_ALLOWANCE_LABELS = {
+    "dept_checkin": "打卡奖励",
+    "dept_event": "演出奖励",
+    "dept_game_host": "开局奖励",
+    "dept_game_play": "参与奖励",
+    "dept_submission": "投稿奖励",
+    "dept_chat": "水群掉落",
+    "dept_referral": "拉新奖励",
+}
 _DEPARTMENT_GAME_PLAY_STEP = 5
 _DEPARTMENT_ALLOWANCE_BINDINGS = frozenset(
     {"checkin", "event", "game", "submission", "chat", "referral"}
@@ -7868,7 +7878,11 @@ class CoreRepository:
             )
         for _participant, performance_user in participant_rows:
             self._grant_department_allowance(
-                session, performance_user, "dept_event", now
+                session,
+                performance_user,
+                "dept_event",
+                now,
+                group_chat_id=reservation.group_chat_id,
             )
 
     @staticmethod
@@ -10395,7 +10409,11 @@ class CoreRepository:
                 texas_creator = session.get(UserRecord, game.creator_user_id)
                 if texas_creator is not None:
                     self._grant_department_allowance(
-                        session, texas_creator, "dept_game_host", now
+                        session,
+                        texas_creator,
+                        "dept_game_host",
+                        now,
+                        group_chat_id=game.group_chat_id,
                     )
                 return TexasHoldemResult(
                     "dealing", game.id, len(rows), tuple(outbound_ids)
@@ -10684,7 +10702,10 @@ class CoreRepository:
         game.finish_reason = reason
         game.finished_at = now
         self._bump_department_game_plays(
-            session, [player.user_id for player, _ in rows], now
+            session,
+            [player.user_id for player, _ in rows],
+            now,
+            group_chat_id=game.group_chat_id,
         )
         if showdown:
             details = []
@@ -12478,7 +12499,10 @@ class CoreRepository:
                 game.signup_deadline = None
                 game.started_at = now
                 self._start_king_game_round_locked(session, game, now, settings)
-                self._grant_department_allowance(session, actor, "dept_game_host", now)
+                self._grant_department_allowance(
+                    session, actor, "dept_game_host", now,
+                    group_chat_id=game.group_chat_id,
+                )
                 return self._king_game_result_locked(session, game, "started")
 
     def reveal_king_game_numbers(
@@ -12774,6 +12798,7 @@ class CoreRepository:
                 session,
                 [player.user_id for player, _ in self._active_king_game_players(session, game.id)],
                 now,
+                group_chat_id=game.group_chat_id,
             )
 
     def _king_game_statistics_locked(
@@ -12962,6 +12987,7 @@ class CoreRepository:
                     for player, _ in self._liar_dice_players(session, game.id)
                 ],
                 now,
+                group_chat_id=game.group_chat_id,
             )
 
     @classmethod
@@ -13310,7 +13336,10 @@ class CoreRepository:
                 game.started_at = now
                 game.timeout_streak = 0
                 self._liar_dice_deal_round(session, game, now, start_seat=1)
-                self._grant_department_allowance(session, actor, "dept_game_host", now)
+                self._grant_department_allowance(
+                    session, actor, "dept_game_host", now,
+                    group_chat_id=game.group_chat_id,
+                )
                 return self._liar_dice_result_locked(session, game, "dealing")
 
     def liar_dice_call(
@@ -14947,6 +14976,7 @@ class CoreRepository:
                     )
                 ],
                 now,
+                group_chat_id=group_chat_id,
             )
         for player in session.scalars(
             select(NeverHaveIEverPlayerRecord).where(
@@ -15029,7 +15059,10 @@ class CoreRepository:
                 )
                 session.add(round_record)
                 session.flush()
-                self._grant_department_allowance(session, user, "dept_game_host", now)
+                self._grant_department_allowance(
+                    session, user, "dept_game_host", now,
+                    group_chat_id=group_chat_id,
+                )
                 return NeverHaveIEverResult(
                     "started",
                     game_id=game.id,
@@ -15306,7 +15339,11 @@ class CoreRepository:
                 bomb_host = session.get(UserRecord, actor.user_id)
                 if bomb_host is not None:
                     self._grant_department_allowance(
-                        session, bomb_host, "dept_game_host", now
+                        session,
+                        bomb_host,
+                        "dept_game_host",
+                        now,
+                        group_chat_id=game.group_chat_id,
                     )
                 return self._start_number_bomb_round(session, game, 1, 1, now)
 
@@ -16428,6 +16465,7 @@ class CoreRepository:
                     )
                 ],
                 now,
+                group_chat_id=game.group_chat_id,
             )
         collecting_round = session.scalar(
             select(NumberBombRoundRecord).where(
@@ -17266,6 +17304,7 @@ class CoreRepository:
                         )
                     ],
                     now,
+                    group_chat_id=session_record.group_chat_id,
                 )
                 return UndercoverGameResult("ended", session_id=session_record.id, game_id=game.id)
 
@@ -17688,7 +17727,11 @@ class CoreRepository:
             undercover_initiator = session.get(UserRecord, members[0].user_id)
             if undercover_initiator is not None:
                 self._grant_department_allowance(
-                    session, undercover_initiator, "dept_game_host", now
+                    session,
+                    undercover_initiator,
+                    "dept_game_host",
+                    now,
+                    group_chat_id=session_record.group_chat_id,
                 )
         return UndercoverGameResult(
             "dealing",
@@ -18058,6 +18101,7 @@ class CoreRepository:
                 )
             ],
             now,
+            group_chat_id=session_record.group_chat_id,
         )
         next_round_exit_labels = self._apply_undercover_next_round_exits(
             session, session_record.id, now
@@ -21477,7 +21521,10 @@ class CoreRepository:
         game.settlement_complete = True
         game.finished_at = now
         self._bump_department_game_plays(
-            session, [player.user_id for player, _ in rows], now
+            session,
+            [player.user_id for player, _ in rows],
+            now,
+            group_chat_id=game.group_chat_id,
         )
         return BlameGameResult(
             "settled",
@@ -21705,7 +21752,13 @@ class CoreRepository:
         game.started_at = now
         blame_host = session.get(UserRecord, game.creator_user_id)
         if blame_host is not None:
-            self._grant_department_allowance(session, blame_host, "dept_game_host", now)
+            self._grant_department_allowance(
+                session,
+                blame_host,
+                "dept_game_host",
+                now,
+                group_chat_id=game.group_chat_id,
+            )
         return BlameGameResult(
             "started",
             game_id=game.id,
@@ -23791,7 +23844,11 @@ class CoreRepository:
         self._finish_random_event(session, event, "ended", now)
         for _participant, event_user in participant_rows:
             self._grant_department_allowance(
-                session, event_user, "dept_event", now
+                session,
+                event_user,
+                "dept_event",
+                now,
+                group_chat_id=event.group_chat_id,
             )
         self.enqueue_system_outbound(
             self._render_reply_template(
@@ -24469,8 +24526,16 @@ class CoreRepository:
         user: UserRecord,
         kind: str,
         now: datetime,
+        *,
+        group_chat_id: UUID | None = None,
+        detail: str | None = None,
     ) -> int:
-        """部门津贴统一发放入口：按后台绑定匹配 + 每人每日封顶，任何不满足都静默返回 0。"""
+        """部门津贴统一发放入口：按后台绑定匹配 + 每人每日封顶，任何不满足都静默返回 0。
+
+        发放成功（granted>0）时发到账通知：哪个群获得发哪个群（group_chat_id），
+        私聊指令场景（打卡/投稿）没有群则发当事人私聊。本次发放后达到每日
+        封顶时文案附加封顶提示；封顶后触发实发为 0，完全静默。
+        """
         rule = _DEPARTMENT_ALLOWANCE_RULES.get(kind)
         if rule is None:
             return 0
@@ -24509,7 +24574,61 @@ class CoreRepository:
             )
         )
         self._apply_balance_change(user, granted, kind, now)
+        self._notify_department_allowance(
+            session,
+            user,
+            department,
+            kind,
+            granted,
+            total + granted >= DEPARTMENT_ALLOWANCE_DAILY_CAP,
+            group_chat_id,
+            detail,
+        )
         return granted
+
+    def _notify_department_allowance(
+        self,
+        session: Session,
+        user: UserRecord,
+        department: DepartmentRecord,
+        kind: str,
+        granted: int,
+        capped: bool,
+        group_chat_id: UUID | None,
+        detail: str | None,
+    ) -> None:
+        """津贴到账通知：员工名用系统注册名，金额为实发数。"""
+        label = _DEPARTMENT_ALLOWANCE_LABELS.get(kind)
+        if label is None:
+            return
+        text = (
+            f"【部门津贴】{user.display_name}（{department.name}）"
+            f"{label} +{granted} 摸鱼币"
+        )
+        if detail:
+            text += f"（{detail}）"
+        if capped:
+            text += f"（今日津贴已满 {DEPARTMENT_ALLOWANCE_DAILY_CAP} 币）"
+        if group_chat_id is not None:
+            destination = self.group_chat_destination(group_chat_id)
+            if destination is not None:
+                self.enqueue_system_outbound(
+                    text,
+                    group_chat_id=group_chat_id,
+                    destination_chatroom_id=destination,
+                )
+                return
+        direct_chatroom_id = session.scalar(
+            select(DirectChatRecord.chatroom_id).where(
+                DirectChatRecord.platform_user_id == user.platform_id
+            )
+        )
+        if direct_chatroom_id is not None:
+            self.enqueue_system_outbound(
+                text,
+                destination_chatroom_id=direct_chatroom_id,
+                delivery_kind="direct",
+            )
 
     def department_allowance_summary(self, platform_id: str, now: datetime) -> int | None:
         """今日部门津贴合计；未绑定津贴部门的员工返回 None（/我 不显示该行）。"""
@@ -24543,7 +24662,11 @@ class CoreRepository:
             return int(total or 0)
 
     def _bump_department_game_plays(
-        self, session: Session, user_ids: Sequence[UUID], now: datetime
+        self,
+        session: Session,
+        user_ids: Sequence[UUID],
+        now: datetime,
+        group_chat_id: UUID | None = None,
     ) -> None:
         """对局完成时给参与者计 1 局；每满 _DEPARTMENT_GAME_PLAY_STEP 局发 1 币。"""
         allow_date = now.astimezone(BEIJING).date()
@@ -24574,12 +24697,24 @@ class CoreRepository:
                 user = session.get(UserRecord, user_id)
                 if user is not None:
                     self._grant_department_allowance(
-                        session, user, "dept_game_play", now
+                        session,
+                        user,
+                        "dept_game_play",
+                        now,
+                        group_chat_id=group_chat_id,
                     )
 
-    def grant_chat_drop_allowance(self, platform_id: str, now: datetime) -> None:
-        """水群掉落（service 层已完成概率与冷却判定）：静默入账。"""
+    def grant_chat_drop_allowance(
+        self, platform_id: str, now: datetime, *, chatroom_id: str | None = None
+    ) -> None:
+        """水群掉落（service 层已完成概率与冷却判定）：入账并发到账通知。"""
         now = now.astimezone(BEIJING)
+        group = (
+            self.resolve_enabled_group_chat(chatroom_id)
+            if chatroom_id is not None
+            else None
+        )
+        group_chat_id = None if group is None else group.id
         with self.transaction():
             with self._session() as session:
                 user = session.scalar(
@@ -24589,7 +24724,9 @@ class CoreRepository:
                 )
                 if user is None:
                     return
-                self._grant_department_allowance(session, user, "dept_chat", now)
+                self._grant_department_allowance(
+                    session, user, "dept_chat", now, group_chat_id=group_chat_id
+                )
 
     def roll_chat_drop(self) -> bool:
         return self._chat_drop_random.random() < 0.1
@@ -24646,8 +24783,18 @@ class CoreRepository:
                     )
                 granted = 0
                 if inviter_user is not None:
+                    group = (
+                        self.resolve_enabled_group_chat(message.chatroom_id)
+                        if message.chatroom_id
+                        else None
+                    )
                     granted = self._grant_department_allowance(
-                        session, inviter_user, "dept_referral", now
+                        session,
+                        inviter_user,
+                        "dept_referral",
+                        now,
+                        group_chat_id=None if group is None else group.id,
+                        detail=f"新人：{newcomer_name}",
                     )
                 session.add(
                     ReferralRecord(

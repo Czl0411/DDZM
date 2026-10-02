@@ -355,7 +355,9 @@ class CoreService:
                 and self._chat_drop_due(message)
             ):
                 self._repository.grant_chat_drop_allowance(
-                    message.sender_platform_id, message.received_at
+                    message.sender_platform_id,
+                    message.received_at,
+                    chatroom_id=group_context.chatroom_id,
                 )
             reply = self._command_handler.handle(message)
             if isinstance(reply, list):

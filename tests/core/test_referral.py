@@ -72,6 +72,13 @@ def _referral_rows(factory):
         ]
 
 
+def _outbound_texts(factory):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    with factory() as session:
+        return list(session.scalars(select(OutboundRecord.text)))
+
+
 def _bind_department(factory, name, allowance_kind):
     from dzmm_bot.core.schema import DepartmentRecord
 
@@ -203,6 +210,11 @@ def test_referral_grants_allowance_to_bound_department():
     assert rows[0]["amount"] == 1
     assert rows[0]["newcomer_id"] == "newcomer-1"
     assert rows[0]["inviter_id"] == "user-0"
+    # 到账通知发到获得津贴的群，员工名用注册名，新人名附注
+    assert any(
+        "【部门津贴】甲（次元外联部）拉新奖励 +1 摸鱼币（新人：新人乙）" in t
+        for t in _outbound_texts(factory)
+    )
 
 
 def test_referral_newcomer_only_attributed_once():

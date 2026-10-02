@@ -107,6 +107,13 @@ def _allowance_total(factory, platform_id, now):
         return sum(rows)
 
 
+def _outbound_texts(factory):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    with factory() as session:
+        return list(session.scalars(select(OutboundRecord.text)))
+
+
 def test_checkin_allowance_and_daily_cap():
     service, repository, factory = _service()
     now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)
@@ -271,3 +278,36 @@ def test_game_host_allowance_on_begin_only():
     _receive(service, "k3", "user-2", "/加入", now)
     _receive(service, "k4", "user-0", "/开始", now)
     assert _allowance_total(factory, "user-0", now) == 1  # 开局 +1
+    # 开局到账通知：员工名用系统注册名
+    assert any("甲（小游戏娱乐部）开局奖励 +1" in t for t in _outbound_texts(factory))
+
+
+def test_chat_drop_notification_with_cap_note():
+    service, repository, factory = _service(chat_drop_random=_AlwaysHit())
+    now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _receive(service, "j0", "user-0", "/入职 甲", now)
+    _receive(service, "j1", "user-1", "/入职 乙", now)
+    department = repository.create_department("摸鱼吃瓜部", "", allowance_kind="chat")
+    _assign_department(factory, "user-0", department.id)
+
+    _receive(service, "m1", "user-0", "今天好摸鱼", now)
+    assert any(
+        "【部门津贴】甲（摸鱼吃瓜部）水群掉落 +1 摸鱼币" in t
+        for t in _outbound_texts(factory)
+    )
+
+    # 当日已领 1（m1）+ 预置 3 = 4 币，本次实发 1 → 恰好封顶，文案带封顶标记
+    _add_allowance(factory, "user-0", 3, now)
+    _receive(service, "m2", "user-0", "继续摸鱼", now + timedelta(minutes=11))
+    assert any(
+        "水群掉落 +1 摸鱼币（今日津贴已满 5 币）" in t
+        for t in _outbound_texts(factory)
+    )
+
+    # 已封顶后再触发：实发 0，完全静默
+    texts_before = len(_outbound_texts(factory))
+    _receive(service, "m3", "user-0", "还在摸鱼", now + timedelta(minutes=22))
+    assert len(_outbound_texts(factory)) == texts_before

@@ -677,7 +677,11 @@ def create_app(
             if_match,
             lambda: _relay_core(
                 lambda: core.create_department(
-                    {"name": request["name"], "description": request.get("description", "")}
+                    {
+                        "name": request["name"],
+                        "description": request.get("description", ""),
+                        "allowance_kind": request.get("allowance_kind"),
+                    }
                 )
             ),
             scope="departments",
@@ -692,7 +696,7 @@ def create_app(
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
         if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     ) -> JSONResponse:
-        required = ("name", "description", "enabled")
+        required = ("name", "description", "enabled", "allowance_kind")
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid department")
         return versioned_configuration_response(

@@ -2527,9 +2527,41 @@ class DepartmentRecord(Base):
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allowance_kind: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
+
+
+class DepartmentAllowanceRecord(Base):
+    __tablename__ = "department_allowances"
+    __table_args__ = (
+        Index("ix_department_allowances_user_date", "user_id", "allow_date"),
+        CheckConstraint(
+            "kind IN ('dept_checkin', 'dept_event', 'dept_game_host', "
+            "'dept_game_play', 'dept_submission', 'dept_chat')",
+            name="ck_department_allowance_kind",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    allow_date: Mapped[date] = mapped_column(Date, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class DepartmentGamePlayRecord(Base):
+    __tablename__ = "department_game_plays"
+    __table_args__ = (UniqueConstraint("user_id", "play_date"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    play_date: Mapped[date] = mapped_column(Date, nullable=False)
+    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class PromotionRequestRecord(Base):

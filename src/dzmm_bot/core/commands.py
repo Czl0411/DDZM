@@ -1908,7 +1908,7 @@ class GroupCommandHandler:
         activity = self._repository.personal_activity(platform_id, received_at)
         if activity is None:
             raise RuntimeError("employee disappeared")
-        return self._reply(
+        rendered = self._reply(
             "/我",
             "shown",
             received_at,
@@ -1926,6 +1926,12 @@ class GroupCommandHandler:
                 "{部门}": profile.department.name,
             },
         )
+        allowance = self._repository.department_allowance_summary(
+            platform_id, received_at
+        )
+        if allowance is None:
+            return rendered
+        return f"{rendered}\n今日部门津贴：{allowance}/5"
 
     def _edit_profile(self, platform_id: str, content: str, received_at) -> str:
         profile_text = content[len("/编辑档案"):].strip()
@@ -2172,12 +2178,24 @@ class GroupCommandHandler:
             return self._reply("/切换部门", "already_pending", received_at)
         return self._reply("/切换部门", "unknown_department", received_at)
 
+    _DEPARTMENT_ALLOWANCE_HINTS = {
+        "checkin": "每日打卡额外 +5 摸鱼币",
+        "event": "参与随机事件/公演并正常完成额外 +5 摸鱼币",
+        "game": "开局小游戏 +1；每参与完成 5 局 +1",
+        "submission": "随机事件投稿过审额外 +5 摸鱼币",
+        "chat": "水群有 10% 概率掉落 1 摸鱼币",
+    }
+
     def _departments(self, received_at) -> str:
-        lines = [
-            f"{department.name}：{department.description or '暂无说明'}"
-            for department in self._repository.list_departments()
-            if department.enabled and not department.is_default
-        ]
+        lines = []
+        for department in self._repository.list_departments():
+            if not department.enabled or department.is_default:
+                continue
+            hint = self._DEPARTMENT_ALLOWANCE_HINTS.get(department.allowance_kind)
+            lines.append(
+                f"{department.name}：{department.description or '暂无说明'}"
+                + (f"（部门增益：{hint}）" if hint else "")
+            )
         return self._reply(
             "/部门", "shown", received_at, {"{部门列表}": "\n".join(lines)}
         )

@@ -1154,7 +1154,9 @@ def create_app(
     ) -> DepartmentResponse:
         try:
             department = repository.create_department(
-                request.name, request.description
+                request.name,
+                request.description,
+                allowance_kind=request.allowance_kind,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -3551,6 +3553,7 @@ def _department_response(record) -> DepartmentResponse:
         description=record.description,
         is_default=record.is_default,
         enabled=record.enabled,
+        allowance_kind=record.allowance_kind,
     )
 
 

@@ -240,6 +240,8 @@ from .schema import (
     KingGamePlayerRecord,
     KingGameRoundRecord,
     KingGameSettingsRecord,
+    DepartmentAllowanceRecord,
+    DepartmentGamePlayRecord,
     LiarDiceGameRecord,
     LiarDicePlayerRecord,
     LiarDiceRoundRecord,
@@ -1197,6 +1199,21 @@ class LiarDicePlayerView:
 
 LIAR_DICE_TURN_SECONDS = 120
 LIAR_DICE_SIGNUP_MINUTES = 10
+
+DEPARTMENT_ALLOWANCE_DAILY_CAP = 5
+# kind → (departments.allowance_kind 绑定值, 单次面额)
+_DEPARTMENT_ALLOWANCE_RULES = {
+    "dept_checkin": ("checkin", 5),
+    "dept_event": ("event", 5),
+    "dept_game_host": ("game", 1),
+    "dept_game_play": ("game", 1),
+    "dept_submission": ("submission", 5),
+    "dept_chat": ("chat", 1),
+}
+_DEPARTMENT_GAME_PLAY_STEP = 5
+_DEPARTMENT_ALLOWANCE_BINDINGS = frozenset(
+    {"checkin", "event", "game", "submission", "chat"}
+)
 
 
 @dataclass(frozen=True)
@@ -2520,6 +2537,7 @@ class CoreRepository:
         shop_random: RandomSource | None = None,
         dark_market_random: RandomSource | None = None,
         liar_dice_random: RandomSource | None = None,
+        chat_drop_random: RandomSource | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._preserve_long_group_messages = preserve_long_group_messages
@@ -2529,6 +2547,7 @@ class CoreRepository:
         self._shop_random = shop_random or SystemRandom()
         self._dark_market_random = dark_market_random or SystemRandom()
         self._liar_dice_random = liar_dice_random or SystemRandom()
+        self._chat_drop_random = chat_drop_random or SystemRandom()
         self._active_session: ContextVar[Session | None] = ContextVar(
             f"core_repository_session_{id(self)}", default=None
         )
@@ -3953,6 +3972,9 @@ class CoreRepository:
                     record.approval_reward,
                     "random_event_submission_approval",
                     now,
+                )
+                self._grant_department_allowance(
+                    session, user, "dept_submission", now
                 )
                 direct_chatroom_id = session.scalar(
                     select(DirectChatRecord.chatroom_id).where(
@@ -7842,6 +7864,10 @@ class CoreRepository:
                 occurred_at=now,
                 detail=reservation.title,
             )
+        for _participant, performance_user in participant_rows:
+            self._grant_department_allowance(
+                session, performance_user, "dept_event", now
+            )
 
     @staticmethod
     def _enqueue_performance_group_outbound(
@@ -10364,6 +10390,11 @@ class CoreRepository:
                         )
                     else:
                         creator_start.count += 1
+                texas_creator = session.get(UserRecord, game.creator_user_id)
+                if texas_creator is not None:
+                    self._grant_department_allowance(
+                        session, texas_creator, "dept_game_host", now
+                    )
                 return TexasHoldemResult(
                     "dealing", game.id, len(rows), tuple(outbound_ids)
                 )
@@ -10650,6 +10681,9 @@ class CoreRepository:
         game.settlement_complete = True
         game.finish_reason = reason
         game.finished_at = now
+        self._bump_department_game_plays(
+            session, [player.user_id for player, _ in rows], now
+        )
         if showdown:
             details = []
             for player, user in active_rows:
@@ -12097,7 +12131,7 @@ class CoreRepository:
                         and game.group_chat_id == group_chat_id
                     ):
                         self._finish_liar_dice_locked(
-                            game, "forced_ended", "admin_forced", now
+                            session, game, "forced_ended", "admin_forced", now
                         )
                         ended = True
                 elif game_type == "never_have_i_ever":
@@ -12442,6 +12476,7 @@ class CoreRepository:
                 game.signup_deadline = None
                 game.started_at = now
                 self._start_king_game_round_locked(session, game, now, settings)
+                self._grant_department_allowance(session, actor, "dept_game_host", now)
                 return self._king_game_result_locked(session, game, "started")
 
     def reveal_king_game_numbers(
@@ -12500,7 +12535,7 @@ class CoreRepository:
                     return self._king_game_result_locked(session, game, "wrong_state")
                 self._promote_king_game_candidates_locked(session, game.id)
                 if len(self._active_king_game_players(session, game.id)) < 3:
-                    self._finish_king_game_locked(game, "completed", "not_enough_players", now)
+                    self._finish_king_game_locked(session, game, "completed", "not_enough_players", now)
                     return self._king_game_result_locked(session, game, "completed")
                 game.end_after_round = False
                 game.state = "awaiting_reveal"
@@ -12572,7 +12607,7 @@ class CoreRepository:
                 if actor is None or not self._is_active_king_game_player(session, game.id, actor.id):
                     return self._king_game_result_locked(session, game, "not_participant")
                 statistics = self._king_game_statistics_locked(session, game)
-                self._finish_king_game_locked(game, "completed", "participant_ended", now)
+                self._finish_king_game_locked(session, game, "completed", "participant_ended", now)
                 return self._king_game_result_locked(
                     session, game, "completed", statistics=statistics
                 )
@@ -12596,7 +12631,7 @@ class CoreRepository:
                 results: list[KingGameResult] = []
                 for game in games:
                     if game.state == "signup":
-                        self._finish_king_game_locked(game, "expired", "signup_timeout", now)
+                        self._finish_king_game_locked(session, game, "expired", "signup_timeout", now)
                         results.append(self._king_game_result_locked(session, game, "signup_expired"))
                     elif game.state == "awaiting_reveal":
                         round_record = self._current_king_game_round(session, game)
@@ -12700,7 +12735,7 @@ class CoreRepository:
     ) -> None:
         players = self._active_king_game_players(session, game.id)
         if len(players) < 3:
-            self._finish_king_game_locked(game, "completed", "not_enough_players", now)
+            self._finish_king_game_locked(session, game, "completed", "not_enough_players", now)
             return
         king_player, _ = SystemRandom().choice(players)
         shuffled = SystemRandom().sample(players, len(players))
@@ -12718,14 +12753,26 @@ class CoreRepository:
             )
         )
 
-    @staticmethod
-    def _finish_king_game_locked(game: KingGameRecord, state: str, reason: str, now: datetime) -> None:
+    def _finish_king_game_locked(
+        self,
+        session: Session,
+        game: KingGameRecord,
+        state: str,
+        reason: str,
+        now: datetime,
+    ) -> None:
         game.state = state
         game.active_key = None
         game.signup_deadline = None
         game.king_phase_deadline = None
         game.finished_at = now
         game.finish_reason = reason
+        if state in {"completed", "forced_ended"}:
+            self._bump_department_game_plays(
+                session,
+                [player.user_id for player, _ in self._active_king_game_players(session, game.id)],
+                now,
+            )
 
     def _king_game_statistics_locked(
         self, session: Session, game: KingGameRecord
@@ -12891,9 +12938,13 @@ class CoreRepository:
                 return seat
         return seats[0]
 
-    @staticmethod
     def _finish_liar_dice_locked(
-        game: LiarDiceGameRecord, state: str, reason: str, now: datetime
+        self,
+        session: Session,
+        game: LiarDiceGameRecord,
+        state: str,
+        reason: str,
+        now: datetime,
     ) -> None:
         game.state = state
         game.active_key = None
@@ -12901,6 +12952,15 @@ class CoreRepository:
         game.turn_deadline = None
         game.finished_at = now
         game.finish_reason = reason
+        if state in {"completed", "forced_ended"}:
+            self._bump_department_game_plays(
+                session,
+                [
+                    player.user_id
+                    for player, _ in self._liar_dice_players(session, game.id)
+                ],
+                now,
+            )
 
     @classmethod
     def _liar_dice_result_locked(
@@ -13187,7 +13247,7 @@ class CoreRepository:
                     remaining = self._liar_dice_players(session, game.id, ("active",))
                     if game.state != "signup" and len(remaining) < 2:
                         self._finish_liar_dice_locked(
-                            game, "completed", "not_enough_players", now
+                            session, game, "completed", "not_enough_players", now
                         )
                         return self._liar_dice_result_locked(
                             session, game, "completed"
@@ -13248,6 +13308,7 @@ class CoreRepository:
                 game.started_at = now
                 game.timeout_streak = 0
                 self._liar_dice_deal_round(session, game, now, start_seat=1)
+                self._grant_department_allowance(session, actor, "dept_game_host", now)
                 return self._liar_dice_result_locked(session, game, "dealing")
 
     def liar_dice_call(
@@ -13454,7 +13515,7 @@ class CoreRepository:
                 players = self._liar_dice_players(session, game.id, ("active",))
                 if len(players) < 2:
                     self._finish_liar_dice_locked(
-                        game, "completed", "not_enough_players", now
+                        session, game, "completed", "not_enough_players", now
                     )
                     return self._liar_dice_result_locked(session, game, "completed")
                 # 连续轮转：从开牌者（current_seat）的下一位开始新一轮
@@ -13489,7 +13550,7 @@ class CoreRepository:
                     )
                 statistics = self._liar_dice_statistics_locked(session, game)
                 self._finish_liar_dice_locked(
-                    game, "completed", "participant_ended", now
+                    session, game, "completed", "participant_ended", now
                 )
                 return self._liar_dice_result_locked(
                     session, game, "completed", statistics=statistics
@@ -13738,7 +13799,7 @@ class CoreRepository:
                 if game.state == "signup":
                     if game.signup_deadline is not None and now >= game.signup_deadline:
                         self._finish_liar_dice_locked(
-                            game, "cancelled", "signup_expired", now
+                            session, game, "cancelled", "signup_expired", now
                         )
                         messages.append("【大话骰子】报名超时，本局已自动取消。")
                     return messages
@@ -14872,6 +14933,19 @@ class CoreRepository:
         game.response_deadline = None
         game.finished_at = now
         game.finish_reason = reason
+        if state in {"ended", "settled"}:
+            self._bump_department_game_plays(
+                session,
+                [
+                    player.user_id
+                    for player in session.scalars(
+                        select(NeverHaveIEverPlayerRecord).where(
+                            NeverHaveIEverPlayerRecord.game_id == game.id
+                        )
+                    )
+                ],
+                now,
+            )
         for player in session.scalars(
             select(NeverHaveIEverPlayerRecord).where(
                 NeverHaveIEverPlayerRecord.game_id == game.id
@@ -14953,6 +15027,7 @@ class CoreRepository:
                 )
                 session.add(round_record)
                 session.flush()
+                self._grant_department_allowance(session, user, "dept_game_host", now)
                 return NeverHaveIEverResult(
                     "started",
                     game_id=game.id,
@@ -15226,6 +15301,11 @@ class CoreRepository:
                     seconds=settings.reminder_interval_seconds
                 )
                 game.skip_enabled = False
+                bomb_host = session.get(UserRecord, actor.user_id)
+                if bomb_host is not None:
+                    self._grant_department_allowance(
+                        session, bomb_host, "dept_game_host", now
+                    )
                 return self._start_number_bomb_round(session, game, 1, 1, now)
 
     def leave_number_bomb_game(
@@ -16333,6 +16413,20 @@ class CoreRepository:
         game.active_key = None
         game.finished_at = now
         game.finish_reason = reason
+        if reason != "empty_signup":
+            self._bump_department_game_plays(
+                session,
+                [
+                    member.user_id
+                    for member in session.scalars(
+                        select(NumberBombMemberRecord).where(
+                            NumberBombMemberRecord.game_id == game.id,
+                            NumberBombMemberRecord.state == "current",
+                        )
+                    )
+                ],
+                now,
+            )
         collecting_round = session.scalar(
             select(NumberBombRoundRecord).where(
                 NumberBombRoundRecord.game_id == game.id,
@@ -17161,6 +17255,16 @@ class CoreRepository:
                 session_record.active_key = None
                 session_record.finished_at = now
                 self._record_undercover_facts(session, game, None, "ended", now)
+                self._bump_department_game_plays(
+                    session,
+                    [
+                        member.user_id
+                        for member in self._undercover_joined_members(
+                            session, session_record.id
+                        )
+                    ],
+                    now,
+                )
                 return UndercoverGameResult("ended", session_id=session_record.id, game_id=game.id)
 
     def leave_undercover(
@@ -17578,6 +17682,12 @@ class CoreRepository:
             assigned_roles.append(role)
         session_record.state = "dealing"
         session_record.signup_deadline = None
+        if members:
+            undercover_initiator = session.get(UserRecord, members[0].user_id)
+            if undercover_initiator is not None:
+                self._grant_department_allowance(
+                    session, undercover_initiator, "dept_game_host", now
+                )
         return UndercoverGameResult(
             "dealing",
             session_id=session_record.id,
@@ -17937,6 +18047,16 @@ class CoreRepository:
         session_record.state = "awaiting_continue"
         session_record.await_continue_deadline = now + _UNDERCOVER_CONTINUE_TIMEOUT
         self._record_undercover_facts(session, game, winner, None, now)
+        self._bump_department_game_plays(
+            session,
+            [
+                member.user_id
+                for member in self._undercover_joined_members(
+                    session, session_record.id
+                )
+            ],
+            now,
+        )
         next_round_exit_labels = self._apply_undercover_next_round_exits(
             session, session_record.id, now
         )
@@ -21354,6 +21474,9 @@ class CoreRepository:
         game.settlement_reason = reason
         game.settlement_complete = True
         game.finished_at = now
+        self._bump_department_game_plays(
+            session, [player.user_id for player, _ in rows], now
+        )
         return BlameGameResult(
             "settled",
             game_id=game.id,
@@ -21578,6 +21701,9 @@ class CoreRepository:
         game.current_holder_user_id = holder.user_id
         game.last_announced_temperature = "温热"
         game.started_at = now
+        blame_host = session.get(UserRecord, game.creator_user_id)
+        if blame_host is not None:
+            self._grant_department_allowance(session, blame_host, "dept_game_host", now)
         return BlameGameResult(
             "started",
             game_id=game.id,
@@ -23661,6 +23787,10 @@ class CoreRepository:
                 for tip, tip_sender in tips_by_recipient.get(user.id, ())
             )
         self._finish_random_event(session, event, "ended", now)
+        for _participant, event_user in participant_rows:
+            self._grant_department_allowance(
+                session, event_user, "dept_event", now
+            )
         self.enqueue_system_outbound(
             self._render_reply_template(
                 "/随机事件打赏",
@@ -24330,6 +24460,136 @@ class CoreRepository:
                 )
             )
             return int(income)
+
+    def _grant_department_allowance(
+        self,
+        session: Session,
+        user: UserRecord,
+        kind: str,
+        now: datetime,
+    ) -> None:
+        """部门津贴统一发放入口：按后台绑定匹配 + 每人每日封顶，任何不满足都静默返回。"""
+        rule = _DEPARTMENT_ALLOWANCE_RULES.get(kind)
+        if rule is None:
+            return
+        expected_binding, amount = rule
+        department = (
+            session.get(DepartmentRecord, user.department_id)
+            if user.department_id is not None
+            else None
+        )
+        if department is None or not department.enabled:
+            return
+        if department.allowance_kind != expected_binding:
+            return
+        allow_date = now.astimezone(BEIJING).date()
+        total = int(
+            session.scalar(
+                select(
+                    func.coalesce(func.sum(DepartmentAllowanceRecord.amount), 0)
+                ).where(
+                    DepartmentAllowanceRecord.user_id == user.id,
+                    DepartmentAllowanceRecord.allow_date == allow_date,
+                )
+            )
+            or 0
+        )
+        if total >= DEPARTMENT_ALLOWANCE_DAILY_CAP:
+            return
+        granted = min(amount, DEPARTMENT_ALLOWANCE_DAILY_CAP - total)
+        session.add(
+            DepartmentAllowanceRecord(
+                user_id=user.id,
+                allow_date=allow_date,
+                kind=kind,
+                amount=granted,
+                created_at=now,
+            )
+        )
+        self._apply_balance_change(user, granted, kind, now)
+
+    def department_allowance_summary(self, platform_id: str, now: datetime) -> int | None:
+        """今日部门津贴合计；未绑定津贴部门的员工返回 None（/我 不显示该行）。"""
+        now = now.astimezone(BEIJING)
+        with self._session() as session:
+            row = session.execute(
+                select(UserRecord, DepartmentRecord)
+                .join(
+                    DepartmentRecord,
+                    DepartmentRecord.id == UserRecord.department_id,
+                )
+                .where(UserRecord.platform_id == platform_id)
+            ).first()
+            if row is None:
+                return None
+            user, department = row
+            if (
+                department is None
+                or not department.enabled
+                or department.allowance_kind is None
+            ):
+                return None
+            total = session.scalar(
+                select(
+                    func.coalesce(func.sum(DepartmentAllowanceRecord.amount), 0)
+                ).where(
+                    DepartmentAllowanceRecord.user_id == user.id,
+                    DepartmentAllowanceRecord.allow_date == now.date(),
+                )
+            )
+            return int(total or 0)
+
+    def _bump_department_game_plays(
+        self, session: Session, user_ids: Sequence[UUID], now: datetime
+    ) -> None:
+        """对局完成时给参与者计 1 局；每满 _DEPARTMENT_GAME_PLAY_STEP 局发 1 币。"""
+        allow_date = now.astimezone(BEIJING).date()
+        dialect_name = session.get_bind().dialect.name
+        for user_id in user_ids:
+            values = {
+                "id": uuid4(),
+                "user_id": user_id,
+                "play_date": allow_date,
+                "count": 1,
+            }
+            if dialect_name == "postgresql":
+                statement = postgresql_insert(DepartmentGamePlayRecord).values(**values)
+            elif dialect_name == "sqlite":
+                statement = sqlite_insert(DepartmentGamePlayRecord).values(**values)
+            else:
+                raise ValueError(f"unsupported database dialect: {dialect_name}")
+            new_count = session.scalar(
+                statement.on_conflict_do_update(
+                    index_elements=[
+                        DepartmentGamePlayRecord.user_id,
+                        DepartmentGamePlayRecord.play_date,
+                    ],
+                    set_={"count": DepartmentGamePlayRecord.count + 1},
+                ).returning(DepartmentGamePlayRecord.count)
+            )
+            if new_count is not None and int(new_count) % _DEPARTMENT_GAME_PLAY_STEP == 0:
+                user = session.get(UserRecord, user_id)
+                if user is not None:
+                    self._grant_department_allowance(
+                        session, user, "dept_game_play", now
+                    )
+
+    def grant_chat_drop_allowance(self, platform_id: str, now: datetime) -> None:
+        """水群掉落（service 层已完成概率与冷却判定）：静默入账。"""
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return
+                self._grant_department_allowance(session, user, "dept_chat", now)
+
+    def roll_chat_drop(self) -> bool:
+        return self._chat_drop_random.random() < 0.1
 
     def run_daily_jobs(self, now: datetime) -> None:
         now = now.astimezone(BEIJING)
@@ -25631,10 +25891,14 @@ class CoreRepository:
             )
             return departments, total
 
-    def create_department(self, name: str, description: str) -> DepartmentRecord:
+    def create_department(
+        self, name: str, description: str, *, allowance_kind: str | None = None
+    ) -> DepartmentRecord:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("部门名称不能为空")
+        if allowance_kind is not None and allowance_kind not in _DEPARTMENT_ALLOWANCE_BINDINGS:
+            raise ValueError("无效的部门津贴类型")
         with self._session() as session:
             self._ensure_organization_defaults(session)
             if session.scalar(
@@ -25646,17 +25910,26 @@ class CoreRepository:
                 description=description.strip(),
                 is_default=False,
                 enabled=True,
+                allowance_kind=allowance_kind,
             )
             session.add(department)
             session.flush()
             return department
 
     def update_department(
-        self, department_id: UUID, *, name: str, description: str, enabled: bool
+        self,
+        department_id: UUID,
+        *,
+        name: str,
+        description: str,
+        enabled: bool,
+        allowance_kind: str | None = None,
     ) -> DepartmentRecord | None:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("部门名称不能为空")
+        if allowance_kind is not None and allowance_kind not in _DEPARTMENT_ALLOWANCE_BINDINGS:
+            raise ValueError("无效的部门津贴类型")
         with self._session() as session:
             self._ensure_organization_defaults(session)
             department = session.get(DepartmentRecord, department_id)
@@ -25677,6 +25950,7 @@ class CoreRepository:
             department.name = normalized_name
             department.description = description.strip()
             department.enabled = enabled
+            department.allowance_kind = allowance_kind
             session.flush()
             return department
 
@@ -26335,6 +26609,9 @@ class CoreRepository:
                 if inserted_id is None:
                     return False
                 self._apply_balance_change(employee, reward, "checkin", checked_in_at)
+                self._grant_department_allowance(
+                    session, employee, "dept_checkin", checked_in_at
+                )
                 session.flush()
                 return True
 

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -31,6 +32,7 @@ _DIRECT_COMMANDS = {
 _RANDOM_EVENT_INDEPENDENT_COMMANDS = {
     "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏", "/随礼",
 }
+_CHAT_DROP_COOLDOWN_SECONDS = 600
 
 
 class CommandHandler(Protocol):
@@ -81,6 +83,7 @@ class CoreService:
         self._command_handler = command_handler or NoopCommandHandler()
         self._submission_handler = RandomEventSubmissionHandler(repository)
         self._cover_image_validator = cover_image_validator
+        self._chat_drop_last_judged: dict[str, datetime] = {}
 
     def receive_inbound(self, message: InboundMessage) -> ReceiveResult:
         with self._repository.transaction():
@@ -332,6 +335,16 @@ class CoreService:
                 message.sender_platform_id,
                 None if group_context is None else group_context.group_chat_id,
             )
+            if (
+                group_context is not None
+                and event_message_status == "none"
+                and not had_active_game_context
+                and not message.content.lstrip().startswith("/")
+                and self._chat_drop_due(message)
+            ):
+                self._repository.grant_chat_drop_allowance(
+                    message.sender_platform_id, message.received_at
+                )
             reply = self._command_handler.handle(message)
             if isinstance(reply, list):
                 replies.extend(
@@ -440,6 +453,19 @@ class CoreService:
                     content_type=reply.content_type,
                 )
             return ReceiveResult(stored.id, True)
+
+    def _chat_drop_due(self, message: InboundMessage) -> bool:
+        """摸鱼吃瓜部水群掉落判定：同人 10 分钟内只判一次。"""
+        sender = message.sender_platform_id
+        received_at = message.received_at
+        last = self._chat_drop_last_judged.get(sender)
+        if (
+            last is not None
+            and (received_at - last).total_seconds() < _CHAT_DROP_COOLDOWN_SECONDS
+        ):
+            return False
+        self._chat_drop_last_judged[sender] = received_at
+        return self._repository.roll_chat_drop()
 
     @staticmethod
     def _adult_card_scene_reply(result):

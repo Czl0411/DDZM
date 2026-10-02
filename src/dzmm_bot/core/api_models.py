@@ -467,11 +467,13 @@ class DepartmentResponse(ApiModel):
     description: str
     is_default: bool
     enabled: bool
+    allowance_kind: str | None = None
 
 
 class CreateDepartmentRequest(ApiModel):
     name: str = Field(min_length=1, max_length=64)
     description: str = Field(default="", max_length=2000)
+    allowance_kind: str | None = None
 
 
 class UpdateDepartmentRequest(CreateDepartmentRequest):

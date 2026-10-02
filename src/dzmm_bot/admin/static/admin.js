@@ -2059,6 +2059,7 @@ function openDepartmentModal(department = null) {
   document.querySelector("#save-department").textContent = department ? "保存部门" : "创建部门";
   document.querySelector("#department-name").value = department?.name || "";
   document.querySelector("#department-description").value = department?.description || "";
+  document.querySelector("#department-allowance").value = department?.allowance_kind || "";
   document.querySelector("#department-enabled").checked = department?.enabled ?? true;
   document.querySelector("#department-name").disabled = Boolean(department?.is_default);
   document.querySelector("#department-enabled").disabled = Boolean(department?.is_default);
@@ -2936,6 +2937,7 @@ departmentModal.addEventListener("click", async (event) => {
   const payload = {
     name: document.querySelector("#department-name").value.trim(),
     description: document.querySelector("#department-description").value.trim(),
+    allowance_kind: document.querySelector("#department-allowance").value || null,
     enabled: document.querySelector("#department-enabled").checked,
   };
   try {
@@ -2945,7 +2947,7 @@ departmentModal.addEventListener("click", async (event) => {
         {
           method: existing ? "PUT" : "POST",
           headers: {"Content-Type": "application/json", ...configurationHeaders()},
-          body: JSON.stringify(existing ? payload : {name: payload.name, description: payload.description}),
+          body: JSON.stringify(payload),
         },
       );
       configurationVersion = updated.version;

@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta
 from math import ceil
 from pathlib import Path
@@ -312,11 +313,40 @@ class BrowserWorker:
         )
 
     def _queue_inbound(self, message: InboundMessage) -> None:
+        message = self._resolve_system_referral(message)
         if not self._listening:
             with self._paused_messages_lock:
                 self._paused_messages.append(message)
             return
         self._inbound_executor.submit(self._dispatch_inbound, message)
+
+    def _resolve_system_referral(self, message: InboundMessage) -> InboundMessage:
+        """入群系统消息归因：在主循环线程把名字解析成平台 uid。
+
+        socket 回调线程不能碰 Playwright page（sync API），所以解析放在
+        run_once → _queue_inbound 这条主线程路径上；成员表带 60s TTL 缓存。
+        """
+        metadata = message.metadata if isinstance(message.metadata, dict) else None
+        referral = (metadata or {}).get("referral")
+        if message.content_type != "system" or not isinstance(referral, dict):
+            return message
+        gateway = self._gateway
+        chatroom_id = message.chatroom_id
+        if chatroom_id is None or gateway is None:
+            return message
+        try:
+            directory = gateway.member_directory(chatroom_id)
+        except Exception:
+            _LOGGER.exception("referral member directory lookup failed")
+            return message
+        resolved = dict(referral)
+        newcomer_name = str(referral.get("newcomer") or "").strip()
+        inviter_name = str(referral.get("inviter") or "").strip()
+        if newcomer_name:
+            resolved["newcomer_id"] = directory.get(newcomer_name)
+        if inviter_name:
+            resolved["inviter_id"] = directory.get(inviter_name)
+        return replace(message, metadata={"referral": resolved})
 
     def _flush_paused_messages(self) -> None:
         if not self._listening:
@@ -324,7 +354,7 @@ class BrowserWorker:
         with self._paused_messages_lock:
             messages, self._paused_messages = self._paused_messages, []
         for message in messages:
-            self._inbound_executor.submit(self._dispatch_inbound, message)
+            self._queue_inbound(message)
 
     def _dispatch_inbound(self, message: InboundMessage) -> None:
         if message.source_type == "group" and message.chatroom_id is not None:

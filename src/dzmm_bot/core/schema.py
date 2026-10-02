@@ -2539,7 +2539,7 @@ class DepartmentAllowanceRecord(Base):
         Index("ix_department_allowances_user_date", "user_id", "allow_date"),
         CheckConstraint(
             "kind IN ('dept_checkin', 'dept_event', 'dept_game_host', "
-            "'dept_game_play', 'dept_submission', 'dept_chat')",
+            "'dept_game_play', 'dept_submission', 'dept_chat', 'dept_referral')",
             name="ck_department_allowance_kind",
         ),
     )
@@ -2562,6 +2562,37 @@ class DepartmentGamePlayRecord(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     play_date: Mapped[date] = mapped_column(Date, nullable=False)
     count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class ReferralRecord(Base):
+    """拉新归因：平台入群系统消息解析出的「新人 ← 邀请人」绑定。
+
+    同一平台消息只处理一次（platform_message_id 唯一）；同一新人只归因一次
+    （newcomer_platform_id 唯一，NULL 不占约束——解析失败的行允许后续补）。
+    """
+
+    __tablename__ = "referral_records"
+    __table_args__ = (
+        UniqueConstraint("platform_message_id", name="uq_referral_message"),
+        UniqueConstraint("newcomer_platform_id", name="uq_referral_newcomer"),
+        Index("ix_referral_records_inviter", "inviter_user_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    chatroom_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    platform_message_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    newcomer_platform_id: Mapped[str | None] = mapped_column(String(64))
+    newcomer_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    inviter_platform_id: Mapped[str | None] = mapped_column(String(64))
+    inviter_name: Mapped[str | None] = mapped_column(String(128))
+    inviter_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
 
 
 class PromotionRequestRecord(Base):

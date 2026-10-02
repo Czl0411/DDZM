@@ -298,6 +298,7 @@ from .schema import (
     RedPacketRecord,
     RedPacketSettingsRecord,
     RedPacketShareRecord,
+    ReferralRecord,
     AdultCardParticipantRecord,
     AdultCardSessionRecord,
     ShopCommonSenseStateRecord,
@@ -1209,10 +1210,11 @@ _DEPARTMENT_ALLOWANCE_RULES = {
     "dept_game_play": ("game", 1),
     "dept_submission": ("submission", 5),
     "dept_chat": ("chat", 1),
+    "dept_referral": ("referral", 1),
 }
 _DEPARTMENT_GAME_PLAY_STEP = 5
 _DEPARTMENT_ALLOWANCE_BINDINGS = frozenset(
-    {"checkin", "event", "game", "submission", "chat"}
+    {"checkin", "event", "game", "submission", "chat", "referral"}
 )
 
 
@@ -24467,11 +24469,11 @@ class CoreRepository:
         user: UserRecord,
         kind: str,
         now: datetime,
-    ) -> None:
-        """部门津贴统一发放入口：按后台绑定匹配 + 每人每日封顶，任何不满足都静默返回。"""
+    ) -> int:
+        """部门津贴统一发放入口：按后台绑定匹配 + 每人每日封顶，任何不满足都静默返回 0。"""
         rule = _DEPARTMENT_ALLOWANCE_RULES.get(kind)
         if rule is None:
-            return
+            return 0
         expected_binding, amount = rule
         department = (
             session.get(DepartmentRecord, user.department_id)
@@ -24479,9 +24481,9 @@ class CoreRepository:
             else None
         )
         if department is None or not department.enabled:
-            return
+            return 0
         if department.allowance_kind != expected_binding:
-            return
+            return 0
         allow_date = now.astimezone(BEIJING).date()
         total = int(
             session.scalar(
@@ -24495,7 +24497,7 @@ class CoreRepository:
             or 0
         )
         if total >= DEPARTMENT_ALLOWANCE_DAILY_CAP:
-            return
+            return 0
         granted = min(amount, DEPARTMENT_ALLOWANCE_DAILY_CAP - total)
         session.add(
             DepartmentAllowanceRecord(
@@ -24507,6 +24509,7 @@ class CoreRepository:
             )
         )
         self._apply_balance_change(user, granted, kind, now)
+        return granted
 
     def department_allowance_summary(self, platform_id: str, now: datetime) -> int | None:
         """今日部门津贴合计；未绑定津贴部门的员工返回 None（/我 不显示该行）。"""
@@ -24590,6 +24593,78 @@ class CoreRepository:
 
     def roll_chat_drop(self) -> bool:
         return self._chat_drop_random.random() < 0.1
+
+    def record_referral_from_system(self, message: InboundMessage, now: datetime) -> None:
+        """入群系统消息 → 拉新归因 + 部门津贴（dept_referral）。
+
+        worker 已完成名字→平台 uid 解析；这里负责防重（同消息/同新人）、
+        建档，并给邀请人按后台绑定（allowance_kind=referral）发币。
+        解析失败或邀请人非绑定部门员工：照常留痕（amount=0），不发币。
+        """
+        metadata = message.metadata if isinstance(message.metadata, dict) else {}
+        referral = metadata.get("referral")
+        if not isinstance(referral, dict):
+            return
+        newcomer_name = str(referral.get("newcomer") or "").strip()
+        if not newcomer_name:
+            return
+        newcomer_id = referral.get("newcomer_id")
+        newcomer_id = newcomer_id.strip() if isinstance(newcomer_id, str) else None
+        inviter_name = referral.get("inviter")
+        inviter_name = inviter_name.strip() if isinstance(inviter_name, str) else None
+        inviter_id = referral.get("inviter_id")
+        inviter_id = inviter_id.strip() if isinstance(inviter_id, str) else None
+
+        with self.transaction():
+            with self._session() as session:
+                # 同一条系统消息只处理一次（worker 重连补推/回放防御）
+                seen = session.scalar(
+                    select(func.count())
+                    .select_from(ReferralRecord)
+                    .where(
+                        ReferralRecord.platform_message_id
+                        == message.platform_message_id
+                    )
+                )
+                if seen:
+                    return
+                # 同一新人只归因一次（防反复进出群刷奖）
+                if newcomer_id:
+                    attributed = session.scalar(
+                        select(func.count())
+                        .select_from(ReferralRecord)
+                        .where(ReferralRecord.newcomer_platform_id == newcomer_id)
+                    )
+                    if attributed:
+                        return
+                inviter_user = None
+                if inviter_id:
+                    inviter_user = session.scalar(
+                        select(UserRecord).where(
+                            UserRecord.platform_id == inviter_id
+                        )
+                    )
+                granted = 0
+                if inviter_user is not None:
+                    granted = self._grant_department_allowance(
+                        session, inviter_user, "dept_referral", now
+                    )
+                session.add(
+                    ReferralRecord(
+                        chatroom_id=message.chatroom_id or "",
+                        platform_message_id=message.platform_message_id,
+                        newcomer_platform_id=newcomer_id,
+                        newcomer_name=newcomer_name[:128],
+                        inviter_platform_id=inviter_id,
+                        inviter_name=inviter_name[:128] if inviter_name else None,
+                        inviter_user_id=(
+                            inviter_user.id if inviter_user is not None else None
+                        ),
+                        amount=granted,
+                        joined_at=message.received_at,
+                        created_at=now,
+                    )
+                )
 
     def run_daily_jobs(self, now: datetime) -> None:
         now = now.astimezone(BEIJING)

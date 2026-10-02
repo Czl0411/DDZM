@@ -2,6 +2,7 @@ from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 import logging
+import re
 from threading import Event, Lock, RLock, get_ident
 from typing import Any
 from pathlib import Path
@@ -20,6 +21,29 @@ from dzmm_bot.runtime.contracts import (
 _LOGGER = logging.getLogger(__name__)
 _SEND_ACK_TIMEOUT_SECONDS = 3
 _DIRECT_JOIN_ACK_TIMEOUT_SECONDS = 2
+
+# 平台入群系统消息（content.type == "system"）两种形态：
+#   「困乏 通过 ROI 的链接加入了群聊」 —— 经邀请链接，可归因邀请人
+#   「似把君邀 加入了群聊」            —— 其他方式，无邀请人
+_JOIN_WITH_LINK_PATTERN = re.compile(r"^(.+?)\s*通过\s*(.+?)\s*的链接加入了群聊$")
+_JOIN_PLAIN_PATTERN = re.compile(r"^(.+?)\s*加入了群聊$")
+
+
+def parse_join_system_message(text: str) -> dict[str, str] | None:
+    """入群系统消息 → {"newcomer": 名, "inviter": 名(仅链接邀请)}；非入群消息返回 None。"""
+    text = (text or "").strip()
+    if not text.endswith("加入了群聊"):
+        return None
+    linked = _JOIN_WITH_LINK_PATTERN.match(text)
+    if linked:
+        return {
+            "newcomer": linked.group(1).strip(),
+            "inviter": linked.group(2).strip(),
+        }
+    plain = _JOIN_PLAIN_PATTERN.match(text)
+    if plain:
+        return {"newcomer": plain.group(1).strip()}
+    return None
 
 
 class AikdaMessageRejectedError(RuntimeError):
@@ -83,6 +107,7 @@ class AikdaSocketGateway:
         self._direct_chatroom_ids: set[str] = set()
         self._joined_direct_chatroom_ids: set[str] = set()
         self._next_direct_room_join_index = 0
+        self._member_directories: dict[str, tuple[datetime, dict[str, str]]] = {}
 
     def configure_group_rooms(
         self, targets: tuple[GroupChatTarget, ...]
@@ -351,6 +376,33 @@ class AikdaSocketGateway:
         nickname = profile.get("nickname")
         return nickname.strip() if isinstance(nickname, str) and nickname.strip() else None
 
+    def member_directory(self, chatroom_id: str) -> dict[str, str]:
+        """fullName → platform uid（60s TTL 缓存）。入群系统消息归因用，仅主循环线程调用。"""
+        now = self._clock()
+        cached = self._member_directories.get(chatroom_id)
+        if cached is not None and (now - cached[0]).total_seconds() < 60:
+            return cached[1]
+        data = self._request(
+            "chatroom.getMembers",
+            {"chatroomId": chatroom_id, "limit": 1000},
+        )
+        directory: dict[str, str] = {}
+        members = data.get("members") if isinstance(data, dict) else None
+        for member in members or []:
+            if not isinstance(member, dict):
+                continue
+            name = member.get("fullName")
+            uid = member.get("id")
+            if (
+                isinstance(name, str)
+                and name.strip()
+                and isinstance(uid, str)
+                and uid
+            ):
+                directory[name.strip()] = uid
+        self._member_directories[chatroom_id] = (now, directory)
+        return directory
+
     def retract(self, message_id: str, *, chatroom_id: str | None = None) -> None:
         self._ensure_connected()
         acknowledgement = self._call(
@@ -522,12 +574,23 @@ class AikdaSocketGateway:
         ):
             return
         content_type = content.get("type")
+        metadata: dict[str, Any] | None = None
         if content_type == "text":
             text_content = content.get("text")
             if not isinstance(text_content, str):
                 return
             image_url = image_alt = None
             image_width = image_height = None
+        elif content_type == "system":
+            # 入群系统消息：文本原样透传，附纯文本解析结果（名字→uid 由主循环解析）
+            text_content = content.get("text")
+            if not isinstance(text_content, str):
+                return
+            image_url = image_alt = None
+            image_width = image_height = None
+            parsed_join = parse_join_system_message(text_content)
+            if parsed_join is not None:
+                metadata = {"referral": parsed_join}
         elif content_type == "image":
             image_url = content.get("url")
             parsed_url = urlsplit(image_url) if isinstance(image_url, str) else None
@@ -570,6 +633,7 @@ class AikdaSocketGateway:
             image_alt=image_alt,
             image_width=image_width,
             image_height=image_height,
+            metadata=metadata,
         )
         with self._pending_lock:
             seen_key = (chatroom_id, message_id)

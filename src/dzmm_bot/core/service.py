@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -33,6 +34,8 @@ _RANDOM_EVENT_INDEPENDENT_COMMANDS = {
     "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏", "/随礼",
 }
 _CHAT_DROP_COOLDOWN_SECONDS = 600
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class CommandHandler(Protocol):
@@ -109,6 +112,15 @@ class CoreService:
             )
             if not inserted:
                 return ReceiveResult(stored.id, False)
+            if message.content_type == "system":
+                # 平台入群系统消息：只做拉新归因，不进指令/游戏/水群逻辑，也不回复
+                try:
+                    self._repository.record_referral_from_system(
+                        message, message.received_at
+                    )
+                except Exception:
+                    _LOGGER.exception("referral attribution failed")
+                return ReceiveResult(stored.id, True)
             command = command_parts[0] if command_parts else ""
             if command in SUBMISSION_COMMANDS:
                 self._repository.ensure_command_definitions()

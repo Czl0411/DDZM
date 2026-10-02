@@ -125,6 +125,14 @@ from .memory_guild_match import (
     render_guild_round_result,
     render_guild_series_ready,
 )
+from .liar_dice import (
+    count_point,
+    dice_str,
+    is_legal_raise,
+    judge_open,
+    roll_dice,
+    roll_wild,
+)
 from .shop_cards import SYSTEM_SHOP_ITEMS, adult_item, item_by_key, purchase_category
 from .red_packet import RandomSource, generate_red_packet_allocation
 from .texas_holdem import (
@@ -232,6 +240,9 @@ from .schema import (
     KingGamePlayerRecord,
     KingGameRoundRecord,
     KingGameSettingsRecord,
+    LiarDiceGameRecord,
+    LiarDicePlayerRecord,
+    LiarDiceRoundRecord,
     NeverHaveIEverGameRecord,
     NeverHaveIEverPlayerRecord,
     NeverHaveIEverResponseRecord,
@@ -1175,6 +1186,46 @@ class KingGameResult:
     deadline: datetime | None = None
     end_after_round: bool = False
     statistics: KingGameStatistics | None = None
+
+
+@dataclass(frozen=True)
+class LiarDicePlayerView:
+    seat: int
+    display_name: str
+    platform_id: str
+
+
+LIAR_DICE_TURN_SECONDS = 120
+LIAR_DICE_SIGNUP_MINUTES = 10
+
+
+@dataclass(frozen=True)
+class LiarDiceStatistics:
+    opens_leaders: tuple[tuple[str, int], ...] = ()
+    bluff_caught_leaders: tuple[tuple[str, int], ...] = ()
+    penalty_leaders: tuple[tuple[str, int], ...] = ()
+    catch_leaders: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class LiarDiceResult:
+    status: str
+    game_id: UUID | None = None
+    group_chat_id: UUID | None = None
+    round_number: int = 0
+    players: tuple[LiarDicePlayerView, ...] = ()
+    turn_name: str | None = None
+    next_name: str | None = None
+    caller_name: str | None = None
+    call_count: int | None = None
+    call_face: int | None = None
+    wild_invalidated: bool = False
+    winner_name: str | None = None
+    loser_name: str | None = None
+    actual_count: int | None = None
+    public_message: str | None = None
+    private_message: str | None = None
+    statistics: LiarDiceStatistics | None = None
 
 
 @dataclass(frozen=True)
@@ -2193,6 +2244,11 @@ _COMMAND_DEFINITIONS = (
     ("/国王游戏", "/国王游戏", "创建国王游戏报名局"),
     ("/国王游戏数据", "/国王游戏数据", "查看当前国王游戏实时统计"),
     ("/公开", "/公开 编号 [编号...]", "国王游戏中公开本轮编号；暗网成交后也可私聊用于公开身份"),
+    ("/大话骰子", "/大话骰子", "创建大话骰子报名局"),
+    ("/牌局", "/牌局", "查看大话骰子当前战况"),
+    ("/开骰", "/开骰", "大话骰子中质疑当前叫数并开牌"),
+    ("/看骰", "/看骰（仅私聊）", "私聊查看自己的大话骰子骰子"),
+    ("/大话骰子数据", "/大话骰子数据", "查看当前大话骰子局实时统计"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
     ("/跳过", "/跳过 编号 [编号...]", "排除蹦蹦数字炸弹中尚未报数的参与者"),
@@ -2463,6 +2519,7 @@ class CoreRepository:
         texas_holdem_random: RandomSource | None = None,
         shop_random: RandomSource | None = None,
         dark_market_random: RandomSource | None = None,
+        liar_dice_random: RandomSource | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._preserve_long_group_messages = preserve_long_group_messages
@@ -2471,6 +2528,7 @@ class CoreRepository:
         self._texas_holdem_random = texas_holdem_random or SystemRandom()
         self._shop_random = shop_random or SystemRandom()
         self._dark_market_random = dark_market_random or SystemRandom()
+        self._liar_dice_random = liar_dice_random or SystemRandom()
         self._active_session: ContextVar[Session | None] = ContextVar(
             f"core_repository_session_{id(self)}", default=None
         )
@@ -2988,6 +3046,10 @@ class CoreRepository:
             "king_game": select(KingGameRecord.id).where(
                 KingGameRecord.group_chat_id == group_id,
                 KingGameRecord.active_key.is_not(None),
+            ),
+            "liar_dice": select(LiarDiceGameRecord.id).where(
+                LiarDiceGameRecord.group_chat_id == group_id,
+                LiarDiceGameRecord.active_key.is_not(None),
             ),
         }
         check = checks.get(game_type)
@@ -11224,6 +11286,58 @@ class CoreRepository:
                     )
                 )
 
+            liar_dice = session.scalar(
+                select(LiarDiceGameRecord).where(
+                    LiarDiceGameRecord.active_key == "global",
+                    LiarDiceGameRecord.group_chat_id == group_chat_id,
+                )
+            )
+            if liar_dice is not None:
+                dice_rows = self._liar_dice_players(
+                    session, liar_dice.id, ("signup", "active")
+                )
+                dice_actor = next(
+                    (
+                        player
+                        for player, user in dice_rows
+                        if user.platform_id == platform_id
+                    ),
+                    None,
+                )
+                if dice_actor is None:
+                    dice_role = "nonparticipant"
+                    dice_commands = ("/加入",) if liar_dice.state == "signup" else ()
+                elif liar_dice.state == "signup":
+                    dice_role = (
+                        "host"
+                        if dice_actor.user_id == liar_dice.host_user_id
+                        else "participant"
+                    )
+                    dice_commands = (
+                        ("/开始", "/退出")
+                        if dice_actor.user_id == liar_dice.host_user_id
+                        else ("/退出",)
+                    )
+                elif liar_dice.state == "round_end":
+                    dice_role = "participant"
+                    dice_commands = ("/继续", "/牌局", "/退出", "/结束游戏")
+                else:
+                    dice_role = "participant"
+                    dice_commands = ("N个X", "/开骰", "/牌局", "/退出", "/结束游戏")
+                active.append(
+                    ActiveGameplaySummary(
+                        "liar_dice",
+                        liar_dice.id,
+                        liar_dice.state,
+                        dice_role,
+                        tuple(user.display_name for _, user in dice_rows),
+                        dice_commands,
+                        liar_dice.signup_deadline,
+                        phase_deadline=liar_dice.turn_deadline,
+                        round_number=liar_dice.round_number,
+                    )
+                )
+
             never_have_i_ever = session.scalar(
                 select(NeverHaveIEverGameRecord).where(
                     NeverHaveIEverGameRecord.active_key == "global",
@@ -11946,6 +12060,7 @@ class CoreRepository:
             group_chat_id = PRIMARY_GROUP_CHAT_ID
         game_names = {
             "king_game": "国王游戏",
+            "liar_dice": "大话骰子",
             "never_have_i_ever": "我有你没有",
             "texas_holdem": "德州扑克",
             "number_bomb": "蹦蹦数字炸弹",
@@ -11971,6 +12086,17 @@ class CoreRepository:
                         and game.group_chat_id == group_chat_id
                     ):
                         self._finish_king_game_locked(
+                            game, "forced_ended", "admin_forced", now
+                        )
+                        ended = True
+                elif game_type == "liar_dice":
+                    game = session.get(LiarDiceGameRecord, game_id, with_for_update=True)
+                    if (
+                        game is not None
+                        and game.active_key == "global"
+                        and game.group_chat_id == group_chat_id
+                    ):
+                        self._finish_liar_dice_locked(
                             game, "forced_ended", "admin_forced", now
                         )
                         ended = True
@@ -12698,6 +12824,926 @@ class CoreRepository:
             end_after_round=game.end_after_round,
             statistics=statistics,
         )
+
+    @staticmethod
+    def _active_liar_dice_game(
+        session: Session, group_chat_id: UUID
+    ) -> LiarDiceGameRecord | None:
+        return session.scalar(
+            select(LiarDiceGameRecord)
+            .where(
+                LiarDiceGameRecord.group_chat_id == group_chat_id,
+                LiarDiceGameRecord.active_key == "global",
+            )
+            .with_for_update()
+        )
+
+    @staticmethod
+    def _liar_dice_user(session: Session, platform_id: str) -> UserRecord | None:
+        return session.scalar(
+            select(UserRecord)
+            .where(UserRecord.platform_id == platform_id)
+            .with_for_update()
+        )
+
+    @staticmethod
+    def _liar_dice_players(
+        session: Session, game_id: UUID, states: tuple[str, ...] = ("active",)
+    ) -> list[tuple[LiarDicePlayerRecord, UserRecord]]:
+        return list(
+            session.execute(
+                select(LiarDicePlayerRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == LiarDicePlayerRecord.user_id)
+                .where(
+                    LiarDicePlayerRecord.game_id == game_id,
+                    LiarDicePlayerRecord.state.in_(states),
+                )
+                .order_by(LiarDicePlayerRecord.seat_number)
+                .with_for_update()
+            )
+        )
+
+    @staticmethod
+    def _liar_dice_current_round(
+        session: Session, game_id: UUID
+    ) -> LiarDiceRoundRecord | None:
+        return session.scalar(
+            select(LiarDiceRoundRecord)
+            .where(LiarDiceRoundRecord.game_id == game_id)
+            .order_by(LiarDiceRoundRecord.sequence.desc())
+            .with_for_update()
+        )
+
+    @staticmethod
+    def _finish_liar_dice_locked(
+        game: LiarDiceGameRecord, state: str, reason: str, now: datetime
+    ) -> None:
+        game.state = state
+        game.active_key = None
+        game.signup_deadline = None
+        game.turn_deadline = None
+        game.finished_at = now
+        game.finish_reason = reason
+
+    @classmethod
+    def _liar_dice_result_locked(
+        cls,
+        session: Session,
+        game: LiarDiceGameRecord,
+        status: str,
+        *,
+        statistics: LiarDiceStatistics | None = None,
+        public_message: str | None = None,
+        private_message: str | None = None,
+    ) -> LiarDiceResult:
+        players = cls._liar_dice_players(
+            session, game.id, ("signup", "active")
+        )
+        views = tuple(
+            LiarDicePlayerView(
+                player.seat_number or 0, user.display_name, user.platform_id
+            )
+            for player, user in players
+        )
+        current_call = game.current_call or {}
+        turn_user = None
+        if game.state in {"calling", "dealing"} and players:
+            turn_player = next(
+                (p for p, _ in players if p.seat_number == game.current_seat), None
+            )
+            if turn_player is not None:
+                turn_user = session.get(UserRecord, turn_player.user_id)
+        round_record = cls._liar_dice_current_round(session, game.id)
+        return LiarDiceResult(
+            status=status,
+            game_id=game.id,
+            group_chat_id=game.group_chat_id,
+            round_number=game.round_number,
+            players=views,
+            turn_name=None if turn_user is None else turn_user.display_name,
+            call_count=current_call.get("count"),
+            call_face=current_call.get("face"),
+            wild_invalidated=(
+                round_record is not None and round_record.wild_invalidated
+            ),
+            statistics=statistics,
+            public_message=public_message,
+            private_message=private_message,
+        )
+
+    def _liar_dice_deal_round(
+        self,
+        session: Session,
+        game: LiarDiceGameRecord,
+        now: datetime,
+    ) -> None:
+        """重摇骰子、开新回合并私聊发骰（dealing 状态，发齐后进 calling）。"""
+        players = self._liar_dice_players(session, game.id, ("active",))
+        for player, _ in players:
+            player.seat_number = None
+        session.flush()
+        for seat, (player, _) in enumerate(players, start=1):
+            player.seat_number = seat
+        session.flush()
+        wild = roll_wild(self._liar_dice_random)
+        round_number = game.round_number + 1
+        round_record = LiarDiceRoundRecord(
+            game_id=game.id,
+            sequence=round_number,
+            wild_face=wild,
+            wild_invalidated=False,
+            calls=[],
+            state="active",
+            started_at=now,
+        )
+        session.add(round_record)
+        game.round_number = round_number
+        game.current_call = None
+        game.last_caller_user_id = None
+        game.current_seat = 1
+        game.state = "dealing"
+        game.turn_deadline = None
+        for player, user in players:
+            player.dice = roll_dice(self._liar_dice_random)
+            player.hand_delivery_state = "pending"
+        session.flush()
+        for player, user in players:
+            room = session.scalar(
+                select(DirectChatRecord.chatroom_id).where(
+                    DirectChatRecord.platform_user_id == user.platform_id
+                )
+            )
+            if room is None:
+                raise RuntimeError("大话骰子私聊会话在发牌阶段消失")
+            outbound = self.enqueue_system_outbound(
+                f"【大话骰子】你的骰子（第 {round_number} 轮）："
+                f"{dice_str(player.dice or [])}。私聊发送 /看骰 可再次查看。",
+                destination_chatroom_id=room,
+                delivery_kind="liar_dice_hand",
+            )
+            player.hand_outbound_id = outbound.id
+        session.flush()
+
+    def _record_liar_dice_hand_delivery(
+        self,
+        session: Session,
+        player: LiarDicePlayerRecord,
+        now: datetime,
+        delivered: bool,
+    ) -> None:
+        game = session.get(LiarDiceGameRecord, player.game_id, with_for_update=True)
+        if game is None or game.state != "dealing":
+            return
+        player.hand_delivery_state = "sent" if delivered else "failed"
+        pending = session.scalar(
+            select(func.count(LiarDicePlayerRecord.id)).where(
+                LiarDicePlayerRecord.game_id == game.id,
+                LiarDicePlayerRecord.state == "active",
+                LiarDicePlayerRecord.hand_delivery_state.in_((None, "pending")),
+            )
+        )
+        if int(pending or 0) != 0:
+            return
+        players = self._liar_dice_players(session, game.id, ("active",))
+        round_record = self._liar_dice_current_round(session, game.id)
+        if round_record is None:
+            raise RuntimeError("大话骰子回合不存在")
+        game.state = "calling"
+        game.current_seat = 1
+        game.turn_deadline = now + timedelta(seconds=LIAR_DICE_TURN_SECONDS)
+        first = players[0][1].display_name
+        wild = round_record.wild_face
+        lines = [f"【大话骰子】第 {game.round_number} 轮开始（{len(players)} 人）"]
+        lines.append(f"🃏 本轮万能点：{dice_str([wild])}（可顶任何点数）")
+        lines.extend(
+            f"{player.seat_number}号 {user.display_name}"
+            for player, user in players
+        )
+        lines.append(
+            f"由 1号 {first} 首叫：最少 {len(players)} 个，直接发送“N个X”；"
+            "质疑则发 /开骰。超时将自动跳过。"
+        )
+        self.enqueue_system_outbound(
+            "\n".join(lines),
+            group_chat_id=game.group_chat_id,
+            destination_chatroom_id=self.group_chat_destination(game.group_chat_id),
+        )
+
+    def start_liar_dice(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                user = self._liar_dice_user(session, platform_id)
+                if user is None:
+                    return LiarDiceResult("not_joined")
+                group = session.get(GroupChatRecord, group_chat_id)
+                if (
+                    group is None
+                    or group.deleted_at is not None
+                    or not group.games_enabled
+                    or "liar_dice" not in group.enabled_game_types
+                ):
+                    return LiarDiceResult("disabled")
+                active = self._active_liar_dice_game(session, group_chat_id)
+                if active is not None:
+                    return self._liar_dice_result_locked(
+                        session, active, "already_active"
+                    )
+                if self._group_has_active_gameplay(session, group_chat_id):
+                    return LiarDiceResult("multiplayer_active")
+                game = LiarDiceGameRecord(
+                    group_chat_id=group_chat_id,
+                    host_user_id=user.id,
+                    active_key="global",
+                    state="signup",
+                    round_number=0,
+                    current_seat=1,
+                    signup_deadline=now + timedelta(minutes=10),
+                    created_at=now,
+                )
+                session.add(game)
+                session.flush()
+                session.add(
+                    LiarDicePlayerRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        state="signup",
+                        joined_at=now,
+                    )
+                )
+                session.flush()
+                return self._liar_dice_result_locked(session, game, "signup_started")
+
+    def join_liar_dice(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                user = self._liar_dice_user(session, platform_id)
+                if user is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                player = session.scalar(
+                    select(LiarDicePlayerRecord)
+                    .where(
+                        LiarDicePlayerRecord.game_id == game.id,
+                        LiarDicePlayerRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if player is not None and player.state in {"signup", "active"}:
+                    return self._liar_dice_result_locked(
+                        session, game, "already_joined"
+                    )
+                if player is None:
+                    player = LiarDicePlayerRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        state="signup",
+                        joined_at=now,
+                    )
+                    session.add(player)
+                else:
+                    player.state = "signup"
+                    player.joined_at = now
+                    player.left_at = None
+                session.flush()
+                status = (
+                    "signup_joined"
+                    if game.state == "signup"
+                    else "next_round_joined"
+                )
+                return self._liar_dice_result_locked(session, game, status)
+
+    def leave_liar_dice(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                user = self._liar_dice_user(session, platform_id)
+                if user is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                player = session.scalar(
+                    select(LiarDicePlayerRecord)
+                    .where(
+                        LiarDicePlayerRecord.game_id == game.id,
+                        LiarDicePlayerRecord.user_id == user.id,
+                        LiarDicePlayerRecord.state.in_(("signup", "active")),
+                    )
+                    .with_for_update()
+                )
+                if player is None:
+                    return self._liar_dice_result_locked(
+                        session, game, "not_participant"
+                    )
+                if game.state in {"signup", "round_end"} or player.state == "signup":
+                    player.state = "left"
+                    player.left_at = now
+                    player.seat_number = None
+                    remaining = self._liar_dice_players(session, game.id, ("active",))
+                    if game.state != "signup" and len(remaining) < 2:
+                        self._finish_liar_dice_locked(
+                            game, "completed", "not_enough_players", now
+                        )
+                        return self._liar_dice_result_locked(
+                            session, game, "completed"
+                        )
+                    return self._liar_dice_result_locked(session, game, "left_game")
+                player.left_at = now
+                return self._liar_dice_result_locked(session, game, "leave_queued")
+
+    def begin_liar_dice(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                actor = self._liar_dice_user(session, platform_id)
+                if actor is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                if game.state != "signup":
+                    return self._liar_dice_result_locked(
+                        session, game, "already_started"
+                    )
+                if actor.id != game.host_user_id:
+                    return self._liar_dice_result_locked(session, game, "host_only")
+                rows = self._liar_dice_players(session, game.id, ("signup",))
+                if len(rows) < 2:
+                    return self._liar_dice_result_locked(
+                        session, game, "not_enough_players"
+                    )
+                missing = [
+                    user.display_name
+                    for _, user in rows
+                    if session.scalar(
+                        select(DirectChatRecord.chatroom_id).where(
+                            DirectChatRecord.platform_user_id == user.platform_id
+                        )
+                    )
+                    is None
+                ]
+                if missing:
+                    return self._liar_dice_result_locked(
+                        session,
+                        game,
+                        "missing_direct_chats",
+                        public_message="、".join(missing),
+                    )
+                self._liar_dice_random.shuffle(rows)
+                for seat, (player, _) in enumerate(rows, start=1):
+                    player.state = "active"
+                    player.seat_number = seat
+                game.signup_deadline = None
+                game.started_at = now
+                game.timeout_streak = 0
+                self._liar_dice_deal_round(session, game, now)
+                return self._liar_dice_result_locked(session, game, "dealing")
+
+    def liar_dice_call(
+        self,
+        platform_id: str,
+        call: tuple[int, int] | None,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        if call is None:
+            return LiarDiceResult("invalid_call")
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                actor = self._liar_dice_user(session, platform_id)
+                if actor is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                if game.state != "calling":
+                    return self._liar_dice_result_locked(session, game, "wrong_state")
+                players = self._liar_dice_players(session, game.id, ("active",))
+                current = next(
+                    (p for p, _ in players if p.seat_number == game.current_seat), None
+                )
+                if current is None or current.user_id != actor.id:
+                    turn_user = next(
+                        (
+                            user
+                            for player, user in players
+                            if player.seat_number == game.current_seat
+                        ),
+                        None,
+                    )
+                    result = self._liar_dice_result_locked(session, game, "not_your_turn")
+                    if turn_user is not None:
+                        result = replace(result, turn_name=turn_user.display_name)
+                    return result
+                round_record = self._liar_dice_current_round(session, game.id)
+                if round_record is None:
+                    raise RuntimeError("大话骰子回合不存在")
+                previous = game.current_call
+                old_call = (
+                    None
+                    if previous is None
+                    else (int(previous["count"]), int(previous["face"]))
+                )
+                if not is_legal_raise(old_call, call, len(players)):
+                    return self._liar_dice_result_locked(session, game, "invalid_raise")
+                invalidated = call[1] == round_record.wild_face
+                if invalidated:
+                    round_record.wild_invalidated = True
+                caller_seat = game.current_seat
+                round_record.calls = list(round_record.calls or []) + [
+                    {
+                        "seat": caller_seat,
+                        "name": actor.display_name,
+                        "count": call[0],
+                        "face": call[1],
+                    }
+                ]
+                game.current_call = {"count": call[0], "face": call[1]}
+                game.last_caller_user_id = actor.id
+                round_record.last_caller_user_id = actor.id
+                round_record.call_count = call[0]
+                round_record.call_face = call[1]
+                next_seat = caller_seat % len(players) + 1
+                game.current_seat = next_seat
+                game.turn_deadline = now + timedelta(seconds=LIAR_DICE_TURN_SECONDS)
+                game.timeout_streak = 0
+                next_player = next(
+                    (p for p, _ in players if p.seat_number == next_seat), None
+                )
+                next_user = (
+                    None
+                    if next_player is None
+                    else session.get(UserRecord, next_player.user_id)
+                )
+                return self._liar_dice_result_locked(
+                    session,
+                    game,
+                    "called",
+                    public_message=(
+                        f"🎲 {actor.display_name} 叫 {call[0]}个{call[1]}"
+                        + ("（万能点失效！）" if invalidated else "")
+                        + f"！轮到 {next_user.display_name}（加码“N个X”或 /开骰）"
+                        if next_user is not None
+                        else None
+                    ),
+                )
+
+    def liar_dice_open(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                actor = self._liar_dice_user(session, platform_id)
+                if actor is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                if game.state != "calling":
+                    return self._liar_dice_result_locked(session, game, "wrong_state")
+                players = self._liar_dice_players(session, game.id, ("active",))
+                current = next(
+                    (p for p, _ in players if p.seat_number == game.current_seat), None
+                )
+                if current is None or current.user_id != actor.id:
+                    return self._liar_dice_result_locked(session, game, "not_your_turn")
+                if game.current_call is None or game.last_caller_user_id is None:
+                    return self._liar_dice_result_locked(session, game, "no_call")
+                if game.last_caller_user_id == actor.id:
+                    return self._liar_dice_result_locked(session, game, "own_call")
+                round_record = self._liar_dice_current_round(session, game.id)
+                if round_record is None:
+                    raise RuntimeError("大话骰子回合不存在")
+                call = (int(game.current_call["count"]), int(game.current_call["face"]))
+                all_dice = {
+                    user.display_name: (player.dice or [])
+                    for player, user in players
+                }
+                actual = count_point(
+                    all_dice,
+                    call[1],
+                    round_record.wild_face,
+                    round_record.wild_invalidated,
+                )
+                caller = session.get(UserRecord, game.last_caller_user_id)
+                if caller is None:
+                    raise RuntimeError("大话骰子叫牌者不存在")
+                caller_win = judge_open(
+                    all_dice, call, round_record.wild_face, round_record.wild_invalidated
+                )
+                winner = caller if caller_win else actor
+                loser = actor if caller_win else caller
+                round_record.opener_user_id = actor.id
+                round_record.actual_count = actual
+                round_record.winner_user_id = winner.id
+                round_record.loser_user_id = loser.id
+                round_record.dice_snapshot = all_dice
+                round_record.state = "resolved"
+                round_record.resolved_at = now
+                game.state = "round_end"
+                game.turn_deadline = None
+                lines = ["🎲 开牌！全场骰子："]
+                lines.extend(
+                    f"{player.seat_number}号 {user.display_name}：{dice_str(player.dice or [])}"
+                    for player, user in players
+                )
+                lines.append(
+                    f"{caller.display_name} 叫 {call[0]}个{call[1]}，实际 {actual} 个"
+                    + (
+                        ""
+                        if not round_record.wild_invalidated
+                        else f"（万能点 🎲{round_record.wild_face} 已失效）"
+                    )
+                )
+                lines.append(
+                    f"🎉 {winner.display_name} 赢！{loser.display_name} 输了，"
+                    f"接受惩罚——{winner.display_name} 获得发令权（可像国王游戏一样"
+                    f"给 {loser.display_name} 布置一个惩罚任务）。"
+                )
+                lines.append(
+                    "发 /继续 开下一轮，发起者或任意参与者可 /结束游戏 查看总战绩。"
+                )
+                return self._liar_dice_result_locked(
+                    session, game, "opened", public_message="\n".join(lines)
+                )
+
+    def liar_dice_continue(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                actor = self._liar_dice_user(session, platform_id)
+                if actor is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                if game.state != "round_end":
+                    return self._liar_dice_result_locked(session, game, "wrong_state")
+                if not self._is_liar_dice_participant(session, game.id, actor.id):
+                    return self._liar_dice_result_locked(
+                        session, game, "not_participant"
+                    )
+                self._apply_liar_dice_queued_leaves(session, game.id)
+                players = self._liar_dice_players(session, game.id, ("active",))
+                if len(players) < 2:
+                    self._finish_liar_dice_locked(
+                        game, "completed", "not_enough_players", now
+                    )
+                    return self._liar_dice_result_locked(session, game, "completed")
+                game.timeout_streak = 0
+                self._liar_dice_deal_round(session, game, now)
+                return self._liar_dice_result_locked(session, game, "dealing")
+
+    def liar_dice_end(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                actor = self._liar_dice_user(session, platform_id)
+                if actor is None or not self._is_liar_dice_participant(
+                    session, game.id, actor.id
+                ):
+                    return self._liar_dice_result_locked(
+                        session, game, "not_participant"
+                    )
+                statistics = self._liar_dice_statistics_locked(session, game)
+                self._finish_liar_dice_locked(
+                    game, "completed", "participant_ended", now
+                )
+                return self._liar_dice_result_locked(
+                    session, game, "completed", statistics=statistics
+                )
+
+    def liar_dice_status(
+        self,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        del now
+        with self._session() as session:
+            game = self._active_liar_dice_game(session, group_chat_id)
+            if game is None:
+                return LiarDiceResult("no_game")
+            players = self._liar_dice_players(session, game.id, ("active",))
+            if game.state == "signup":
+                return self._liar_dice_result_locked(
+                    session, game, "status_signup"
+                )
+            if game.state == "round_end":
+                return self._liar_dice_result_locked(
+                    session, game, "status_round_end"
+                )
+            round_record = self._liar_dice_current_round(session, game.id)
+            wild_note = ""
+            if round_record is not None:
+                wild_note = (
+                    f"⚠️ 万能点 🎲{round_record.wild_face} 已被叫过，不再生效"
+                    if round_record.wild_invalidated
+                    else f"🃏 本轮万能点：{dice_str([round_record.wild_face])}（可顶任何点数）"
+                )
+            lines = [f"【大话骰子】第 {game.round_number} 轮（{len(players)} 人）"]
+            lines.append(
+                "顺序：" + " → ".join(f"{p.seat_number}号{u.display_name}" for p, u in players)
+            )
+            if game.current_call is not None:
+                lines.append(
+                    f"当前叫数：{game.current_call['count']}个{game.current_call['face']}"
+                )
+            else:
+                lines.append("当前叫数：无（等 1号 首叫）")
+            turn_user = next(
+                (
+                    user
+                    for player, user in players
+                    if player.seat_number == game.current_seat
+                ),
+                None,
+            )
+            if turn_user is not None:
+                lines.append(f"轮到：{turn_user.display_name}")
+            if wild_note:
+                lines.append(wild_note)
+            return self._liar_dice_result_locked(
+                session, game, "status", public_message="\n".join(lines)
+            )
+
+    def liar_dice_private_hands(
+        self,
+        platform_id: str,
+        now: datetime,
+    ) -> LiarDiceResult:
+        del now
+        with self._session() as session:
+            row = session.execute(
+                select(LiarDicePlayerRecord, LiarDiceGameRecord)
+                .join(
+                    LiarDiceGameRecord,
+                    LiarDiceGameRecord.id == LiarDicePlayerRecord.game_id,
+                )
+                .join(
+                    UserRecord,
+                    UserRecord.id == LiarDicePlayerRecord.user_id,
+                )
+                .where(
+                    UserRecord.platform_id == platform_id,
+                    LiarDiceGameRecord.active_key == "global",
+                    LiarDiceGameRecord.state.in_(("dealing", "calling")),
+                    LiarDicePlayerRecord.state == "active",
+                )
+                .order_by(LiarDiceGameRecord.started_at.desc())
+                .limit(1)
+            ).first()
+            if row is None:
+                return LiarDiceResult("no_hands")
+            player, game = row
+            round_record = self._liar_dice_current_round(session, game.id)
+            wild_note = (
+                ""
+                if round_record is None
+                else (
+                    f"本轮万能点 🎲{round_record.wild_face}"
+                    + ("（已失效，只算自身）" if round_record.wild_invalidated else "（可顶任何点数）")
+                )
+            )
+            message = (
+                f"【大话骰子】第 {game.round_number} 轮你的骰子：{dice_str(player.dice or [])}"
+                + (f"\n{wild_note}" if wild_note else "")
+            )
+            return LiarDiceResult("shown", game_id=game.id, private_message=message)
+
+    def liar_dice_statistics(
+        self, group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID
+    ) -> LiarDiceStatistics | None:
+        with self._session() as session:
+            game = session.scalar(
+                select(LiarDiceGameRecord).where(
+                    LiarDiceGameRecord.group_chat_id == group_chat_id,
+                    LiarDiceGameRecord.active_key == "global",
+                )
+            )
+            if game is None:
+                return None
+            return self._liar_dice_statistics_locked(session, game)
+
+    def _liar_dice_statistics_locked(
+        self, session: Session, game: LiarDiceGameRecord
+    ) -> LiarDiceStatistics:
+        names = dict(
+            session.execute(
+                select(UserRecord.id, UserRecord.display_name)
+                .join(
+                    LiarDicePlayerRecord,
+                    LiarDicePlayerRecord.user_id == UserRecord.id,
+                )
+                .where(LiarDicePlayerRecord.game_id == game.id)
+            ).all()
+        )
+        opens: dict[UUID, int] = {}
+        penalties: dict[UUID, int] = {}
+        bluff_caught: dict[UUID, int] = {}
+        catches: dict[UUID, int] = {}
+        rounds = session.scalars(
+            select(LiarDiceRoundRecord)
+            .where(
+                LiarDiceRoundRecord.game_id == game.id,
+                LiarDiceRoundRecord.state == "resolved",
+            )
+            .order_by(LiarDiceRoundRecord.sequence)
+        )
+        for round_record in rounds:
+            if round_record.opener_user_id is not None:
+                opens[round_record.opener_user_id] = (
+                    opens.get(round_record.opener_user_id, 0) + 1
+                )
+            if round_record.winner_user_id is not None and (
+                round_record.winner_user_id == round_record.opener_user_id
+            ):
+                catches[round_record.winner_user_id] = (
+                    catches.get(round_record.winner_user_id, 0) + 1
+                )
+            if round_record.loser_user_id is None:
+                continue
+            penalties[round_record.loser_user_id] = (
+                penalties.get(round_record.loser_user_id, 0) + 1
+            )
+            if round_record.loser_user_id == round_record.last_caller_user_id:
+                bluff_caught[round_record.loser_user_id] = (
+                    bluff_caught.get(round_record.loser_user_id, 0) + 1
+                )
+
+        def leaders(counts: dict[UUID, int]) -> tuple[tuple[str, int], ...]:
+            if not counts:
+                return ()
+            highest = max(counts.values())
+            return tuple(
+                sorted(
+                    (
+                        (names.get(user_id, "未知员工"), count)
+                        for user_id, count in counts.items()
+                        if count == highest
+                    ),
+                    key=lambda entry: entry[0],
+                )
+            )
+
+        return LiarDiceStatistics(
+            opens_leaders=leaders(opens),
+            bluff_caught_leaders=leaders(bluff_caught),
+            penalty_leaders=leaders(penalties),
+            catch_leaders=leaders(catches),
+        )
+
+    def _is_liar_dice_participant(
+        self, session: Session, game_id: UUID, user_id: UUID
+    ) -> bool:
+        player = session.scalar(
+            select(LiarDicePlayerRecord).where(
+                LiarDicePlayerRecord.game_id == game_id,
+                LiarDicePlayerRecord.user_id == user_id,
+                LiarDicePlayerRecord.state.in_(("signup", "active")),
+            )
+        )
+        return player is not None
+
+    @staticmethod
+    def _apply_liar_dice_queued_leaves(session: Session, game_id: UUID) -> None:
+        leavers = session.scalars(
+            select(LiarDicePlayerRecord).where(
+                LiarDicePlayerRecord.game_id == game_id,
+                LiarDicePlayerRecord.state == "active",
+                LiarDicePlayerRecord.left_at.is_not(None),
+            )
+        )
+        for player in leavers:
+            player.state = "left"
+            player.seat_number = None
+
+    def run_liar_dice_jobs(
+        self, now: datetime, group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID
+    ) -> list[str]:
+        now = now.astimezone(BEIJING)
+        messages: list[str] = []
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return messages
+                if game.state == "signup":
+                    if game.signup_deadline is not None and now >= game.signup_deadline:
+                        self._finish_liar_dice_locked(
+                            game, "cancelled", "signup_expired", now
+                        )
+                        messages.append("【大话骰子】报名超时，本局已自动取消。")
+                    return messages
+                if game.state != "calling" or game.turn_deadline is None:
+                    return messages
+                if now < game.turn_deadline:
+                    return messages
+                players = self._liar_dice_players(session, game.id, ("active",))
+                if not players:
+                    return messages
+                current = next(
+                    (p for p, _ in players if p.seat_number == game.current_seat),
+                    None,
+                )
+                if current is None:
+                    game.current_seat = 1
+                    return messages
+                current_user = session.get(UserRecord, current.user_id)
+                ordered = sorted(players, key=lambda row: row[0].seat_number or 0)
+                index = next(
+                    (
+                        position
+                        for position, (player, _) in enumerate(ordered)
+                        if player.user_id == current.user_id
+                    ),
+                    0,
+                )
+                rotated = ordered[:index] + ordered[index + 1 :] + [ordered[index]]
+                for player, _ in rotated:
+                    player.seat_number = None
+                session.flush()
+                for seat, (player, _) in enumerate(rotated, start=1):
+                    player.seat_number = seat
+                if index == len(players) - 1:
+                    game.current_seat = 1
+                game.timeout_streak = (game.timeout_streak or 0) + 1
+                if game.timeout_streak >= len(players):
+                    round_record = self._liar_dice_current_round(session, game.id)
+                    if round_record is not None:
+                        round_record.state = "voided"
+                    game.state = "round_end"
+                    game.turn_deadline = None
+                    game.timeout_streak = 0
+                    messages.append(
+                        "⏱️ 大家都超时了，本轮作废！发 /继续 开下一轮，或 /结束游戏 结束。"
+                    )
+                    return messages
+                game.turn_deadline = now + timedelta(seconds=LIAR_DICE_TURN_SECONDS)
+                next_player = next(
+                    (p for p, _ in rotated if p.seat_number == game.current_seat),
+                    None,
+                )
+                next_user = (
+                    None
+                    if next_player is None
+                    else session.get(UserRecord, next_player.user_id)
+                )
+                if current_user is not None and next_user is not None:
+                    messages.append(
+                        f"⏱️ {current_user.display_name} 超时，自动跳到最后！"
+                        f"轮到 {next_user.display_name}"
+                    )
+                return messages
 
     def get_never_have_i_ever_settings(self) -> NeverHaveIEverSettings:
         with self._session() as session:
@@ -23362,6 +24408,14 @@ class CoreRepository:
             self.run_undercover_jobs(now)
             for group_chat_id in group_ids:
                 self.run_blame_game_jobs(now, group_chat_id)
+                for message in self.run_liar_dice_jobs(now, group_chat_id):
+                    self.enqueue_system_outbound(
+                        message,
+                        group_chat_id=group_chat_id,
+                        destination_chatroom_id=self.group_chat_destination(
+                            group_chat_id
+                        ),
+                    )
                 for message in self.run_number_bomb_jobs(now, group_chat_id):
                     self.enqueue_system_outbound(
                         message,
@@ -27716,6 +28770,20 @@ class CoreRepository:
                         self._record_texas_card_delivery(session, player, now)
                     finally:
                         self._active_session.reset(active_token)
+            elif record.delivery_kind == "liar_dice_hand":
+                dice_player = session.scalar(
+                    select(LiarDicePlayerRecord)
+                    .where(LiarDicePlayerRecord.hand_outbound_id == record.id)
+                    .with_for_update()
+                )
+                if dice_player is not None:
+                    active_token = self._active_session.set(session)
+                    try:
+                        self._record_liar_dice_hand_delivery(
+                            session, dice_player, now, True
+                        )
+                    finally:
+                        self._active_session.reset(active_token)
             return True
 
     def mark_outbound_failed(
@@ -27775,6 +28843,20 @@ class CoreRepository:
                     )
                     if game is not None and game.state == "dealing":
                         player.private_delivery_state = "failed"
+            elif record.delivery_kind == "liar_dice_hand":
+                dice_player = session.scalar(
+                    select(LiarDicePlayerRecord)
+                    .where(LiarDicePlayerRecord.hand_outbound_id == record.id)
+                    .with_for_update()
+                )
+                if dice_player is not None:
+                    active_token = self._active_session.set(session)
+                    try:
+                        self._record_liar_dice_hand_delivery(
+                            session, dice_player, now, False
+                        )
+                    finally:
+                        self._active_session.reset(active_token)
             return True
 
     def release_outbound(

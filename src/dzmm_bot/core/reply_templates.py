@@ -600,6 +600,8 @@ TEMPLATE_DEFINITIONS = (
     TemplateDefinition("/退出", "texas_folded", "本手弃牌", "你已退出本手德州扑克，按弃牌处理。", ("{日期}",)),
     TemplateDefinition("/退出", "texas_cannot_leave", "无法退出", "当前没有你可以退出的德州扑克。", ("{日期}",)),
     TemplateDefinition("/看牌", "group_only", "仅限私聊", "请在私聊中发送 /看牌，群内不会展示底牌。", ("{日期}",)),
+    TemplateDefinition("/大话骰子", "disabled", "游戏未开放", "大话骰子当前未开放，请稍后再试。", ("{日期}",)),
+    TemplateDefinition("/看骰", "group_only", "仅限私聊", "请在私聊中发送 /看骰，群内不会展示骰子。", ("{日期}",)),
     TemplateDefinition("/看牌", "no_cards", "暂无底牌", "当前没有你可以查看的德州扑克底牌。", ("{日期}",)),
     TemplateDefinition("/看牌", "usage", "看牌格式", "请在私聊发送 /看牌；同时参加多桌时发送 /看牌 群序号。", ("{日期}",)),
     TemplateDefinition("/看牌", "choose_group", "选择群聊", "你同时参加了多个群的德州扑克，请发送 /看牌 群序号：\n{群聊列表}", ("{群聊列表}", "{日期}")),

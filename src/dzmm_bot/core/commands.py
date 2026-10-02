@@ -7,6 +7,7 @@ from dzmm_bot.runtime.contracts import InboundMessage
 
 from .group_games import GROUP_GAME_COMMANDS, GROUP_GAME_LABELS
 from .birthday import parse_visibility
+from .liar_dice import parse_call
 
 from .company_lottery import (
     ALL_TIERS,
@@ -49,6 +50,7 @@ _COMMANDS = {
     "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/跳过", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证",
     "/设置生日", "/我的生日", "/本月生日",
     "/随礼",
+    "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据",
 }
 
 _LOTTERY_COMMANDS = {
@@ -95,6 +97,9 @@ class GroupCommandHandler:
         if command == "/买彩票":
             command = "/购买彩票"
         if command not in _COMMANDS:
+            dice_reply = self._liar_dice_call_step(message, content)
+            if dice_reply is not None:
+                return dice_reply
             return self._company_lottery_draft_step(message, content)
         self._repository.ensure_command_definitions()
         if not self._repository.is_command_enabled(command):
@@ -290,6 +295,7 @@ class GroupCommandHandler:
                 "/蹦蹦数字炸弹",
                 "/德州扑克",
                 "/国王游戏",
+                "/大话骰子",
             }
             and self._repository.performance_blocks_new_game(group_chat_id)
         ):
@@ -300,6 +306,7 @@ class GroupCommandHandler:
             and command in {
                 "/发红包", "/摸鱼躲猫猫", "/记忆考核", "/谁是卧底",
                 "/甩锅游戏", "/蹦蹦数字炸弹", "/德州扑克", "/国王游戏",
+                "/大话骰子",
             }
         ):
             return self._reply(command, "disabled", received_at)
@@ -345,6 +352,18 @@ class GroupCommandHandler:
             return self._king_game_start(message, received_at, group_chat_id)
         if command == "/国王游戏数据":
             return self._king_game_statistics(message, group_chat_id)
+        if command == "/大话骰子":
+            return self._liar_dice_start(message, received_at, group_chat_id)
+        if command == "/开骰":
+            return self._liar_dice_open(message, received_at, group_chat_id)
+        if command == "/牌局":
+            return self._liar_dice_status(message, received_at, group_chat_id)
+        if command == "/看骰":
+            if message.source_type != "direct":
+                return self._reply("/看骰", "group_only", received_at)
+            return self._liar_dice_private_hands(message)
+        if command == "/大话骰子数据":
+            return self._liar_dice_statistics(message, group_chat_id)
         if command == "/看牌":
             if message.source_type != "direct":
                 return self._reply("/看牌", "group_only", received_at)
@@ -430,6 +449,8 @@ class GroupCommandHandler:
                 )
             if summary.game_type == "king_game":
                 return self._king_game_begin(message, received_at, group_chat_id)
+            if summary.game_type == "liar_dice":
+                return self._liar_dice_begin(message, received_at, group_chat_id)
             return self._reply("/开始", "no_current_game", received_at)
         if command == "/报数":
             if message.source_type != "direct":
@@ -546,6 +567,8 @@ class GroupCommandHandler:
                 )
             if summary.game_type == "king_game":
                 return self._king_game_end(message, received_at, group_chat_id)
+            if summary.game_type == "liar_dice":
+                return self._liar_dice_end(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._reply("/结束游戏", "no_current_game", received_at)
@@ -662,6 +685,8 @@ class GroupCommandHandler:
                 )
             if summary.game_type == "king_game":
                 return self._king_game_join(message, received_at, group_chat_id)
+            if summary.game_type == "liar_dice":
+                return self._liar_dice_join(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._event_join(
@@ -708,6 +733,8 @@ class GroupCommandHandler:
                 )
             if summary.game_type == "king_game":
                 return self._king_game_leave(message, received_at, group_chat_id)
+            if summary.game_type == "liar_dice":
+                return self._liar_dice_leave(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._event_leave(
@@ -739,6 +766,8 @@ class GroupCommandHandler:
                 return self._king_game_continue(
                     message, received_at, group_chat_id
                 )
+            if summary.game_type == "liar_dice":
+                return self._liar_dice_continue(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._memory_assessment_continue(
@@ -1120,6 +1149,7 @@ class GroupCommandHandler:
             return self._reply("/当前游戏", "conflict", received_at)
         game_name = {
             "king_game": "国王游戏",
+            "liar_dice": "大话骰子",
             "never_have_i_ever": "我有你没有",
             "texas_holdem": "德州扑克",
             "number_bomb": "蹦蹦数字炸弹",
@@ -1160,6 +1190,8 @@ class GroupCommandHandler:
             "free_punishment": "自由惩罚",
             "awaiting_reveal": "等待国王公开",
             "revealed": "等待下一轮",
+            "calling": "叫牌中",
+            "round_end": "回合结束",
         }.get(summary.state, "进行中")
         if (
             summary.game_type == "number_bomb"
@@ -1534,6 +1566,202 @@ class GroupCommandHandler:
             f"再于 {timeout} 秒内发送 /公开 编号（例如 /公开 2 5）。\n"
             "号码在公开前仅国王可知；系统不会判断命令内容。"
         )
+
+    def _liar_dice_start(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /大话骰子。"
+        result = self._repository.start_liar_dice(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        messages = {
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "disabled": "大话骰子当前未开放。",
+            "multiplayer_active": "当前已有游戏或随机事件进行中。",
+            "already_active": "当前已有大话骰子对局。",
+        }
+        if result.status in messages:
+            return messages[result.status]
+        return (
+            "【大话骰子】报名已开启！想玩的发 /加入（每人 5 骰、每轮随机万能点；"
+            "需要先和机器人私聊过），人齐后发起者发 /开始 摇骰开局。"
+        )
+
+    def _liar_dice_join(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /加入。"
+        result = self._repository.join_liar_dice(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "signup_joined":
+            return f"已加入大话骰子，当前 {len(result.players)} 人。"
+        if result.status == "next_round_joined":
+            return "已加入大话骰子，下一轮开骰时参战。"
+        return {
+            "no_game": "当前没有可加入的大话骰子报名局，发 /大话骰子 发起。",
+            "already_joined": "你已经在当前大话骰子局中。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+        }.get(result.status, "当前不能加入大话骰子。")
+
+    def _liar_dice_begin(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /开始。"
+        result = self._repository.begin_liar_dice(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "dealing":
+            return (
+                f"【大话骰子】第 {result.round_number} 轮摇骰中（{len(result.players)} 人），"
+                "骰子正在私聊发放，未收到的话稍后私聊发 /看骰。"
+            )
+        if result.status == "missing_direct_chats":
+            return (
+                "以下成员还没有和机器人私聊过，无法私发骰子："
+                f"{result.public_message}。请先各自私聊机器人发一句话，再发 /开始。"
+            )
+        return {
+            "no_game": "当前没有可开始的大话骰子报名局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "host_only": "只有发起者可以开始大话骰子。",
+            "not_enough_players": "当前人数不足，至少 2 人才能开始。",
+            "already_started": "本局大话骰子已经开始。",
+        }.get(result.status, "当前不能开始大话骰子。")
+
+    def _liar_dice_call_step(self, message: InboundMessage, content: str):
+        call = parse_call(content)
+        if call is None or message.source_type != "group":
+            return None
+        group = self._repository.resolve_enabled_group_chat(message.chatroom_id)
+        if group is None:
+            return None
+        received_at = message.received_at.astimezone(_BEIJING)
+        result = self._repository.liar_dice_call(
+            message.sender_platform_id, call, received_at, group.id
+        )
+        if result.status in {"no_game", "wrong_state", "not_joined"}:
+            return None
+        if result.status == "called":
+            return result.public_message
+        if result.status == "invalid_raise":
+            return "叫数不合法哦～要比上一个大（个数更多，或点数更大），首叫至少为在场人数～"
+        if result.status == "not_your_turn":
+            return f"还没轮到你哦～现在轮到 {result.turn_name}～"
+        return None
+
+    def _liar_dice_open(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在大话骰子所在群发送 /开骰。"
+        result = self._repository.liar_dice_open(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "opened":
+            return result.public_message
+        if result.status == "not_your_turn":
+            return f"还没轮到你哦～现在轮到 {result.turn_name}～"
+        return {
+            "no_game": "当前没有大话骰子对局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "wrong_state": "当前不在叫牌阶段，无法开牌。",
+            "no_call": "还没有人叫数呢，不能开～",
+            "own_call": "你不能开自己叫的数哦～",
+        }.get(result.status, "当前不能开牌。")
+
+    def _liar_dice_continue(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /继续。"
+        result = self._repository.liar_dice_continue(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "dealing":
+            return (
+                f"【大话骰子】第 {result.round_number} 轮摇骰中（{len(result.players)} 人），"
+                "新骰子正在私聊发放，未收到的话稍后私聊发 /看骰。"
+            )
+        if result.status == "completed":
+            return "【大话骰子】剩余人数不足 2 人，本局结束。"
+        return {
+            "no_game": "当前没有大话骰子对局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "not_participant": "只有本局参与者可以继续。",
+            "wrong_state": "本轮还在进行中，等开牌后再 /继续。",
+        }.get(result.status, "当前不能继续大话骰子。")
+
+    def _liar_dice_leave(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /退出。"
+        result = self._repository.leave_liar_dice(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "left_game":
+            return "你已退出本局大话骰子。"
+        if result.status == "leave_queued":
+            return "已登记退出，本轮结束后生效。"
+        if result.status == "completed":
+            return "【大话骰子】剩余人数不足 2 人，本局已结束。"
+        return {
+            "no_game": "当前没有大话骰子对局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "not_participant": "你没有参与当前大话骰子局。",
+        }.get(result.status, "当前不能退出大话骰子。")
+
+    def _liar_dice_end(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /结束游戏。"
+        result = self._repository.liar_dice_end(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "completed":
+            return "【大话骰子】本局结束。\n" + self._liar_dice_statistics_message(
+                result.statistics
+            )
+        return {
+            "no_game": "当前没有可结束的大话骰子局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "not_participant": "只有本局参与者可以结束游戏。",
+        }.get(result.status, "当前不能结束大话骰子。")
+
+    def _liar_dice_status(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /牌局。"
+        result = self._repository.liar_dice_status(received_at, group_chat_id)
+        if result.status == "no_game":
+            return "当前没有进行中的大话骰子局哦～发 /大话骰子 发起～"
+        if result.status in {"status_signup", "status_round_end"}:
+            return result.public_message or "【大话骰子】对局进行中。"
+        return result.public_message or "【大话骰子】对局进行中。"
+
+    def _liar_dice_private_hands(self, message):
+        result = self._repository.liar_dice_private_hands(
+            message.sender_platform_id,
+            message.received_at.astimezone(_BEIJING),
+        )
+        if result.status == "shown":
+            return result.private_message
+        return "你当前没有进行中的大话骰子骰子哦～"
+
+    def _liar_dice_statistics(self, message, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /大话骰子数据。"
+        statistics = self._repository.liar_dice_statistics(group_chat_id)
+        if statistics is None:
+            return "当前没有大话骰子对局。"
+        return self._liar_dice_statistics_message(statistics)
+
+    @staticmethod
+    def _liar_dice_statistics_message(statistics) -> str:
+        def line(label, leaders) -> str:
+            if not leaders:
+                return f"{label}：暂无"
+            return f"{label}：" + "、".join(
+                f"{name}（{count} 次）" for name, count in leaders
+            )
+
+        return "\n".join((
+            "【大话骰子数据】",
+            line("开牌次数最多", statistics.opens_leaders),
+            line("虚张声势败露最多", statistics.bluff_caught_leaders),
+            line("拆穿他人最多", statistics.catch_leaders),
+            line("受罚次数最多", statistics.penalty_leaders),
+        ))
 
     def _join(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)
@@ -4249,6 +4477,21 @@ class GroupCommandHandler:
                     ("/公开", "/公开 编号 [编号...]：仅本轮国王公开指定编号"),
                     ("/继续", "/继续：任一参与者进入下一轮"),
                     ("/国王游戏数据", "/国王游戏数据：查看当前局国王、受罚和回旋镖实时统计"),
+                    ("/结束游戏", "/结束游戏：任一参与者结束本局并公布统计"),
+                ),
+            ),
+            "大话骰子": (
+                "【大话骰子】",
+                (
+                    ("/大话骰子", "/大话骰子：创建报名局（每人 5 骰 + 每轮随机万能点）"),
+                    ("/加入", "/加入：报名；对局中途加入者在下一轮生效"),
+                    ("/开始", "/开始：发起者摇骰开局，骰子私聊发放"),
+                    ("N个X", "直接发送如“3个5”：当前行动者叫数或加码"),
+                    ("/开骰", "/开骰：当前行动者质疑上一手叫数，全场明牌定胜负"),
+                    ("/牌局", "/牌局：查看座位、当前叫数与万能点状态"),
+                    ("/看骰", "私聊 /看骰：查看自己当前骰子"),
+                    ("/继续", "/继续：开牌后任一参与者开启下一轮"),
+                    ("/大话骰子数据", "/大话骰子数据：查看开牌、败露、拆穿与受罚统计"),
                     ("/结束游戏", "/结束游戏：任一参与者结束本局并公布统计"),
                 ),
             ),

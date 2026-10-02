@@ -1004,6 +1004,103 @@ class KingGameRoundRecord(Base):
     revealed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
 
 
+class LiarDiceGameRecord(Base):
+    __tablename__ = "liar_dice_games"
+    __table_args__ = (
+        Index(
+            "ux_liar_dice_one_active",
+            "group_chat_id",
+            unique=True,
+            sqlite_where=text("active_key IS NOT NULL"),
+            postgresql_where=text("active_key IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "state IN ('signup', 'dealing', 'calling', 'round_end', "
+            "'completed', 'cancelled', 'forced_ended')",
+            name="ck_liar_dice_game_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"), default=PRIMARY_GROUP_CHAT_ID, nullable=False
+    )
+    host_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    active_key: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    current_call: Mapped[dict[str, int] | None] = mapped_column(JSON)
+    last_caller_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    current_seat: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    turn_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    timeout_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    signup_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finish_reason: Mapped[str | None] = mapped_column(String(64))
+
+
+class LiarDicePlayerRecord(Base):
+    __tablename__ = "liar_dice_players"
+    __table_args__ = (
+        UniqueConstraint("game_id", "user_id"),
+        UniqueConstraint("game_id", "seat_number"),
+        CheckConstraint(
+            "state IN ('signup', 'active', 'left')",
+            name="ck_liar_dice_player_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("liar_dice_games.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    seat_number: Mapped[int | None] = mapped_column(Integer)
+    dice: Mapped[list[int] | None] = mapped_column(JSON)
+    hand_delivery_state: Mapped[str | None] = mapped_column(String(16))
+    hand_outbound_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("outbound_messages.id")
+    )
+    joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    left_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class LiarDiceRoundRecord(Base):
+    __tablename__ = "liar_dice_rounds"
+    __table_args__ = (
+        UniqueConstraint("game_id", "sequence"),
+        CheckConstraint(
+            "state IN ('active', 'resolved', 'voided')",
+            name="ck_liar_dice_round_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("liar_dice_games.id"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    wild_face: Mapped[int] = mapped_column(Integer, nullable=False)
+    wild_invalidated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    calls: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    opener_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    last_caller_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    call_count: Mapped[int | None] = mapped_column(Integer)
+    call_face: Mapped[int | None] = mapped_column(Integer)
+    actual_count: Mapped[int | None] = mapped_column(Integer)
+    winner_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    loser_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    dice_snapshot: Mapped[dict[str, list[int]] | None] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
 class TexasHoldemSettingsRecord(Base):
     __tablename__ = "texas_holdem_settings"
 

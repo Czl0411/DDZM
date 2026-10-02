@@ -1,0 +1,318 @@
+from datetime import datetime, timedelta
+from random import Random
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+
+from dzmm_bot.core.liar_dice import (
+    count_point,
+    is_legal_raise,
+    judge_open,
+    parse_call,
+)
+from dzmm_bot.runtime.contracts import InboundMessage
+
+
+BEIJING = ZoneInfo("Asia/Shanghai")
+
+
+def _service(*, liar_dice_random=None):
+    from dzmm_bot.core.commands import GroupCommandHandler
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import Base
+    from dzmm_bot.core.service import CoreService
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    repository = CoreRepository(factory, liar_dice_random=liar_dice_random)
+    return CoreService(repository, GroupCommandHandler(repository)), repository, factory
+
+
+def _receive(service, message_id, sender, content, received_at, **kwargs):
+    kwargs.setdefault("chatroom_id", "group-main")
+    message = InboundMessage(message_id, sender, content, received_at, **kwargs)
+    return service.receive_inbound(message)
+
+
+def _latest_reply(factory):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    with factory() as session:
+        latest = session.scalar(
+            select(OutboundRecord).order_by(OutboundRecord.created_at.desc())
+        )
+        if latest is None:
+            return ""
+        if latest.inbound_message_id is None:
+            return latest.text
+        return "\n".join(
+            session.scalars(
+                select(OutboundRecord.text)
+                .where(OutboundRecord.inbound_message_id == latest.inbound_message_id)
+                .order_by(OutboundRecord.reply_index)
+            )
+        )
+
+
+def _join_employees(service, now):
+    for index, name in enumerate(("甲", "乙", "丙")):
+        _receive(service, f"join-{index}", f"user-{index}", f"/入职 {name}", now)
+
+
+def _seed_direct_chats(factory, now, drop_platform_id=None):
+    from dzmm_bot.core.schema import DirectChatRecord
+
+    with factory.begin() as session:
+        for index in range(3):
+            platform_id = f"user-{index}"
+            if platform_id == drop_platform_id:
+                continue
+            session.add(
+                DirectChatRecord(
+                    platform_user_id=platform_id,
+                    chatroom_id=f"dm-{platform_id}",
+                    discovered_at=now,
+                )
+            )
+
+
+def _flush_all_outbound(repository, now):
+    """模拟 worker 把当前所有待发消息都发成功（含私聊发骰回执）。"""
+    for _ in range(32):
+        record = repository.claim_outbound("worker-1", now, 30)
+        if record is None:
+            return
+        assert repository.confirm_sent(
+            record.id, "worker-1", record.lease_token, f"psn-{record.id}", now
+        )
+    raise AssertionError("outbound 队列迟迟不清空")
+
+
+def _seat_platform_id(factory, seat):
+    from dzmm_bot.core.schema import LiarDicePlayerRecord, UserRecord
+
+    with factory() as session:
+        row = session.execute(
+            select(LiarDicePlayerRecord, UserRecord)
+            .join(UserRecord, UserRecord.id == LiarDicePlayerRecord.user_id)
+            .where(
+                LiarDicePlayerRecord.state == "active",
+                LiarDicePlayerRecord.seat_number == seat,
+            )
+        ).first()
+        assert row is not None, f"seat {seat} 不存在"
+        return row[1].platform_id
+
+
+def _dice_game(repository):
+    from dzmm_bot.core.schema import LiarDiceGameRecord
+
+    with repository._session() as session:
+        return session.scalar(
+            select(LiarDiceGameRecord).where(
+                LiarDiceGameRecord.active_key == "global"
+            )
+        )
+
+
+def _hand_texts(factory, since_round=None):
+    from dzmm_bot.core.schema import LiarDicePlayerRecord, OutboundRecord
+
+    with factory() as session:
+        rows = session.execute(
+            select(OutboundRecord, LiarDicePlayerRecord)
+            .join(
+                LiarDicePlayerRecord,
+                LiarDicePlayerRecord.hand_outbound_id == OutboundRecord.id,
+            )
+            .order_by(OutboundRecord.created_at)
+        ).all()
+        return [
+            outbound.text
+            for outbound, _ in rows
+            if since_round is None or f"第 {since_round} 轮" in outbound.text
+        ]
+
+
+def test_parse_call_and_raise_rules():
+    assert parse_call("3个3") == (3, 3)
+    assert parse_call("/5个6") == (5, 6)
+    assert parse_call("12 个 2") == (12, 2)
+    assert parse_call("3个7") is None
+    assert parse_call("个3") is None
+    assert is_legal_raise(None, (3, 2), 3)
+    assert not is_legal_raise(None, (2, 2), 3)
+    assert is_legal_raise((3, 2), (4, 1), 3)
+    assert is_legal_raise((3, 2), (3, 5), 3)
+    assert not is_legal_raise((3, 2), (3, 2), 3)
+    assert not is_legal_raise((4, 1), (3, 6), 3)
+
+
+def test_count_point_with_wild():
+    dice = {"a": [1, 2, 3, 4, 5], "b": [2, 2, 3, 3, 3]}
+    assert count_point(dice, 3, 6, False) == 4
+    assert count_point(dice, 2, 2, False) == 3
+    assert count_point(dice, 2, 2, True) == 3
+    assert count_point(dice, 6, 3, False) == 4
+    assert count_point(dice, 6, 3, True) == 0
+    assert judge_open(dice, (4, 3), 6, False)
+    assert not judge_open(dice, (5, 3), 6, False)
+
+
+def test_liar_dice_full_flow():
+    service, repository, factory = _service(liar_dice_random=Random(7))
+    now = datetime(2026, 10, 2, 16, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _join_employees(service, now)
+    _seed_direct_chats(factory, now)
+
+    _receive(service, "m1", "user-0", "/大话骰子", now)
+    assert "报名已开启" in _latest_reply(factory)
+    _receive(service, "m2", "user-1", "/加入", now)
+    assert "当前 2 人" in _latest_reply(factory)
+    _receive(service, "m3", "user-2", "/加入", now)
+    assert "当前 3 人" in _latest_reply(factory)
+    _receive(service, "m4", "user-0", "/加入", now)
+    assert "已经在当前大话骰子局" in _latest_reply(factory)
+
+    game = _dice_game(repository)
+    assert game is not None and game.state == "signup"
+
+    _receive(service, "m5", "user-0", "/开始", now)
+    assert "摇骰中" in _latest_reply(factory)
+    _flush_all_outbound(repository, now)
+    game = _dice_game(repository)
+    assert game.state == "calling"
+    assert game.round_number == 1
+
+    hands = _hand_texts(factory)
+    assert len(hands) == 3
+    assert all("你的骰子" in text for text in hands)
+
+    first = _seat_platform_id(factory, 1)
+    _receive(service, "m6", first, "3个3", now)
+    assert "叫 3个3" in _latest_reply(factory)
+
+    second = _seat_platform_id(factory, 2)
+    _receive(service, "m7", second, "/开骰", now)
+    assert "全场骰子" in _latest_reply(factory)
+    assert "获得发令权" in _latest_reply(factory)
+    game = _dice_game(repository)
+    assert game.state == "round_end"
+
+    _receive(service, "m8", "user-0", "/大话骰子数据", now)
+    assert "大话骰子数据" in _latest_reply(factory)
+
+    _receive(service, "m9", "user-0", "/继续", now)
+    assert "第 2 轮" in _latest_reply(factory)
+    _flush_all_outbound(repository, now)
+    assert _dice_game(repository).state == "calling"
+
+    # 中途退出：本轮仍参与，下一轮生效
+    _receive(service, "m10", "user-2", "/退出", now)
+    assert "本轮结束后生效" in _latest_reply(factory)
+    assert _dice_game(repository).state == "calling"
+    _receive(service, "m10b", first, "3个2", now)
+    _receive(service, "m10c", second, "/开骰", now)
+    assert _dice_game(repository).state == "round_end"
+
+    _receive(service, "m11", "user-0", "/继续", now)
+    assert "第 3 轮" in _latest_reply(factory)
+    _flush_all_outbound(repository, now)
+    assert _dice_game(repository).state == "calling"
+    assert len(_hand_texts(factory, since_round=3)) == 2
+
+    _receive(service, "m12", "user-1", "/退出", now)
+    third_first = _seat_platform_id(factory, 1)
+    _receive(service, "m12b", third_first, "2个1", now)
+    third_second = _seat_platform_id(factory, 2)
+    _receive(service, "m12c", third_second, "/开骰", now)
+
+    _receive(service, "m13", "user-0", "/继续", now)
+    assert "不足 2 人" in _latest_reply(factory)
+    from dzmm_bot.core.schema import LiarDiceGameRecord
+
+    with repository._session() as session:
+        finished = session.scalar(
+            select(LiarDiceGameRecord).order_by(
+                LiarDiceGameRecord.created_at.desc()
+            )
+        )
+    assert finished.state == "completed"
+
+
+def test_liar_dice_requires_direct_chats():
+    service, repository, factory = _service(liar_dice_random=Random(3))
+    now = datetime(2026, 10, 2, 16, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _join_employees(service, now)
+    _seed_direct_chats(factory, now, drop_platform_id="user-2")
+
+    _receive(service, "m1", "user-0", "/大话骰子", now)
+    _receive(service, "m2", "user-1", "/加入", now)
+    _receive(service, "m3", "user-2", "/加入", now)
+    _receive(service, "m4", "user-0", "/开始", now)
+    assert "私聊" in _latest_reply(factory) and "丙" in _latest_reply(factory)
+    assert _dice_game(repository).state == "signup"
+
+
+def test_liar_dice_timeout_skip_and_void():
+    service, repository, factory = _service(liar_dice_random=Random(11))
+    now = datetime(2026, 10, 2, 16, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _join_employees(service, now)
+    _seed_direct_chats(factory, now)
+    _receive(service, "m1", "user-0", "/大话骰子", now)
+    _receive(service, "m2", "user-1", "/加入", now)
+    _receive(service, "m3", "user-2", "/加入", now)
+    _receive(service, "m4", "user-0", "/开始", now)
+    _flush_all_outbound(repository, now)
+    assert _dice_game(repository).state == "calling"
+    group_chat_id = _dice_game(repository).group_chat_id
+
+    later = now + timedelta(minutes=10)
+    first_skip = repository.run_liar_dice_jobs(later, group_chat_id)
+    assert len(first_skip) == 1
+    assert "超时" in first_skip[0]
+    assert _dice_game(repository).state == "calling"
+
+    repository.run_liar_dice_jobs(later + timedelta(minutes=5), group_chat_id)
+    repository.run_liar_dice_jobs(later + timedelta(minutes=10), group_chat_id)
+    game = _dice_game(repository)
+    assert game.state == "round_end"
+
+
+def test_liar_dice_look_dice_is_direct_only():
+    service, repository, factory = _service(liar_dice_random=Random(5))
+    now = datetime(2026, 10, 2, 16, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _join_employees(service, now)
+    _seed_direct_chats(factory, now)
+    _receive(service, "m1", "user-0", "/大话骰子", now)
+    _receive(service, "m2", "user-1", "/加入", now)
+    _receive(service, "m3", "user-2", "/加入", now)
+    _receive(service, "m4", "user-0", "/开始", now)
+    _flush_all_outbound(repository, now)
+
+    _receive(service, "m5", "user-0", "/看骰", now)
+    assert "私聊" in _latest_reply(factory)
+    _receive(
+        service,
+        "m6",
+        "user-0",
+        "/看骰",
+        now,
+        source_type="direct",
+        chatroom_id="dm-user-0",
+    )
+    assert "你的骰子" in _latest_reply(factory)

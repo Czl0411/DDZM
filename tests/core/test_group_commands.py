@@ -2241,6 +2241,30 @@ def test_balance_inventory_and_shop_require_employee_and_return_persisted_data()
     ) in reply
 
 
+def test_shop_lists_items_grouped_by_category_with_other_fallback():
+    service, repository, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _receive(service, "group-1", "platform-xiaoming", "/入职 小明", received_at)
+    repository.add_item("纪念章", "自建收藏品", 1, 5, category="收藏")
+    repository.add_item("杂物", "未分类商品", 2, 5)
+
+    _receive(service, "group-2", "platform-xiaoming", "/商店", received_at)
+    reply = _latest_reply(factory)
+
+    assert "◆ 礼物赠送" in reply
+    assert "◆ 刮刮乐" in reply
+    assert "◆ 功能道具" in reply
+    assert "◆ 收藏" in reply
+    assert "◆ 其他" in reply
+    assert (
+        reply.index("◆ 礼物赠送")
+        < reply.index("◆ 刮刮乐")
+        < reply.index("◆ 功能道具")
+        < reply.index("◆ 收藏")
+        < reply.index("◆ 其他")
+    )
+
+
 def test_shop_purchase_inventory_and_scratch_use_group_commands():
     service, repository, factory = _service()
     now = datetime(2026, 8, 25, 10, 0, tzinfo=BEIJING)

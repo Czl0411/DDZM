@@ -1373,7 +1373,12 @@ def create_app(
     ) -> ItemResponse:
         return _item_response(
             repository.add_item(
-                request.name, request.description, request.price, request.stock
+                request.name,
+                request.description,
+                request.price,
+                request.stock,
+                category=request.category,
+                daily_purchase_limit=request.daily_purchase_limit,
             )
         )
 
@@ -1393,6 +1398,9 @@ def create_app(
                 minimum_rank_order=request.minimum_rank_order,
                 unlimited_stock=request.unlimited_stock,
                 stock=request.stock,
+                price=request.price,
+                category=request.category,
+                daily_purchase_limit=request.daily_purchase_limit,
             )
         except LookupError as error:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(error))
@@ -3527,6 +3535,8 @@ def _item_response(record) -> ItemResponse:
         effect_type=record.effect_type,
         minimum_rank_order=record.minimum_rank_order,
         enabled=record.enabled,
+        category=record.category,
+        daily_purchase_limit=record.daily_purchase_limit,
     )
 
 

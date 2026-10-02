@@ -1874,6 +1874,9 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
             "minimum_rank_order": None,
             "unlimited_stock": False,
             "stock": 3,
+            "price": 5,
+            "category": "收藏",
+            "daily_purchase_limit": 2,
         },
     )
     items = client.get("/internal/game/items", headers=headers)
@@ -1906,6 +1909,8 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
     assert created_item.status_code == 201
     assert updated_item.status_code == 200
     assert updated_item.json()["description"] == "使用后可以安心休息十分钟。"
+    assert updated_item.json()["category"] == "收藏"
+    assert updated_item.json()["daily_purchase_limit"] == 2
     item_page = items.json()
     assert item_page["total"] == 23
     assert item_page["pages"] == 2
@@ -1920,6 +1925,8 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
         "effect_type": None,
         "minimum_rank_order": None,
         "enabled": True,
+        "category": "收藏",
+        "daily_purchase_limit": 2,
     }
 
 

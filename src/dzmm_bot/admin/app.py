@@ -797,10 +797,14 @@ def create_app(
         required = ("name", "description", "price", "stock")
         if not isinstance(item, dict) or not all(key in item for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid item")
+        payload = {key: item[key] for key in required}
+        for optional in ("category", "daily_purchase_limit"):
+            if optional in item:
+                payload[optional] = item[optional]
         return idempotent_response(
             identity,
             idempotency_key,
-            lambda: (201, core.create_game_item({key: item[key] for key in required})),
+            lambda: (201, core.create_game_item(payload)),
             scope="game-items",
         )
 
@@ -819,6 +823,9 @@ def create_app(
             "minimum_rank_order",
             "unlimited_stock",
             "stock",
+            "price",
+            "category",
+            "daily_purchase_limit",
         }
         if set(request) != required:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid item")
@@ -829,11 +836,29 @@ def create_app(
             or not isinstance(request["unlimited_stock"], bool)
             or not isinstance(request["stock"], int)
             or request["stock"] < 0
+            or not isinstance(request["price"], int)
+            or request["price"] < 0
             or (
                 request["minimum_rank_order"] is not None
                 and (
                     not isinstance(request["minimum_rank_order"], int)
                     or request["minimum_rank_order"] < 1
+                )
+            )
+            or (
+                request["category"] is not None
+                and not isinstance(request["category"], str)
+            )
+            or (
+                isinstance(request["category"], str)
+                and len(request["category"].strip()) > 32
+            )
+            or (
+                request["daily_purchase_limit"] is not None
+                and (
+                    not isinstance(request["daily_purchase_limit"], int)
+                    or isinstance(request["daily_purchase_limit"], bool)
+                    or request["daily_purchase_limit"] < 0
                 )
             )
         ):

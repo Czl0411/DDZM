@@ -554,6 +554,8 @@ class ItemResponse(ApiModel):
     effect_type: str | None
     minimum_rank_order: int | None
     enabled: bool
+    category: str | None = None
+    daily_purchase_limit: int | None = None
 
 
 class PaginatedUsersResponse(ApiModel):
@@ -577,6 +579,8 @@ class CreateItemRequest(ApiModel):
     description: str = Field(min_length=1, max_length=200)
     price: int = Field(ge=0, le=999)
     stock: int = Field(ge=0, le=999)
+    category: str | None = Field(default=None, max_length=32)
+    daily_purchase_limit: int | None = Field(default=None, ge=0, le=99)
 
 
 class UpdateItemRequest(ApiModel):
@@ -585,6 +589,9 @@ class UpdateItemRequest(ApiModel):
     minimum_rank_order: int | None = Field(default=None, ge=1, le=999)
     unlimited_stock: bool
     stock: int = Field(ge=0, le=99999)
+    price: int = Field(ge=0, le=999)
+    category: str | None = Field(default=None, max_length=32)
+    daily_purchase_limit: int | None = Field(default=None, ge=0, le=99)
 
 
 class ShopPurchaseLogResponse(ApiModel):

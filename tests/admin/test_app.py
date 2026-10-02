@@ -2034,6 +2034,9 @@ def test_admin_updates_an_existing_item_description(client, headers):
             "minimum_rank_order": None,
             "unlimited_stock": True,
             "stock": 0,
+            "price": 5,
+            "category": None,
+            "daily_purchase_limit": None,
         },
     )
 

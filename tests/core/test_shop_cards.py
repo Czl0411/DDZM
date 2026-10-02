@@ -1,8 +1,13 @@
 from dzmm_bot.core.shop_cards import (
+    CATEGORY_ADULT,
+    CATEGORY_FUNCTION,
+    CATEGORY_GIFT,
+    CATEGORY_SCRATCH,
     SYSTEM_SHOP_ITEMS,
     adult_item,
     item_by_key,
-    purchase_category,
+    item_category,
+    item_daily_purchase_limit,
 )
 
 
@@ -54,6 +59,14 @@ def test_fixed_prices_ranks_and_effect_parameters() -> None:
 def test_adult_and_purchase_categories() -> None:
     assert adult_item(item_by_key("adult_m")) is True
     assert adult_item(item_by_key("scratch_a")) is False
-    assert purchase_category(item_by_key("gift_basic")) == "gift"
-    assert purchase_category(item_by_key("scratch_c")) == "scratch"
-    assert purchase_category(item_by_key("ai_quota")) is None
+    assert item_category(item_by_key("gift_basic")) == CATEGORY_GIFT
+    assert item_category(item_by_key("scratch_c")) == CATEGORY_SCRATCH
+    assert item_category(item_by_key("ai_quota")) == CATEGORY_FUNCTION
+    assert item_category(item_by_key("adult_m")) == CATEGORY_ADULT
+
+
+def test_default_daily_purchase_limits() -> None:
+    assert item_daily_purchase_limit(item_by_key("gift_basic")) == 2
+    assert item_daily_purchase_limit(item_by_key("scratch_c")) == 3
+    assert item_daily_purchase_limit(item_by_key("ai_quota")) is None
+    assert item_daily_purchase_limit(item_by_key("adult_m")) is None

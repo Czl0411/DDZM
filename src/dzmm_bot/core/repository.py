@@ -133,7 +133,13 @@ from .liar_dice import (
     roll_dice,
     roll_wild,
 )
-from .shop_cards import SYSTEM_SHOP_ITEMS, adult_item, item_by_key, purchase_category
+from .shop_cards import (
+    SYSTEM_SHOP_ITEMS,
+    adult_item,
+    item_by_key,
+    item_category,
+    item_daily_purchase_limit,
+)
 from .red_packet import RandomSource, generate_red_packet_allocation
 from .texas_holdem import (
     BettingPlayer,
@@ -371,6 +377,8 @@ class ShopCatalogItem:
     system_key: str | None
     effect_type: str | None
     minimum_rank_order: int | None
+    category: str | None
+    daily_purchase_limit: int | None
 
 
 @dataclass(frozen=True)
@@ -27206,8 +27214,18 @@ class CoreRepository:
             )
 
     def add_item(
-        self, name: str, description: str, price: int, stock: int
+        self,
+        name: str,
+        description: str,
+        price: int,
+        stock: int,
+        *,
+        category: str | None = None,
+        daily_purchase_limit: int | None = None,
     ) -> ItemRecord:
+        category, daily_purchase_limit = self._normalize_shop_item_fields(
+            category, daily_purchase_limit
+        )
         with self.transaction():
             with self._session() as session:
                 self._ensure_shop_catalog(session)
@@ -27219,10 +27237,26 @@ class CoreRepository:
                     stock=stock,
                     unlimited_stock=False,
                     enabled=True,
+                    category=category,
+                    daily_purchase_limit=daily_purchase_limit,
                 )
                 session.add(record)
                 session.flush()
                 return record
+
+    @staticmethod
+    def _normalize_shop_item_fields(
+        category: str | None, daily_purchase_limit: int | None
+    ) -> tuple[str | None, int | None]:
+        normalized_category = (category or "").strip() or None
+        if normalized_category is not None and len(normalized_category) > 32:
+            raise ValueError("商品分类长度无效")
+        if daily_purchase_limit is not None:
+            if daily_purchase_limit < 0:
+                raise ValueError("每日限购无效")
+            if daily_purchase_limit == 0:
+                daily_purchase_limit = None
+        return normalized_category, daily_purchase_limit
 
     def _next_item_public_number(self, session: Session) -> int:
         return int(session.scalar(select(func.max(ItemRecord.public_number))) or 0) + 1
@@ -27268,6 +27302,8 @@ class CoreRepository:
             record.description = definition.description
             record.minimum_rank_order = definition.minimum_rank_order
             record.unlimited_stock = True
+            record.category = item_category(definition)
+            record.daily_purchase_limit = item_daily_purchase_limit(definition)
         session.flush()
 
     @staticmethod
@@ -27283,6 +27319,8 @@ class CoreRepository:
             system_key=record.system_key,
             effect_type=record.effect_type,
             minimum_rank_order=record.minimum_rank_order,
+            category=record.category,
+            daily_purchase_limit=record.daily_purchase_limit,
         )
 
     def list_shop_items(
@@ -27388,31 +27426,27 @@ class CoreRepository:
                 charged = self.shop_price_for(item.price, user.id, now)
                 if user.balance < charged:
                     return ShopPurchaseResult("insufficient_balance", view, user.balance)
-                category = (
-                    purchase_category(item_by_key(item.system_key))
-                    if item.system_key is not None
-                    else None
-                )
+                limit = item.daily_purchase_limit
                 usage = None
-                if category is not None:
+                if limit is not None and limit > 0:
+                    bucket = item.category or f"#{item.public_number}"
                     usage_date = now.astimezone(BEIJING).date()
                     usage = session.scalar(
                         select(ShopPurchaseDailyUsageRecord)
                         .where(
                             ShopPurchaseDailyUsageRecord.user_id == user.id,
                             ShopPurchaseDailyUsageRecord.usage_date == usage_date,
-                            ShopPurchaseDailyUsageRecord.category == category,
+                            ShopPurchaseDailyUsageRecord.category == bucket,
                         )
                         .with_for_update()
                     )
-                    limit = 2 if category == "gift" else 3
                     if usage is not None and usage.count >= limit:
                         return ShopPurchaseResult("daily_limit", view, user.balance)
                     if usage is None:
                         usage = ShopPurchaseDailyUsageRecord(
                             user_id=user.id,
                             usage_date=usage_date,
-                            category=category,
+                            category=bucket,
                             count=0,
                         )
                         session.add(usage)
@@ -28799,6 +28833,9 @@ class CoreRepository:
         minimum_rank_order: int | None,
         unlimited_stock: bool,
         stock: int,
+        price: int,
+        category: str | None = None,
+        daily_purchase_limit: int | None = None,
     ) -> ItemRecord:
         description = description.strip()
         if not 1 <= len(description) <= 200:
@@ -28807,6 +28844,11 @@ class CoreRepository:
             raise ValueError("最低职位无效")
         if stock < 0:
             raise ValueError("库存无效")
+        if price < 0:
+            raise ValueError("价格无效")
+        category, daily_purchase_limit = self._normalize_shop_item_fields(
+            category, daily_purchase_limit
+        )
         with self.transaction():
             with self._session() as session:
                 self._ensure_shop_catalog(session)
@@ -28822,6 +28864,9 @@ class CoreRepository:
                 item.minimum_rank_order = minimum_rank_order
                 item.unlimited_stock = unlimited_stock
                 item.stock = stock
+                item.price = price
+                item.category = category
+                item.daily_purchase_limit = daily_purchase_limit
                 session.flush()
                 return item
 

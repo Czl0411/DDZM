@@ -29,6 +29,7 @@ from .memory_guild_match import (
 )
 from .performance import parse_postponement
 from .reply_templates import render_template, template_definition
+from .shop_cards import CATEGORY_DISPLAY_ORDER, CATEGORY_OTHER
 from .schema import PRIMARY_GROUP_CHAT_ID
 from .repository import (
     BlameGameResult,
@@ -2426,19 +2427,33 @@ class GroupCommandHandler:
         if not items:
             return self._reply("/商店", "empty", received_at)
         currency_name = self._repository.get_game_settings().currency_name
-        return self._reply(
-            "/商店",
-            "items_available",
-            received_at,
-            {
-                "{商店列表}": "\n\n".join(
+        grouped: dict[str, list] = {}
+        for item in items:
+            grouped.setdefault(item.category or CATEGORY_OTHER, []).append(item)
+        ordered = [category for category in CATEGORY_DISPLAY_ORDER if category in grouped]
+        ordered += [
+            category
+            for category in grouped
+            if category not in CATEGORY_DISPLAY_ORDER and category != CATEGORY_OTHER
+        ]
+        if CATEGORY_OTHER in grouped:
+            ordered.append(CATEGORY_OTHER)
+        sections = []
+        for category in ordered:
+            lines = [f"◆ {category}"]
+            for item in grouped[category]:
+                lines.append(
                     f"#{item.public_number} {item.name}（{item.price} {currency_name}，库存 "
                     f"{'不限' if item.unlimited_stock else item.stock}"
                     f"{'，需 LV' + str(item.minimum_rank_order) if item.minimum_rank_order else ''}）"
                     f"\n说明：{item.description}"
-                    for item in items
                 )
-            },
+            sections.append("\n".join(lines))
+        return self._reply(
+            "/商店",
+            "items_available",
+            received_at,
+            {"{商店列表}": "\n\n".join(sections)},
         )
 
     def _purchase(

@@ -189,6 +189,98 @@ def test_purchase_enforces_shared_daily_limit_rank_stock_and_adult_switch(
     )
 
 
+def test_purchase_without_daily_limit_is_unrestricted(setup_repository, now) -> None:
+    repository, _ = setup_repository
+    repository.create_user("bulk-buyer", "囤货者", now, 100)
+    custom = repository.add_item("纪念章", "无效果", 1, 100)
+
+    for index in range(4):
+        moment = now + timedelta(seconds=index)
+        assert (
+            repository.purchase_shop_item(
+                _inbound(repository, "bulk-buyer", moment),
+                "bulk-buyer",
+                custom.public_number,
+                PRIMARY_GROUP_CHAT_ID,
+                moment,
+            ).status
+            == "purchased"
+        )
+
+
+def test_purchase_daily_limit_resets_on_next_beijing_day(
+    setup_repository, now
+) -> None:
+    repository, _ = setup_repository
+    repository.create_user("limited-buyer", "限购者", now, 100)
+    custom = repository.add_item(
+        "限量券", "限购两件", 1, 100, daily_purchase_limit=2
+    )
+
+    def buy(moment):
+        return repository.purchase_shop_item(
+            _inbound(repository, "limited-buyer", moment),
+            "limited-buyer",
+            custom.public_number,
+            PRIMARY_GROUP_CHAT_ID,
+            moment,
+        ).status
+
+    assert buy(now) == "purchased"
+    assert buy(now + timedelta(seconds=1)) == "purchased"
+    assert buy(now + timedelta(seconds=2)) == "daily_limit"
+    assert buy(now + timedelta(days=1)) == "purchased"
+
+
+def test_update_shop_item_applies_price_category_and_limit_to_purchases(
+    setup_repository, now
+) -> None:
+    repository, _ = setup_repository
+    repository.create_user("editor-target", "改价对象", now, 100)
+    number = _number(repository, "scratch_a")
+
+    repository.update_shop_item(
+        number,
+        description="改价后的说明",
+        enabled=True,
+        minimum_rank_order=None,
+        unlimited_stock=True,
+        stock=0,
+        price=7,
+        category="自定分类",
+        daily_purchase_limit=1,
+    )
+
+    updated = next(
+        item for item in repository.list_active_items() if item.public_number == number
+    )
+    assert (updated.price, updated.category, updated.daily_purchase_limit) == (
+        7,
+        "自定分类",
+        1,
+    )
+    assert (
+        repository.purchase_shop_item(
+            _inbound(repository, "editor-target", now),
+            "editor-target",
+            number,
+            PRIMARY_GROUP_CHAT_ID,
+            now,
+        ).balance
+        == 93
+    )
+    assert (
+        repository.purchase_shop_item(
+            _inbound(repository, "editor-target", now + timedelta(seconds=1)),
+            "editor-target",
+            number,
+            PRIMARY_GROUP_CHAT_ID,
+            now + timedelta(seconds=1),
+        ).status
+        == "daily_limit"
+    )
+
+
 def test_ordinary_cards_apply_effects_and_keep_generic_item(
     setup_repository, now
 ) -> None:
@@ -282,6 +374,7 @@ def test_disabled_owned_system_card_can_still_be_used(setup_repository, now) -> 
         minimum_rank_order=None,
         unlimited_stock=True,
         stock=0,
+        price=5,
     )
 
     result = repository.use_ordinary_shop_item(

@@ -29,6 +29,7 @@ let gameplayVersion = null;
 let randomEventSettings = null;
 let employeePage = 1;
 let shopPage = 1;
+let shopCategoryFilter = "";
 let departmentPage = 1;
 let promotionPage = 1;
 let departmentRequestPage = 1;
@@ -267,6 +268,14 @@ function initializeListFilters() {
       }
     });
   });
+  const shopCategorySelect = document.querySelector("#shop-category-filter");
+  if (shopCategorySelect) {
+    shopCategorySelect.addEventListener("change", () => {
+      shopCategoryFilter = shopCategorySelect.value;
+      shopPage = 1;
+      void loadShop();
+    });
+  }
 }
 
 const loginScreen = document.querySelector("#login-screen");
@@ -2133,9 +2142,27 @@ async function loadShop(page = shopPage) {
   ]);
   rankDefinitions = ranks;
   shopPage = items.page;
-  const filtered = filterList("shop", items.items, (item) => `${item.name} ${item.description}`);
+  const categoryFiltered = shopCategoryFilter
+    ? items.items.filter((item) => (item.category || "") === shopCategoryFilter)
+    : items.items;
+  const filtered = filterList("shop", categoryFiltered, (item) => `${item.name} ${item.description} ${item.category || ""}`);
   document.querySelector("#shop-list").innerHTML = filtered.map((item) => `
-    <article class="data-row" data-shop-item="${item.public_number}"><div><b>#${item.public_number} ${escapeHtml(item.name)}</b><label>商品描述<textarea data-item-description maxlength="200" rows="2">${escapeHtml(item.description)}</textarea></label><small>${item.system_key ? `系统效果：${escapeHtml(item.effect_type || "-")}` : "管理员普通商品（无使用效果）"}</small></div><div class="command-actions"><strong>${item.price} ${escapeHtml(settings.currency_name)}</strong><label><input data-item-enabled type="checkbox" ${item.enabled ? "checked" : ""}> 启用</label><label><input data-item-unlimited type="checkbox" ${item.unlimited_stock ? "checked" : ""}> 无限库存</label><input data-item-stock type="number" min="0" max="99999" value="${item.stock}" aria-label="库存"><select data-item-rank aria-label="最低职位"><option value="">不限职位</option>${rankDefinitions.map((rank) => `<option value="${rank.sort_order}" ${item.minimum_rank_order === rank.sort_order ? "selected" : ""}>${escapeHtml(rank.level_label)} ${escapeHtml(rank.name)}</option>`).join("")}</select><button class="secondary" data-save-shop-item type="button">保存</button></div></article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
+    <article class="data-row shop-item-card" data-shop-item="${item.public_number}">
+      <div class="shop-item-heading">
+        <div class="shop-item-title"><b>#${item.public_number} ${escapeHtml(item.name)}</b><div class="shop-item-badges">${statusBadge(item.enabled ? "已上架" : "已下架", item.enabled ? "success" : "warning")}<span class="status-badge">${escapeHtml(item.category || "未分类")}</span><small>${item.system_key ? `系统效果：${escapeHtml(item.effect_type || "-")}` : "管理员普通商品（无使用效果）"}</small></div></div>
+        <label class="shop-item-toggle"><input data-item-enabled type="checkbox" ${item.enabled ? "checked" : ""}> 上架</label>
+      </div>
+      <label>商品描述<textarea data-item-description maxlength="200" rows="2">${escapeHtml(item.description)}</textarea></label>
+      <div class="shop-item-grid">
+        <label>价格<input data-item-price type="number" min="0" max="999" value="${item.price}"></label>
+        <label>库存<input data-item-stock type="number" min="0" max="99999" value="${item.stock}"></label>
+        <label class="shop-item-check"><input data-item-unlimited type="checkbox" ${item.unlimited_stock ? "checked" : ""}> 无限库存</label>
+        <label>分类<input data-item-category list="shop-category-options" maxlength="32" value="${escapeHtml(item.category || "")}" placeholder="未分类"></label>
+        <label>每日限购<input data-item-daily-limit type="number" min="0" max="99" value="${item.daily_purchase_limit ?? ""}" placeholder="不限"></label>
+        <label>最低职位<select data-item-rank aria-label="最低职位"><option value="">不限职位</option>${rankDefinitions.map((rank) => `<option value="${rank.sort_order}" ${item.minimum_rank_order === rank.sort_order ? "selected" : ""}>${escapeHtml(rank.level_label)} ${escapeHtml(rank.name)}</option>`).join("")}</select></label>
+      </div>
+      <div class="command-actions"><small class="muted">分类相同的商品共用每日限购额度；留空分类时按单个商品计数。</small><button class="secondary" data-save-shop-item type="button">保存</button></div>
+    </article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
   renderPagination(document.querySelector("#shop-pagination"), items, "件物品", loadShop);
   document.querySelector("#shop-purchase-log").innerHTML = activity.purchases.map((entry) => `
     <article class="data-row"><div><b>${escapeHtml(entry.user_name)} 购买 #${entry.item_number} ${escapeHtml(entry.item_name)}</b><small>${escapeHtml(entry.group_name)} · ${entry.price} 摸鱼币 · ${escapeHtml(entry.created_at)}</small></div></article>`).join("") || "<p class=\"muted\">暂无购买记录。</p>";
@@ -4401,10 +4428,17 @@ document.querySelector("#item-form").addEventListener("submit", async (event) =>
   const button = event.currentTarget.querySelector("button[type=submit]");
   try {
     await runMutation(button, "上架中…", async () => {
+      const limitValue = (values.daily_purchase_limit || "").trim();
       await requestGame("/api/game/items", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({...values, price: Number(values.price), stock: Number(values.stock)}),
+        body: JSON.stringify({
+          ...values,
+          price: Number(values.price),
+          stock: Number(values.stock),
+          category: (values.category || "").trim() || null,
+          daily_purchase_limit: limitValue === "" ? null : Number(limitValue),
+        }),
       });
       event.currentTarget.reset();
       await loadShop(shopPage);
@@ -4420,12 +4454,16 @@ document.querySelector("#shop-list").addEventListener("click", async (event) => 
   if (!button) return;
   const row = button.closest("[data-shop-item]");
   const rankValue = row.querySelector("[data-item-rank]").value;
+  const limitValue = row.querySelector("[data-item-daily-limit]").value.trim();
   const payload = {
     description: row.querySelector("[data-item-description]").value.trim(),
     enabled: row.querySelector("[data-item-enabled]").checked,
     minimum_rank_order: rankValue ? Number(rankValue) : null,
     unlimited_stock: row.querySelector("[data-item-unlimited]").checked,
     stock: Number(row.querySelector("[data-item-stock]").value),
+    price: Number(row.querySelector("[data-item-price]").value),
+    category: row.querySelector("[data-item-category]").value.trim() || null,
+    daily_purchase_limit: limitValue === "" ? null : Number(limitValue),
   };
   try {
     await runMutation(button, "保存中…", async () => {

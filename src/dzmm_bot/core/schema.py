@@ -2747,6 +2747,8 @@ class ItemRecord(Base):
     system_key: Mapped[str | None] = mapped_column(String(64), unique=True)
     effect_type: Mapped[str | None] = mapped_column(String(32))
     minimum_rank_order: Mapped[int | None] = mapped_column(Integer)
+    category: Mapped[str | None] = mapped_column(String(32))
+    daily_purchase_limit: Mapped[int | None] = mapped_column(Integer)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
@@ -2789,7 +2791,7 @@ class ShopPurchaseDailyUsageRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     usage_date: Mapped[date] = mapped_column(Date, nullable=False)
-    category: Mapped[str] = mapped_column(String(16), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
     count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 

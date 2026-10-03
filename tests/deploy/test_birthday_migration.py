@@ -196,7 +196,7 @@ def test_birthday_migration_lays_out_the_settings_columns(tmp_path, monkeypatch)
     assert {
         "id",
         "enabled",
-        "greet_time",
+        "greet_times",
         "preview_enabled",
         "preview_time",
         "gift_amount",

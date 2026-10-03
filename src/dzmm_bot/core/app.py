@@ -2656,7 +2656,7 @@ def create_app(
         try:
             settings = repository.set_birthday_settings(
                 request.enabled,
-                request.greet_time,
+                request.greet_times,
                 request.preview_enabled,
                 request.preview_time,
                 request.gift_amount,
@@ -4068,7 +4068,7 @@ def _hide_and_seek_settings_response(settings) -> HideAndSeekSettingsResponse:
 def _birthday_settings_response(settings) -> BirthdaySettingsResponse:
     return BirthdaySettingsResponse(
         enabled=settings.enabled,
-        greet_time=settings.greet_time,
+        greet_times=settings.greet_times,
         preview_enabled=settings.preview_enabled,
         preview_time=settings.preview_time,
         gift_amount=settings.gift_amount,

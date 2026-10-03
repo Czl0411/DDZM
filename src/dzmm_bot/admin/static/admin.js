@@ -2270,7 +2270,7 @@ function renderBirthdayPanel(settings, members, groups) {
     <div class="panel-heading"><div><h2>生日祝福</h2><p class="muted">总开关默认关闭；群开关默认开启。随礼窗口填 0 表示一直有效到当天 24:00。</p></div><div class="command-actions"><button id="birthday-save" class="primary" type="button">保存生日设置</button></div></div>
     <div class="event-input-grid">${birthdayFlagField("birthday-enabled", "开启生日祝福", settings.enabled)}${birthdayFlagField("birthday-preview-enabled", "前一天预告", settings.preview_enabled)}${birthdayFlagField("birthday-backfill", "当天补发", settings.same_day_backfill)}</div>
     <div class="event-input-grid">${birthdayFlagField("birthday-tips-enabled", "允许随礼", settings.tips_enabled)}${birthdayFlagField("birthday-anniversary-enabled", "入职周年", settings.anniversary_enabled)}</div>
-    <div class="event-input-grid"><label>祝福时刻<input id="birthday-greet-time" type="time" value="${escapeHtml(settings.greet_time)}"></label><label>预告时刻<input id="birthday-preview-time" type="time" value="${escapeHtml(settings.preview_time)}"></label></div>
+    <div class="event-input-grid"><label>祝福时刻（逗号分隔，最多 10 个，如 09:00,12:00,17:00）<input id="birthday-greet-times" type="text" value="${escapeHtml((settings.greet_times || []).join(","))}"></label><label>预告时刻<input id="birthday-preview-time" type="time" value="${escapeHtml(settings.preview_time)}"></label></div>
     <div class="event-input-grid">${birthdayNumberField("birthday-gift", "生日礼金", settings.gift_amount, 0, 999)}${birthdayNumberField("birthday-free-tickets", "免单注数", settings.lottery_free_tickets, 0, 20)}${birthdayNumberField("birthday-discount", "商店折扣(%)", settings.shop_discount_percent, 1, 100)}</div>
     <div class="event-input-grid">${birthdayNumberField("birthday-checkin", "打卡倍率", settings.checkin_multiplier, 1, 10)}${birthdayNumberField("birthday-bonus", "事件奖励加成(%)", settings.event_reward_bonus_percent, 0, 500)}${birthdayNumberField("birthday-tip-max", "随礼单次上限", settings.tip_max_amount, 1, 999)}${birthdayNumberField("birthday-tip-window", "随礼窗口(分钟，0=到24:00)", settings.tip_window_minutes, 0, 1440)}</div>
     <div class="event-input-grid"><label>祝福语（可用 {寿星}）<textarea id="birthday-greet-template" rows="2">${escapeHtml(settings.greet_template)}</textarea></label><label>预告文案<textarea id="birthday-preview-template" rows="2">${escapeHtml(settings.preview_template)}</textarea></label><label>随礼汇总<textarea id="birthday-tips-template" rows="2">${escapeHtml(settings.tips_summary_template)}</textarea></label></div>
@@ -2299,7 +2299,7 @@ async function saveBirthdaySettings() {
     same_day_backfill: document.querySelector("#birthday-backfill").checked,
     tips_enabled: document.querySelector("#birthday-tips-enabled").checked,
     anniversary_enabled: document.querySelector("#birthday-anniversary-enabled").checked,
-    greet_time: document.querySelector("#birthday-greet-time").value,
+    greet_times: document.querySelector("#birthday-greet-times").value.split(",").map((s) => s.trim()).filter(Boolean),
     preview_time: document.querySelector("#birthday-preview-time").value,
     gift_amount: Number(document.querySelector("#birthday-gift").value),
     lottery_free_tickets: Number(document.querySelector("#birthday-free-tickets").value),

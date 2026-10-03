@@ -3730,6 +3730,18 @@ class BirthdayPreviewRecord(Base):
     previewed_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class BirthdayGreetAnnouncementRecord(Base):
+    """当天祝福公告的幂等记录：每个日期 × 每个公告时刻只广播一次。"""
+
+    __tablename__ = "birthday_greet_announcements"
+    __table_args__ = (UniqueConstraint("announce_date", "slot"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    announce_date: Mapped[date] = mapped_column(Date, nullable=False)
+    slot: Mapped[str] = mapped_column(String(5), nullable=False)
+    announced_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class BirthdayTipRecord(Base):
     __tablename__ = "birthday_tips"
     __table_args__ = (
@@ -3756,8 +3768,11 @@ class BirthdaySettingsRecord(Base):
     enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false(), nullable=False
     )
-    greet_time: Mapped[str] = mapped_column(
-        String(5), default="09:00", server_default="09:00", nullable=False
+    greet_times: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=lambda: ["09:00", "12:00", "17:00"],
+        server_default='["09:00", "12:00", "17:00"]',
+        nullable=False,
     )
     preview_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=true(), nullable=False

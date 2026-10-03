@@ -222,6 +222,24 @@ def test_two_birthdays_share_one_message(repository, seeded):
     assert "小明、小红" in texts(seeded)[0]
 
 
+def test_the_greeting_announces_at_every_slot_but_pays_once(repository, seeded):
+    """默认三个祝福时刻（09/12/17）：公告各发一次，礼金只发一次。"""
+    enable(repository)
+    give_birthday(seeded, "p1", 9, 17)
+
+    repository.run_birthday_jobs(NOW)  # 09:00 首次公告 + 礼金
+    repository.run_birthday_jobs(NOW + timedelta(hours=3))  # 12:00
+    repository.run_birthday_jobs(NOW + timedelta(hours=8))  # 17:00
+    repository.run_birthday_jobs(NOW + timedelta(hours=8))  # 重复跑不重发
+
+    assert len(greetings(seeded)) == 1
+    assert balance_of(seeded, "p1") == 20
+    greets = [text for text in texts(seeded) if "【生日祝福】" in text]
+    assert len(greets) == 9  # 3 个时刻 × 3 个群
+    for text in greets:
+        assert "小明" in text
+
+
 def test_the_greeting_is_backfilled_later_the_same_day(repository, seeded):
     enable(repository)
     give_birthday(seeded, "p1", 9, 17)

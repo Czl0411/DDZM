@@ -140,7 +140,7 @@ def _settings_stub():
 
     return BirthdaySettings(
         enabled=False,
-        greet_time="09:00",
+        greet_times=["09:00"],
         preview_enabled=True,
         preview_time="20:00",
         gift_amount=20,

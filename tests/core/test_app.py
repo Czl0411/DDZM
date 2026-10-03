@@ -3522,7 +3522,7 @@ def test_birthday_settings_are_managed_over_core_api(client, headers):
     payload.update(
         {
             "enabled": True,
-            "greet_time": "08:30",
+            "greet_times": ["08:30", "18:00"],
             "preview_enabled": False,
             "preview_time": "21:00",
             "gift_amount": 30,
@@ -3552,11 +3552,11 @@ def test_birthday_settings_are_managed_over_core_api(client, headers):
 
     assert initial.status_code == 200
     assert initial.json()["enabled"] is False
-    assert initial.json()["greet_time"] == "09:00"
+    assert initial.json()["greet_times"] == ["09:00", "12:00", "17:00"]
     assert initial.json()["gift_amount"] == 20
     assert initial.json()["lottery_free_tickets"] == 5
     assert updated.status_code == 200
-    assert updated.json()["greet_time"] == "08:30"
+    assert updated.json()["greet_times"] == ["08:30", "18:00"]
     assert updated.json()["shop_discount_percent"] == 90
     assert rejected.status_code == 422
 
@@ -3564,7 +3564,7 @@ def test_birthday_settings_are_managed_over_core_api(client, headers):
 def test_birthday_settings_reject_a_malformed_time(client, headers):
     initial = client.get("/internal/game/birthday/settings", headers=headers)
     payload = dict(initial.json())
-    payload["greet_time"] = "9点"
+    payload["greet_times"] = ["9点"]
 
     rejected = client.patch(
         "/internal/game/birthday/settings", headers=headers, json=payload

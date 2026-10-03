@@ -1494,7 +1494,7 @@ class SetMemoryAssessmentSettingsRequest(MemoryAssessmentSettingsResponse):
 
 class BirthdaySettingsResponse(ApiModel):
     enabled: bool
-    greet_time: str = Field(min_length=4, max_length=5)
+    greet_times: list[str] = Field(min_length=1)
     preview_enabled: bool
     preview_time: str = Field(min_length=4, max_length=5)
     gift_amount: int = Field(ge=0, le=999)

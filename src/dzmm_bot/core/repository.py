@@ -225,6 +225,7 @@ from .schema import (
     HideAndSeekSceneRecord,
     HideAndSeekSettingsRecord,
     BirthdayGreetingRecord,
+    BirthdayGreetAnnouncementRecord,
     BirthdayPreviewRecord,
     BirthdaySettingsRecord,
     BirthdayTipRecord,
@@ -664,7 +665,7 @@ _DEFAULT_HIDE_AND_SEEK_ENTRY_FEE = 1
 _DEFAULT_HIDE_AND_SEEK_WIN_REWARD = 3
 _DEFAULT_HIDE_AND_SEEK_DAILY_LIMIT = 2
 _DEFAULT_HIDE_AND_SEEK_SELECTION_TIMEOUT_MINUTES = 2
-_DEFAULT_BIRTHDAY_GREET_TIME = "09:00"
+_DEFAULT_BIRTHDAY_GREET_TIMES = ("09:00", "12:00", "17:00")
 _DEFAULT_BIRTHDAY_PREVIEW_TIME = "20:00"
 _DEFAULT_BIRTHDAY_GIFT_AMOUNT = 20
 _DEFAULT_BIRTHDAY_EDIT_LIMIT_PER_YEAR = 1
@@ -964,7 +965,7 @@ class HideAndSeekSettings:
 @dataclass(frozen=True)
 class BirthdaySettings:
     enabled: bool
-    greet_time: str
+    greet_times: list[str]
     preview_enabled: bool
     preview_time: str
     gift_amount: int
@@ -23689,7 +23690,7 @@ class CoreRepository:
                 record = BirthdaySettingsRecord(
                     id=1,
                     enabled=False,
-                    greet_time=_DEFAULT_BIRTHDAY_GREET_TIME,
+                    greet_times=list(_DEFAULT_BIRTHDAY_GREET_TIMES),
                     preview_enabled=True,
                     preview_time=_DEFAULT_BIRTHDAY_PREVIEW_TIME,
                     gift_amount=_DEFAULT_BIRTHDAY_GIFT_AMOUNT,
@@ -23716,7 +23717,7 @@ class CoreRepository:
     def set_birthday_settings(
         self,
         enabled: bool,
-        greet_time: str,
+        greet_times: list[str],
         preview_enabled: bool,
         preview_time: str,
         gift_amount: int,
@@ -23744,7 +23745,16 @@ class CoreRepository:
         ):
             if not isinstance(flag, bool):
                 raise ValueError(f"{label}无效")
-        for label, value in (("祝福时刻", greet_time), ("预告时刻", preview_time)):
+        if not isinstance(greet_times, list) or not greet_times or len(greet_times) > 10:
+            raise ValueError("祝福时刻需为 1 至 10 个 HH:mm 时刻")
+        normalized_greet_times: list[str] = []
+        for value in greet_times:
+            if not isinstance(value, str) or _event_time_minutes(value) is None:
+                raise ValueError("祝福时刻必须使用 HH:mm 格式")
+            if value not in normalized_greet_times:
+                normalized_greet_times.append(value)
+        normalized_greet_times.sort(key=_event_time_minutes)
+        for label, value in (("预告时刻", preview_time),):
             if not isinstance(value, str) or _event_time_minutes(value) is None:
                 raise ValueError(f"{label}必须使用 HH:mm 格式")
         ranges = (
@@ -23779,7 +23789,7 @@ class CoreRepository:
             if record is None:
                 raise RuntimeError("生日设置消失")
             record.enabled = enabled
-            record.greet_time = greet_time
+            record.greet_times = normalized_greet_times
             record.preview_enabled = preview_enabled
             record.preview_time = preview_time
             record.gift_amount = gift_amount
@@ -32709,52 +32719,81 @@ class CoreRepository:
     def _run_birthday_greetings(
         self, session: Session, settings: BirthdaySettings, now: datetime
     ) -> None:
-        """当天祝福：到点之后开始算，一年只发一次；礼金与公告同事务。"""
+        """当天祝福：每个公告时刻广播一次（按天+时刻幂等），礼金一年只发一次。
+
+        公告时刻列表来自设置（默认 09:00 / 12:00 / 17:00）；礼金与祝福记录
+        仍由 birthday_greetings 的唯一约束保证只发一次，在第一个时刻发放。
+        """
         today = now.date()
-        greet_at = _birthday_moment(today, settings.greet_time)
-        if now < greet_at:
-            return
-        if not settings.same_day_backfill and now >= greet_at + timedelta(
-            minutes=_BIRTHDAY_BACKFILL_WINDOW_MINUTES
-        ):
+        if not settings.greet_times:
             return
         pairs = self._birthday_candidates(session, today)
         if not pairs:
             return
-        already = set(
+        greet_at = _birthday_moment(today, settings.greet_times[0])
+        backfill_expired = not settings.same_day_backfill and now >= greet_at + timedelta(
+            minutes=_BIRTHDAY_BACKFILL_WINDOW_MINUTES
+        )
+        if now >= greet_at and not backfill_expired:
+            already = set(
+                session.scalars(
+                    select(BirthdayGreetingRecord.user_id).where(
+                        BirthdayGreetingRecord.greet_year == today.year
+                    )
+                )
+            )
+            fresh = [(user, record) for user, record in pairs if user.id not in already]
+            for user, _ in fresh:
+                self._apply_balance_change(user, settings.gift_amount, "birthday_gift", now)
+                session.add(
+                    BirthdayGreetingRecord(
+                        user_id=user.id,
+                        greet_year=today.year,
+                        greeted_at=now,
+                        gift_amount=settings.gift_amount,
+                        lottery_tickets=0,
+                        tips_count=0,
+                        tips_total=0,
+                        tips_closed_at=None,
+                        status="greeted",
+                    )
+                )
+            session.flush()
+        greeted_ids = set(
             session.scalars(
                 select(BirthdayGreetingRecord.user_id).where(
                     BirthdayGreetingRecord.greet_year == today.year
                 )
             )
         )
-        fresh = [(user, record) for user, record in pairs if user.id not in already]
-        if not fresh:
+        entries = [
+            (user.display_name, birthday_format_tenure(user.joined_at, today))
+            for user, _ in pairs
+            if user.id in greeted_ids
+        ]
+        if not entries:
             return
-        entries: list[tuple[str, str]] = []
-        for user, _ in fresh:
-            self._apply_balance_change(user, settings.gift_amount, "birthday_gift", now)
+        fired = False
+        for slot in settings.greet_times:
+            if now < _birthday_moment(today, slot):
+                continue
+            already_announced = session.scalar(
+                select(BirthdayGreetAnnouncementRecord.id).where(
+                    BirthdayGreetAnnouncementRecord.announce_date == today,
+                    BirthdayGreetAnnouncementRecord.slot == slot,
+                )
+            )
+            if already_announced is not None:
+                continue
             session.add(
-                BirthdayGreetingRecord(
-                    user_id=user.id,
-                    greet_year=today.year,
-                    greeted_at=now,
-                    gift_amount=settings.gift_amount,
-                    lottery_tickets=0,
-                    tips_count=0,
-                    tips_total=0,
-                    tips_closed_at=None,
-                    status="greeted",
+                BirthdayGreetAnnouncementRecord(
+                    announce_date=today, slot=slot, announced_at=now
                 )
             )
-            entries.append(
-                (
-                    user.display_name,
-                    birthday_format_tenure(user.joined_at, today),
-                )
-            )
-        session.flush()
-        self._birthday_announce(_render_birthday_greeting(settings, entries, now))
+            fired = True
+        if fired:
+            session.flush()
+            self._birthday_announce(_render_birthday_greeting(settings, entries, now))
 
 
     def _company_lottery_announce(self, text: str) -> int:
@@ -34348,7 +34387,7 @@ def _discipline_fine_settings(
 def _birthday_settings(record: BirthdaySettingsRecord) -> BirthdaySettings:
     return BirthdaySettings(
         enabled=record.enabled,
-        greet_time=record.greet_time,
+        greet_times=list(record.greet_times or []),
         preview_enabled=record.preview_enabled,
         preview_time=record.preview_time,
         gift_amount=record.gift_amount,

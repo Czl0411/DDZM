@@ -1245,6 +1245,14 @@ class LiarDiceStatistics:
 
 
 @dataclass(frozen=True)
+class LiarDiceStatisticsReport:
+    """大话骰子统计：current 为当前活跃对局，career 为本群全部历史对局累计。"""
+
+    current: LiarDiceStatistics | None
+    career: LiarDiceStatistics
+
+
+@dataclass(frozen=True)
 class LiarDiceResult:
     status: str
     game_id: UUID | None = None
@@ -13587,7 +13595,7 @@ class CoreRepository:
                     return self._liar_dice_result_locked(
                         session, game, "not_participant"
                     )
-                statistics = self._liar_dice_statistics_locked(session, game)
+                statistics = self._liar_dice_game_statistics(session, (game.id,))
                 self._finish_liar_dice_locked(
                     session, game, "completed", "participant_ended", now
                 )
@@ -13694,21 +13702,34 @@ class CoreRepository:
 
     def liar_dice_statistics(
         self, group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID
-    ) -> LiarDiceStatistics | None:
+    ) -> LiarDiceStatisticsReport:
         with self._session() as session:
-            game = session.scalar(
-                select(LiarDiceGameRecord).where(
-                    LiarDiceGameRecord.group_chat_id == group_chat_id,
-                    LiarDiceGameRecord.active_key == "global",
+            game_ids = tuple(
+                session.scalars(
+                    select(LiarDiceGameRecord.id).where(
+                        LiarDiceGameRecord.group_chat_id == group_chat_id
+                    )
                 )
             )
-            if game is None:
-                return None
-            return self._liar_dice_statistics_locked(session, game)
+            career = self._liar_dice_game_statistics(session, game_ids)
+            active_id = session.scalar(
+                select(LiarDiceGameRecord.id).where(
+                    LiarDiceGameRecord.group_chat_id == group_chat_id,
+                    LiarDiceGameRecord.active_key.is_not(None),
+                )
+            )
+            current = (
+                self._liar_dice_game_statistics(session, (active_id,))
+                if active_id is not None
+                else None
+            )
+            return LiarDiceStatisticsReport(current=current, career=career)
 
-    def _liar_dice_statistics_locked(
-        self, session: Session, game: LiarDiceGameRecord
+    def _liar_dice_game_statistics(
+        self, session: Session, game_ids: Sequence[UUID]
     ) -> LiarDiceStatistics:
+        if not game_ids:
+            return LiarDiceStatistics()
         names = dict(
             session.execute(
                 select(UserRecord.id, UserRecord.display_name)
@@ -13716,7 +13737,7 @@ class CoreRepository:
                     LiarDicePlayerRecord,
                     LiarDicePlayerRecord.user_id == UserRecord.id,
                 )
-                .where(LiarDicePlayerRecord.game_id == game.id)
+                .where(LiarDicePlayerRecord.game_id.in_(game_ids))
             ).all()
         )
         opens: dict[UUID, int] = {}
@@ -13726,7 +13747,7 @@ class CoreRepository:
         rounds = session.scalars(
             select(LiarDiceRoundRecord)
             .where(
-                LiarDiceRoundRecord.game_id == game.id,
+                LiarDiceRoundRecord.game_id.in_(game_ids),
                 LiarDiceRoundRecord.state == "resolved",
             )
             .order_by(LiarDiceRoundRecord.sequence)

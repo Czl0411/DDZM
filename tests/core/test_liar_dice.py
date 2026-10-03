@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from random import Random
+import re
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, select
@@ -91,13 +92,24 @@ def _flush_all_outbound(repository, now):
 
 
 def _seat_map(factory):
-    from dzmm_bot.core.schema import LiarDicePlayerRecord, UserRecord
+    from dzmm_bot.core.schema import (
+        LiarDiceGameRecord,
+        LiarDicePlayerRecord,
+        UserRecord,
+    )
 
     with factory() as session:
         rows = session.execute(
             select(LiarDicePlayerRecord, UserRecord)
             .join(UserRecord, UserRecord.id == LiarDicePlayerRecord.user_id)
-            .where(LiarDicePlayerRecord.state == "active")
+            .join(
+                LiarDiceGameRecord,
+                LiarDiceGameRecord.id == LiarDicePlayerRecord.game_id,
+            )
+            .where(
+                LiarDiceGameRecord.active_key == "global",
+                LiarDicePlayerRecord.state == "active",
+            )
         ).all()
         return {player.seat_number: user.platform_id for player, user in rows}
 
@@ -204,7 +216,9 @@ def test_liar_dice_full_flow():
     assert _dice_game(repository).state == "round_end"
 
     _receive(service, "m9", "user-0", "/大话骰子数据", now)
-    assert "大话骰子数据" in _latest_reply(factory)
+    reply = _latest_reply(factory)
+    assert "大话骰子数据" in reply
+    assert "本局：" in reply and "总战绩：" in reply
 
     # 第 2 轮：连续轮转——开牌者是 2号，下家本应是 3号，但 3号已退出，回绕到 1号
     _receive(service, "m10", "user-0", "/继续", now)
@@ -249,6 +263,51 @@ def test_liar_dice_full_flow():
             )
         )
     assert finished.state == "completed"
+
+
+def test_liar_dice_career_statistics_accumulate_across_games():
+    service, repository, factory = _service(liar_dice_random=Random(7))
+    now = datetime(2026, 10, 2, 16, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _join_employees(service, now)
+    _seed_direct_chats(factory, now)
+
+    def career_opens_total(reply):
+        career = reply.split("总战绩：", 1)[1]
+        opens = career.split("开牌次数最多：", 1)[1].splitlines()[0]
+        return sum(int(count) for count in re.findall(r"（(\d+) 次）", opens))
+
+    def play_one_round(message_id):
+        _receive(service, f"{message_id}a", "user-0", "/大话骰子", now)
+        _receive(service, f"{message_id}b", "user-1", "/加入", now)
+        _receive(service, f"{message_id}c", "user-2", "/加入", now)
+        _receive(service, f"{message_id}d", "user-0", "/开始", now)
+        _flush_all_outbound(repository, now)
+        seats = _seat_map(factory)
+        _receive(service, f"{message_id}e", seats[1], "3个2", now)
+        assert "叫 3个2" in _latest_reply(factory)
+        _receive(service, f"{message_id}f", seats[2], "/开骰", now)
+        assert "全场骰子" in _latest_reply(factory)
+        assert _dice_game(repository).state == "round_end"
+
+    # 第 1 局打完一轮回合后收局：对局结束后没有本局块，总战绩保留
+    play_one_round("g1")
+    _receive(service, "end1", "user-0", "/结束游戏", now)
+    assert "本局结束" in _latest_reply(factory)
+    _receive(service, "stat1", "user-0", "/大话骰子数据", now)
+    reply = _latest_reply(factory)
+    assert "总战绩：" in reply
+    assert "本局：" not in reply
+    assert career_opens_total(reply) == 1
+
+    # 第 2 局再打一轮：总战绩跨局累计为 2 次
+    play_one_round("g2")
+    _receive(service, "stat2", "user-0", "/大话骰子数据", now)
+    reply = _latest_reply(factory)
+    assert "本局：" in reply
+    assert career_opens_total(reply) == 2
 
 
 def test_liar_dice_requires_direct_chats():

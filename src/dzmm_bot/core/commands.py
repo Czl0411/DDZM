@@ -1742,13 +1742,17 @@ class GroupCommandHandler:
     def _liar_dice_statistics(self, message, group_chat_id):
         if message.source_type != "group" or group_chat_id is None:
             return "请在已启用的群聊中发送 /大话骰子数据。"
-        statistics = self._repository.liar_dice_statistics(group_chat_id)
-        if statistics is None:
-            return "当前没有大话骰子对局。"
-        return self._liar_dice_statistics_message(statistics)
+        report = self._repository.liar_dice_statistics(group_chat_id)
+        lines = ["【大话骰子数据】"]
+        if report.current is not None:
+            lines.append("本局：")
+            lines.extend(self._liar_dice_statistic_lines(report.current))
+        lines.append("总战绩：")
+        lines.extend(self._liar_dice_statistic_lines(report.career))
+        return "\n".join(lines)
 
     @staticmethod
-    def _liar_dice_statistics_message(statistics) -> str:
+    def _liar_dice_statistic_lines(statistics) -> list[str]:
         def line(label, leaders) -> str:
             if not leaders:
                 return f"{label}：暂无"
@@ -1756,13 +1760,18 @@ class GroupCommandHandler:
                 f"{name}（{count} 次）" for name, count in leaders
             )
 
-        return "\n".join((
-            "【大话骰子数据】",
+        return [
             line("开牌次数最多", statistics.opens_leaders),
             line("虚张声势败露最多", statistics.bluff_caught_leaders),
             line("拆穿他人最多", statistics.catch_leaders),
             line("受罚次数最多", statistics.penalty_leaders),
-        ))
+        ]
+
+    @classmethod
+    def _liar_dice_statistics_message(cls, statistics) -> str:
+        return "\n".join(
+            ("【大话骰子数据】", *cls._liar_dice_statistic_lines(statistics))
+        )
 
     def _join(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)

@@ -52,6 +52,7 @@ _COMMANDS = {
     "/设置生日", "/我的生日", "/本月生日",
     "/随礼",
     "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据",
+    "/真心换真心", "/真心换真心数据", "/问题", "/真心",
 }
 
 _LOTTERY_COMMANDS = {
@@ -307,7 +308,7 @@ class GroupCommandHandler:
             and command in {
                 "/发红包", "/摸鱼躲猫猫", "/记忆考核", "/谁是卧底",
                 "/甩锅游戏", "/蹦蹦数字炸弹", "/德州扑克", "/国王游戏",
-                "/大话骰子",
+                "/大话骰子", "/真心换真心",
             }
         ):
             return self._reply(command, "disabled", received_at)
@@ -365,6 +366,14 @@ class GroupCommandHandler:
             return self._liar_dice_private_hands(message)
         if command == "/大话骰子数据":
             return self._liar_dice_statistics(message, group_chat_id)
+        if command == "/真心换真心":
+            return self._truth_trade_start(message, received_at, group_chat_id)
+        if command == "/真心换真心数据":
+            return self._truth_trade_statistics(message, group_chat_id)
+        if command == "/问题":
+            return self._truth_trade_ask(message, content, received_at, group_chat_id)
+        if command == "/真心":
+            return self._truth_trade_answer(message, content, received_at, group_chat_id)
         if command == "/看牌":
             if message.source_type != "direct":
                 return self._reply("/看牌", "group_only", received_at)
@@ -452,6 +461,8 @@ class GroupCommandHandler:
                 return self._king_game_begin(message, received_at, group_chat_id)
             if summary.game_type == "liar_dice":
                 return self._liar_dice_begin(message, received_at, group_chat_id)
+            if summary.game_type == "truth_trade":
+                return self._truth_trade_begin(message, received_at, group_chat_id)
             return self._reply("/开始", "no_current_game", received_at)
         if command == "/报数":
             if message.source_type != "direct":
@@ -570,6 +581,8 @@ class GroupCommandHandler:
                 return self._king_game_end(message, received_at, group_chat_id)
             if summary.game_type == "liar_dice":
                 return self._liar_dice_end(message, received_at, group_chat_id)
+            if summary.game_type == "truth_trade":
+                return self._truth_trade_end(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._reply("/结束游戏", "no_current_game", received_at)
@@ -688,6 +701,8 @@ class GroupCommandHandler:
                 return self._king_game_join(message, received_at, group_chat_id)
             if summary.game_type == "liar_dice":
                 return self._liar_dice_join(message, received_at, group_chat_id)
+            if summary.game_type == "truth_trade":
+                return self._truth_trade_join(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._event_join(
@@ -736,6 +751,8 @@ class GroupCommandHandler:
                 return self._king_game_leave(message, received_at, group_chat_id)
             if summary.game_type == "liar_dice":
                 return self._liar_dice_leave(message, received_at, group_chat_id)
+            if summary.game_type == "truth_trade":
+                return self._truth_trade_leave(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._event_leave(
@@ -769,6 +786,8 @@ class GroupCommandHandler:
                 )
             if summary.game_type == "liar_dice":
                 return self._liar_dice_continue(message, received_at, group_chat_id)
+            if summary.game_type == "truth_trade":
+                return self._truth_trade_continue(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._memory_assessment_continue(
@@ -1160,6 +1179,7 @@ class GroupCommandHandler:
             "memory_single": "记忆考核",
             "memory_guild": "记忆考核公会赛",
             "random_event": "随机事件",
+            "truth_trade": "真心换真心",
         }[summary.game_type]
         if (
             summary.game_type == "number_bomb"
@@ -1219,6 +1239,33 @@ class GroupCommandHandler:
                     f"回应：{summary.responded_count}/"
                     f"{summary.expected_response_count}"
                 )
+            if summary.phase_deadline is not None:
+                details.append(
+                    f"截止：{summary.phase_deadline.strftime('%H:%M:%S')}"
+                )
+            if details:
+                state_name = f"{state_name}（{'；'.join(details)}）"
+        if summary.game_type == "truth_trade":
+            state_name = {
+                "asking": "提问轮",
+                "answering": "回答轮",
+                "round_complete": "轮次结束",
+            }.get(summary.state, state_name)
+            details = []
+            if summary.state == "asking" and summary.current_speaker_name:
+                details.append(
+                    f"轮到 {summary.current_speaker_name} 提问，发送 /问题 你的问题"
+                )
+            if summary.state == "answering" and summary.current_speaker_name:
+                details.append(
+                    f"{summary.current_speaker_name} 的问题收集中："
+                    f"{summary.responded_count}/{summary.expected_response_count}"
+                )
+            if summary.state == "round_complete":
+                details.append("发送 /继续 开下一轮")
+            if summary.actor_number is not None:
+                details.append(f"你的编号：{summary.actor_number}号")
+            details.append(f"当前玩家共 {len(summary.participant_names)} 人")
             if summary.phase_deadline is not None:
                 details.append(
                     f"截止：{summary.phase_deadline.strftime('%H:%M:%S')}"
@@ -1772,6 +1819,180 @@ class GroupCommandHandler:
         return "\n".join(
             ("【大话骰子数据】", *cls._liar_dice_statistic_lines(statistics))
         )
+
+    # ------------------------------------------------------------------
+    # 真心换真心
+    # ------------------------------------------------------------------
+
+    def _truth_trade_start(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /真心换真心。"
+        result = self._repository.start_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "disabled":
+            return "真心换真心当前未开放。"
+        if result.status == "already_active":
+            return "当前已有真心换真心对局。"
+        if result.status == "multiplayer_active":
+            return "当前已有游戏或随机事件进行中。"
+        return (
+            f"【真心换真心】报名开启，发送 /加入 报名；"
+            f"至少 {result.min_players} 人后发起者 /开始。"
+        )
+
+    def _truth_trade_join(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /加入。"
+        result = self._repository.join_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "no_game":
+            return "当前没有可加入的真心换真心局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "already_joined":
+            return "你已经在当前真心换真心局中。"
+        return result.public_message or "当前不能加入真心换真心。"
+
+    def _truth_trade_begin(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /开始。"
+        result = self._repository.begin_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "no_game":
+            return "当前没有可开始的真心换真心报名局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "already_started":
+            return "本局真心换真心已经开始。"
+        if result.status == "host_only":
+            return "只有发起者可以开始真心换真心。"
+        if result.status == "not_enough_players":
+            return f"报名人数不足 {result.min_players} 人，无法开始。"
+        return result.public_message or "当前不能开始真心换真心。"
+
+    def _truth_trade_ask(self, message, content, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /问题 内容。"
+        payload = content[len("/问题"):].strip()
+        result = self._repository.ask_truth_trade(
+            message.sender_platform_id,
+            payload,
+            received_at,
+            group_chat_id,
+        )
+        if result.status == "no_game":
+            return "当前没有进行中的真心换真心局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "not_participant":
+            return "只有当前玩家可以提问。"
+        if result.status == "not_your_turn":
+            if result.asker_position is not None and result.asker_name:
+                return (
+                    f"还没轮到你提问，当前轮到 {result.asker_position}号 "
+                    f"{result.asker_name}。"
+                )
+            return "还没轮到你提问。"
+        if result.status == "empty_question":
+            return "请发送 /问题 内容，问题不能为空。"
+        return result.public_message or "当前不能提问。"
+
+    def _truth_trade_answer(self, message, content, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /真心 内容。"
+        payload = content[len("/真心"):].strip()
+        result = self._repository.answer_truth_trade(
+            message.sender_platform_id,
+            payload,
+            received_at,
+            group_chat_id,
+        )
+        errors = {
+            "no_game": "当前没有进行中的真心换真心局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "not_participant": "只有当前玩家可以回答。",
+            "wrong_state": "当前没有开放的问题。",
+            "asker_cannot_answer": "这是你提的问题，等其他人的回答吧。",
+            "not_required": "你加入晚于本题，无需回答。",
+            "already_answered": "你已经回答过本题了。",
+            "empty_answer": "请发送 /真心 内容，回答不能为空。",
+        }
+        if result.status in errors:
+            return errors[result.status]
+        return result.public_message or "当前不能回答。"
+
+    def _truth_trade_leave(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /退出。"
+        result = self._repository.leave_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "no_game":
+            return "当前没有真心换真心对局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "not_participant":
+            return "你没有参与当前真心换真心局。"
+        return result.public_message or "你已退出本局真心换真心。"
+
+    def _truth_trade_end(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /结束游戏。"
+        result = self._repository.end_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "no_game":
+            return "当前没有可结束的真心换真心局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "not_participant":
+            return "只有本局参与者可以结束游戏。"
+        return result.public_message or "【真心换真心】本局已结束。"
+
+    def _truth_trade_continue(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /继续。"
+        result = self._repository.continue_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "no_game":
+            return "当前没有真心换真心对局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "not_participant":
+            return "只有当前玩家可以继续下一轮。"
+        if result.status == "wrong_state":
+            return "本轮还在进行中，等本轮结算后再 /继续。"
+        if result.status == "not_enough_players":
+            return f"活跃玩家不足 {result.min_players} 人，无法继续；可 /结束游戏 收尾。"
+        return result.public_message or "当前不能继续真心换真心。"
+
+    def _truth_trade_statistics(self, message, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /真心换真心数据。"
+        statistics = self._repository.truth_trade_statistics(group_chat_id)
+        if statistics.games == 0:
+            return "本群还没有真心换真心对局记录。"
+
+        def line(label, leaders) -> str:
+            if not leaders:
+                return f"{label}：暂无"
+            return f"{label}：" + "、".join(
+                f"{name}（{count} 次）" for name, count in leaders
+            )
+
+        return "\n".join((
+            "【真心换真心数据】",
+            f"对局：{statistics.games} 局 · 提问：{statistics.questions} 个 · "
+            f"回答：{statistics.answers} 条",
+            line("提问最多", statistics.ask_leaders),
+            line("回答最多", statistics.answer_leaders),
+        ))
 
     def _join(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)
@@ -4537,6 +4758,20 @@ class GroupCommandHandler:
                     ("/结束游戏", "/结束游戏：任一参与者结束本局并公布统计"),
                 ),
             ),
+            "真心换真心": (
+                "【真心换真心】",
+                (
+                    ("/真心换真心", "/真心换真心：创建报名局"),
+                    ("/加入", "/加入：报名；对局中途加入者从下一个问题起参与"),
+                    ("/开始", "/开始：至少 2 人后由发起者开局"),
+                    ("/问题", "轮到自己时 /问题 内容：向其他人提问；/问题 跳过：跳过本轮提问"),
+                    ("/真心", "其余玩家 /真心 内容：回答当前问题；/真心 跳过：记为拒答"),
+                    ("/继续", "/继续：本轮结算后任一参与者开下一轮"),
+                    ("/当前游戏", "/当前游戏：查看当前进度、玩家名单与总人数"),
+                    ("/真心换真心数据", "/真心换真心数据：查看本群总战绩"),
+                    ("/结束游戏", "/结束游戏：任一参与者结束本局"),
+                ),
+            ),
             "暗网交易所": (
                 "【暗网交易所】",
                 (
@@ -4620,6 +4855,7 @@ class GroupCommandHandler:
                         "蹦蹦数字炸弹",
                         "德州扑克",
                         "我有你没有",
+                        "真心换真心",
                         "暗网交易所",
                         "公演",
                     )
@@ -4632,7 +4868,7 @@ class GroupCommandHandler:
                 ("商店", "/帮助 商店：购买、使用、赠送与授权"),
                 (
                     "游戏",
-                    "/帮助 游戏：玩法总览；/帮助 摸鱼躲藏、/帮助 记忆考核、/帮助 谁是卧底、/帮助 甩锅游戏、/帮助 蹦蹦数字炸弹、/帮助 德州扑克、/帮助 我有你没有、/帮助 暗网交易所、/帮助 公演预约",
+                    "/帮助 游戏：玩法总览；/帮助 摸鱼躲藏、/帮助 记忆考核、/帮助 谁是卧底、/帮助 甩锅游戏、/帮助 蹦蹦数字炸弹、/帮助 德州扑克、/帮助 我有你没有、/帮助 真心换真心、/帮助 暗网交易所、/帮助 公演预约",
                 ),
                 ("随机事件", "/帮助 随机事件：报名与退出"),
                 ("彩票", "/帮助 彩票：公司双色球的玩法、奖级与开奖规则"),
@@ -4655,6 +4891,7 @@ class GroupCommandHandler:
                     "蹦蹦数字炸弹",
                     "德州扑克",
                     "我有你没有",
+                    "真心换真心",
                     "暗网交易所",
                     "公演",
                 )

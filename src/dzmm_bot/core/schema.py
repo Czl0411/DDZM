@@ -1101,6 +1101,132 @@ class LiarDiceRoundRecord(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
 
 
+class TruthTradeSettingsRecord(Base):
+    __tablename__ = "truth_trade_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"),
+        default=PRIMARY_GROUP_CHAT_ID,
+        unique=True,
+        nullable=False,
+    )
+    question_timeout_seconds: Mapped[int] = mapped_column(
+        Integer, default=300, nullable=False
+    )
+    answer_timeout_seconds: Mapped[int] = mapped_column(
+        Integer, default=600, nullable=False
+    )
+    min_players: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+
+
+class TruthTradeGameRecord(Base):
+    __tablename__ = "truth_trade_games"
+    __table_args__ = (
+        Index(
+            "ux_truth_trade_one_active",
+            "group_chat_id",
+            unique=True,
+            sqlite_where=text("active_key IS NOT NULL"),
+            postgresql_where=text("active_key IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "state IN ('signup', 'asking', 'answering', 'round_complete', "
+            "'finished', 'cancelled')",
+            name="ck_truth_trade_game_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"), default=PRIMARY_GROUP_CHAT_ID, nullable=False
+    )
+    host_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    active_key: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    settled_rounds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    current_position: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    phase_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    signup_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finish_reason: Mapped[str | None] = mapped_column(String(64))
+
+
+class TruthTradePlayerRecord(Base):
+    __tablename__ = "truth_trade_players"
+    __table_args__ = (
+        UniqueConstraint("game_id", "user_id"),
+        UniqueConstraint("game_id", "position"),
+        CheckConstraint(
+            "state IN ('active', 'withdrawn')",
+            name="ck_truth_trade_player_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("truth_trade_games.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class TruthTradeQuestionRecord(Base):
+    __tablename__ = "truth_trade_questions"
+    __table_args__ = (
+        UniqueConstraint("game_id", "round_number", "position"),
+        CheckConstraint(
+            "state IN ('open', 'collected', 'skipped')",
+            name="ck_truth_trade_question_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("truth_trade_games.id"), nullable=False
+    )
+    asker_player_id: Mapped[UUID] = mapped_column(
+        ForeignKey("truth_trade_players.id"), nullable=False
+    )
+    round_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str | None] = mapped_column(Text)
+    required_player_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    asked_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    collected_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class TruthTradeAnswerRecord(Base):
+    __tablename__ = "truth_trade_answers"
+    __table_args__ = (
+        UniqueConstraint("question_id", "user_id"),
+        CheckConstraint(
+            "state IN ('answered', 'declined', 'timed_out', 'left')",
+            name="ck_truth_trade_answer_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    question_id: Mapped[UUID] = mapped_column(
+        ForeignKey("truth_trade_questions.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    content: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    answered_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
 class TexasHoldemSettingsRecord(Base):
     __tablename__ = "texas_holdem_settings"
 

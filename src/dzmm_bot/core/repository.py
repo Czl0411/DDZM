@@ -256,6 +256,11 @@ from .schema import (
     NeverHaveIEverResponseRecord,
     NeverHaveIEverRoundRecord,
     NeverHaveIEverSettingsRecord,
+    TruthTradeAnswerRecord,
+    TruthTradeGameRecord,
+    TruthTradePlayerRecord,
+    TruthTradeQuestionRecord,
+    TruthTradeSettingsRecord,
     TexasHoldemActionRecord,
     TexasHoldemDailyStartRecord,
     TexasHoldemGameRecord,
@@ -1250,6 +1255,51 @@ class LiarDiceStatisticsReport:
 
     current: LiarDiceStatistics | None
     career: LiarDiceStatistics
+
+
+@dataclass(frozen=True)
+class TruthTradeRosterEntry:
+    position: int
+    display_name: str
+
+
+@dataclass(frozen=True)
+class TruthTradeRecapEntry:
+    display_name: str
+    state: str  # answered/declined/timed_out/left
+    content: str | None
+
+
+@dataclass(frozen=True)
+class TruthTradeResult:
+    status: str
+    game_id: UUID | None = None
+    group_chat_id: UUID | None = None
+    state: str | None = None
+    round_number: int = 0
+    players: tuple[TruthTradeRosterEntry, ...] = ()
+    asker_position: int | None = None
+    asker_name: str | None = None
+    question_text: str | None = None
+    answered_count: int = 0
+    required_count: int = 0
+    question_timeout_seconds: int = 0
+    answer_timeout_seconds: int = 0
+    min_players: int = 2
+    recap: tuple[TruthTradeRecapEntry, ...] = ()
+    ask_leaders: tuple[tuple[str, int], ...] = ()
+    answer_leaders: tuple[tuple[str, int], ...] = ()
+    announcements: tuple[str, ...] = ()
+    public_message: str | None = None
+
+
+@dataclass(frozen=True)
+class TruthTradeStatistics:
+    games: int = 0
+    questions: int = 0
+    answers: int = 0
+    ask_leaders: tuple[tuple[str, int], ...] = ()
+    answer_leaders: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2294,6 +2344,10 @@ _COMMAND_DEFINITIONS = (
     ("/开骰", "/开骰", "大话骰子中质疑当前叫数并开牌"),
     ("/看骰", "/看骰（仅私聊）", "私聊查看自己的大话骰子骰子"),
     ("/大话骰子数据", "/大话骰子数据", "查看当前大话骰子局实时统计"),
+    ("/真心换真心", "/真心换真心", "创建真心换真心报名局"),
+    ("/真心换真心数据", "/真心换真心数据", "查看本群真心换真心总战绩"),
+    ("/问题", "/问题 内容；/问题 跳过", "真心换真心中轮到自己时提问，或跳过本轮提问"),
+    ("/真心", "/真心 内容；/真心 跳过", "真心换真心中回答当前问题，或记为拒答"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
     ("/跳过", "/跳过 编号 [编号...]", "排除蹦蹦数字炸弹中尚未报数的参与者"),
@@ -3097,6 +3151,10 @@ class CoreRepository:
             "liar_dice": select(LiarDiceGameRecord.id).where(
                 LiarDiceGameRecord.group_chat_id == group_id,
                 LiarDiceGameRecord.active_key.is_not(None),
+            ),
+            "truth_trade": select(TruthTradeGameRecord.id).where(
+                TruthTradeGameRecord.group_chat_id == group_id,
+                TruthTradeGameRecord.active_key.is_not(None),
             ),
         }
         check = checks.get(game_type)
@@ -11411,6 +11469,121 @@ class CoreRepository:
                     )
                 )
 
+            truth_game = session.scalar(
+                select(TruthTradeGameRecord).where(
+                    TruthTradeGameRecord.active_key == "global",
+                    TruthTradeGameRecord.group_chat_id == group_chat_id,
+                )
+            )
+            if truth_game is not None:
+                truth_rows = self._truth_trade_active_players(session, truth_game.id)
+                truth_actor = next(
+                    (
+                        player
+                        for player, user in truth_rows
+                        if user.platform_id == platform_id
+                    ),
+                    None,
+                )
+                asker_name = next(
+                    (
+                        user.display_name
+                        for player, user in truth_rows
+                        if player.position == truth_game.current_position
+                    ),
+                    None,
+                )
+                responded = 0
+                expected = 0
+                if truth_game.state == "answering":
+                    question = self._truth_trade_open_question(
+                        session, truth_game.id, truth_game.round_number
+                    )
+                    if question is not None:
+                        required = self._truth_trade_required_players(
+                            session, truth_game, question
+                        )
+                        expected = len(required)
+                        responded = sum(
+                            1
+                            for player, _ in required
+                            if session.scalar(
+                                select(TruthTradeAnswerRecord.id).where(
+                                    TruthTradeAnswerRecord.question_id == question.id,
+                                    TruthTradeAnswerRecord.user_id == player.user_id,
+                                )
+                            )
+                            is not None
+                        )
+                if truth_actor is None:
+                    truth_role = "nonparticipant"
+                    truth_commands = ("/加入",)
+                elif truth_game.state == "signup":
+                    truth_role = (
+                        "host" if truth_actor.user_id == truth_game.host_user_id else "participant"
+                    )
+                    truth_commands = (
+                        ("/开始", "/退出")
+                        if truth_actor.user_id == truth_game.host_user_id
+                        else ("/退出",)
+                    )
+                elif truth_game.state == "asking":
+                    truth_role = "participant"
+                    truth_commands = (
+                        ("/问题 内容", "/问题 跳过", "/退出", "/结束游戏")
+                        if truth_actor.position == truth_game.current_position
+                        else ("/退出", "/结束游戏")
+                    )
+                elif truth_game.state == "answering":
+                    truth_role = "participant"
+                    question = self._truth_trade_open_question(
+                        session, truth_game.id, truth_game.round_number
+                    )
+                    must_answer = (
+                        question is not None
+                        and truth_actor.position != question.position
+                        and truth_actor.position <= question.required_player_count
+                        and session.scalar(
+                            select(TruthTradeAnswerRecord.id).where(
+                                TruthTradeAnswerRecord.question_id == question.id,
+                                TruthTradeAnswerRecord.user_id == truth_actor.user_id,
+                            )
+                        )
+                        is None
+                    )
+                    truth_commands = (
+                        ("/真心 内容", "/真心 跳过", "/退出", "/结束游戏")
+                        if must_answer
+                        else ("/退出", "/结束游戏")
+                    )
+                else:
+                    truth_role = "participant"
+                    truth_commands = ("/继续", "/退出", "/结束游戏")
+                active.append(
+                    ActiveGameplaySummary(
+                        "truth_trade",
+                        truth_game.id,
+                        truth_game.state,
+                        truth_role,
+                        tuple(
+                            f"{player.position}号 {user.display_name}"
+                            for player, user in truth_rows
+                        ),
+                        truth_commands,
+                        None,
+                        phase_deadline=truth_game.phase_deadline,
+                        round_number=truth_game.round_number,
+                        actor_number=(
+                            truth_actor.position if truth_actor is not None else None
+                        ),
+                        current_speaker_name=(
+                            asker_name if truth_game.state in {"asking", "answering"} else None
+                        ),
+                        responded_count=responded,
+                        expected_response_count=expected,
+                    )
+                )
+
             never_have_i_ever = session.scalar(
                 select(NeverHaveIEverGameRecord).where(
                     NeverHaveIEverGameRecord.active_key == "global",
@@ -12143,6 +12316,7 @@ class CoreRepository:
             "memory_single": "记忆考核",
             "memory_guild": "记忆考核公会赛",
             "random_event": "随机事件",
+            "truth_trade": "真心换真心",
         }
         if game_type not in game_names:
             return False
@@ -12184,6 +12358,19 @@ class CoreRepository:
                     ):
                         self._finish_never_have_i_ever_locked(
                             session, game, "forced_ended", "admin_forced", now
+                        )
+                        ended = True
+                elif game_type == "truth_trade":
+                    game = session.get(
+                        TruthTradeGameRecord, game_id, with_for_update=True
+                    )
+                    if (
+                        game is not None
+                        and game.active_key == "global"
+                        and game.group_chat_id == group_chat_id
+                    ):
+                        self._truth_trade_finish_locked(
+                            session, game, "finished", "admin_forced", now
                         )
                         ended = True
                 elif game_type == "texas_holdem":
@@ -13794,6 +13981,1118 @@ class CoreRepository:
             penalty_leaders=leaders(penalties),
             catch_leaders=leaders(catches),
         )
+
+    # ------------------------------------------------------------------
+    # 真心换真心：群轮流问答游戏
+    # ------------------------------------------------------------------
+
+    def _truth_trade_user(
+        self, session: Session, platform_id: str
+    ) -> UserRecord | None:
+        return session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == platform_id)
+        )
+
+    def _active_truth_trade_game(
+        self, session: Session, group_chat_id: UUID
+    ) -> TruthTradeGameRecord | None:
+        return session.scalar(
+            select(TruthTradeGameRecord)
+            .where(
+                TruthTradeGameRecord.active_key == "global",
+                TruthTradeGameRecord.group_chat_id == group_chat_id,
+            )
+            .with_for_update()
+        )
+
+    def _truth_trade_settings_row(
+        self, session: Session, group_chat_id: UUID
+    ) -> TruthTradeSettingsRecord:
+        row = session.scalar(
+            select(TruthTradeSettingsRecord).where(
+                TruthTradeSettingsRecord.group_chat_id == group_chat_id
+            )
+        )
+        if row is None:
+            row = TruthTradeSettingsRecord(group_chat_id=group_chat_id)
+            session.add(row)
+            session.flush()
+        return row
+
+    @staticmethod
+    def _truth_trade_active_players(
+        session: Session, game_id: UUID
+    ) -> list[tuple[TruthTradePlayerRecord, UserRecord]]:
+        return list(
+            session.execute(
+                select(TruthTradePlayerRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == TruthTradePlayerRecord.user_id)
+                .where(
+                    TruthTradePlayerRecord.game_id == game_id,
+                    TruthTradePlayerRecord.state == "active",
+                )
+                .order_by(TruthTradePlayerRecord.position)
+            )
+        )
+
+    @staticmethod
+    def _truth_trade_open_question(
+        session: Session, game_id: UUID, round_number: int
+    ) -> TruthTradeQuestionRecord | None:
+        return session.scalar(
+            select(TruthTradeQuestionRecord)
+            .where(
+                TruthTradeQuestionRecord.game_id == game_id,
+                TruthTradeQuestionRecord.round_number == round_number,
+                TruthTradeQuestionRecord.state == "open",
+            )
+            .with_for_update()
+        )
+
+    @classmethod
+    def _truth_trade_required_players(
+        cls,
+        session: Session,
+        game: TruthTradeGameRecord,
+        question: TruthTradeQuestionRecord,
+    ) -> list[tuple[TruthTradePlayerRecord, UserRecord]]:
+        """本题需要作答的活跃玩家：提问时在册（position <= required_player_count），
+        排除提问者本人；中途退出者已不在 active 名单。"""
+        return [
+            (player, user)
+            for player, user in cls._truth_trade_active_players(session, game.id)
+            if player.position != question.position
+            and player.position <= question.required_player_count
+        ]
+
+    def _truth_trade_result_locked(
+        self,
+        session: Session,
+        game: TruthTradeGameRecord,
+        status: str,
+        *,
+        public_message: str | None = None,
+        announcements: tuple[str, ...] = (),
+        question_text: str | None = None,
+        recap: tuple[TruthTradeRecapEntry, ...] = (),
+        ask_leaders: tuple[tuple[str, int], ...] = (),
+        answer_leaders: tuple[tuple[str, int], ...] = (),
+    ) -> TruthTradeResult:
+        players = self._truth_trade_active_players(session, game.id)
+        settings = self._truth_trade_settings_row(session, game.group_chat_id)
+        asker_name = None
+        answered_count = 0
+        required_count = 0
+        if game.state == "asking":
+            for player, user in players:
+                if player.position == game.current_position:
+                    asker_name = user.display_name
+                    break
+        if game.state == "answering":
+            question = self._truth_trade_open_question(session, game.id, game.round_number)
+            if question is not None:
+                required = self._truth_trade_required_players(session, game, question)
+                required_count = len(required)
+                answered_count = sum(
+                    1
+                    for player, _ in required
+                    if session.scalar(
+                        select(TruthTradeAnswerRecord.id).where(
+                            TruthTradeAnswerRecord.question_id == question.id,
+                            TruthTradeAnswerRecord.user_id == player.user_id,
+                        )
+                    )
+                    is not None
+                )
+        return TruthTradeResult(
+            status=status,
+            game_id=game.id,
+            group_chat_id=game.group_chat_id,
+            state=game.state,
+            round_number=game.round_number,
+            players=tuple(
+                TruthTradeRosterEntry(player.position, user.display_name)
+                for player, user in players
+            ),
+            asker_position=game.current_position if game.state == "asking" else None,
+            asker_name=asker_name,
+            question_text=question_text,
+            answered_count=answered_count,
+            required_count=required_count,
+            question_timeout_seconds=settings.question_timeout_seconds,
+            answer_timeout_seconds=settings.answer_timeout_seconds,
+            min_players=settings.min_players,
+            recap=recap,
+            ask_leaders=ask_leaders,
+            answer_leaders=answer_leaders,
+            announcements=announcements,
+            public_message=public_message,
+        )
+
+    def _truth_trade_expire_phase(
+        self,
+        session: Session,
+        game: TruthTradeGameRecord,
+        settings: TruthTradeSettingsRecord,
+        now: datetime,
+    ) -> tuple[str, ...]:
+        """懒超时：提问超时跳过提问者，回答超时未答者记超时未答并轮转。"""
+        if game.phase_deadline is None or now <= game.phase_deadline:
+            return ()
+        if game.state == "asking":
+            asker = session.scalar(
+                select(TruthTradePlayerRecord)
+                .where(
+                    TruthTradePlayerRecord.game_id == game.id,
+                    TruthTradePlayerRecord.position == game.current_position,
+                    TruthTradePlayerRecord.state == "active",
+                )
+                .with_for_update()
+            )
+            if asker is None:
+                return ()
+            asker_user = session.get(UserRecord, asker.user_id)
+            session.add(
+                TruthTradeQuestionRecord(
+                    game_id=game.id,
+                    asker_player_id=asker.id,
+                    round_number=game.round_number,
+                    position=game.current_position,
+                    content=None,
+                    required_player_count=0,
+                    state="skipped",
+                    asked_at=now,
+                    collected_at=now,
+                )
+            )
+            session.flush()
+            ahead = (f"【真心换真心】{asker.position}号 {asker_user.display_name} 提问超时，自动跳过。",)
+            return ahead + self._truth_trade_advance(session, game, settings, now)
+        if game.state == "answering":
+            question = self._truth_trade_open_question(session, game.id, game.round_number)
+            if question is None:
+                return ()
+            required = self._truth_trade_required_players(session, game, question)
+            for player, _user in required:
+                existing = session.scalar(
+                    select(TruthTradeAnswerRecord.id).where(
+                        TruthTradeAnswerRecord.question_id == question.id,
+                        TruthTradeAnswerRecord.user_id == player.user_id,
+                    )
+                )
+                if existing is None:
+                    session.add(
+                        TruthTradeAnswerRecord(
+                            question_id=question.id,
+                            user_id=player.user_id,
+                            content=None,
+                            state="timed_out",
+                            answered_at=now,
+                        )
+                    )
+            question.state = "collected"
+            question.collected_at = now
+            session.flush()
+            asker_player = session.get(TruthTradePlayerRecord, question.asker_player_id)
+            asker_user = session.get(UserRecord, asker_player.user_id)
+            lines = self._truth_trade_recap_lines(
+                question.position,
+                asker_user.display_name,
+                question.content,
+                self._truth_trade_recap_entries(session, question),
+            )
+            return tuple(lines) + self._truth_trade_advance(
+                session, game, settings, now
+            )
+        return ()
+
+    @staticmethod
+    def _truth_trade_recap_lines(
+        position: int,
+        asker_name: str,
+        question_text: str | None,
+        recap: list[TruthTradeRecapEntry],
+    ) -> list[str]:
+        labels = {
+            "answered": None,
+            "declined": "拒答",
+            "timed_out": "超时未答",
+            "left": "中途退出",
+        }
+        lines = [
+            f"【真心换真心】{position}号 {asker_name} 的问题收集完毕：",
+            f"问题：{question_text or '（提问被跳过）'}",
+        ]
+        for entry in recap:
+            label = labels.get(entry.state)
+            lines.append(
+                f"{entry.display_name}：{entry.content if entry.state == 'answered' else label}"
+            )
+        return lines
+
+    @staticmethod
+    def _truth_trade_recap_entries(
+        session: Session, question: TruthTradeQuestionRecord
+    ) -> list[TruthTradeRecapEntry]:
+        """按序号顺序返回本题全部作答记录（含拒答/超时/中途退出）。"""
+        rows = session.execute(
+            select(TruthTradeAnswerRecord, UserRecord)
+            .join(UserRecord, UserRecord.id == TruthTradeAnswerRecord.user_id)
+            .where(TruthTradeAnswerRecord.question_id == question.id)
+        ).all()
+        positions = {
+            player.user_id: player.position
+            for player in session.scalars(
+                select(TruthTradePlayerRecord).where(
+                    TruthTradePlayerRecord.game_id == question.game_id
+                )
+            )
+        }
+        ordered = sorted(
+            rows, key=lambda row: positions.get(row[0].user_id, 999)
+        )
+        return [
+            TruthTradeRecapEntry(user.display_name, answer.state, answer.content)
+            for answer, user in ordered
+        ]
+
+    def _truth_trade_game_leaders(
+        self, session: Session, game: TruthTradeGameRecord
+    ) -> tuple[tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]]:
+        """本局至今的提问/回答排行（含本局所有已收集问题）。"""
+        ask_rows = session.execute(
+            select(UserRecord.display_name, func.count())
+            .select_from(TruthTradeQuestionRecord)
+            .join(
+                TruthTradePlayerRecord,
+                TruthTradePlayerRecord.id == TruthTradeQuestionRecord.asker_player_id,
+            )
+            .join(UserRecord, UserRecord.id == TruthTradePlayerRecord.user_id)
+            .where(
+                TruthTradeQuestionRecord.game_id == game.id,
+                TruthTradeQuestionRecord.state == "collected",
+            )
+            .group_by(UserRecord.display_name)
+        ).all()
+        answer_rows = session.execute(
+            select(UserRecord.display_name, func.count())
+            .select_from(TruthTradeAnswerRecord)
+            .join(
+                TruthTradeQuestionRecord,
+                TruthTradeQuestionRecord.id == TruthTradeAnswerRecord.question_id,
+            )
+            .join(UserRecord, UserRecord.id == TruthTradeAnswerRecord.user_id)
+            .where(
+                TruthTradeQuestionRecord.game_id == game.id,
+                TruthTradeAnswerRecord.state == "answered",
+            )
+            .group_by(UserRecord.display_name)
+        ).all()
+
+        def leaders(rows) -> tuple[tuple[str, int], ...]:
+            if not rows:
+                return ()
+            highest = max(count for _, count in rows)
+            return tuple(
+                sorted(
+                    (name, count) for name, count in rows if count == highest
+                )
+            )
+
+        return leaders(ask_rows), leaders(answer_rows)
+
+    def _truth_trade_advance(
+        self,
+        session: Session,
+        game: TruthTradeGameRecord,
+        settings: TruthTradeSettingsRecord,
+        now: datetime,
+    ) -> tuple[str, ...]:
+        """当前问题已收集/跳过后：轮到下一位提问，或本轮完毕进入结算。"""
+        players = self._truth_trade_active_players(session, game.id)
+        next_player = next(
+            (player for player, _ in players if player.position > game.current_position),
+            None,
+        )
+        if next_player is not None:
+            user = session.get(UserRecord, next_player.user_id)
+            game.state = "asking"
+            game.current_position = next_player.position
+            game.phase_deadline = now + timedelta(
+                seconds=settings.question_timeout_seconds
+            )
+            return (
+                f"【真心换真心】第 {game.round_number} 轮 · 轮到 "
+                f"{next_player.position}号 {user.display_name} 提问，发送 /问题 你的问题"
+                f"（超时 {settings.question_timeout_seconds} 秒自动跳过）",
+            )
+        game.state = "round_complete"
+        game.phase_deadline = None
+        game.settled_rounds += 1
+        self._bump_department_game_plays(
+            session,
+            [player.user_id for player, _ in players],
+            now,
+            group_chat_id=game.group_chat_id,
+        )
+        ask_leaders, answer_leaders = self._truth_trade_game_leaders(session, game)
+        lines = [
+            f"【真心换真心】第 {game.round_number} 轮结束。",
+            self._truth_trade_leaders_line("提问最多", ask_leaders),
+            self._truth_trade_leaders_line("回答最多", answer_leaders),
+            "发送 /继续 开下一轮，/结束游戏 结束。",
+        ]
+        return ("\n".join(lines),)
+
+    @staticmethod
+    def _truth_trade_leaders_line(label: str, leaders: tuple[tuple[str, int], ...]) -> str:
+        if not leaders:
+            return f"{label}：暂无"
+        return f"{label}：" + "、".join(
+            f"{name}（{count} 次）" for name, count in leaders
+        )
+
+    def _truth_trade_enqueue_announcements(
+        self,
+        session: Session,
+        game: TruthTradeGameRecord,
+        announcements: tuple[str, ...],
+    ) -> None:
+        """懒超时等被动触发的群公告入队（主动指令的回复不走这里）。"""
+        if not announcements:
+            return
+        group = session.get(GroupChatRecord, game.group_chat_id)
+        for text in announcements:
+            self.enqueue_system_outbound(
+                text,
+                group_chat_id=game.group_chat_id,
+                destination_chatroom_id=(
+                    None if group is None else group.chatroom_id
+                ),
+            )
+
+    def _truth_trade_finish_locked(
+        self,
+        session: Session,
+        game: TruthTradeGameRecord,
+        state: str,
+        reason: str,
+        now: datetime,
+    ) -> None:
+        """收局：unfinished 轮（已开局未结算）补计 1 局参与数。"""
+        game.state = state
+        game.active_key = None
+        game.phase_deadline = None
+        game.finished_at = now
+        game.finish_reason = reason
+        if game.round_number > game.settled_rounds and game.round_number >= 1:
+            game.settled_rounds = game.round_number
+            players = self._truth_trade_active_players(session, game.id)
+            self._bump_department_game_plays(
+                session,
+                [player.user_id for player, _ in players],
+                now,
+                group_chat_id=game.group_chat_id,
+            )
+
+    def start_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                group = session.get(GroupChatRecord, group_chat_id)
+                if (
+                    group is None
+                    or group.deleted_at is not None
+                    or not group.games_enabled
+                    or "truth_trade" not in group.enabled_game_types
+                ):
+                    return TruthTradeResult("disabled")
+                active = self._active_truth_trade_game(session, group_chat_id)
+                if active is not None:
+                    return TruthTradeResult("already_active")
+                if self._group_has_active_gameplay(session, group_chat_id):
+                    return TruthTradeResult("multiplayer_active")
+                game = TruthTradeGameRecord(
+                    group_chat_id=group_chat_id,
+                    host_user_id=user.id,
+                    active_key="global",
+                    state="signup",
+                    round_number=0,
+                    current_position=1,
+                    signup_at=now,
+                    created_at=now,
+                )
+                session.add(game)
+                session.flush()
+                session.add(
+                    TruthTradePlayerRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        position=1,
+                        state="active",
+                        joined_at=now,
+                    )
+                )
+                session.flush()
+                return self._truth_trade_result_locked(session, game, "signup_started")
+
+    def join_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                announcements = self._truth_trade_expire_phase(
+                    session, game, settings, now
+                )
+                self._truth_trade_enqueue_announcements(session, game, announcements)
+                if game.state in {"finished", "cancelled"}:
+                    return TruthTradeResult("no_game")
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord)
+                    .where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if player is not None and player.state == "active":
+                    return TruthTradeResult("already_joined")
+                max_position = session.scalar(
+                    select(func.max(TruthTradePlayerRecord.position)).where(
+                        TruthTradePlayerRecord.game_id == game.id
+                    )
+                )
+                next_position = int(max_position or 0) + 1
+                if player is None:
+                    session.add(
+                        TruthTradePlayerRecord(
+                            game_id=game.id,
+                            user_id=user.id,
+                            position=next_position,
+                            state="active",
+                            joined_at=now,
+                        )
+                    )
+                else:
+                    player.position = next_position
+                    player.state = "active"
+                    player.withdrawn_at = None
+                session.flush()
+                status = (
+                    "joined_signup" if game.state == "signup" else "joined_midway"
+                )
+                if game.state == "signup":
+                    public_message = (
+                        f"【真心换真心】{user.display_name} 加入报名，"
+                        f"当前 {len(self._truth_trade_active_players(session, game.id))} 人。"
+                    )
+                else:
+                    public_message = (
+                        f"【真心换真心】{next_position}号 {user.display_name} 加入，"
+                        f"当前共 {len(self._truth_trade_active_players(session, game.id))} 人；"
+                        "从下一个问题开始参与回答。"
+                    )
+                return self._truth_trade_result_locked(
+                    session, game, status, public_message=public_message
+                )
+
+    def begin_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                if game.state != "signup":
+                    return TruthTradeResult("already_started")
+                if user.id != game.host_user_id:
+                    return TruthTradeResult("host_only")
+                players = self._truth_trade_active_players(session, game.id)
+                if len(players) < settings.min_players:
+                    return self._truth_trade_result_locked(
+                        session, game, "not_enough_players"
+                    )
+                game.state = "asking"
+                game.round_number = 1
+                first_player, first_user = players[0]
+                game.current_position = first_player.position
+                game.started_at = now
+                game.phase_deadline = now + timedelta(
+                    seconds=settings.question_timeout_seconds
+                )
+                self._grant_department_allowance(
+                    session,
+                    user,
+                    "dept_game_host",
+                    now,
+                    group_chat_id=game.group_chat_id,
+                )
+                roster = "、".join(
+                    f"{player.position}号 {user.display_name}"
+                    for player, user in players
+                )
+                public_message = (
+                    f"【真心换真心】第 1 轮开始（共 {len(players)} 人）：{roster}\n"
+                    f"轮到 {first_player.position}号 {first_user.display_name} 提问，"
+                    f"发送 /问题 你的问题"
+                    f"（超时 {settings.question_timeout_seconds} 秒自动跳过）"
+                )
+                return self._truth_trade_result_locked(
+                    session, game, "started", public_message=public_message
+                )
+
+    def ask_truth_trade(
+        self,
+        platform_id: str,
+        content: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                announcements = self._truth_trade_expire_phase(
+                    session, game, settings, now
+                )
+                self._truth_trade_enqueue_announcements(session, game, announcements)
+                if game.state in {"finished", "cancelled"}:
+                    return TruthTradeResult("no_game")
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord).where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                )
+                if player is None or player.state != "active":
+                    return TruthTradeResult("not_participant")
+                if game.state != "asking" or game.current_position != player.position:
+                    return self._truth_trade_result_locked(
+                        session, game, "not_your_turn", announcements=announcements
+                    )
+                text = content.strip()
+                if not text:
+                    return TruthTradeResult("empty_question", announcements=announcements)
+                active_players = self._truth_trade_active_players(session, game.id)
+                if text == "跳过":
+                    session.add(
+                        TruthTradeQuestionRecord(
+                            game_id=game.id,
+                            asker_player_id=player.id,
+                            round_number=game.round_number,
+                            position=game.current_position,
+                            content=None,
+                            required_player_count=0,
+                            state="skipped",
+                            asked_at=now,
+                            collected_at=now,
+                        )
+                    )
+                    session.flush()
+                    ahead = self._truth_trade_advance(session, game, settings, now)
+                    self._truth_trade_enqueue_announcements(session, game, ahead)
+                    return self._truth_trade_result_locked(
+                        session,
+                        game,
+                        "skipped",
+                        public_message="【真心换真心】已跳过本轮提问。",
+                    )
+                question = TruthTradeQuestionRecord(
+                    game_id=game.id,
+                    asker_player_id=player.id,
+                    round_number=game.round_number,
+                    position=game.current_position,
+                    content=text,
+                    required_player_count=max(
+                        entry.position for entry, _ in active_players
+                    ),
+                    state="open",
+                    asked_at=now,
+                )
+                session.add(question)
+                game.state = "answering"
+                game.phase_deadline = now + timedelta(
+                    seconds=settings.answer_timeout_seconds
+                )
+                session.flush()
+                public_message = (
+                    f"【真心换真心】{player.position}号 {user.display_name} 的问题：{text}\n"
+                    f"其他人发送 /真心 你的回答（/真心 跳过 可拒答，"
+                    f"超时 {settings.answer_timeout_seconds} 秒记为超时未答）"
+                )
+                return self._truth_trade_result_locked(
+                    session,
+                    game,
+                    "asked",
+                    public_message=public_message,
+                    question_text=text,
+                )
+
+    def answer_truth_trade(
+        self,
+        platform_id: str,
+        content: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                announcements = self._truth_trade_expire_phase(
+                    session, game, settings, now
+                )
+                self._truth_trade_enqueue_announcements(session, game, announcements)
+                if game.state in {"finished", "cancelled"}:
+                    return TruthTradeResult("no_game")
+                if game.state != "answering":
+                    return TruthTradeResult("wrong_state")
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord).where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                )
+                if player is None or player.state != "active":
+                    return TruthTradeResult("not_participant")
+                question = self._truth_trade_open_question(
+                    session, game.id, game.round_number
+                )
+                if question is None:
+                    return TruthTradeResult("wrong_state")
+                if question.position == player.position:
+                    return TruthTradeResult("asker_cannot_answer")
+                if player.position > question.required_player_count:
+                    return TruthTradeResult("not_required")
+                existing = session.scalar(
+                    select(TruthTradeAnswerRecord).where(
+                        TruthTradeAnswerRecord.question_id == question.id,
+                        TruthTradeAnswerRecord.user_id == user.id,
+                    )
+                )
+                if existing is not None:
+                    return TruthTradeResult("already_answered")
+                text = content.strip()
+                if not text:
+                    return TruthTradeResult("empty_answer")
+                declined = text == "跳过"
+                session.add(
+                    TruthTradeAnswerRecord(
+                        question_id=question.id,
+                        user_id=user.id,
+                        content=None if declined else text,
+                        state="declined" if declined else "answered",
+                        answered_at=now,
+                    )
+                )
+                session.flush()
+                required = self._truth_trade_required_players(session, game, question)
+                answered = sum(
+                    1
+                    for entry, _ in required
+                    if session.scalar(
+                        select(TruthTradeAnswerRecord.id).where(
+                            TruthTradeAnswerRecord.question_id == question.id,
+                            TruthTradeAnswerRecord.user_id == entry.user_id,
+                        )
+                    )
+                    is not None
+                )
+                if answered < len(required):
+                    ack = (
+                        f"【真心换真心】已记录 {player.position}号 {user.display_name} 的"
+                        f"{'拒答' if declined else '回答'}（{answered}/{len(required)}）。"
+                    )
+                    return self._truth_trade_result_locked(
+                        session,
+                        game,
+                        "declined" if declined else "answered",
+                        public_message=ack,
+                        announcements=announcements,
+                    )
+                question.state = "collected"
+                question.collected_at = now
+                session.flush()
+                asker_player = session.get(TruthTradePlayerRecord, question.asker_player_id)
+                asker_user = session.get(UserRecord, asker_player.user_id)
+                recap = self._truth_trade_recap_entries(session, question)
+                recap_lines = self._truth_trade_recap_lines(
+                    question.position, asker_user.display_name, question.content, recap
+                )
+                ahead = self._truth_trade_advance(session, game, settings, now)
+                return self._truth_trade_result_locked(
+                    session,
+                    game,
+                    "collected",
+                    public_message="\n".join(recap_lines + list(ahead)),
+                    announcements=announcements,
+                    recap=tuple(recap),
+                )
+
+    def leave_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                announcements = self._truth_trade_expire_phase(
+                    session, game, settings, now
+                )
+                self._truth_trade_enqueue_announcements(session, game, announcements)
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord)
+                    .where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if player is None or player.state != "active":
+                    return TruthTradeResult("not_participant")
+                player.state = "withdrawn"
+                player.withdrawn_at = now
+                extras: tuple[str, ...] = ()
+                if game.state == "asking" and game.current_position == player.position:
+                    session.add(
+                        TruthTradeQuestionRecord(
+                            game_id=game.id,
+                            asker_player_id=player.id,
+                            round_number=game.round_number,
+                            position=game.current_position,
+                            content=None,
+                            required_player_count=0,
+                            state="skipped",
+                            asked_at=now,
+                            collected_at=now,
+                        )
+                    )
+                    session.flush()
+                    extras = extras + self._truth_trade_advance(
+                        session, game, settings, now
+                    )
+                elif game.state == "answering":
+                    question = self._truth_trade_open_question(
+                        session, game.id, game.round_number
+                    )
+                    if (
+                        question is not None
+                        and player.position <= question.required_player_count
+                        and player.position != question.position
+                        and session.scalar(
+                            select(TruthTradeAnswerRecord.id).where(
+                                TruthTradeAnswerRecord.question_id == question.id,
+                                TruthTradeAnswerRecord.user_id == user.id,
+                            )
+                        )
+                        is None
+                    ):
+                        session.add(
+                            TruthTradeAnswerRecord(
+                                question_id=question.id,
+                                user_id=user.id,
+                                content=None,
+                                state="left",
+                                answered_at=now,
+                            )
+                        )
+                        session.flush()
+                        required = self._truth_trade_required_players(
+                            session, game, question
+                        )
+                        answered = sum(
+                            1
+                            for entry, _ in required
+                            if session.scalar(
+                                select(TruthTradeAnswerRecord.id).where(
+                                    TruthTradeAnswerRecord.question_id == question.id,
+                                    TruthTradeAnswerRecord.user_id == entry.user_id,
+                                )
+                            )
+                            is not None
+                        )
+                        if answered >= len(required):
+                            question.state = "collected"
+                            question.collected_at = now
+                            session.flush()
+                            asker_player = session.get(
+                                TruthTradePlayerRecord, question.asker_player_id
+                            )
+                            asker_user = session.get(UserRecord, asker_player.user_id)
+                            extras = extras + tuple(
+                                self._truth_trade_recap_lines(
+                                    question.position,
+                                    asker_user.display_name,
+                                    question.content,
+                                    self._truth_trade_recap_entries(session, question),
+                                )
+                            ) + self._truth_trade_advance(session, game, settings, now)
+                players = self._truth_trade_active_players(session, game.id)
+                if len(players) < 2:
+                    self._truth_trade_finish_locked(
+                        session, game, "finished", "not_enough_players", now
+                    )
+                    extras = extras + (
+                        "【真心换真心】剩余活跃人数不足 2 人，本局已结束。",
+                    )
+                self._truth_trade_enqueue_announcements(session, game, extras)
+                return self._truth_trade_result_locked(
+                    session,
+                    game,
+                    "left",
+                    public_message="你已退出本局真心换真心。",
+                    announcements=announcements + extras,
+                )
+
+    def end_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord).where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                )
+                if player is None or player.state != "active":
+                    return TruthTradeResult("not_participant")
+                ask_leaders, answer_leaders = self._truth_trade_game_leaders(
+                    session, game
+                )
+                self._truth_trade_finish_locked(
+                    session, game, "finished", "participant_ended", now
+                )
+                lines = ["【真心换真心】本局已结束。"]
+                if ask_leaders or answer_leaders:
+                    lines.append(
+                        self._truth_trade_leaders_line("提问最多", ask_leaders)
+                    )
+                    lines.append(
+                        self._truth_trade_leaders_line("回答最多", answer_leaders)
+                    )
+                return self._truth_trade_result_locked(
+                    session,
+                    game,
+                    "completed",
+                    public_message="\n".join(lines),
+                    ask_leaders=ask_leaders,
+                    answer_leaders=answer_leaders,
+                )
+
+    def continue_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord).where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                )
+                if player is None or player.state != "active":
+                    return TruthTradeResult("not_participant")
+                if game.state != "round_complete":
+                    return TruthTradeResult("wrong_state")
+                players = self._truth_trade_active_players(session, game.id)
+                if len(players) < settings.min_players:
+                    return self._truth_trade_result_locked(
+                        session, game, "not_enough_players"
+                    )
+                game.round_number += 1
+                first_player, first_user = players[0]
+                game.current_position = first_player.position
+                game.state = "asking"
+                game.phase_deadline = now + timedelta(
+                    seconds=settings.question_timeout_seconds
+                )
+                roster = "、".join(
+                    f"{entry.position}号 {entry.display_name}"
+                    for entry in (
+                        TruthTradeRosterEntry(p.position, u.display_name)
+                        for p, u in players
+                    )
+                )
+                public_message = (
+                    f"【真心换真心】第 {game.round_number} 轮开始（共 {len(players)} 人）："
+                    f"{roster}\n轮到 {first_player.position}号 {first_user.display_name} 提问，"
+                    f"发送 /问题 你的问题"
+                    f"（超时 {settings.question_timeout_seconds} 秒自动跳过）"
+                )
+                return self._truth_trade_result_locked(
+                    session, game, "continued", public_message=public_message
+                )
+
+    def truth_trade_statistics(
+        self, group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID
+    ) -> TruthTradeStatistics:
+        with self._session() as session:
+            game_ids = tuple(
+                session.scalars(
+                    select(TruthTradeGameRecord.id).where(
+                        TruthTradeGameRecord.group_chat_id == group_chat_id,
+                        TruthTradeGameRecord.started_at.is_not(None),
+                    )
+                )
+            )
+            if not game_ids:
+                return TruthTradeStatistics()
+            games = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(TruthTradeGameRecord)
+                    .where(
+                        TruthTradeGameRecord.group_chat_id == group_chat_id,
+                        TruthTradeGameRecord.started_at.is_not(None),
+                    )
+                )
+                or 0
+            )
+            questions = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(TruthTradeQuestionRecord)
+                    .where(
+                        TruthTradeQuestionRecord.game_id.in_(game_ids),
+                        TruthTradeQuestionRecord.state == "collected",
+                    )
+                )
+                or 0
+            )
+            answers = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(TruthTradeAnswerRecord)
+                    .join(
+                        TruthTradeQuestionRecord,
+                        TruthTradeQuestionRecord.id == TruthTradeAnswerRecord.question_id,
+                    )
+                    .where(
+                        TruthTradeQuestionRecord.game_id.in_(game_ids),
+                        TruthTradeAnswerRecord.state == "answered",
+                    )
+                )
+                or 0
+            )
+            ask_rows = session.execute(
+                select(UserRecord.display_name, func.count())
+                .select_from(TruthTradeQuestionRecord)
+                .join(
+                    TruthTradePlayerRecord,
+                    TruthTradePlayerRecord.id == TruthTradeQuestionRecord.asker_player_id,
+                )
+                .join(UserRecord, UserRecord.id == TruthTradePlayerRecord.user_id)
+                .where(
+                    TruthTradeQuestionRecord.game_id.in_(game_ids),
+                    TruthTradeQuestionRecord.state == "collected",
+                )
+                .group_by(UserRecord.display_name)
+            ).all()
+            answer_rows = session.execute(
+                select(UserRecord.display_name, func.count())
+                .select_from(TruthTradeAnswerRecord)
+                .join(
+                    TruthTradeQuestionRecord,
+                    TruthTradeQuestionRecord.id == TruthTradeAnswerRecord.question_id,
+                )
+                .join(UserRecord, UserRecord.id == TruthTradeAnswerRecord.user_id)
+                .where(
+                    TruthTradeQuestionRecord.game_id.in_(game_ids),
+                    TruthTradeAnswerRecord.state == "answered",
+                )
+                .group_by(UserRecord.display_name)
+            ).all()
+
+            def top(rows) -> tuple[tuple[str, int], ...]:
+                ordered = sorted(rows, key=lambda row: (-row[1], row[0]))
+                return tuple(ordered[:5])
+
+            return TruthTradeStatistics(
+                games=games,
+                questions=questions,
+                answers=answers,
+                ask_leaders=top(ask_rows),
+                answer_leaders=top(answer_rows),
+            )
 
     def _is_liar_dice_participant(
         self, session: Session, game_id: UUID, user_id: UUID

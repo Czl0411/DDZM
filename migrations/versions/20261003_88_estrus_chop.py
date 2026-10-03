@@ -44,6 +44,14 @@ def upgrade() -> None:
         sa.Column(
             "opted_out", sa.Boolean(), nullable=False, server_default=sa.false()
         ),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.ForeignKeyConstraint(["group_chat_id"], ["group_chats.id"]),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),

@@ -1866,3 +1866,19 @@ class TruthTradeSettingsResponse(ApiModel):
 
 class SetTruthTradeSettingsRequest(TruthTradeSettingsResponse):
     pass
+
+
+class EstrusSettingsResponse(ApiModel):
+    enabled: bool
+    climax_threshold: int = Field(ge=10, le=1000)
+    heat_p0: int = Field(ge=0, le=100)
+    heat_p1: int = Field(ge=0, le=100)
+    heat_p2: int = Field(ge=0, le=100)
+    coin_p0: int = Field(ge=0, le=100)
+    coin_p1: int = Field(ge=0, le=100)
+    coin_p2: int = Field(ge=0, le=100)
+    chop_cooldown_seconds: int = Field(ge=0, le=86400)
+
+
+class SetEstrusSettingsRequest(EstrusSettingsResponse):
+    pass

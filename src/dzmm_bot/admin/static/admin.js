@@ -2507,6 +2507,68 @@ async function saveTruthTradeSettings() {
   }
 }
 
+async function loadEstrusSettings() {
+  const [settings, groups] = await Promise.all([
+    requestGame("/api/game/estrus/settings"),
+    requestGame("/api/group-chats", {cache: "no-store"}),
+  ]);
+  configurationVersion = groups.version;
+  renderEstrusSettingsPanel(settings);
+}
+
+function renderEstrusSettingsPanel(settings) {
+  const panel = document.querySelector("#estrus-panel");
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="panel-heading"><div><h2>凿与发情值参数</h2><p class="muted">/凿 玩法的开关、概率与限制；概率三档之和必须等于 100。</p></div><div class="command-actions"><button id="estrus-save" class="primary" type="button">保存设置</button></div></div>
+    <div class="panel-heading"><div><h2>总开关与限制</h2></div></div>
+    <div class="event-input-grid">
+      <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-enabled" type="checkbox" ${settings.enabled ? "checked" : ""}> 启用凿与发情值玩法</label>
+      ${birthdayNumberField("estrus-threshold", "高潮阈值（发情值满多少触发）", settings.climax_threshold, 10, 1000)}
+      ${birthdayNumberField("estrus-cooldown", "凿者冷却（秒，0=无限制）", settings.chop_cooldown_seconds, 0, 86400)}
+    </div>
+    <div class="panel-heading"><div><h2>发情值增量概率（0/1/2）</h2></div></div>
+    <div class="event-input-grid">
+      ${birthdayNumberField("estrus-heat-p0", "发情值 +0 概率(%)", settings.heat_p0, 0, 100)}
+      ${birthdayNumberField("estrus-heat-p1", "发情值 +1 概率(%)", settings.heat_p1, 0, 100)}
+      ${birthdayNumberField("estrus-heat-p2", "发情值 +2 概率(%)", settings.heat_p2, 0, 100)}
+    </div>
+    <div class="panel-heading"><div><h2>摸鱼币概率（0/1/2）</h2></div></div>
+    <div class="event-input-grid">
+      ${birthdayNumberField("estrus-coin-p0", "摸鱼币 0 概率(%)", settings.coin_p0, 0, 100)}
+      ${birthdayNumberField("estrus-coin-p1", "摸鱼币 1 概率(%)", settings.coin_p1, 0, 100)}
+      ${birthdayNumberField("estrus-coin-p2", "摸鱼币 2 概率(%)", settings.coin_p2, 0, 100)}
+    </div>`;
+  document.querySelector("#estrus-save").addEventListener("click", saveEstrusSettings);
+}
+
+async function saveEstrusSettings() {
+  const button = document.querySelector("#estrus-save");
+  const payload = {
+    enabled: document.querySelector("#estrus-enabled").checked,
+    climax_threshold: Number(document.querySelector("#estrus-threshold").value),
+    heat_p0: Number(document.querySelector("#estrus-heat-p0").value),
+    heat_p1: Number(document.querySelector("#estrus-heat-p1").value),
+    heat_p2: Number(document.querySelector("#estrus-heat-p2").value),
+    coin_p0: Number(document.querySelector("#estrus-coin-p0").value),
+    coin_p1: Number(document.querySelector("#estrus-coin-p1").value),
+    coin_p2: Number(document.querySelector("#estrus-coin-p2").value),
+    chop_cooldown_seconds: Number(document.querySelector("#estrus-cooldown").value),
+  };
+  try {
+    await runMutation(button, "保存中…", async () => {
+      await requestGame("/api/game/estrus/settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify(payload),
+      });
+    });
+    setResult("凿与发情值设置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+}
+
 async function loadDisciplineFine(page = disciplineFinePage) {
   const [settings, ranks, records, groups] = await Promise.all([
     requestGame("/api/game/discipline-fine/settings"),
@@ -2614,6 +2676,7 @@ async function loadGameView(view) {
     if (view === "department-allowance") return loadDepartmentAllowances();
     if (view === "liar-dice") return loadLiarDiceSettings();
     if (view === "truth-trade") return loadTruthTradeSettings();
+    if (view === "estrus") return loadEstrusSettings();
     if (view === "memory-assessment") return loadMemoryAssessment();
     if (view === "undercover") return loadUndercover();
     if (view === "blame-bomb") return loadBlameBomb();

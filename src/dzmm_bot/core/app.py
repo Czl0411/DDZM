@@ -16,6 +16,7 @@ from dzmm_bot.runtime.contracts import (
     WorkerHeartbeat,
 )
 from dzmm_bot.runtime.settings import Settings
+from dzmm_bot.ai.client import DeepSeekChatClient
 from dzmm_bot.ai.impressions import AIImpressionOperation
 
 from .api_models import (
@@ -165,6 +166,8 @@ from .api_models import (
     SetLiarDiceSettingsRequest,
     TruthTradeSettingsResponse,
     SetTruthTradeSettingsRequest,
+    EstrusSettingsResponse,
+    SetEstrusSettingsRequest,
     MemoryAssessmentSettingsResponse,
     SetMemoryAssessmentSettingsRequest,
     MemoryAssessmentLevelRuleModel,
@@ -247,15 +250,37 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
 
 def create_app_from_environment() -> FastAPI:
     settings = Settings.from_environment()
+    estrus_text_client = None
+    if settings.deepseek_api_key:
+        estrus_text_client = DeepSeekChatClient(
+            settings.deepseek_api_key,
+            settings.deepseek_model,
+            base_url=settings.deepseek_base_url,
+        )
     repository = CoreRepository(
         create_session_factory(settings.database_url),
         preserve_long_group_messages=settings.bot_api_token is not None,
+        estrus_text_client=estrus_text_client,
     )
     _ensure_primary_group(repository, settings.chat_url)
     return create_app(
         repository,
         settings.core_token,
         require_group_chat_bootstrap=True,
+    )
+
+
+def _estrus_settings_response(settings) -> EstrusSettingsResponse:
+    return EstrusSettingsResponse(
+        enabled=settings.enabled,
+        climax_threshold=settings.climax_threshold,
+        heat_p0=settings.heat_p0,
+        heat_p1=settings.heat_p1,
+        heat_p2=settings.heat_p2,
+        coin_p0=settings.coin_p0,
+        coin_p1=settings.coin_p1,
+        coin_p2=settings.coin_p2,
+        chop_cooldown_seconds=settings.chop_cooldown_seconds,
     )
 
 
@@ -2779,6 +2804,40 @@ def create_app(
             answer_timeout_seconds=settings.answer_timeout_seconds,
             min_players=settings.min_players,
         )
+
+    @app.get(
+        "/internal/game/estrus/settings",
+        response_model=EstrusSettingsResponse,
+    )
+    def estrus_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> EstrusSettingsResponse:
+        settings = repository.get_estrus_settings()
+        return _estrus_settings_response(settings)
+
+    @app.patch(
+        "/internal/game/estrus/settings",
+        response_model=EstrusSettingsResponse,
+    )
+    def set_estrus_settings(
+        request: SetEstrusSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> EstrusSettingsResponse:
+        try:
+            settings = repository.set_estrus_settings(
+                enabled=request.enabled,
+                climax_threshold=request.climax_threshold,
+                heat_p0=request.heat_p0,
+                heat_p1=request.heat_p1,
+                heat_p2=request.heat_p2,
+                coin_p0=request.coin_p0,
+                coin_p1=request.coin_p1,
+                coin_p2=request.coin_p2,
+                chop_cooldown_seconds=request.chop_cooldown_seconds,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _estrus_settings_response(settings)
 
     @app.patch(
         "/internal/game/discipline-fine/settings",

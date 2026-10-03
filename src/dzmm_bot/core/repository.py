@@ -59,6 +59,7 @@ from .birthday import (
     strip_visibility,
 )
 from .birthday import format_tenure as birthday_format_tenure
+from .estrus import build_climax_messages, fallback_climax_text
 
 from .company_lottery import (
     DEFAULT_BLUE_POOL,
@@ -255,6 +256,9 @@ from .schema import (
     LiarDicePlayerRecord,
     LiarDiceRoundRecord,
     LiarDiceSettingsRecord,
+    EstrusStateRecord,
+    EstrusChopRecord,
+    EstrusSettingsRecord,
     NeverHaveIEverGameRecord,
     NeverHaveIEverPlayerRecord,
     NeverHaveIEverResponseRecord,
@@ -1230,6 +1234,37 @@ class KingGameResult:
 @dataclass(frozen=True)
 class LiarDiceSettings:
     turn_seconds: int
+
+
+@dataclass(frozen=True)
+class EstrusSettings:
+    enabled: bool
+    climax_threshold: int
+    heat_p0: int
+    heat_p1: int
+    heat_p2: int
+    coin_p0: int
+    coin_p1: int
+    coin_p2: int
+    chop_cooldown_seconds: int
+
+
+@dataclass(frozen=True)
+class EstrusChopResult:
+    status: str
+    chopper_name: str | None = None
+    target_name: str | None = None
+    note: str | None = None
+    heat_gain: int = 0
+    heat_now: int = 0
+    threshold: int = 100
+    coins: int = 0
+    climax_triggered: bool = False
+    climax_text: str | None = None
+    today_climaxes: int = 0
+    total_climaxes: int = 0
+    cooldown_remaining_seconds: int = 0
+    candidate_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2444,6 +2479,12 @@ _COMMAND_DEFINITIONS = (
     ("/罚款", "/罚款 [名字/#工号] [理由]", "风纪监察部成员对违规员工处以摸鱼币罚款，可引用回复目标消息"),
     ("/我的罚款", "/我的罚款（仅私聊）", "查看自己被罚款的记录"),
     ("/我的津贴", "/我的津贴", "查看自己今日各项部门津贴明细与合计"),
+    ("/凿", "/凿 名字 [附言]", "凿一下别人：目标发情值随机上涨并获得随机摸鱼币，可引用回复目标消息"),
+    ("/允许被凿", "/允许被凿", "允许别人凿自己（默认开启）"),
+    ("/拒绝被凿", "/拒绝被凿", "拒绝被凿：之后被 /凿 时对方会吃一杵子"),
+    ("/我的发情值", "/我的发情值", "查看自己的发情值、被凿次数与高潮次数"),
+    ("/发情值排名", "/发情值排名", "查看本群发情值排行前 5 名"),
+    ("/设置性别", "/设置性别 男|女", "设置自己的性别（/修改性别 等效），影响高潮文字文风"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
     ("/跳过", "/跳过 编号 [编号...]", "排除蹦蹦数字炸弹中尚未报数的参与者"),
@@ -2716,6 +2757,8 @@ class CoreRepository:
         dark_market_random: RandomSource | None = None,
         liar_dice_random: RandomSource | None = None,
         chat_drop_random: RandomSource | None = None,
+        estrus_random: RandomSource | None = None,
+        estrus_text_client=None,
     ) -> None:
         self._session_factory = session_factory
         self._preserve_long_group_messages = preserve_long_group_messages
@@ -2726,6 +2769,8 @@ class CoreRepository:
         self._dark_market_random = dark_market_random or SystemRandom()
         self._liar_dice_random = liar_dice_random or SystemRandom()
         self._chat_drop_random = chat_drop_random or SystemRandom()
+        self._estrus_random = estrus_random or SystemRandom()
+        self._estrus_text_client = estrus_text_client
         self._active_session: ContextVar[Session | None] = ContextVar(
             f"core_repository_session_{id(self)}", default=None
         )
@@ -14168,6 +14213,377 @@ class CoreRepository:
                 row.min_players = min_players
                 session.flush()
                 return _truth_trade_settings(row)
+
+    def _estrus_settings_row(self, session: Session) -> EstrusSettingsRecord:
+        row = session.get(EstrusSettingsRecord, 1)
+        if row is None:
+            row = EstrusSettingsRecord(id=1)
+            session.add(row)
+            session.flush()
+        return row
+
+    def _estrus_state_row(
+        self, session: Session, group_chat_id: UUID, user_id: UUID
+    ) -> EstrusStateRecord:
+        row = session.scalar(
+            select(EstrusStateRecord).where(
+                EstrusStateRecord.group_chat_id == group_chat_id,
+                EstrusStateRecord.user_id == user_id,
+            )
+        )
+        if row is None:
+            row = EstrusStateRecord(group_chat_id=group_chat_id, user_id=user_id)
+            session.add(row)
+            session.flush()
+        return row
+
+    def _roll_estrus_pair(
+        self, settings: EstrusSettingsRecord
+    ) -> tuple[int, int]:
+        """按后台概率分布 roll (发情值增量, 摸鱼币)，各档 0/1/2。"""
+        heat_roll = self._estrus_random.random() * 100
+        if heat_roll < settings.heat_p0:
+            heat_gain = 0
+        elif heat_roll < settings.heat_p0 + settings.heat_p1:
+            heat_gain = 1
+        else:
+            heat_gain = 2
+        coin_roll = self._estrus_random.random() * 100
+        if coin_roll < settings.coin_p0:
+            coins = 0
+        elif coin_roll < settings.coin_p0 + settings.coin_p1:
+            coins = 1
+        else:
+            coins = 2
+        return heat_gain, coins
+
+    def get_estrus_settings(self) -> EstrusSettings:
+        with self._session() as session:
+            row = self._estrus_settings_row(session)
+            return EstrusSettings(
+                enabled=bool(row.enabled),
+                climax_threshold=int(row.climax_threshold),
+                heat_p0=int(row.heat_p0),
+                heat_p1=int(row.heat_p1),
+                heat_p2=int(row.heat_p2),
+                coin_p0=int(row.coin_p0),
+                coin_p1=int(row.coin_p1),
+                coin_p2=int(row.coin_p2),
+                chop_cooldown_seconds=int(row.chop_cooldown_seconds),
+            )
+
+    def set_estrus_settings(
+        self,
+        *,
+        enabled: bool,
+        climax_threshold: int,
+        heat_p0: int,
+        heat_p1: int,
+        heat_p2: int,
+        coin_p0: int,
+        coin_p1: int,
+        coin_p2: int,
+        chop_cooldown_seconds: int,
+    ) -> EstrusSettings:
+        if sum((heat_p0, heat_p1, heat_p2)) != 100:
+            raise ValueError("发情值三档概率之和必须等于 100")
+        if sum((coin_p0, coin_p1, coin_p2)) != 100:
+            raise ValueError("摸鱼币三档概率之和必须等于 100")
+        checks = (
+            ("高潮阈值", climax_threshold, 10, 1000),
+            ("发情值 0 档概率", heat_p0, 0, 100),
+            ("发情值 1 档概率", heat_p1, 0, 100),
+            ("发情值 2 档概率", heat_p2, 0, 100),
+            ("摸鱼币 0 档概率", coin_p0, 0, 100),
+            ("摸鱼币 1 档概率", coin_p1, 0, 100),
+            ("摸鱼币 2 档概率", coin_p2, 0, 100),
+            ("凿者冷却秒数", chop_cooldown_seconds, 0, 86400),
+        )
+        for label, value, low, high in checks:
+            if not isinstance(value, int) or not low <= value <= high:
+                raise ValueError(f"{label}必须在 {low}~{high} 之间")
+        with self.transaction():
+            with self._session() as session:
+                row = self._estrus_settings_row(session)
+                row.enabled = enabled
+                row.climax_threshold = climax_threshold
+                row.heat_p0 = heat_p0
+                row.heat_p1 = heat_p1
+                row.heat_p2 = heat_p2
+                row.coin_p0 = coin_p0
+                row.coin_p1 = coin_p1
+                row.coin_p2 = coin_p2
+                row.chop_cooldown_seconds = chop_cooldown_seconds
+                session.flush()
+                return self.get_estrus_settings()
+
+    def set_user_gender(self, platform_id: str, gender: str) -> bool:
+        """用户自设性别（male/female）；未入职返回 False。"""
+        if gender not in ("male", "female"):
+            raise ValueError("性别只能是 男 或 女")
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                if user is None:
+                    return False
+                user.gender = gender
+                return True
+
+    def set_estrus_opt_out(
+        self, platform_id: str, group_chat_id: UUID, opted_out: bool
+    ) -> str | None:
+        """切换自己是否允许被凿；未入职返回 None。"""
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                if user is None:
+                    return None
+                state = self._estrus_state_row(
+                    session, group_chat_id, user.id
+                )
+                state.opted_out = opted_out
+                state.updated_at = datetime.now(BEIJING)
+                return user.display_name
+
+    def get_my_estrus(
+        self, platform_id: str, group_chat_id: UUID, now: datetime
+    ) -> dict | None:
+        with self._session() as session:
+            row = session.execute(
+                select(UserRecord, EstrusStateRecord)
+                .outerjoin(
+                    EstrusStateRecord,
+                    (EstrusStateRecord.user_id == UserRecord.id)
+                    & (EstrusStateRecord.group_chat_id == group_chat_id),
+                )
+                .where(UserRecord.platform_id == platform_id)
+            ).first()
+            if row is None:
+                return None
+            user, state = row
+            today = now.astimezone(BEIJING).date()
+            today_climaxes = (
+                state.today_climaxes
+                if state is not None and state.last_climax_date == today
+                else 0
+            )
+            return {
+                "display_name": user.display_name,
+                "heat": state.heat if state is not None else 0,
+                "chopped_count": state.chopped_count if state is not None else 0,
+                "today_climaxes": today_climaxes,
+                "total_climaxes": (
+                    state.total_climaxes if state is not None else 0
+                ),
+                "opted_out": state.opted_out if state is not None else False,
+                "gender": user.gender or "unknown",
+            }
+
+    def estrus_rankings(
+        self, group_chat_id: UUID, now: datetime
+    ) -> list[dict]:
+        """发情值排行（前 5）：今日高潮 > 总高潮 > 发情值 > 被凿次数。"""
+        today = now.astimezone(BEIJING).date()
+        with self._session() as session:
+            rows = session.execute(
+                select(EstrusStateRecord, UserRecord)
+                .join(
+                    UserRecord, UserRecord.id == EstrusStateRecord.user_id
+                )
+                .where(EstrusStateRecord.group_chat_id == group_chat_id)
+            ).all()
+        entries = []
+        for state, user in rows:
+            today_climaxes = (
+                state.today_climaxes
+                if state.last_climax_date == today
+                else 0
+            )
+            entries.append(
+                {
+                    "display_name": user.display_name,
+                    "heat": int(state.heat),
+                    "chopped_count": int(state.chopped_count),
+                    "today_climaxes": int(today_climaxes),
+                    "total_climaxes": int(state.total_climaxes),
+                }
+            )
+        entries.sort(
+            key=lambda item: (
+                -item["today_climaxes"],
+                -item["total_climaxes"],
+                -item["heat"],
+                -item["chopped_count"],
+            )
+        )
+        return entries[:5]
+
+    def _estrus_climax_text(self, user: UserRecord) -> str | None:
+        if self._estrus_text_client is None:
+            return None
+        system, user_content = build_climax_messages(
+            user.display_name, user.gender or "unknown"
+        )
+        try:
+            return (
+                self._estrus_text_client.complete(
+                    system,
+                    user_content,
+                    max_chars=300,
+                    timeout_seconds=10,
+                ).strip()
+                or None
+            )
+        except Exception:
+            return None
+
+    def execute_estrus_chop(
+        self,
+        chopper_platform_id: str,
+        *,
+        target_platform_id: str | None = None,
+        target_name: str | None = None,
+        note: str | None = None,
+        now: datetime,
+        group_chat_id: UUID,
+    ) -> EstrusChopResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                settings = self._estrus_settings_row(session)
+                if not settings.enabled:
+                    return EstrusChopResult("disabled")
+                chopper = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.platform_id == chopper_platform_id
+                    )
+                )
+                if chopper is None:
+                    return EstrusChopResult("not_joined")
+                if target_platform_id:
+                    target = session.scalar(
+                        select(UserRecord).where(
+                            UserRecord.platform_id == target_platform_id
+                        )
+                    )
+                    if target is None:
+                        return EstrusChopResult("target_not_joined")
+                else:
+                    cleaned = (target_name or "").strip().lstrip("@").strip()
+                    if not cleaned:
+                        return EstrusChopResult("missing_target")
+                    target = session.scalar(
+                        select(UserRecord).where(
+                            UserRecord.display_name == cleaned
+                        )
+                    )
+                    if target is None:
+                        nickname_matches = session.scalars(
+                            select(UserRecord).where(
+                                UserRecord.platform_nickname == cleaned
+                            )
+                        ).all()
+                        if len(nickname_matches) == 1:
+                            target = nickname_matches[0]
+                        elif len(nickname_matches) > 1:
+                            return EstrusChopResult(
+                                "ambiguous_target",
+                                candidate_labels=tuple(
+                                    f"{match.display_name} "
+                                    f"{format_employee_number(match.employee_number)}"
+                                    for match in nickname_matches
+                                ),
+                            )
+                        else:
+                            return EstrusChopResult("target_not_found")
+                if target.id == chopper.id:
+                    return EstrusChopResult(
+                        "self", chopper_name=chopper.display_name
+                    )
+                cooldown = int(settings.chop_cooldown_seconds)
+                if cooldown > 0:
+                    last_created = session.scalar(
+                        select(func.max(EstrusChopRecord.created_at)).where(
+                            EstrusChopRecord.chopper_user_id == chopper.id,
+                            EstrusChopRecord.group_chat_id == group_chat_id,
+                        )
+                    )
+                    if last_created is not None:
+                        remaining = cooldown - int(
+                            (now - last_created).total_seconds()
+                        )
+                        if remaining > 0:
+                            return EstrusChopResult(
+                                "cooldown",
+                                cooldown_remaining_seconds=remaining,
+                            )
+                state = self._estrus_state_row(
+                    session, group_chat_id, target.id
+                )
+                if state.last_climax_date != now.date():
+                    state.today_climaxes = 0
+                if state.opted_out:
+                    return EstrusChopResult(
+                        "refused",
+                        chopper_name=chopper.display_name,
+                        target_name=target.display_name,
+                    )
+                heat_gain, coins = self._roll_estrus_pair(settings)
+                state.heat = int(state.heat) + heat_gain
+                state.chopped_count = int(state.chopped_count) + 1
+                climax_triggered = state.heat >= int(settings.climax_threshold)
+                climax_text = None
+                if climax_triggered:
+                    climax_text = self._estrus_climax_text(target)
+                    if not climax_text:
+                        climax_text = fallback_climax_text(
+                            target.display_name,
+                            target.gender or "unknown",
+                            self._estrus_random,
+                        )
+                    state.heat = 0
+                    state.total_climaxes = int(state.total_climaxes) + 1
+                    state.today_climaxes = int(state.today_climaxes) + 1
+                    state.last_climax_date = now.date()
+                if coins > 0:
+                    self._apply_balance_change(
+                        target, coins, "estrus_gain", now
+                    )
+                state.updated_at = now
+                session.add(
+                    EstrusChopRecord(
+                        group_chat_id=group_chat_id,
+                        chopper_user_id=chopper.id,
+                        target_user_id=target.id,
+                        heat_gain=heat_gain,
+                        coins=coins,
+                        climax_triggered=climax_triggered,
+                        note=note[:200] if note else None,
+                        created_at=now,
+                    )
+                )
+                return EstrusChopResult(
+                    "ok",
+                    chopper_name=chopper.display_name,
+                    target_name=target.display_name,
+                    note=note,
+                    heat_gain=heat_gain,
+                    heat_now=int(state.heat),
+                    threshold=int(settings.climax_threshold),
+                    coins=coins,
+                    climax_triggered=climax_triggered,
+                    climax_text=climax_text,
+                    today_climaxes=int(state.today_climaxes),
+                    total_climaxes=int(state.total_climaxes),
+                )
 
     def _truth_trade_settings_row(
         self, session: Session, group_chat_id: UUID
@@ -27231,6 +27647,16 @@ class CoreRepository:
                     )
                     if existing is not None:
                         continue
+                    destination = self.group_chat_destination(group_chat_id)
+                    estrus_text = self._estrus_rank_text(
+                        group_chat_id, report_time, now
+                    )
+                    if estrus_text:
+                        self.enqueue_system_outbound(
+                            estrus_text,
+                            group_chat_id=group_chat_id,
+                            destination_chatroom_id=destination,
+                        )
                     if not rankings:
                         session.add(
                             IncomeReportDeliveryRecord(
@@ -27241,7 +27667,6 @@ class CoreRepository:
                             )
                         )
                         continue
-                    destination = self.group_chat_destination(group_chat_id)
                     outbound = self.enqueue_system_outbound(
                         self._income_report_text(rankings, report_time),
                         group_chat_id=group_chat_id,
@@ -27256,6 +27681,21 @@ class CoreRepository:
                             outbound_message_id=outbound.id,
                         )
                     )
+
+    def _estrus_rank_text(
+        self, group_chat_id: UUID, report_time: str, now: datetime
+    ) -> str | None:
+        entries = self.estrus_rankings(group_chat_id, now)
+        if not entries:
+            return None
+        lines = [f"【发情值排名】（{report_time}）"]
+        for index, entry in enumerate(entries, 1):
+            lines.append(
+                f"{index}. {entry['display_name']} · 发情 {entry['heat']}"
+                f" · 被凿 {entry['chopped_count']}"
+                f" · 高潮 今{entry['today_climaxes']}/总{entry['total_climaxes']}"
+            )
+        return "\n".join(lines)
 
     def _income_rankings(self, session: Session, now: datetime) -> list[tuple[str, int]]:
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)

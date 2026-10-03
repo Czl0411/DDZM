@@ -2368,6 +2368,9 @@ class UserRecord(Base):
     platform_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     platform_nickname: Mapped[str | None] = mapped_column(String(64))
+    gender: Mapped[str] = mapped_column(
+        String(16), default="unknown", server_default="unknown", nullable=False
+    )
     platform_nickname_synced_at: Mapped[datetime | None] = mapped_column(
         BeijingDateTime
     )
@@ -2708,6 +2711,84 @@ class DepartmentAllowanceSettingsRecord(Base):
     )
     daily_cap: Mapped[int] = mapped_column(
         Integer, default=5, server_default="5", nullable=False
+    )
+
+
+class EstrusStateRecord(Base):
+    __tablename__ = "estrus_states"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    heat: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    chopped_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_climaxes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    today_climaxes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_climax_date: Mapped[date | None] = mapped_column(Date)
+    opted_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    __table_args__ = (
+        UniqueConstraint("group_chat_id", "user_id", name="ux_estrus_state"),
+    )
+
+
+class EstrusChopRecord(Base):
+    __tablename__ = "estrus_chops"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"), nullable=False
+    )
+    chopper_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    target_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    heat_gain: Mapped[int] = mapped_column(Integer, nullable=False)
+    coins: Mapped[int] = mapped_column(Integer, nullable=False)
+    climax_triggered: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class EstrusSettingsRecord(Base):
+    __tablename__ = "estrus_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    climax_threshold: Mapped[int] = mapped_column(
+        Integer, default=100, server_default="100", nullable=False
+    )
+    heat_p0: Mapped[int] = mapped_column(
+        Integer, default=50, server_default="50", nullable=False
+    )
+    heat_p1: Mapped[int] = mapped_column(
+        Integer, default=30, server_default="30", nullable=False
+    )
+    heat_p2: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    coin_p0: Mapped[int] = mapped_column(
+        Integer, default=50, server_default="50", nullable=False
+    )
+    coin_p1: Mapped[int] = mapped_column(
+        Integer, default=30, server_default="30", nullable=False
+    )
+    coin_p2: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    chop_cooldown_seconds: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
     )
 
 

@@ -2223,6 +2223,45 @@ def create_app(
             scope="truth-trade-settings",
         )
 
+    @app.get("/api/game/estrus/settings")
+    def estrus_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_estrus_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/estrus/settings")
+    def set_estrus_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "enabled",
+            "climax_threshold",
+            "heat_p0",
+            "heat_p1",
+            "heat_p2",
+            "coin_p0",
+            "coin_p1",
+            "coin_p2",
+            "chop_cooldown_seconds",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_estrus_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="estrus-settings",
+        )
+
     @app.get("/api/game/hide-and-seek/settings")
     def hide_and_seek_settings(_: Annotated[None, Depends(authorize)]) -> dict:
         return {

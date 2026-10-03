@@ -55,6 +55,8 @@ _COMMANDS = {
     "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据",
     "/真心换真心", "/真心换真心数据", "/问题", "/真心",
     "/罚款", "/我的罚款", "/我的津贴",
+    "/凿", "/允许被凿", "/拒绝被凿", "/我的发情值", "/发情值排名",
+    "/设置性别", "/修改性别",
 }
 
 _LOTTERY_COMMANDS = {
@@ -106,6 +108,8 @@ class GroupCommandHandler:
             command = "/真心"
         if command == "/罚":
             command = "/罚款"
+        if command == "/修改性别":
+            command = "/设置性别"
         if command not in _COMMANDS:
             dice_reply = self._liar_dice_call_step(message, content)
             if dice_reply is not None:
@@ -390,6 +394,18 @@ class GroupCommandHandler:
             return self._my_discipline_fines(message, received_at)
         if command == "/我的津贴":
             return self._my_allowances(message.sender_platform_id, received_at)
+        if command == "/凿":
+            return self._estrus_chop(message, content, received_at, group_chat_id)
+        if command == "/允许被凿":
+            return self._set_estrus_opt_out(message, received_at, group_chat_id, False)
+        if command == "/拒绝被凿":
+            return self._set_estrus_opt_out(message, received_at, group_chat_id, True)
+        if command == "/我的发情值":
+            return self._my_estrus(message, received_at, group_chat_id)
+        if command == "/发情值排名":
+            return self._estrus_rank(message, received_at, group_chat_id)
+        if command in ("/设置性别", "/修改性别"):
+            return self._set_gender(message, content, received_at)
         if command == "/看牌":
             if message.source_type != "direct":
                 return self._reply("/看牌", "group_only", received_at)
@@ -2056,6 +2072,147 @@ class GroupCommandHandler:
         capped = "（已封顶）" if total >= cap else ""
         lines.append(f"今日合计：{total}/{cap}{capped}")
         return "\n".join(lines)
+
+    def _estrus_chop(self, message, content, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中使用 /凿。"
+        payload = content[len("/凿"):].strip()
+        reference = message.reference
+        if reference is not None and reference.sender_platform_id:
+            # 引用形态：引用优先于名字参数，payload 整体作为附言
+            target_platform_id = reference.sender_platform_id
+            target_name = None
+            note = payload or None
+        else:
+            parts = payload.split(None, 1)
+            if not parts:
+                return (
+                    "用法：引用对方消息发送 /凿 [附言]，"
+                    "或发送 /凿 名字 [附言]。"
+                )
+            target_name = parts[0]
+            note = parts[1].strip() if len(parts) > 1 else None
+            target_platform_id = None
+        result = self._repository.execute_estrus_chop(
+            message.sender_platform_id,
+            target_platform_id=target_platform_id,
+            target_name=target_name,
+            note=note,
+            now=received_at,
+            group_chat_id=group_chat_id,
+        )
+        if result.status == "disabled":
+            return "凿与发情值玩法未开启。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "missing_target":
+            return (
+                "用法：引用对方消息发送 /凿 [附言]，"
+                "或发送 /凿 名字 [附言]。"
+            )
+        if result.status == "target_not_found":
+            return f"没找到员工「{target_name}」。"
+        if result.status == "target_not_joined":
+            return "目标还未入职摸鱼公司。"
+        if result.status == "self":
+            return "不能凿自己。"
+        if result.status == "ambiguous_target":
+            candidates = "\n".join(result.candidate_labels)
+            return f"重名员工，请按工号凿：\n{candidates}"
+        if result.status == "cooldown":
+            return f"凿冷却中，请 {max(1, result.cooldown_remaining_seconds)} 秒后再试。"
+        if result.status == "refused":
+            return (
+                f"{result.target_name} 拒绝了 {result.chopper_name} 的凿，"
+                f"并且给了 {result.chopper_name} 一杵子。"
+            )
+        lines = [f"【凿】{result.chopper_name}凿了一下{result.target_name}"]
+        if result.note:
+            lines[0] += f"（{result.note}）"
+        if result.coins > 0:
+            lines.append(
+                f"{result.target_name} 发情值 +{result.heat_gain}"
+                f"（当前 {result.heat_now}/{result.threshold}），"
+                f"获得 {result.coins} 摸鱼币。"
+            )
+        else:
+            lines.append(
+                f"{result.target_name} 发情值 +{result.heat_gain}"
+                f"（当前 {result.heat_now}/{result.threshold}），一无所获。"
+            )
+        if result.climax_triggered:
+            lines.append(f"🔥 {result.target_name} 发情值爆表！")
+            if result.climax_text:
+                lines.append(result.climax_text)
+            lines.append(
+                f"（今日第 {result.today_climaxes} 次 / "
+                f"总第 {result.total_climaxes} 次）"
+            )
+        return "\n".join(lines)
+
+    def _set_estrus_opt_out(self, message, received_at, group_chat_id, opted_out):
+        if group_chat_id is None:
+            return "请在已启用的群聊中设置。"
+        display_name = self._repository.set_estrus_opt_out(
+            message.sender_platform_id, group_chat_id, opted_out
+        )
+        if display_name is None:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if opted_out:
+            return f"{display_name} 已开启拒绝被凿：今后被 /凿 时对方会吃一杵子。"
+        return f"{display_name} 已开启允许被凿：欢迎来凿。"
+
+    def _my_estrus(self, message, received_at, group_chat_id):
+        if group_chat_id is None:
+            return "请在已启用的群聊中查询。"
+        info = self._repository.get_my_estrus(
+            message.sender_platform_id, group_chat_id, received_at
+        )
+        if info is None:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        return (
+            "【我的发情值】\n"
+            f"当前发情值：{info['heat']}\n"
+            f"被凿次数：{info['chopped_count']} ｜ "
+            f"高潮：今日 {info['today_climaxes']} 次 / 总 {info['total_climaxes']} 次\n"
+            f"状态：{'拒绝被凿' if info['opted_out'] else '允许被凿'}"
+        )
+
+    def _estrus_rank(self, message, received_at, group_chat_id):
+        if group_chat_id is None:
+            return "请在已启用的群聊中查询。"
+        entries = self._repository.estrus_rankings(group_chat_id, received_at)
+        if not entries:
+            return "还没有人被凿过，快用 /凿 开张吧。"
+        lines = ["【发情值排名】"]
+        for index, entry in enumerate(entries, 1):
+            lines.append(
+                f"{index}. {entry['display_name']} · 发情 {entry['heat']}"
+                f" · 被凿 {entry['chopped_count']}"
+                f" · 高潮 今{entry['today_climaxes']}/总{entry['total_climaxes']}"
+            )
+        return "\n".join(lines)
+
+    def _set_gender(self, message, content, received_at):
+        tokens = content.strip().split()
+        if len(tokens) < 2:
+            return "用法：/设置性别 男 或 /设置性别 女。"
+        raw = tokens[1]
+        gender = {
+            "男": "male", "男性": "male", "male": "male", "m": "male",
+            "女": "female", "女性": "female", "female": "female", "f": "female",
+        }.get(raw.strip().lower() if raw.isascii() else raw)
+        if gender is None:
+            return "性别只能填 男 或 女。"
+        try:
+            updated = self._repository.set_user_gender(
+                message.sender_platform_id, gender
+            )
+        except ValueError as error:
+            return str(error)
+        if not updated:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        return f"已将你的性别设置为{'男' if gender == 'male' else '女'}。"
 
     def _truth_trade_leave(self, message, received_at, group_chat_id):
         if message.source_type != "group" or group_chat_id is None:
@@ -5000,6 +5157,18 @@ class GroupCommandHandler:
                     ("/罚款", "或 /罚款 名字 [理由]：按注册名罚款；重名请用 /罚款 #工号 [理由]"),
                     ("/罚款", "罚款即销毁，余额不足扣到 0；执法者获得抽成津贴（计入每日 5 币封顶）"),
                     ("/我的罚款", "私聊 /我的罚款：查看自己被罚款的记录"),
+                ),
+            ),
+            "凿与发情值": (
+                "【凿与发情值】",
+                (
+                    ("/凿", "引用对方消息发送 /凿 [附言]，或 /凿 名字 [附言]：凿一下对方"),
+                    ("/凿", "被凿者发情值随机 +0~2、获得随机摸鱼币；发情值攒满 100 触发高潮"),
+                    ("/拒绝被凿", "/拒绝被凿：不再接受被凿，凿你的人会吃一杵子"),
+                    ("/允许被凿", "/允许被凿：重新接受被凿"),
+                    ("/我的发情值", "/我的发情值：查看自己的发情值、被凿次数与高潮次数"),
+                    ("/发情值排名", "/发情值排名：查看本群排行前 5（每日随收益榜推送）"),
+                    ("/设置性别", "/设置性别 男|女：设置自己的性别（/修改性别 等效），影响高潮文风"),
                 ),
             ),
         }

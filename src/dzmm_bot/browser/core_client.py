@@ -243,6 +243,10 @@ class CoreClient:
                     "image_height": message.image_height,
                 }
             )
+        if message.content_type not in ("text", "image"):
+            payload["content_type"] = message.content_type
+        if message.metadata is not None:
+            payload["metadata"] = message.metadata
         if reference is not None:
             reference_payload = {
                 "message_id": reference.message_id,

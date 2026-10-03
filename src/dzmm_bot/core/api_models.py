@@ -34,7 +34,8 @@ class InboundRequest(ApiModel):
     source_type: Literal["group", "direct"] = "group"
     chatroom_id: str | None = Field(default=None, max_length=255)
     reference: MessageReferenceRequest | None = None
-    content_type: Literal["text", "image"] = "text"
+    content_type: Literal["text", "image", "system"] = "text"
+    metadata: dict | None = None
     image_url: str | None = Field(default=None, max_length=4096)
     image_alt: str | None = Field(default=None, max_length=512)
     image_width: int | None = Field(default=None, ge=1)

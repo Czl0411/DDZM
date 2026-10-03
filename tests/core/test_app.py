@@ -105,6 +105,50 @@ def test_internal_inbound_is_idempotent(client, headers, payload):
     assert second.json()["message_id"] == first.json()["message_id"]
 
 
+def test_internal_inbound_preserves_system_referral_metadata(
+    app_context, client, headers
+):
+    """Fails if the /internal/inbound endpoint drops system referral metadata."""
+    response = client.post(
+        "/internal/inbound",
+        headers=headers,
+        json={
+            "platform_message_id": "system-join-1",
+            "sender_platform_id": "platform-system",
+            "content": "小小糯 通过 甲 的链接加入了群聊",
+            "received_at": NOW.isoformat(),
+            "source_type": "group",
+            "chatroom_id": "chatroom-main",
+            "content_type": "system",
+            "metadata": {
+                "referral": {
+                    "newcomer": "小小糯",
+                    "inviter": "甲",
+                    "newcomer_id": "platform-newcomer",
+                    "inviter_id": "platform-inviter",
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+
+    from dzmm_bot.core.schema import ReferralRecord
+
+    with app_context.session_factory() as session:
+        row = session.scalar(
+            select(ReferralRecord).where(
+                ReferralRecord.platform_message_id == "system-join-1"
+            )
+        )
+    assert row is not None
+    assert row.newcomer_name == "小小糯"
+    assert row.newcomer_platform_id == "platform-newcomer"
+    assert row.inviter_platform_id == "platform-inviter"
+    assert row.amount == 0  # 邀请人平台 uid 未注册员工：留痕不发币
+
+
 def test_game_users_expose_platform_nickname(app_context, headers):
     app_context.repository.create_user("nickname-api", "公司名称", NOW, 0)
     app_context.repository.complete_platform_nickname_refresh(

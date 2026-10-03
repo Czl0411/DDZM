@@ -296,6 +296,7 @@ def create_app(
                     text=reference.text,
                 ),
                 content_type=request.content_type,
+                metadata=request.metadata,
                 image_url=request.image_url,
                 image_alt=request.image_alt,
                 image_width=request.image_width,

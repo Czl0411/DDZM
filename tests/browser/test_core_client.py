@@ -314,6 +314,57 @@ def test_core_client_serializes_referenced_image():
     }
 
 
+def test_core_client_serializes_system_referral_metadata():
+    """Fails if the Worker-to-core HTTP request drops system referral metadata."""
+    from dzmm_bot.browser.core_client import CoreClient
+
+    observed = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.update(json.loads(request.content))
+        return httpx.Response(200, json={"accepted": True})
+
+    client = CoreClient(
+        "http://core.test",
+        "token",
+        client=httpx.Client(
+            base_url="http://core.test",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    now = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+
+    client.submit_inbound(
+        InboundMessage(
+            "system-join-1",
+            "system",
+            "小小糯 通过 甲 的链接加入了群聊",
+            now,
+            source_type="group",
+            chatroom_id="chatroom-main",
+            content_type="system",
+            metadata={
+                "referral": {
+                    "newcomer": "小小糯",
+                    "inviter": "甲",
+                    "newcomer_id": "p-newcomer",
+                    "inviter_id": "p-inviter",
+                }
+            },
+        )
+    )
+
+    assert observed["content_type"] == "system"
+    assert observed["metadata"] == {
+        "referral": {
+            "newcomer": "小小糯",
+            "inviter": "甲",
+            "newcomer_id": "p-newcomer",
+            "inviter_id": "p-inviter",
+        }
+    }
+
+
 def test_core_client_serializes_direct_image_inbound():
     from dzmm_bot.browser.core_client import CoreClient
 

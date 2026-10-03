@@ -2172,7 +2172,7 @@ class GroupCommandHandler:
             return "请先用 /入职 名字 加入摸鱼公司。"
         return (
             "【我的发情值】\n"
-            f"当前发情值：{info['heat']}\n"
+            f"当前发情值：{info['heat']}/{info['threshold']}\n"
             f"被凿次数：{info['chopped_count']} ｜ "
             f"高潮：今日 {info['today_climaxes']} 次 / 总 {info['total_climaxes']} 次\n"
             f"状态：{'拒绝被凿' if info['opted_out'] else '允许被凿'}"

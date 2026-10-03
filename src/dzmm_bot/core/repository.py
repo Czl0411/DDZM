@@ -59,7 +59,12 @@ from .birthday import (
     strip_visibility,
 )
 from .birthday import format_tenure as birthday_format_tenure
-from .estrus import build_climax_messages, fallback_climax_text
+from .estrus import (
+    CLIMAX_MAX_CHARS,
+    CLIMAX_TIMEOUT_SECONDS,
+    build_climax_messages,
+    fallback_climax_text,
+)
 
 from .company_lottery import (
     DEFAULT_BLUE_POOL,
@@ -14357,6 +14362,7 @@ class CoreRepository:
         self, platform_id: str, group_chat_id: UUID, now: datetime
     ) -> dict | None:
         with self._session() as session:
+            threshold = int(self._estrus_settings_row(session).climax_threshold)
             row = session.execute(
                 select(UserRecord, EstrusStateRecord)
                 .outerjoin(
@@ -14378,6 +14384,7 @@ class CoreRepository:
             return {
                 "display_name": user.display_name,
                 "heat": state.heat if state is not None else 0,
+                "threshold": threshold,
                 "chopped_count": state.chopped_count if state is not None else 0,
                 "today_climaxes": today_climaxes,
                 "total_climaxes": (
@@ -14426,19 +14433,25 @@ class CoreRepository:
         )
         return entries[:5]
 
-    def _estrus_climax_text(self, user: UserRecord) -> str | None:
+    def _estrus_climax_text(
+        self,
+        user: UserRecord,
+        chopper_name: str | None = None,
+        threshold: int = 100,
+    ) -> str | None:
+        """AI 高潮长文；主角是被凿者，`chopper_name` 是最后一凿的人。"""
         if self._estrus_text_client is None:
             return None
         system, user_content = build_climax_messages(
-            user.display_name, user.gender or "unknown"
+            user.display_name, user.gender or "unknown", chopper_name, threshold
         )
         try:
             return (
                 self._estrus_text_client.complete(
                     system,
                     user_content,
-                    max_chars=300,
-                    timeout_seconds=10,
+                    max_chars=CLIMAX_MAX_CHARS,
+                    timeout_seconds=CLIMAX_TIMEOUT_SECONDS,
                 ).strip()
                 or None
             )
@@ -14539,15 +14552,19 @@ class CoreRepository:
                 heat_gain, coins = self._roll_estrus_pair(settings)
                 state.heat = int(state.heat) + heat_gain
                 state.chopped_count = int(state.chopped_count) + 1
-                climax_triggered = state.heat >= int(settings.climax_threshold)
+                threshold = int(settings.climax_threshold)
+                climax_triggered = state.heat >= threshold
                 climax_text = None
                 if climax_triggered:
-                    climax_text = self._estrus_climax_text(target)
+                    climax_text = self._estrus_climax_text(
+                        target, chopper.display_name, threshold
+                    )
                     if not climax_text:
                         climax_text = fallback_climax_text(
                             target.display_name,
                             target.gender or "unknown",
                             self._estrus_random,
+                            chopper.display_name,
                         )
                     state.heat = 0
                     state.total_climaxes = int(state.total_climaxes) + 1
@@ -14576,8 +14593,9 @@ class CoreRepository:
                     target_name=target.display_name,
                     note=note,
                     heat_gain=heat_gain,
-                    heat_now=int(state.heat),
-                    threshold=int(settings.climax_threshold),
+                    # 爆表这一次要显示满值 100/100（状态里的 heat 已清零）
+                    heat_now=threshold if climax_triggered else int(state.heat),
+                    threshold=threshold,
                     coins=coins,
                     climax_triggered=climax_triggered,
                     climax_text=climax_text,

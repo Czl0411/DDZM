@@ -45,3 +45,6 @@ psql "$DB" -c "SELECT id, state, group_chat_id, created_at FROM random_events OR
 
 echo "===== 11. 最近出站消息（机器人最后发声时间）====="
 psql "$DB" -c "SELECT created_at, status, left(text, 40) AS text FROM outbound_messages ORDER BY created_at DESC LIMIT 12;"
+
+echo "===== 12. /我的津贴 指令种子 ====="
+psql "$DB" -c "SELECT command, enabled FROM command_definitions WHERE command LIKE '%津贴%' OR command LIKE '%罚款%';"

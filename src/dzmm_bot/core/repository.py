@@ -2433,6 +2433,7 @@ _COMMAND_DEFINITIONS = (
     ("/真心", "/回答 内容；/回答 跳过", "真心换真心中回答当前问题，或记为拒答（/真心 等效）"),
     ("/罚款", "/罚款 [名字/#工号] [理由]", "风纪监察部成员对违规员工处以摸鱼币罚款，可引用回复目标消息"),
     ("/我的罚款", "/我的罚款（仅私聊）", "查看自己被罚款的记录"),
+    ("/我的津贴", "/我的津贴", "查看自己今日各项部门津贴明细与合计"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
     ("/跳过", "/跳过 编号 [编号...]", "排除蹦蹦数字炸弹中尚未报数的参与者"),
@@ -26018,6 +26019,52 @@ class CoreRepository:
                 )
             )
             return int(total or 0)
+
+    def my_allowance_breakdown(
+        self, platform_id: str, now: datetime
+    ) -> tuple[list[tuple[str, int]], int, int] | None:
+        """今日部门津贴明细：(标签, 金额) 列表 + 合计 + 封顶；未入职返回 None。"""
+        now = now.astimezone(BEIJING)
+        labels = {**_DEPARTMENT_ALLOWANCE_LABELS, "dept_fine": "罚款抽成"}
+        order = {
+            kind: index
+            for index, kind in enumerate(
+                (
+                    "dept_checkin",
+                    "dept_event",
+                    "dept_game_host",
+                    "dept_game_play",
+                    "dept_submission",
+                    "dept_chat",
+                    "dept_referral",
+                    "dept_fine",
+                )
+            )
+        }
+        with self._session() as session:
+            user_id = session.scalar(
+                select(UserRecord.id).where(UserRecord.platform_id == platform_id)
+            )
+            if user_id is None:
+                return None
+            rows = session.execute(
+                select(
+                    DepartmentAllowanceRecord.kind,
+                    func.sum(DepartmentAllowanceRecord.amount),
+                ).where(
+                    DepartmentAllowanceRecord.user_id == user_id,
+                    DepartmentAllowanceRecord.allow_date == now.date(),
+                )
+                .group_by(DepartmentAllowanceRecord.kind)
+            ).all()
+            detail = [
+                (labels.get(kind, kind), int(amount))
+                for kind, amount in sorted(
+                    rows, key=lambda pair: order.get(pair[0], len(order))
+                )
+            ]
+            cap = int(self._department_allowance_settings_row(session).daily_cap)
+            return detail, sum(amount for _, amount in detail), cap
 
     def get_discipline_fine_settings(self) -> DisciplineFineSettings:
         with self._session() as session:

@@ -54,7 +54,7 @@ _COMMANDS = {
     "/随礼",
     "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据",
     "/真心换真心", "/真心换真心数据", "/问题", "/真心",
-    "/罚款", "/我的罚款",
+    "/罚款", "/我的罚款", "/我的津贴",
 }
 
 _LOTTERY_COMMANDS = {
@@ -388,6 +388,8 @@ class GroupCommandHandler:
             if message.source_type != "direct":
                 return "只能在私聊中使用 /我的罚款。"
             return self._my_discipline_fines(message, received_at)
+        if command == "/我的津贴":
+            return self._my_allowances(message.sender_platform_id, received_at)
         if command == "/看牌":
             if message.source_type != "direct":
                 return self._reply("/看牌", "group_only", received_at)
@@ -2039,6 +2041,22 @@ class GroupCommandHandler:
             )
         return "\n".join(lines)
 
+    def _my_allowances(self, platform_id: str, received_at) -> str:
+        breakdown = self._repository.my_allowance_breakdown(
+            platform_id, received_at
+        )
+        if breakdown is None:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        detail, total, cap = breakdown
+        date_label = received_at.astimezone(_BEIJING).strftime("%m-%d")
+        if not detail:
+            return f"【我的津贴】{date_label}\n今日暂无津贴入账（0/{cap}）。"
+        lines = [f"【我的津贴】{date_label}"]
+        lines.extend(f"{label} +{amount}" for label, amount in detail)
+        capped = "（已封顶）" if total >= cap else ""
+        lines.append(f"今日合计：{total}/{cap}{capped}")
+        return "\n".join(lines)
+
     def _truth_trade_leave(self, message, received_at, group_chat_id):
         if message.source_type != "group" or group_chat_id is None:
             return "请在已启用的群聊中发送 /退出。"
@@ -2277,7 +2295,8 @@ class GroupCommandHandler:
         )
         if allowance is None:
             return rendered
-        return f"{rendered}\n今日部门津贴：{allowance}/5"
+        cap = self._repository.get_department_allowance_settings().daily_cap
+        return f"{rendered}\n今日部门津贴：{allowance}/{cap}"
 
     def _edit_profile(self, platform_id: str, content: str, received_at) -> str:
         profile_text = content[len("/编辑档案"):].strip()
@@ -4745,6 +4764,7 @@ class GroupCommandHandler:
                     ("/发红包", "/发红包 人数 总金额：发出随机运气红包"),
                     ("/抢红包", "/抢红包：领取当前红包"),
                     ("/我", "/我：查看个人资料、收益与活跃度"),
+                    ("/我的津贴", "/我的津贴：查看今日各项部门津贴明细与合计"),
                     ("/我的物品", "/我的物品：查看持有物品"),
                     ("/商店", "/商店：查看可购买物品"),
                 ),

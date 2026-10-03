@@ -331,6 +331,40 @@ def test_chat_drop_no_cooldown_by_default():
     assert _balance(factory, "user-0") == _balance(factory, "user-1") + 2
 
 
+def test_my_allowance_command_breakdown():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _receive(service, "j0", "user-0", "/入职 甲", now)
+    department_id = _bind_department(factory, "核心技术部", "checkin")
+    _assign_department(factory, "user-0", department_id)
+
+    _receive(service, "c1", "user-0", "/打卡", now)
+    _receive(service, "a1", "user-0", "/我的津贴", now)
+
+    texts = _outbound_texts(factory)
+    assert any("【我的津贴】10-02" in t for t in texts)
+    assert any("打卡奖励 +5" in t for t in texts)
+    assert any("今日合计：5/5（已封顶）" in t for t in texts)
+
+
+def test_my_allowance_command_empty_and_not_joined():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+
+    _receive(service, "a0", "user-0", "/我的津贴", now)
+    assert any("请先用 /入职" in t for t in _outbound_texts(factory))
+
+    _receive(service, "j0", "user-0", "/入职 甲", now)
+    _receive(service, "a1", "user-0", "/我的津贴", now)
+    assert any("今日暂无津贴入账（0/5）" in t for t in _outbound_texts(factory))
+
+
 def test_chat_drop_miss_and_commands_skip():
     service, repository, factory = _service(chat_drop_random=_AlwaysMiss())
     now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)

@@ -2346,7 +2346,7 @@ _COMMAND_DEFINITIONS = (
     ("/大话骰子数据", "/大话骰子数据", "查看当前大话骰子局实时统计"),
     ("/真心换真心", "/真心换真心", "创建真心换真心报名局"),
     ("/真心换真心数据", "/真心换真心数据", "查看本群真心换真心总战绩"),
-    ("/问题", "/问题 内容；/问题 跳过", "真心换真心中轮到自己时提问，或跳过本轮提问"),
+    ("/问题", "/问吧 内容；/问吧 跳过", "真心换真心中轮到自己时提问，或跳过本轮提问（/问题 等效）"),
     ("/真心", "/真心 内容；/真心 跳过", "真心换真心中回答当前问题，或记为拒答"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
@@ -11530,7 +11530,7 @@ class CoreRepository:
                 elif truth_game.state == "asking":
                     truth_role = "participant"
                     truth_commands = (
-                        ("/问题 内容", "/问题 跳过", "/退出", "/结束游戏")
+                        ("/问吧 内容", "/问吧 跳过", "/退出", "/结束游戏")
                         if truth_actor.position == truth_game.current_position
                         else ("/退出", "/结束游戏")
                     )
@@ -14323,7 +14323,7 @@ class CoreRepository:
             )
             return (
                 f"【真心换真心】第 {game.round_number} 轮 · 轮到 "
-                f"{next_player.position}号 {user.display_name} 提问，发送 /问题 你的问题"
+                f"{next_player.position}号 {user.display_name} 提问，发送 /问吧 你的问题"
                 f"（超时 {settings.question_timeout_seconds} 秒自动跳过）",
             )
         game.state = "round_complete"
@@ -14565,7 +14565,7 @@ class CoreRepository:
                 public_message = (
                     f"【真心换真心】第 1 轮开始（共 {len(players)} 人）：{roster}\n"
                     f"轮到 {first_player.position}号 {first_user.display_name} 提问，"
-                    f"发送 /问题 你的问题"
+                    f"发送 /问吧 你的问题"
                     f"（超时 {settings.question_timeout_seconds} 秒自动跳过）"
                 )
                 return self._truth_trade_result_locked(
@@ -14995,7 +14995,7 @@ class CoreRepository:
                 public_message = (
                     f"【真心换真心】第 {game.round_number} 轮开始（共 {len(players)} 人）："
                     f"{roster}\n轮到 {first_player.position}号 {first_user.display_name} 提问，"
-                    f"发送 /问题 你的问题"
+                    f"发送 /问吧 你的问题"
                     f"（超时 {settings.question_timeout_seconds} 秒自动跳过）"
                 )
                 return self._truth_trade_result_locked(

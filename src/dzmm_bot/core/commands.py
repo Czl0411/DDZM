@@ -98,6 +98,8 @@ class GroupCommandHandler:
             command = "/我"
         if command == "/买彩票":
             command = "/购买彩票"
+        if command == "/问吧":
+            command = "/问题"
         if command not in _COMMANDS:
             dice_reply = self._liar_dice_call_step(message, content)
             if dice_reply is not None:
@@ -1877,8 +1879,11 @@ class GroupCommandHandler:
 
     def _truth_trade_ask(self, message, content, received_at, group_chat_id):
         if message.source_type != "group" or group_chat_id is None:
-            return "请在已启用的群聊中发送 /问题 内容。"
-        payload = content[len("/问题"):].strip()
+            return "请在已启用的群聊中发送 /问吧 内容。"
+        # /问吧 是 /问题 的别名，handle 里归一化成 /问题 路由到这里；
+        # content 保留原文，按实际前缀剥离
+        prefix = "/问吧" if content.startswith("/问吧") else "/问题"
+        payload = content[len(prefix):].strip()
         result = self._repository.ask_truth_trade(
             message.sender_platform_id,
             payload,
@@ -1899,7 +1904,7 @@ class GroupCommandHandler:
                 )
             return "还没轮到你提问。"
         if result.status == "empty_question":
-            return "请发送 /问题 内容，问题不能为空。"
+            return "请发送 /问吧 内容，问题不能为空。"
         return result.public_message or "当前不能提问。"
 
     def _truth_trade_answer(self, message, content, received_at, group_chat_id):
@@ -4767,7 +4772,7 @@ class GroupCommandHandler:
                     ("/真心换真心", "/真心换真心：创建报名局"),
                     ("/加入", "/加入：报名；对局中途加入者从下一个问题起参与"),
                     ("/开始", "/开始：至少 2 人后由发起者开局"),
-                    ("/问题", "轮到自己时 /问题 内容：向其他人提问；/问题 跳过：跳过本轮提问"),
+                    ("/问吧", "轮到自己时 /问吧 内容：向其他人提问；/问吧 跳过：跳过本轮提问（/问题 也可）"),
                     ("/真心", "其余玩家 /真心 内容：回答当前问题；/真心 跳过：记为拒答"),
                     ("/继续", "/继续：本轮结算后任一参与者开下一轮"),
                     ("/当前游戏", "/当前游戏：查看当前进度、玩家名单与总人数"),

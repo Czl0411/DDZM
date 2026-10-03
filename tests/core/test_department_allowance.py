@@ -165,6 +165,23 @@ def test_checkin_allowance_notifies_the_group():
         assert all(notice.delivery_kind == "group" for notice in notices)
 
 
+def test_department_list_shows_referral_hint():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _receive(service, "j0", "user-0", "/入职 甲", now)
+    department_id = _bind_department(factory, "次元外联部", "referral")
+    assert department_id is not None
+
+    _receive(service, "dept", "user-0", "/部门", now)
+
+    texts = _outbound_texts(factory)
+    assert any("次元外联部" in text for text in texts)
+    assert any("每邀请新人通过链接进群 +1 摸鱼币" in text for text in texts)
+
+
 def test_allowance_cap_partial_grant():
     service, repository, factory = _service()
     now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)

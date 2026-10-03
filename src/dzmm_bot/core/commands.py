@@ -2417,6 +2417,7 @@ class GroupCommandHandler:
         "game": "开局小游戏 +1；每参与完成 5 局 +1",
         "submission": "随机事件投稿过审额外 +5 摸鱼币",
         "chat": "水群有 10% 概率掉落 1 摸鱼币",
+        "referral": "每邀请新人通过链接进群 +1 摸鱼币",
     }
 
     def _departments(self, received_at) -> str:

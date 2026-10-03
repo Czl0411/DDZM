@@ -139,6 +139,32 @@ def test_checkin_allowance_and_daily_cap():
     assert _balance(factory, "user-0") == before_cap
 
 
+def test_checkin_allowance_notifies_the_group():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _receive(service, "j0", "user-0", "/入职 甲", now)
+    department_id = _bind_department(factory, "核心技术部", "checkin")
+    _assign_department(factory, "user-0", department_id)
+
+    _receive(service, "c1", "user-0", "/打卡", now)
+
+    texts = _outbound_texts(factory)
+    assert any("【部门津贴】甲（核心技术部）打卡奖励 +5 摸鱼币" in text for text in texts)
+    from dzmm_bot.core.schema import OutboundRecord
+
+    with factory() as session:
+        notices = session.scalars(
+            select(OutboundRecord).where(
+                OutboundRecord.text.like("【部门津贴】%")
+            )
+        ).all()
+        assert notices
+        assert all(notice.delivery_kind == "group" for notice in notices)
+
+
 def test_allowance_cap_partial_grant():
     service, repository, factory = _service()
     now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)

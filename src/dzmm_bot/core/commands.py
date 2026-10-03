@@ -587,7 +587,7 @@ class GroupCommandHandler:
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._reply("/结束游戏", "no_current_game", received_at)
         if command == "/打卡":
-            return self._check_in(message.sender_platform_id, received_at)
+            return self._check_in(message.sender_platform_id, received_at, group_chat_id)
         if command == "/余额":
             return self._balance(message.sender_platform_id, received_at)
         if command == "/修改名称":
@@ -2026,7 +2026,7 @@ class GroupCommandHandler:
             },
         )
 
-    def _check_in(self, platform_id: str, received_at) -> str:
+    def _check_in(self, platform_id: str, received_at, group_chat_id=None) -> str:
         profile = self._repository.get_user_profile(platform_id)
         if profile is None:
             return self._reply("/打卡", "not_joined", received_at)
@@ -2035,7 +2035,9 @@ class GroupCommandHandler:
         birthday = self._repository.birthday_settings_for(employee.id, received_at)
         if birthday is not None and birthday.checkin_multiplier > 1:
             reward = reward * birthday.checkin_multiplier
-        if not self._repository.check_in(employee, received_at, reward):
+        if not self._repository.check_in(
+            employee, received_at, reward, group_chat_id=group_chat_id
+        ):
             return self._reply(
                 "/打卡", "already_checked_in", received_at, {"{昵称}": employee.display_name}
             )

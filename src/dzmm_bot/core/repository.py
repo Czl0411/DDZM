@@ -28129,7 +28129,14 @@ class CoreRepository:
             .values(state="expired", decided_at=now)
         )
 
-    def check_in(self, user: UserRecord, checked_in_at: datetime, reward: int) -> bool:
+    def check_in(
+        self,
+        user: UserRecord,
+        checked_in_at: datetime,
+        reward: int,
+        *,
+        group_chat_id: UUID | None = None,
+    ) -> bool:
         with self.transaction():
             with self._session() as session:
                 employee = session.get(UserRecord, user.id)
@@ -28160,7 +28167,11 @@ class CoreRepository:
                     return False
                 self._apply_balance_change(employee, reward, "checkin", checked_in_at)
                 self._grant_department_allowance(
-                    session, employee, "dept_checkin", checked_in_at
+                    session,
+                    employee,
+                    "dept_checkin",
+                    checked_in_at,
+                    group_chat_id=group_chat_id,
                 )
                 session.flush()
                 return True

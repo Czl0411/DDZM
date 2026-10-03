@@ -269,6 +269,14 @@ class AdminCorePort(Protocol):
 
     def set_department_allowance_settings(self, settings: dict) -> dict: ...
 
+    def get_liar_dice_settings(self) -> dict: ...
+
+    def set_liar_dice_settings(self, settings: dict) -> dict: ...
+
+    def get_truth_trade_settings(self) -> dict: ...
+
+    def set_truth_trade_settings(self, settings: dict) -> dict: ...
+
     def list_discipline_fine_records(self, page: int, page_size: int) -> dict: ...
 
     def revoke_discipline_fine(self, record_id: str) -> dict: ...
@@ -982,6 +990,26 @@ class CoreClient:
     def set_department_allowance_settings(self, settings: dict) -> dict:
         response = self._client.patch(
             "/internal/game/department-allowances/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_liar_dice_settings(self) -> dict:
+        return self._get("/internal/game/liar-dice/settings")
+
+    def set_liar_dice_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/liar-dice/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_truth_trade_settings(self) -> dict:
+        return self._get("/internal/game/truth-trade/settings")
+
+    def set_truth_trade_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/truth-trade/settings", json=settings
         )
         response.raise_for_status()
         return response.json()

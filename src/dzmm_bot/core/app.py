@@ -161,6 +161,10 @@ from .api_models import (
     SetDisciplineFineSettingsRequest,
     DepartmentAllowanceSettingsResponse,
     SetDepartmentAllowanceSettingsRequest,
+    LiarDiceSettingsResponse,
+    SetLiarDiceSettingsRequest,
+    TruthTradeSettingsResponse,
+    SetTruthTradeSettingsRequest,
     MemoryAssessmentSettingsResponse,
     SetMemoryAssessmentSettingsRequest,
     MemoryAssessmentLevelRuleModel,
@@ -2712,6 +2716,68 @@ def create_app(
             chat_drop_cooldown_seconds=settings.chat_drop_cooldown_seconds,
             referral_amount=settings.referral_amount,
             daily_cap=settings.daily_cap,
+        )
+
+    @app.get(
+        "/internal/game/liar-dice/settings",
+        response_model=LiarDiceSettingsResponse,
+    )
+    def liar_dice_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> LiarDiceSettingsResponse:
+        settings = repository.get_liar_dice_settings()
+        return LiarDiceSettingsResponse(turn_seconds=settings.turn_seconds)
+
+    @app.patch(
+        "/internal/game/liar-dice/settings",
+        response_model=LiarDiceSettingsResponse,
+    )
+    def set_liar_dice_settings(
+        request: SetLiarDiceSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> LiarDiceSettingsResponse:
+        try:
+            settings = repository.set_liar_dice_settings(
+                turn_seconds=request.turn_seconds,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return LiarDiceSettingsResponse(turn_seconds=settings.turn_seconds)
+
+    @app.get(
+        "/internal/game/truth-trade/settings",
+        response_model=TruthTradeSettingsResponse,
+    )
+    def truth_trade_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> TruthTradeSettingsResponse:
+        settings = repository.get_truth_trade_settings()
+        return TruthTradeSettingsResponse(
+            question_timeout_seconds=settings.question_timeout_seconds,
+            answer_timeout_seconds=settings.answer_timeout_seconds,
+            min_players=settings.min_players,
+        )
+
+    @app.patch(
+        "/internal/game/truth-trade/settings",
+        response_model=TruthTradeSettingsResponse,
+    )
+    def set_truth_trade_settings(
+        request: SetTruthTradeSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> TruthTradeSettingsResponse:
+        try:
+            settings = repository.set_truth_trade_settings(
+                question_timeout_seconds=request.question_timeout_seconds,
+                answer_timeout_seconds=request.answer_timeout_seconds,
+                min_players=request.min_players,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return TruthTradeSettingsResponse(
+            question_timeout_seconds=settings.question_timeout_seconds,
+            answer_timeout_seconds=settings.answer_timeout_seconds,
+            min_players=settings.min_players,
         )
 
     @app.patch(

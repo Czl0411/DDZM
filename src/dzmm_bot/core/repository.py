@@ -254,6 +254,7 @@ from .schema import (
     LiarDiceGameRecord,
     LiarDicePlayerRecord,
     LiarDiceRoundRecord,
+    LiarDiceSettingsRecord,
     NeverHaveIEverGameRecord,
     NeverHaveIEverPlayerRecord,
     NeverHaveIEverResponseRecord,
@@ -1227,14 +1228,23 @@ class KingGameResult:
 
 
 @dataclass(frozen=True)
+class LiarDiceSettings:
+    turn_seconds: int
+
+
+@dataclass(frozen=True)
+class TruthTradeSettings:
+    question_timeout_seconds: int
+    answer_timeout_seconds: int
+    min_players: int
+
+
+@dataclass(frozen=True)
 class LiarDicePlayerView:
     seat: int
     display_name: str
     platform_id: str
 
-
-LIAR_DICE_TURN_SECONDS = 120
-LIAR_DICE_SIGNUP_MINUTES = 10
 
 # 部门津贴每日封顶的默认种子值；实际封顶走 department_allowance_settings.daily_cap
 DEPARTMENT_ALLOWANCE_DAILY_CAP = 5
@@ -13401,7 +13411,11 @@ class CoreRepository:
         if round_record is None:
             raise RuntimeError("大话骰子回合不存在")
         game.state = "calling"
-        game.turn_deadline = now + timedelta(seconds=LIAR_DICE_TURN_SECONDS)
+        game.turn_deadline = now + timedelta(
+            seconds=self._liar_dice_settings_row(
+                session, game.group_chat_id
+            ).turn_seconds
+        )
         first = next(
             (
                 user.display_name
@@ -13701,7 +13715,11 @@ class CoreRepository:
                 if next_seat is None:
                     next_seat = caller_seat
                 game.current_seat = next_seat
-                game.turn_deadline = now + timedelta(seconds=LIAR_DICE_TURN_SECONDS)
+                game.turn_deadline = now + timedelta(
+                    seconds=self._liar_dice_settings_row(
+                        session, game.group_chat_id
+                    ).turn_seconds
+                )
                 game.timeout_streak = 0
                 next_player = next(
                     (p for p, _ in players if p.seat_number == next_seat), None
@@ -14090,6 +14108,66 @@ class CoreRepository:
             )
             .with_for_update()
         )
+
+    def _liar_dice_settings_row(
+        self, session: Session, group_chat_id: UUID
+    ) -> LiarDiceSettingsRecord:
+        row = session.scalar(
+            select(LiarDiceSettingsRecord).where(
+                LiarDiceSettingsRecord.group_chat_id == group_chat_id
+            )
+        )
+        if row is None:
+            row = LiarDiceSettingsRecord(group_chat_id=group_chat_id)
+            session.add(row)
+            session.flush()
+        return row
+
+    def get_liar_dice_settings(self) -> LiarDiceSettings:
+        with self._session() as session:
+            row = self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+            return LiarDiceSettings(turn_seconds=int(row.turn_seconds))
+
+    def set_liar_dice_settings(self, *, turn_seconds: int) -> LiarDiceSettings:
+        if not isinstance(turn_seconds, int) or not 30 <= turn_seconds <= 600:
+            raise ValueError("回合超时秒数必须在 30~600 之间")
+        with self.transaction():
+            with self._session() as session:
+                row = self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+                row.turn_seconds = turn_seconds
+                session.flush()
+                return LiarDiceSettings(turn_seconds=int(row.turn_seconds))
+
+    def get_truth_trade_settings(self) -> TruthTradeSettings:
+        with self._session() as session:
+            row = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+            return _truth_trade_settings(row)
+
+    def set_truth_trade_settings(
+        self,
+        *,
+        question_timeout_seconds: int,
+        answer_timeout_seconds: int,
+        min_players: int,
+    ) -> TruthTradeSettings:
+        ranges = (
+            ("提问超时秒数", question_timeout_seconds, 30, 3600),
+            ("回答超时秒数", answer_timeout_seconds, 30, 3600),
+            ("最少开局人数", min_players, 2, 10),
+        )
+        for label, value, low, high in ranges:
+            if not isinstance(value, int) or not low <= value <= high:
+                raise ValueError(f"{label}必须在 {low}~{high} 之间")
+        with self.transaction():
+            with self._session() as session:
+                row = self._truth_trade_settings_row(
+                    session, PRIMARY_GROUP_CHAT_ID
+                )
+                row.question_timeout_seconds = question_timeout_seconds
+                row.answer_timeout_seconds = answer_timeout_seconds
+                row.min_players = min_players
+                session.flush()
+                return _truth_trade_settings(row)
 
     def _truth_trade_settings_row(
         self, session: Session, group_chat_id: UUID
@@ -15229,7 +15307,11 @@ class CoreRepository:
                         "⏱️ 大家都超时了，本轮作废！发 /继续 开下一轮，或 /结束游戏 结束。"
                     )
                     return messages
-                game.turn_deadline = now + timedelta(seconds=LIAR_DICE_TURN_SECONDS)
+                game.turn_deadline = now + timedelta(
+                    seconds=self._liar_dice_settings_row(
+                        session, game.group_chat_id
+                    ).turn_seconds
+                )
                 next_player = next(
                     (p for p, _ in players if p.seat_number == game.current_seat),
                     None,
@@ -33760,6 +33842,16 @@ def _department_allowance_settings(
         chat_drop_cooldown_seconds=record.chat_drop_cooldown_seconds,
         referral_amount=record.referral_amount,
         daily_cap=record.daily_cap,
+    )
+
+
+def _truth_trade_settings(
+    record: TruthTradeSettingsRecord,
+) -> TruthTradeSettings:
+    return TruthTradeSettings(
+        question_timeout_seconds=int(record.question_timeout_seconds),
+        answer_timeout_seconds=int(record.answer_timeout_seconds),
+        min_players=int(record.min_players),
     )
 
 

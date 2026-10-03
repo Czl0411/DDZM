@@ -1004,6 +1004,19 @@ class KingGameRoundRecord(Base):
     revealed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
 
 
+class LiarDiceSettingsRecord(Base):
+    __tablename__ = "liar_dice_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"),
+        default=PRIMARY_GROUP_CHAT_ID,
+        unique=True,
+        nullable=False,
+    )
+    turn_seconds: Mapped[int] = mapped_column(Integer, default=120, nullable=False)
+
+
 class LiarDiceGameRecord(Base):
     __tablename__ = "liar_dice_games"
     __table_args__ = (

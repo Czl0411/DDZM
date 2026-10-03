@@ -2423,6 +2423,90 @@ async function saveDepartmentAllowanceSettings() {
   }
 }
 
+async function loadLiarDiceSettings() {
+  const [settings, groups] = await Promise.all([
+    requestGame("/api/game/liar-dice/settings"),
+    requestGame("/api/group-chats", {cache: "no-store"}),
+  ]);
+  configurationVersion = groups.version;
+  renderLiarDiceSettingsPanel(settings);
+}
+
+function renderLiarDiceSettingsPanel(settings) {
+  const panel = document.querySelector("#liar-dice-panel");
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="panel-heading"><div><h2>大话骰子参数</h2><p class="muted">对局节奏参数，保存后从下一回合起生效。</p></div><div class="command-actions"><button id="liar-dice-save" class="primary" type="button">保存设置</button></div></div>
+    <div class="panel-heading"><div><h2>节奏参数</h2></div></div>
+    <div class="event-input-grid">
+      ${birthdayNumberField("liar-dice-turn-seconds", "回合超时秒数", settings.turn_seconds, 30, 600)}
+    </div>`;
+  document.querySelector("#liar-dice-save").addEventListener("click", saveLiarDiceSettings);
+}
+
+async function saveLiarDiceSettings() {
+  const button = document.querySelector("#liar-dice-save");
+  const payload = {
+    turn_seconds: Number(document.querySelector("#liar-dice-turn-seconds").value),
+  };
+  try {
+    await runMutation(button, "保存中…", async () => {
+      await requestGame("/api/game/liar-dice/settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify(payload),
+      });
+    });
+    setResult("大话骰子设置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+}
+
+async function loadTruthTradeSettings() {
+  const [settings, groups] = await Promise.all([
+    requestGame("/api/game/truth-trade/settings"),
+    requestGame("/api/group-chats", {cache: "no-store"}),
+  ]);
+  configurationVersion = groups.version;
+  renderTruthTradeSettingsPanel(settings);
+}
+
+function renderTruthTradeSettingsPanel(settings) {
+  const panel = document.querySelector("#truth-trade-panel");
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="panel-heading"><div><h2>真心换真心参数</h2><p class="muted">提问与回答的超时时间，保存后从下一轮起生效。</p></div><div class="command-actions"><button id="truth-trade-save" class="primary" type="button">保存设置</button></div></div>
+    <div class="panel-heading"><div><h2>节奏参数</h2></div></div>
+    <div class="event-input-grid">
+      ${birthdayNumberField("truth-trade-question-seconds", "提问超时秒数", settings.question_timeout_seconds, 30, 3600)}
+      ${birthdayNumberField("truth-trade-answer-seconds", "回答超时秒数", settings.answer_timeout_seconds, 30, 3600)}
+      ${birthdayNumberField("truth-trade-min-players", "最少开局人数", settings.min_players, 2, 10)}
+    </div>`;
+  document.querySelector("#truth-trade-save").addEventListener("click", saveTruthTradeSettings);
+}
+
+async function saveTruthTradeSettings() {
+  const button = document.querySelector("#truth-trade-save");
+  const payload = {
+    question_timeout_seconds: Number(document.querySelector("#truth-trade-question-seconds").value),
+    answer_timeout_seconds: Number(document.querySelector("#truth-trade-answer-seconds").value),
+    min_players: Number(document.querySelector("#truth-trade-min-players").value),
+  };
+  try {
+    await runMutation(button, "保存中…", async () => {
+      await requestGame("/api/game/truth-trade/settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify(payload),
+      });
+    });
+    setResult("真心换真心设置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+}
+
 async function loadDisciplineFine(page = disciplineFinePage) {
   const [settings, ranks, records, groups] = await Promise.all([
     requestGame("/api/game/discipline-fine/settings"),
@@ -2528,6 +2612,8 @@ async function loadGameView(view) {
     if (view === "birthday") return loadBirthday();
     if (view === "discipline-fine") return loadDisciplineFine();
     if (view === "department-allowance") return loadDepartmentAllowances();
+    if (view === "liar-dice") return loadLiarDiceSettings();
+    if (view === "truth-trade") return loadTruthTradeSettings();
     if (view === "memory-assessment") return loadMemoryAssessment();
     if (view === "undercover") return loadUndercover();
     if (view === "blame-bomb") return loadBlameBomb();

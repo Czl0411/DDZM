@@ -1848,3 +1848,21 @@ class DepartmentAllowanceSettingsResponse(ApiModel):
 
 class SetDepartmentAllowanceSettingsRequest(DepartmentAllowanceSettingsResponse):
     pass
+
+
+class LiarDiceSettingsResponse(ApiModel):
+    turn_seconds: int = Field(ge=30, le=600)
+
+
+class SetLiarDiceSettingsRequest(LiarDiceSettingsResponse):
+    pass
+
+
+class TruthTradeSettingsResponse(ApiModel):
+    question_timeout_seconds: int = Field(ge=30, le=3600)
+    answer_timeout_seconds: int = Field(ge=30, le=3600)
+    min_players: int = Field(ge=2, le=10)
+
+
+class SetTruthTradeSettingsRequest(TruthTradeSettingsResponse):
+    pass

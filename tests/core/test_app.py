@@ -2339,6 +2339,68 @@ def test_memory_assessment_settings_are_managed_over_core_api(client, headers):
     }
 
 
+def test_liar_dice_settings_are_managed_over_core_api(client, headers):
+    initial = client.get("/internal/game/liar-dice/settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()["turn_seconds"] == 120
+
+    updated = client.patch(
+        "/internal/game/liar-dice/settings",
+        headers=headers,
+        json={"turn_seconds": 90},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["turn_seconds"] == 90
+    assert (
+        client.get("/internal/game/liar-dice/settings", headers=headers).json()[
+            "turn_seconds"
+        ]
+        == 90
+    )
+
+    invalid = client.patch(
+        "/internal/game/liar-dice/settings",
+        headers=headers,
+        json={"turn_seconds": 10},
+    )
+    assert invalid.status_code == 422
+
+
+def test_truth_trade_settings_are_managed_over_core_api(client, headers):
+    initial = client.get("/internal/game/truth-trade/settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json() == {
+        "question_timeout_seconds": 300,
+        "answer_timeout_seconds": 600,
+        "min_players": 2,
+    }
+
+    updated = client.patch(
+        "/internal/game/truth-trade/settings",
+        headers=headers,
+        json={
+            "question_timeout_seconds": 120,
+            "answer_timeout_seconds": 240,
+            "min_players": 3,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["question_timeout_seconds"] == 120
+    assert updated.json()["answer_timeout_seconds"] == 240
+    assert updated.json()["min_players"] == 3
+
+    invalid = client.patch(
+        "/internal/game/truth-trade/settings",
+        headers=headers,
+        json={
+            "question_timeout_seconds": 10,
+            "answer_timeout_seconds": 240,
+            "min_players": 3,
+        },
+    )
+    assert invalid.status_code == 422
+
+
 def test_daily_jobs_require_the_core_token(client, headers):
     assert client.post("/internal/daily-jobs/run", json={"now": NOW.isoformat()}).status_code == 401
 

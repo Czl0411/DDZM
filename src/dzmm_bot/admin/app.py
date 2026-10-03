@@ -2162,6 +2162,66 @@ def create_app(
             scope="department-allowance-settings",
         )
 
+    @app.get("/api/game/liar-dice/settings")
+    def liar_dice_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_liar_dice_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/liar-dice/settings")
+    def set_liar_dice_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        if "turn_seconds" not in request:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_liar_dice_settings(
+                    {"turn_seconds": request["turn_seconds"]}
+                )
+            ),
+            scope="liar-dice-settings",
+        )
+
+    @app.get("/api/game/truth-trade/settings")
+    def truth_trade_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_truth_trade_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/truth-trade/settings")
+    def set_truth_trade_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "question_timeout_seconds",
+            "answer_timeout_seconds",
+            "min_players",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_truth_trade_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="truth-trade-settings",
+        )
 
     @app.get("/api/game/hide-and-seek/settings")
     def hide_and_seek_settings(_: Annotated[None, Depends(authorize)]) -> dict:

@@ -265,6 +265,10 @@ class AdminCorePort(Protocol):
 
     def set_discipline_fine_settings(self, settings: dict) -> dict: ...
 
+    def get_department_allowance_settings(self) -> dict: ...
+
+    def set_department_allowance_settings(self, settings: dict) -> dict: ...
+
     def list_discipline_fine_records(self, page: int, page_size: int) -> dict: ...
 
     def revoke_discipline_fine(self, record_id: str) -> dict: ...
@@ -968,6 +972,16 @@ class CoreClient:
     def revoke_discipline_fine(self, record_id: str) -> dict:
         response = self._client.post(
             f"/internal/game/discipline-fine/records/{record_id}/revoke"
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_department_allowance_settings(self) -> dict:
+        return self._get("/internal/game/department-allowances/settings")
+
+    def set_department_allowance_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/department-allowances/settings", json=settings
         )
         response.raise_for_status()
         return response.json()

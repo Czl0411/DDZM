@@ -2360,6 +2360,67 @@ async function toggleGroupBirthday(groupId, enabled) {
 let disciplineFineSettings = null;
 let disciplineFinePage = 1;
 
+async function loadDepartmentAllowances() {
+  const [settings, groups] = await Promise.all([
+    requestGame("/api/game/department-allowances/settings"),
+    requestGame("/api/group-chats", {cache: "no-store"}),
+  ]);
+  configurationVersion = groups.version;
+  renderDepartmentAllowancePanel(settings);
+}
+
+function renderDepartmentAllowancePanel(settings) {
+  const panel = document.querySelector("#department-allowance-panel");
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="panel-heading"><div><h2>部门津贴参数</h2><p class="muted">各津贴的单次面额、触发参数与每人每日封顶；封顶台账为全部津贴与风纪执法抽成共享。发放对象仍按「职位与部门」里的部门津贴绑定生效。</p></div><div class="command-actions"><button id="department-allowance-save" class="primary" type="button">保存津贴设置</button></div></div>
+    <div class="panel-heading"><div><h2>单次面额</h2></div></div>
+    <div class="event-input-grid">
+      ${birthdayNumberField("allowance-checkin", "打卡奖励", settings.checkin_amount, 0, 999)}
+      ${birthdayNumberField("allowance-event", "演出奖励", settings.event_amount, 0, 999)}
+      ${birthdayNumberField("allowance-game-host", "开局奖励", settings.game_host_amount, 0, 999)}
+      ${birthdayNumberField("allowance-game-play", "游戏参与奖励", settings.game_play_amount, 0, 999)}
+      ${birthdayNumberField("allowance-submission", "投稿奖励", settings.submission_amount, 0, 999)}
+      ${birthdayNumberField("allowance-chat", "水群掉落金额", settings.chat_drop_amount, 0, 999)}
+      ${birthdayNumberField("allowance-referral", "拉新奖励", settings.referral_amount, 0, 999)}
+    </div>
+    <div class="panel-heading"><div><h2>触发参数与封顶</h2></div></div>
+    <div class="event-input-grid">
+      ${birthdayNumberField("allowance-game-step", "游戏参与计局步长（每 N 局发一次）", settings.game_play_step, 1, 999)}
+      ${birthdayNumberField("allowance-chat-percent", "水群掉落概率(%)", settings.chat_drop_percent, 0, 100)}
+      ${birthdayNumberField("allowance-daily-cap", "每人每日津贴封顶", settings.daily_cap, 1, 9999)}
+    </div>`;
+  document.querySelector("#department-allowance-save").addEventListener("click", saveDepartmentAllowanceSettings);
+}
+
+async function saveDepartmentAllowanceSettings() {
+  const button = document.querySelector("#department-allowance-save");
+  const payload = {
+    checkin_amount: Number(document.querySelector("#allowance-checkin").value),
+    event_amount: Number(document.querySelector("#allowance-event").value),
+    game_host_amount: Number(document.querySelector("#allowance-game-host").value),
+    game_play_amount: Number(document.querySelector("#allowance-game-play").value),
+    game_play_step: Number(document.querySelector("#allowance-game-step").value),
+    submission_amount: Number(document.querySelector("#allowance-submission").value),
+    chat_drop_percent: Number(document.querySelector("#allowance-chat-percent").value),
+    chat_drop_amount: Number(document.querySelector("#allowance-chat").value),
+    referral_amount: Number(document.querySelector("#allowance-referral").value),
+    daily_cap: Number(document.querySelector("#allowance-daily-cap").value),
+  };
+  try {
+    await runMutation(button, "保存中…", async () => {
+      await requestGame("/api/game/department-allowances/settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify(payload),
+      });
+    });
+    setResult("部门津贴设置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+}
+
 async function loadDisciplineFine(page = disciplineFinePage) {
   const [settings, ranks, records, groups] = await Promise.all([
     requestGame("/api/game/discipline-fine/settings"),
@@ -2464,6 +2525,7 @@ async function loadGameView(view) {
     if (view === "hide-and-seek") return loadHideAndSeek();
     if (view === "birthday") return loadBirthday();
     if (view === "discipline-fine") return loadDisciplineFine();
+    if (view === "department-allowance") return loadDepartmentAllowances();
     if (view === "memory-assessment") return loadMemoryAssessment();
     if (view === "undercover") return loadUndercover();
     if (view === "blame-bomb") return loadBlameBomb();

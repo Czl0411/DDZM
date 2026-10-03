@@ -34,7 +34,6 @@ from .schema import PRIMARY_GROUP_CHAT_ID
 from .repository import (
     BlameGameResult,
     CoreRepository,
-    DEPARTMENT_ALLOWANCE_DAILY_CAP,
     EmployeeNameTakenError,
     _FINE_FEEDBACK_HINT,
     blame_settlement_template_values,
@@ -2009,15 +2008,15 @@ class GroupCommandHandler:
             "" if result.actual_amount == result.amount
             else f"（余额不足，实扣 {result.actual_amount}）"
         )
-        if result.allowance_total >= DEPARTMENT_ALLOWANCE_DAILY_CAP:
+        if result.allowance_total >= result.allowance_cap:
             allowance_note = (
                 f"稽查人获得 {result.kickback} 摸鱼币津贴"
-                f"（今日津贴已满 {DEPARTMENT_ALLOWANCE_DAILY_CAP} 币）"
+                f"（今日津贴已满 {result.allowance_cap} 币）"
             )
         else:
             allowance_note = (
                 f"稽查人获得 {result.kickback} 摸鱼币津贴"
-                f"（今日津贴 {result.allowance_total}/{DEPARTMENT_ALLOWANCE_DAILY_CAP}）"
+                f"（今日津贴 {result.allowance_total}/{result.allowance_cap}）"
             )
         return (
             f"【风纪罚款】{result.issuer_display_name}（{result.department_name}）对 "
@@ -2531,22 +2530,29 @@ class GroupCommandHandler:
             return self._reply("/切换部门", "already_pending", received_at)
         return self._reply("/切换部门", "unknown_department", received_at)
 
-    _DEPARTMENT_ALLOWANCE_HINTS = {
-        "checkin": "每日打卡额外 +5 摸鱼币",
-        "event": "参与随机事件/公演并正常完成额外 +5 摸鱼币",
-        "game": "开局小游戏 +1；每参与完成 5 局 +1",
-        "submission": "随机事件投稿过审额外 +5 摸鱼币",
-        "chat": "水群有 10% 概率掉落 1 摸鱼币",
-        "referral": "每邀请新人通过链接进群 +1 摸鱼币",
-        "discipline": "风纪执法：成员可执行 /罚款 对违规员工处以罚款",
-    }
+    def _department_allowance_hints(self) -> dict[str, str]:
+        """/部门 增益提示：文案随后台津贴设置动态生成。"""
+        settings = self._repository.get_department_allowance_settings()
+        return {
+            "checkin": f"每日打卡额外 +{settings.checkin_amount} 摸鱼币",
+            "event": f"参与随机事件/公演并正常完成额外 +{settings.event_amount} 摸鱼币",
+            "game": (
+                f"开局小游戏 +{settings.game_host_amount}；"
+                f"每参与完成 {settings.game_play_step} 局 +{settings.game_play_amount}"
+            ),
+            "submission": f"随机事件投稿过审额外 +{settings.submission_amount} 摸鱼币",
+            "chat": f"水群有 {settings.chat_drop_percent}% 概率掉落 {settings.chat_drop_amount} 摸鱼币",
+            "referral": f"每邀请新人通过链接进群 +{settings.referral_amount} 摸鱼币",
+            "discipline": "风纪执法：成员可执行 /罚款 对违规员工处以罚款",
+        }
 
     def _departments(self, received_at) -> str:
+        hints = self._department_allowance_hints()
         lines = []
         for department in self._repository.list_departments():
             if not department.enabled or department.is_default:
                 continue
-            hint = self._DEPARTMENT_ALLOWANCE_HINTS.get(department.allowance_kind)
+            hint = hints.get(department.allowance_kind)
             lines.append(
                 f"{department.name}：{department.description or '暂无说明'}"
                 + (f"（部门增益：{hint}）" if hint else "")

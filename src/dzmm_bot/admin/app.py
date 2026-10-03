@@ -2119,6 +2119,48 @@ def create_app(
     ) -> dict:
         return _relay_core(lambda: core.revoke_discipline_fine(record_id))
 
+    @app.get("/api/game/department-allowances/settings")
+    def department_allowance_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return {
+            **_relay_core(core.get_department_allowance_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/department-allowances/settings")
+    def set_department_allowance_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "checkin_amount",
+            "event_amount",
+            "game_host_amount",
+            "game_play_amount",
+            "game_play_step",
+            "submission_amount",
+            "chat_drop_percent",
+            "chat_drop_amount",
+            "referral_amount",
+            "daily_cap",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_department_allowance_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="department-allowance-settings",
+        )
+
 
     @app.get("/api/game/hide-and-seek/settings")
     def hide_and_seek_settings(_: Annotated[None, Depends(authorize)]) -> dict:

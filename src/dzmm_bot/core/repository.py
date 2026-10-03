@@ -197,6 +197,7 @@ from .schema import (
     DailyActivityRecord,
     DailyAIUsageRecord,
     DailyCheckinRecord,
+    DepartmentAllowanceSettingsRecord,
     DisciplineFineRecord,
     DisciplineFineSettingsRecord,
     DarkMarketBidRecord,
@@ -1235,16 +1236,17 @@ class LiarDicePlayerView:
 LIAR_DICE_TURN_SECONDS = 120
 LIAR_DICE_SIGNUP_MINUTES = 10
 
+# 部门津贴每日封顶的默认种子值；实际封顶走 department_allowance_settings.daily_cap
 DEPARTMENT_ALLOWANCE_DAILY_CAP = 5
-# kind → (departments.allowance_kind 绑定值, 单次面额)
+# kind → departments.allowance_kind 绑定值（单次面额来自 department_allowance_settings）
 _DEPARTMENT_ALLOWANCE_RULES = {
-    "dept_checkin": ("checkin", 5),
-    "dept_event": ("event", 5),
-    "dept_game_host": ("game", 1),
-    "dept_game_play": ("game", 1),
-    "dept_submission": ("submission", 5),
-    "dept_chat": ("chat", 1),
-    "dept_referral": ("referral", 1),
+    "dept_checkin": "checkin",
+    "dept_event": "event",
+    "dept_game_host": "game",
+    "dept_game_play": "game",
+    "dept_submission": "submission",
+    "dept_chat": "chat",
+    "dept_referral": "referral",
 }
 # kind → 到账通知里的动作词
 _DEPARTMENT_ALLOWANCE_LABELS = {
@@ -1256,7 +1258,6 @@ _DEPARTMENT_ALLOWANCE_LABELS = {
     "dept_chat": "水群掉落",
     "dept_referral": "拉新奖励",
 }
-_DEPARTMENT_GAME_PLAY_STEP = 5
 _DEPARTMENT_ALLOWANCE_BINDINGS = frozenset(
     {"checkin", "event", "game", "submission", "chat", "referral", "discipline"}
 )
@@ -2176,6 +2177,20 @@ class DisciplineFineSettings:
 
 
 @dataclass(frozen=True)
+class DepartmentAllowanceSettings:
+    checkin_amount: int
+    event_amount: int
+    game_host_amount: int
+    game_play_amount: int
+    game_play_step: int
+    submission_amount: int
+    chat_drop_percent: int
+    chat_drop_amount: int
+    referral_amount: int
+    daily_cap: int
+
+
+@dataclass(frozen=True)
 class DisciplineFineResult:
     status: str
     issuer_display_name: str | None = None
@@ -2185,6 +2200,7 @@ class DisciplineFineResult:
     actual_amount: int = 0
     kickback: int = 0
     allowance_total: int = 0
+    allowance_cap: int = 5
     cooldown_remaining_seconds: int = 0
     candidate_labels: tuple[str, ...] = ()
 
@@ -25867,7 +25883,19 @@ class CoreRepository:
         rule = _DEPARTMENT_ALLOWANCE_RULES.get(kind)
         if rule is None:
             return 0
-        expected_binding, amount = rule
+        expected_binding = rule
+        allowance_settings = self._department_allowance_settings_row(session)
+        amounts = {
+            "dept_checkin": allowance_settings.checkin_amount,
+            "dept_event": allowance_settings.event_amount,
+            "dept_game_host": allowance_settings.game_host_amount,
+            "dept_game_play": allowance_settings.game_play_amount,
+            "dept_submission": allowance_settings.submission_amount,
+            "dept_chat": allowance_settings.chat_drop_amount,
+            "dept_referral": allowance_settings.referral_amount,
+        }
+        amount = amounts[kind]
+        daily_cap = int(allowance_settings.daily_cap)
         department = (
             session.get(DepartmentRecord, user.department_id)
             if user.department_id is not None
@@ -25889,9 +25917,9 @@ class CoreRepository:
             )
             or 0
         )
-        if total >= DEPARTMENT_ALLOWANCE_DAILY_CAP:
+        if total >= daily_cap:
             return 0
-        granted = min(amount, DEPARTMENT_ALLOWANCE_DAILY_CAP - total)
+        granted = min(amount, daily_cap - total)
         session.add(
             DepartmentAllowanceRecord(
                 user_id=user.id,
@@ -25908,7 +25936,8 @@ class CoreRepository:
             department,
             kind,
             granted,
-            total + granted >= DEPARTMENT_ALLOWANCE_DAILY_CAP,
+            total + granted >= daily_cap,
+            daily_cap,
             group_chat_id,
             detail,
         )
@@ -25922,6 +25951,7 @@ class CoreRepository:
         kind: str,
         granted: int,
         capped: bool,
+        daily_cap: int,
         group_chat_id: UUID | None,
         detail: str | None,
     ) -> None:
@@ -25936,7 +25966,7 @@ class CoreRepository:
         if detail:
             text += f"（{detail}）"
         if capped:
-            text += f"（今日津贴已满 {DEPARTMENT_ALLOWANCE_DAILY_CAP} 币）"
+            text += f"（今日津贴已满 {daily_cap} 币）"
         if group_chat_id is not None:
             destination = self.group_chat_destination(group_chat_id)
             if destination is not None:
@@ -25993,6 +26023,79 @@ class CoreRepository:
         with self._session() as session:
             record = self._discipline_fine_settings_row(session)
             return _discipline_fine_settings(record)
+
+    def get_department_allowance_settings(self) -> DepartmentAllowanceSettings:
+        with self._session() as session:
+            record = self._department_allowance_settings_row(session)
+            return _department_allowance_settings(record)
+
+    def set_department_allowance_settings(
+        self,
+        *,
+        checkin_amount: int,
+        event_amount: int,
+        game_host_amount: int,
+        game_play_amount: int,
+        game_play_step: int,
+        submission_amount: int,
+        chat_drop_percent: int,
+        chat_drop_amount: int,
+        referral_amount: int,
+        daily_cap: int,
+    ) -> DepartmentAllowanceSettings:
+        """整份覆盖：与风纪罚款那套设置接口保持一致，校验先跑完再落库。"""
+        ranges = (
+            ("打卡奖励", checkin_amount, 0, 999),
+            ("演出奖励", event_amount, 0, 999),
+            ("开局奖励", game_host_amount, 0, 999),
+            ("游戏参与奖励", game_play_amount, 0, 999),
+            ("游戏参与计局步长", game_play_step, 1, 999),
+            ("投稿奖励", submission_amount, 0, 999),
+            ("水群掉落概率", chat_drop_percent, 0, 100),
+            ("水群掉落金额", chat_drop_amount, 0, 999),
+            ("拉新奖励", referral_amount, 0, 999),
+            ("每日津贴封顶", daily_cap, 1, 9999),
+        )
+        for label, value, low, high in ranges:
+            if not isinstance(value, int) or not low <= value <= high:
+                raise ValueError(f"{label}必须在 {low}~{high} 之间")
+        with self.transaction():
+            with self._session() as session:
+                record = self._department_allowance_settings_row(session)
+                record.checkin_amount = checkin_amount
+                record.event_amount = event_amount
+                record.game_host_amount = game_host_amount
+                record.game_play_amount = game_play_amount
+                record.game_play_step = game_play_step
+                record.submission_amount = submission_amount
+                record.chat_drop_percent = chat_drop_percent
+                record.chat_drop_amount = chat_drop_amount
+                record.referral_amount = referral_amount
+                record.daily_cap = daily_cap
+                session.flush()
+                return _department_allowance_settings(record)
+
+    def _department_allowance_settings_row(
+        self, session: Session
+    ) -> DepartmentAllowanceSettingsRecord:
+        record = session.get(DepartmentAllowanceSettingsRecord, 1)
+        if record is None:
+            record = DepartmentAllowanceSettingsRecord(
+                id=1,
+                checkin_amount=5,
+                event_amount=5,
+                game_host_amount=1,
+                game_play_amount=1,
+                game_play_step=5,
+                submission_amount=5,
+                chat_drop_percent=10,
+                chat_drop_amount=1,
+                referral_amount=1,
+                daily_cap=DEPARTMENT_ALLOWANCE_DAILY_CAP,
+            )
+            session.add(record)
+            session.flush()
+        return record
 
     def _discipline_fine_settings_row(
         self, session: Session
@@ -26182,7 +26285,7 @@ class CoreRepository:
                 kickback_nominal = (
                     actual * int(settings_record.kickback_percent) // 100
                 )
-                kickback, allowance_total = self._grant_fine_kickback(
+                kickback, allowance_total, allowance_cap = self._grant_fine_kickback(
                     session, issuer, kickback_nominal, now
                 )
                 self._apply_balance_change(
@@ -26217,6 +26320,7 @@ class CoreRepository:
                     actual_amount=actual,
                     kickback=kickback,
                     allowance_total=allowance_total,
+                    allowance_cap=allowance_cap,
                 )
 
     def _resolve_fine_target(
@@ -26272,8 +26376,10 @@ class CoreRepository:
 
     def _grant_fine_kickback(
         self, session: Session, user: UserRecord, nominal: int, now: datetime
-    ) -> tuple[int, int]:
-        """风纪执法抽成：与部门津贴共享每日 5 币封顶台账；不发标准到账通知（罚款回执已含）。"""
+    ) -> tuple[int, int, int]:
+        """风纪执法抽成：与部门津贴共享每日封顶台账（封顶可配置）；不发标准到账通知（罚款回执已含）。"""
+        settings_row = self._department_allowance_settings_row(session)
+        daily_cap = int(settings_row.daily_cap)
         allow_date = now.astimezone(BEIJING).date()
         total = int(
             session.scalar(
@@ -26284,9 +26390,9 @@ class CoreRepository:
             )
             or 0
         )
-        if nominal <= 0 or total >= DEPARTMENT_ALLOWANCE_DAILY_CAP:
-            return 0, total
-        granted = min(nominal, DEPARTMENT_ALLOWANCE_DAILY_CAP - total)
+        if nominal <= 0 or total >= daily_cap:
+            return 0, total, daily_cap
+        granted = min(nominal, daily_cap - total)
         session.add(
             DepartmentAllowanceRecord(
                 user_id=user.id,
@@ -26297,7 +26403,7 @@ class CoreRepository:
             )
         )
         self._apply_balance_change(user, granted, "fine_kickback", now)
-        return granted, total + granted
+        return granted, total + granted, daily_cap
 
     def _send_fine_private(
         self, session: Session, platform_id: str, text: str
@@ -26431,8 +26537,10 @@ class CoreRepository:
         now: datetime,
         group_chat_id: UUID | None = None,
     ) -> None:
-        """对局完成时给参与者计 1 局；每满 _DEPARTMENT_GAME_PLAY_STEP 局发 1 币。"""
+        """对局完成时给参与者计 1 局；每满步长局发 1 币（步长可配置）。"""
         allow_date = now.astimezone(BEIJING).date()
+        settings_row = self._department_allowance_settings_row(session)
+        step = max(1, int(settings_row.game_play_step))
         dialect_name = session.get_bind().dialect.name
         for user_id in user_ids:
             values = {
@@ -26456,7 +26564,7 @@ class CoreRepository:
                     set_={"count": DepartmentGamePlayRecord.count + 1},
                 ).returning(DepartmentGamePlayRecord.count)
             )
-            if new_count is not None and int(new_count) % _DEPARTMENT_GAME_PLAY_STEP == 0:
+            if new_count is not None and int(new_count) % step == 0:
                 user = session.get(UserRecord, user_id)
                 if user is not None:
                     self._grant_department_allowance(
@@ -26492,7 +26600,9 @@ class CoreRepository:
                 )
 
     def roll_chat_drop(self) -> bool:
-        return self._chat_drop_random.random() < 0.1
+        with self._session() as session:
+            percent = int(self._department_allowance_settings_row(session).chat_drop_percent)
+        return self._chat_drop_random.random() < percent / 100
 
     def record_referral_from_system(self, message: InboundMessage, now: datetime) -> None:
         """入群系统消息 → 拉新归因 + 部门津贴（dept_referral）。
@@ -33572,6 +33682,23 @@ def _hide_and_seek_settings(record: HideAndSeekSettingsRecord) -> HideAndSeekSet
         win_reward=record.win_reward,
         daily_limit=record.daily_limit,
         selection_timeout_minutes=record.selection_timeout_minutes,
+    )
+
+
+def _department_allowance_settings(
+    record: DepartmentAllowanceSettingsRecord,
+) -> DepartmentAllowanceSettings:
+    return DepartmentAllowanceSettings(
+        checkin_amount=record.checkin_amount,
+        event_amount=record.event_amount,
+        game_host_amount=record.game_host_amount,
+        game_play_amount=record.game_play_amount,
+        game_play_step=record.game_play_step,
+        submission_amount=record.submission_amount,
+        chat_drop_percent=record.chat_drop_percent,
+        chat_drop_amount=record.chat_drop_amount,
+        referral_amount=record.referral_amount,
+        daily_cap=record.daily_cap,
     )
 
 

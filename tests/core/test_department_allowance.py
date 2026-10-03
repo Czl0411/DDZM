@@ -182,6 +182,47 @@ def test_department_list_shows_referral_hint():
     assert any("每邀请新人通过链接进群 +1 摸鱼币" in text for text in texts)
 
 
+def test_allowance_settings_override_amounts_and_hints():
+    """津贴参数后台可配置：面额、水群概率、封顶与 /部门 文案随之变化。"""
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _receive(service, "j0", "user-0", "/入职 甲", now)
+    department_id = _bind_department(factory, "核心技术部", "checkin")
+    _assign_department(factory, "user-0", department_id)
+    repository.set_department_allowance_settings(
+        checkin_amount=2,
+        event_amount=5,
+        game_host_amount=1,
+        game_play_amount=1,
+        game_play_step=5,
+        submission_amount=5,
+        chat_drop_percent=10,
+        chat_drop_amount=1,
+        referral_amount=1,
+        daily_cap=3,
+    )
+
+    before = _balance(factory, "user-0")
+    _receive(service, "c1", "user-0", "/打卡", now)
+    # 打卡基础奖 5 + 部门津贴 2（改过的面额）
+    assert _balance(factory, "user-0") - before == 7
+    assert _allowance_total(factory, "user-0", now) == 2
+
+    _receive(service, "dept", "user-0", "/部门", now)
+    assert _replied_text(factory, "每日打卡额外 +2 摸鱼币")
+
+
+def _replied_text(factory, snippet):
+    from dzmm_bot.core.schema import OutboundRecord
+
+    with factory() as session:
+        texts = list(session.scalars(select(OutboundRecord.text)))
+    return any(snippet in text for text in texts)
+
+
 def test_allowance_cap_partial_grant():
     service, repository, factory = _service()
     now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)

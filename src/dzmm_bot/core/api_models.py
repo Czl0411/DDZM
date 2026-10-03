@@ -1830,3 +1830,20 @@ class PaginatedDisciplineFineRecordsResponse(ApiModel):
 
 class DisciplineFineRevokeResponse(ApiModel):
     status: Literal["revoked", "not_found", "already_revoked"]
+
+
+class DepartmentAllowanceSettingsResponse(ApiModel):
+    checkin_amount: int = Field(ge=0, le=999)
+    event_amount: int = Field(ge=0, le=999)
+    game_host_amount: int = Field(ge=0, le=999)
+    game_play_amount: int = Field(ge=0, le=999)
+    game_play_step: int = Field(ge=1, le=999)
+    submission_amount: int = Field(ge=0, le=999)
+    chat_drop_percent: int = Field(ge=0, le=100)
+    chat_drop_amount: int = Field(ge=0, le=999)
+    referral_amount: int = Field(ge=0, le=999)
+    daily_cap: int = Field(ge=1, le=9999)
+
+
+class SetDepartmentAllowanceSettingsRequest(DepartmentAllowanceSettingsResponse):
+    pass

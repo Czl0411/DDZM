@@ -2659,6 +2659,42 @@ class DepartmentRecord(Base):
     )
 
 
+class DepartmentAllowanceSettingsRecord(Base):
+    __tablename__ = "department_allowance_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    checkin_amount: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+    event_amount: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+    game_host_amount: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    game_play_amount: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    game_play_step: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+    submission_amount: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+    chat_drop_percent: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10", nullable=False
+    )
+    chat_drop_amount: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    referral_amount: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    daily_cap: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+
+
 class DepartmentAllowanceRecord(Base):
     __tablename__ = "department_allowances"
     __table_args__ = (

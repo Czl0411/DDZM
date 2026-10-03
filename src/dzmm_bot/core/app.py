@@ -159,6 +159,8 @@ from .api_models import (
     DisciplineFineRevokeResponse,
     PaginatedDisciplineFineRecordsResponse,
     SetDisciplineFineSettingsRequest,
+    DepartmentAllowanceSettingsResponse,
+    SetDepartmentAllowanceSettingsRequest,
     MemoryAssessmentSettingsResponse,
     SetMemoryAssessmentSettingsRequest,
     MemoryAssessmentLevelRuleModel,
@@ -2650,6 +2652,63 @@ def create_app(
             rank_quotas=settings.rank_quotas,
             cooldown_minutes=settings.cooldown_minutes,
             target_daily_limit=settings.target_daily_limit,
+        )
+
+    @app.get(
+        "/internal/game/department-allowances/settings",
+        response_model=DepartmentAllowanceSettingsResponse,
+    )
+    def department_allowance_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> DepartmentAllowanceSettingsResponse:
+        settings = repository.get_department_allowance_settings()
+        return DepartmentAllowanceSettingsResponse(
+            checkin_amount=settings.checkin_amount,
+            event_amount=settings.event_amount,
+            game_host_amount=settings.game_host_amount,
+            game_play_amount=settings.game_play_amount,
+            game_play_step=settings.game_play_step,
+            submission_amount=settings.submission_amount,
+            chat_drop_percent=settings.chat_drop_percent,
+            chat_drop_amount=settings.chat_drop_amount,
+            referral_amount=settings.referral_amount,
+            daily_cap=settings.daily_cap,
+        )
+
+    @app.patch(
+        "/internal/game/department-allowances/settings",
+        response_model=DepartmentAllowanceSettingsResponse,
+    )
+    def set_department_allowance_settings(
+        request: SetDepartmentAllowanceSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> DepartmentAllowanceSettingsResponse:
+        try:
+            settings = repository.set_department_allowance_settings(
+                checkin_amount=request.checkin_amount,
+                event_amount=request.event_amount,
+                game_host_amount=request.game_host_amount,
+                game_play_amount=request.game_play_amount,
+                game_play_step=request.game_play_step,
+                submission_amount=request.submission_amount,
+                chat_drop_percent=request.chat_drop_percent,
+                chat_drop_amount=request.chat_drop_amount,
+                referral_amount=request.referral_amount,
+                daily_cap=request.daily_cap,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return DepartmentAllowanceSettingsResponse(
+            checkin_amount=settings.checkin_amount,
+            event_amount=settings.event_amount,
+            game_host_amount=settings.game_host_amount,
+            game_play_amount=settings.game_play_amount,
+            game_play_step=settings.game_play_step,
+            submission_amount=settings.submission_amount,
+            chat_drop_percent=settings.chat_drop_percent,
+            chat_drop_amount=settings.chat_drop_amount,
+            referral_amount=settings.referral_amount,
+            daily_cap=settings.daily_cap,
         )
 
     @app.patch(

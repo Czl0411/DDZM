@@ -2665,7 +2665,8 @@ class DepartmentAllowanceRecord(Base):
         Index("ix_department_allowances_user_date", "user_id", "allow_date"),
         CheckConstraint(
             "kind IN ('dept_checkin', 'dept_event', 'dept_game_host', "
-            "'dept_game_play', 'dept_submission', 'dept_chat', 'dept_referral')",
+            "'dept_game_play', 'dept_submission', 'dept_chat', 'dept_referral', "
+            "'dept_fine')",
             name="ck_department_allowance_kind",
         ),
     )
@@ -3673,3 +3674,52 @@ class BirthdaySettingsRecord(Base):
     tips_summary_template: Mapped[str] = mapped_column(
         Text, default="", server_default="", nullable=False
     )
+
+
+class DisciplineFineSettingsRecord(Base):
+    __tablename__ = "discipline_fine_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    department_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("departments.id")
+    )
+    amount: Mapped[int] = mapped_column(Integer, default=5, server_default="5", nullable=False)
+    kickback_percent: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    rank_quotas: Mapped[dict[str, int]] = mapped_column(
+        JSON, default=dict, server_default="{}", nullable=False
+    )
+    cooldown_minutes: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10", nullable=False
+    )
+    target_daily_limit: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+
+
+class DisciplineFineRecord(Base):
+    __tablename__ = "discipline_fine_records"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("group_chats.id"), nullable=False
+    )
+    issuer_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=False
+    )
+    target_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=False
+    )
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    kickback: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    via_reply: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    revoked_by: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))

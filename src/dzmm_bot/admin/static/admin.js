@@ -2356,6 +2356,108 @@ async function toggleGroupBirthday(groupId, enabled) {
     setResult(`保存失败（${error.message}）`, "error");
   }
 }
+
+let disciplineFineSettings = null;
+let disciplineFinePage = 1;
+
+async function loadDisciplineFine(page = disciplineFinePage) {
+  const [settings, ranks, departments, records, groups] = await Promise.all([
+    requestGame("/api/game/discipline-fine/settings"),
+    requestGame("/api/game/ranks"),
+    requestGame("/api/game/departments?page=1&page_size=100"),
+    requestGame(`/api/game/discipline-fine/records?page=${page}&page_size=${pageSizeFor("discipline-fine")}`),
+    requestGame("/api/group-chats", {cache: "no-store"}),
+  ]);
+  disciplineFineSettings = settings;
+  disciplineFinePage = records.page;
+  configurationVersion = groups.version;
+  renderDisciplineFinePanel(settings, ranks, departments.items, records);
+}
+
+function renderDisciplineFinePanel(settings, ranks, departments, records) {
+  const panel = document.querySelector("#discipline-fine-panel");
+  if (!panel) return;
+  const departmentOptions = departments.map((department) =>
+    `<option value="${department.id}"${department.id === settings.department_id ? " selected" : ""}>${escapeHtml(department.name)}</option>`
+  ).join("");
+  const defaultQuotas = {1: 0, 2: 1, 3: 2, 4: 3, 5: 3, 6: 5, 7: 5, 8: 8, 9: 8, 10: 10, 11: 20};
+  const quotaInputs = ranks.map((rank) => {
+    const quota = settings.rank_quotas[String(rank.id)] ?? defaultQuotas[rank.sort_order] ?? 0;
+    return `<label>${escapeHtml(rank.level_label)} ${escapeHtml(rank.name)}<input data-fine-quota="${rank.id}" type="number" min="0" max="999" value="${quota}"></label>`;
+  }).join("");
+  const recordRows = records.items.map((record) => {
+    const action = record.revoked_at
+      ? "已撤销"
+      : `<button class="danger-button" data-fine-revoke="${record.id}" type="button">撤销</button>`;
+    const reason = escapeHtml(record.reason || "未填写理由") + (record.via_reply ? "（引用）" : "");
+    return `<tr><td>${formatHeartbeat(record.created_at)}</td><td>${escapeHtml(record.group_name || "—")}</td><td>${escapeHtml(record.issuer_display_name)}</td><td>${escapeHtml(record.target_display_name)}</td><td>${record.amount}</td><td>${record.kickback}</td><td>${reason}</td><td>${action}</td></tr>`;
+  }).join("") || '<tr><td colspan="8" class="muted">还没有罚款记录。</td></tr>';
+  panel.innerHTML = `
+    <div class="panel-heading"><div><h2>风纪罚款</h2><p class="muted">罚款即销毁，余额不足扣到 0；执法者抽成计入每人每日 5 币津贴封顶。职级配额为 0 表示该职级不能罚款。</p></div><div class="command-actions"><button id="discipline-fine-save" class="primary" type="button">保存罚款设置</button></div></div>
+    <div class="event-input-grid">
+      <label><input id="discipline-fine-enabled" type="checkbox"${settings.enabled ? " checked" : ""}>开启风纪罚款</label>
+      <label>执法部门<select id="discipline-fine-department"><option value="">未配置</option>${departmentOptions}</select></label>
+    </div>
+    <div class="event-input-grid">
+      ${birthdayNumberField("discipline-fine-amount", "单次罚款(摸鱼币)", settings.amount, 1, 999)}
+      ${birthdayNumberField("discipline-fine-kickback", "执法抽成(%)", settings.kickback_percent, 0, 100)}
+      ${birthdayNumberField("discipline-fine-cooldown", "同人冷却(分钟)", settings.cooldown_minutes, 0, 1440)}
+      ${birthdayNumberField("discipline-fine-target-limit", "被罚人每日上限(0=不限)", settings.target_daily_limit, 0, 999)}
+    </div>
+    <div class="panel-heading"><div><h2>职级每日罚款次数</h2></div></div>
+    <div class="event-input-grid">${quotaInputs}</div>
+    <div class="panel-heading"><div><h2>罚款记录</h2><p class="muted">撤销会全额退还实扣摸鱼币，不追回执法者已得抽成。</p></div></div>
+    <table class="data-table"><thead><tr><th>时间</th><th>群聊</th><th>执法者</th><th>被罚人</th><th>实扣</th><th>抽成</th><th>理由</th><th>操作</th></tr></thead><tbody>${recordRows}</tbody></table>
+    <div id="discipline-fine-pagination"></div>`;
+  renderPagination(document.querySelector("#discipline-fine-pagination"), records, "条记录", (page) => loadDisciplineFine(page));
+  document.querySelector("#discipline-fine-save").addEventListener("click", saveDisciplineFineSettings);
+  for (const button of panel.querySelectorAll("[data-fine-revoke]")) {
+    button.addEventListener("click", () => revokeDisciplineFine(button.dataset.fineRevoke));
+  }
+}
+
+async function saveDisciplineFineSettings() {
+  const button = document.querySelector("#discipline-fine-save");
+  const rankQuotas = {};
+  for (const input of document.querySelectorAll("[data-fine-quota]")) {
+    rankQuotas[input.dataset.fineQuota] = Number(input.value);
+  }
+  const departmentValue = document.querySelector("#discipline-fine-department").value;
+  const payload = {
+    enabled: document.querySelector("#discipline-fine-enabled").checked,
+    department_id: departmentValue || null,
+    amount: Number(document.querySelector("#discipline-fine-amount").value),
+    kickback_percent: Number(document.querySelector("#discipline-fine-kickback").value),
+    rank_quotas: rankQuotas,
+    cooldown_minutes: Number(document.querySelector("#discipline-fine-cooldown").value),
+    target_daily_limit: Number(document.querySelector("#discipline-fine-target-limit").value),
+  };
+  try {
+    await runMutation(button, "保存中…", async () => {
+      disciplineFineSettings = await requestGame("/api/game/discipline-fine/settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify(payload),
+      });
+      configurationVersion = disciplineFineSettings.version;
+    });
+    setResult("风纪罚款设置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+}
+
+async function revokeDisciplineFine(recordId) {
+  if (!window.confirm("撤销这条罚款吗？会全额退还实扣摸鱼币。")) return;
+  try {
+    await requestGame(`/api/game/discipline-fine/records/${recordId}/revoke`, {method: "POST"});
+    setResult("罚款已撤销，款项已退还", "success");
+    await loadDisciplineFine();
+  } catch (error) {
+    setResult(`撤销失败（${error.message}）`, "error");
+  }
+}
+
 async function loadGameView(view) {
   setPageContext(view);
   showView(view);
@@ -2368,6 +2470,7 @@ async function loadGameView(view) {
     if (view === "events") return loadRandomEvents();
     if (view === "hide-and-seek") return loadHideAndSeek();
     if (view === "birthday") return loadBirthday();
+    if (view === "discipline-fine") return loadDisciplineFine();
     if (view === "memory-assessment") return loadMemoryAssessment();
     if (view === "undercover") return loadUndercover();
     if (view === "blame-bomb") return loadBlameBomb();

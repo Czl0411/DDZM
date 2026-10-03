@@ -34,7 +34,9 @@ from .schema import PRIMARY_GROUP_CHAT_ID
 from .repository import (
     BlameGameResult,
     CoreRepository,
+    DEPARTMENT_ALLOWANCE_DAILY_CAP,
     EmployeeNameTakenError,
+    _FINE_FEEDBACK_HINT,
     blame_settlement_template_values,
     company_story_novel_resource_id,
     format_employee_number,
@@ -53,6 +55,7 @@ _COMMANDS = {
     "/随礼",
     "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据",
     "/真心换真心", "/真心换真心数据", "/问题", "/真心",
+    "/罚款", "/我的罚款",
 }
 
 _LOTTERY_COMMANDS = {
@@ -102,6 +105,8 @@ class GroupCommandHandler:
             command = "/问题"
         if command in {"/回答", "/答"}:
             command = "/真心"
+        if command == "/罚":
+            command = "/罚款"
         if command not in _COMMANDS:
             dice_reply = self._liar_dice_call_step(message, content)
             if dice_reply is not None:
@@ -378,6 +383,12 @@ class GroupCommandHandler:
             return self._truth_trade_ask(message, content, received_at, group_chat_id)
         if command == "/真心":
             return self._truth_trade_answer(message, content, received_at, group_chat_id)
+        if command == "/罚款":
+            return self._discipline_fine(message, content, received_at, group_chat_id)
+        if command == "/我的罚款":
+            if message.source_type != "direct":
+                return "只能在私聊中使用 /我的罚款。"
+            return self._my_discipline_fines(message, received_at)
         if command == "/看牌":
             if message.source_type != "direct":
                 return self._reply("/看牌", "group_only", received_at)
@@ -1939,6 +1950,101 @@ class GroupCommandHandler:
         if result.status in errors:
             return errors[result.status]
         return result.public_message or "当前不能回答。"
+
+    def _discipline_fine(self, message, content, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中执行罚款。"
+        # /罚 是 /罚款 的别名；content 保留原文，按实际前缀剥离（/罚款 必须在 /罚 之前判断）
+        prefix = next(p for p in ("/罚款", "/罚") if content.startswith(p))
+        payload = content[len(prefix):].strip()
+        reference = message.reference
+        if reference is not None and reference.sender_platform_id:
+            # 引用形态：引用优先于名字参数，payload 整体作为理由
+            target_platform_id = reference.sender_platform_id
+            target_name = None
+            reason = payload or None
+            via_reply = True
+        else:
+            parts = payload.split(None, 1)
+            if not parts:
+                return (
+                    "用法：引用对方消息发送 /罚款 [理由]，"
+                    "或发送 /罚款 名字 [理由]。"
+                )
+            target_name = parts[0]
+            reason = parts[1].strip() if len(parts) > 1 else None
+            target_platform_id = None
+            via_reply = False
+        result = self._repository.execute_discipline_fine(
+            message.sender_platform_id,
+            target_name=target_name,
+            target_platform_id=target_platform_id,
+            reason=reason,
+            via_reply=via_reply,
+            received_at=received_at,
+            group_chat_id=group_chat_id,
+        )
+        errors = {
+            "disabled": "风纪罚款未开启。",
+            "not_configured": "风纪罚款未配置执法部门，请联系管理员在后台设置。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "quota_zero": "你的职级今日无可用的罚款次数（配额为 0）。",
+            "quota_exhausted": "你今日的罚款次数已用完，明天再来吧。",
+            "target_not_joined": "目标还未入职摸鱼公司。",
+            "self": "不能罚款自己。",
+            "same_department": "不能罚款执法部门内部成员。",
+            "target_limit": "该员工今日被罚款次数已达上限。",
+        }
+        if result.status in errors:
+            return errors[result.status]
+        if result.status == "not_authorized":
+            return f"只有{result.department_name}成员可以执行罚款。"
+        if result.status == "cooldown":
+            return f"罚款冷却中，请 {max(1, result.cooldown_remaining_seconds)} 秒后再试。"
+        if result.status == "ambiguous_target":
+            candidates = "\n".join(result.candidate_labels)
+            return f"重名员工，请按工号罚款：\n{candidates}"
+        reason_label = reason or "未填写理由"
+        deduction_note = (
+            "" if result.actual_amount == result.amount
+            else f"（余额不足，实扣 {result.actual_amount}）"
+        )
+        if result.allowance_total >= DEPARTMENT_ALLOWANCE_DAILY_CAP:
+            allowance_note = (
+                f"稽查人获得 {result.kickback} 摸鱼币津贴"
+                f"（今日津贴已满 {DEPARTMENT_ALLOWANCE_DAILY_CAP} 币）"
+            )
+        else:
+            allowance_note = (
+                f"稽查人获得 {result.kickback} 摸鱼币津贴"
+                f"（今日津贴 {result.allowance_total}/{DEPARTMENT_ALLOWANCE_DAILY_CAP}）"
+            )
+        return (
+            f"【风纪罚款】{result.issuer_display_name}（{result.department_name}）对 "
+            f"{result.target_display_name} 处以 {result.amount} 摸鱼币罚款"
+            f"{deduction_note}，理由：{reason_label}\n"
+            f"已成功扣款 {result.actual_amount} 摸鱼币，{allowance_note}。\n"
+            f"{_FINE_FEEDBACK_HINT}"
+        )
+
+    def _my_discipline_fines(self, message, received_at):
+        view = self._repository.my_discipline_fines(message.sender_platform_id)
+        if view is None:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        lines = [
+            f"【我的罚款记录】累计被罚 {view.total_count} 次 / "
+            f"{view.total_amount} 摸鱼币（不含已撤销）"
+        ]
+        if not view.records:
+            lines.append("暂无记录。")
+        for index, record in enumerate(view.records, 1):
+            revoked = "（已撤销）" if record.revoked_at is not None else ""
+            reason = record.reason or "未填写理由"
+            lines.append(
+                f"{index}. {record.created_at:%m-%d %H:%M} 由 "
+                f"{record.issuer_display_name} 罚 {record.amount} 币｜{reason}{revoked}"
+            )
+        return "\n".join(lines)
 
     def _truth_trade_leave(self, message, received_at, group_chat_id):
         if message.source_type != "group" or group_chat_id is None:
@@ -4858,6 +4964,15 @@ class GroupCommandHandler:
                     ("/彩票", "奖池上限 200 摸鱼币，超出部分转入调节金；调节金累计到当前员工总数时全员各发 1 摸鱼币"),
                 ),
             ),
+            "风纪": (
+                "【风纪罚款】",
+                (
+                    ("/罚款", "执法部门成员引用他人消息发送 /罚款 [理由]：对目标处以罚款"),
+                    ("/罚款", "或 /罚款 名字 [理由]：按注册名罚款；重名请用 /罚款 #工号 [理由]"),
+                    ("/罚款", "罚款即销毁，余额不足扣到 0；执法者获得抽成津贴（计入每日 5 币封顶）"),
+                    ("/我的罚款", "私聊 /我的罚款：查看自己被罚款的记录"),
+                ),
+            ),
         }
 
         def category_available(category: str) -> bool:
@@ -4889,6 +5004,7 @@ class GroupCommandHandler:
                 ),
                 ("随机事件", "/帮助 随机事件：报名与退出"),
                 ("彩票", "/帮助 彩票：公司双色球的玩法、奖级与开奖规则"),
+                ("风纪", "/帮助 风纪：风纪罚款"),
                 ("部门", "/帮助 部门：部门申请与审批"),
                 ("职位", "/帮助 职位：职位晋升与审批"),
             )

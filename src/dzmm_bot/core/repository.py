@@ -197,6 +197,8 @@ from .schema import (
     DailyActivityRecord,
     DailyAIUsageRecord,
     DailyCheckinRecord,
+    DisciplineFineRecord,
+    DisciplineFineSettingsRecord,
     DarkMarketBidRecord,
     DarkMarketDailyListingRecord,
     DarkMarketDeferredNoticeRecord,
@@ -539,7 +541,26 @@ _BALANCE_SOURCE_LABELS = {
     "shop_gift": "赠送卡到账",
     "shop_scratch": "刮刮卡奖励",
     "shop_compensation": "卡片作废补偿",
+    "discipline_fine": "风纪罚款",
+    "discipline_fine_refund": "风纪罚款退款",
+    "fine_kickback": "风纪执法抽成",
 }
+# 风纪罚款执法者每日次数默认配额：按职级序（sort_order）取值；
+# rank_quotas 中显式配置的 rank_id 优先于该默认
+_DEFAULT_FINE_QUOTAS_BY_SORT_ORDER = {
+    1: 0,
+    2: 1,
+    3: 2,
+    4: 3,
+    5: 3,
+    6: 5,
+    7: 5,
+    8: 8,
+    9: 8,
+    10: 10,
+    11: 20,
+}
+_FINE_FEEDBACK_HINT = "如对本次罚款有异议，请保存截图并向经理或总监职级以上的员工反馈。"
 _DEFAULT_RED_PACKET_EXPIRY_MINUTES = 10
 _DEFAULT_RED_PACKET_EMPTY_PROBABILITY_PERCENT = 5
 _RED_PACKET_DAILY_LIMIT = 5
@@ -2145,6 +2166,52 @@ class BoardBonusResult:
 
 
 @dataclass(frozen=True)
+class DisciplineFineSettings:
+    enabled: bool
+    department_id: UUID | None
+    amount: int
+    kickback_percent: int
+    rank_quotas: dict[str, int]
+    cooldown_minutes: int
+    target_daily_limit: int
+
+
+@dataclass(frozen=True)
+class DisciplineFineResult:
+    status: str
+    issuer_display_name: str | None = None
+    department_name: str | None = None
+    target_display_name: str | None = None
+    amount: int = 0
+    actual_amount: int = 0
+    kickback: int = 0
+    allowance_total: int = 0
+    cooldown_remaining_seconds: int = 0
+    candidate_labels: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DisciplineFineRecordView:
+    id: UUID
+    issuer_display_name: str
+    target_display_name: str
+    group_name: str | None
+    amount: int
+    kickback: int
+    reason: str | None
+    via_reply: bool
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class MyDisciplineFineView:
+    total_amount: int
+    total_count: int
+    records: tuple[DisciplineFineRecordView, ...]
+
+
+@dataclass(frozen=True)
 class PromotionRequestResult:
     status: str
     request: PromotionRequestRecord | None = None
@@ -2348,6 +2415,8 @@ _COMMAND_DEFINITIONS = (
     ("/真心换真心数据", "/真心换真心数据", "查看本群真心换真心总战绩"),
     ("/问题", "/问 内容；/问 跳过", "真心换真心中轮到自己时提问，或跳过本轮提问（/问题 等效）"),
     ("/真心", "/回答 内容；/回答 跳过", "真心换真心中回答当前问题，或记为拒答（/真心 等效）"),
+    ("/罚款", "/罚款 [名字/#工号] [理由]", "风纪监察部成员对违规员工处以摸鱼币罚款，可引用回复目标消息"),
+    ("/我的罚款", "/我的罚款（仅私聊）", "查看自己被罚款的记录"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
     ("/跳过", "/跳过 编号 [编号...]", "排除蹦蹦数字炸弹中尚未报数的参与者"),
@@ -25921,6 +25990,441 @@ class CoreRepository:
             )
             return int(total or 0)
 
+    def get_discipline_fine_settings(self) -> DisciplineFineSettings:
+        with self._session() as session:
+            record = self._discipline_fine_settings_row(session)
+            return _discipline_fine_settings(record)
+
+    def _discipline_fine_settings_row(
+        self, session: Session
+    ) -> DisciplineFineSettingsRecord:
+        record = session.get(DisciplineFineSettingsRecord, 1)
+        if record is None:
+            record = DisciplineFineSettingsRecord(
+                id=1,
+                enabled=False,
+                department_id=None,
+                amount=5,
+                kickback_percent=20,
+                rank_quotas={},
+                cooldown_minutes=10,
+                target_daily_limit=0,
+            )
+            session.add(record)
+            session.flush()
+        return record
+
+    def set_discipline_fine_settings(
+        self,
+        *,
+        enabled: bool,
+        department_id: UUID | None,
+        amount: int,
+        kickback_percent: int,
+        rank_quotas: dict[str, int],
+        cooldown_minutes: int,
+        target_daily_limit: int,
+    ) -> DisciplineFineSettings:
+        """整份覆盖：与生日祝福那套设置接口保持一致，校验先跑完再落库。"""
+        if not isinstance(enabled, bool):
+            raise ValueError("风纪罚款开关无效")
+        if not isinstance(amount, int) or not 1 <= amount <= 999:
+            raise ValueError("单次罚款金额必须在 1~999 之间")
+        if not isinstance(kickback_percent, int) or not 0 <= kickback_percent <= 100:
+            raise ValueError("执法抽成比例必须在 0~100 之间")
+        if not isinstance(cooldown_minutes, int) or not 0 <= cooldown_minutes <= 1440:
+            raise ValueError("罚款冷却分钟数必须在 0~1440 之间")
+        if (
+            not isinstance(target_daily_limit, int)
+            or not 0 <= target_daily_limit <= 999
+        ):
+            raise ValueError("被罚人每日上限必须在 0~999 之间")
+        if not isinstance(rank_quotas, dict):
+            raise ValueError("职级配额无效")
+        quotas: dict[str, int] = {}
+        for key, value in rank_quotas.items():
+            normalized_key = str(key).strip()
+            if not normalized_key or len(normalized_key) > 64:
+                raise ValueError("职级配额的职级编号无效")
+            if not isinstance(value, int) or not 0 <= value <= 999:
+                raise ValueError("职级配额次数必须在 0~999 之间")
+            quotas[normalized_key] = value
+        with self.transaction():
+            with self._session() as session:
+                if department_id is not None:
+                    department = session.get(DepartmentRecord, department_id)
+                    if department is None or not department.enabled:
+                        raise ValueError("执法部门不存在")
+                record = self._discipline_fine_settings_row(session)
+                record.enabled = enabled
+                record.department_id = department_id
+                record.amount = amount
+                record.kickback_percent = kickback_percent
+                record.rank_quotas = quotas
+                record.cooldown_minutes = cooldown_minutes
+                record.target_daily_limit = target_daily_limit
+                session.flush()
+                return _discipline_fine_settings(record)
+
+    def execute_discipline_fine(
+        self,
+        issuer_platform_id: str,
+        *,
+        target_name: str | None,
+        target_platform_id: str | None,
+        reason: str | None,
+        via_reply: bool,
+        received_at: datetime,
+        group_chat_id: UUID,
+    ) -> DisciplineFineResult:
+        now = received_at.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                settings_record = self._discipline_fine_settings_row(session)
+                if not settings_record.enabled:
+                    return DisciplineFineResult("disabled")
+                enforcement_department = (
+                    session.get(DepartmentRecord, settings_record.department_id)
+                    if settings_record.department_id is not None
+                    else None
+                )
+                if enforcement_department is None or not enforcement_department.enabled:
+                    return DisciplineFineResult("not_configured")
+                issuer_row = session.execute(
+                    select(UserRecord, RankRecord)
+                    .join(RankRecord, UserRecord.rank_id == RankRecord.id)
+                    .where(UserRecord.platform_id == issuer_platform_id)
+                ).first()
+                if issuer_row is None:
+                    return DisciplineFineResult("not_joined")
+                issuer, issuer_rank = issuer_row
+                if issuer.department_id != enforcement_department.id:
+                    return DisciplineFineResult(
+                        "not_authorized",
+                        department_name=enforcement_department.name,
+                    )
+                quota = int(
+                    (settings_record.rank_quotas or {}).get(
+                        str(issuer_rank.id),
+                        _DEFAULT_FINE_QUOTAS_BY_SORT_ORDER.get(
+                            issuer_rank.sort_order, 0
+                        ),
+                    )
+                )
+                if quota <= 0:
+                    return DisciplineFineResult(
+                        "quota_zero",
+                        department_name=enforcement_department.name,
+                    )
+                day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                day_end = day_start + timedelta(days=1)
+                fines_today = int(
+                    session.scalar(
+                        select(func.count()).select_from(DisciplineFineRecord).where(
+                            DisciplineFineRecord.issuer_id == issuer.id,
+                            DisciplineFineRecord.created_at >= day_start,
+                            DisciplineFineRecord.created_at < day_end,
+                        )
+                    )
+                    or 0
+                )
+                if fines_today >= quota:
+                    return DisciplineFineResult(
+                        "quota_exhausted",
+                        issuer_display_name=issuer.display_name,
+                        department_name=enforcement_department.name,
+                    )
+                if settings_record.cooldown_minutes > 0:
+                    last_created_at = session.scalar(
+                        select(func.max(DisciplineFineRecord.created_at)).where(
+                            DisciplineFineRecord.issuer_id == issuer.id
+                        )
+                    )
+                    if last_created_at is not None:
+                        elapsed = (now - last_created_at).total_seconds()
+                        cooldown_seconds = settings_record.cooldown_minutes * 60
+                        if elapsed < cooldown_seconds:
+                            return DisciplineFineResult(
+                                "cooldown",
+                                cooldown_remaining_seconds=int(
+                                    cooldown_seconds - elapsed
+                                ),
+                            )
+                status, target, candidates = self._resolve_fine_target(
+                    session, target_name, target_platform_id
+                )
+                if status == "ambiguous":
+                    return DisciplineFineResult(
+                        "ambiguous_target", candidate_labels=candidates
+                    )
+                if target is None:
+                    return DisciplineFineResult("target_not_joined")
+                if target.id == issuer.id:
+                    return DisciplineFineResult("self")
+                if target.department_id == enforcement_department.id:
+                    return DisciplineFineResult("same_department")
+                if settings_record.target_daily_limit > 0:
+                    fined_today = int(
+                        session.scalar(
+                            select(func.count())
+                            .select_from(DisciplineFineRecord)
+                            .where(
+                                DisciplineFineRecord.target_id == target.id,
+                                DisciplineFineRecord.created_at >= day_start,
+                                DisciplineFineRecord.created_at < day_end,
+                            )
+                        )
+                        or 0
+                    )
+                    if fined_today >= settings_record.target_daily_limit:
+                        return DisciplineFineResult("target_limit")
+                amount = int(settings_record.amount)
+                actual = int(min(max(int(target.balance), 0), amount))
+                kickback_nominal = (
+                    actual * int(settings_record.kickback_percent) // 100
+                )
+                kickback, allowance_total = self._grant_fine_kickback(
+                    session, issuer, kickback_nominal, now
+                )
+                self._apply_balance_change(
+                    target, -actual, "discipline_fine", now
+                )
+                session.add(
+                    DisciplineFineRecord(
+                        group_chat_id=group_chat_id,
+                        issuer_id=issuer.id,
+                        target_id=target.id,
+                        amount=actual,
+                        kickback=kickback,
+                        reason=reason,
+                        via_reply=via_reply,
+                        created_at=now,
+                    )
+                )
+                session.flush()
+                self._send_fine_private(
+                    session,
+                    target.platform_id,
+                    f"【风纪罚款】你被处以 {amount} 摸鱼币罚款（实扣 {actual}），"
+                    f"理由：{reason or '未填写理由'}。当前余额：{int(target.balance)}。"
+                    f"{_FINE_FEEDBACK_HINT}",
+                )
+                return DisciplineFineResult(
+                    "granted",
+                    issuer_display_name=issuer.display_name,
+                    department_name=enforcement_department.name,
+                    target_display_name=target.display_name,
+                    amount=amount,
+                    actual_amount=actual,
+                    kickback=kickback,
+                    allowance_total=allowance_total,
+                )
+
+    def _resolve_fine_target(
+        self,
+        session: Session,
+        target_name: str | None,
+        target_platform_id: str | None,
+    ) -> tuple[str, UserRecord | None, tuple[str, ...]]:
+        """返回 (status, target, candidates)；status ∈ ok/ambiguous/missing。"""
+        if target_platform_id:
+            target = session.scalar(
+                select(UserRecord)
+                .where(UserRecord.platform_id == target_platform_id)
+                .with_for_update()
+            )
+            return ("ok", target, ())
+        normalized = (target_name or "").strip()
+        if not normalized:
+            return ("missing", None, ())
+        employee_number_match = re.fullmatch(r"#([0-9]+)", normalized)
+        if employee_number_match is not None:
+            rows = list(
+                session.scalars(
+                    select(UserRecord)
+                    .where(
+                        UserRecord.employee_number
+                        == int(employee_number_match.group(1))
+                    )
+                    .with_for_update()
+                )
+            )
+        else:
+            rows = list(
+                session.scalars(
+                    select(UserRecord)
+                    .where(UserRecord.display_name == normalized)
+                    .order_by(UserRecord.employee_number)
+                    .with_for_update()
+                )
+            )
+        if not rows:
+            return ("missing", None, ())
+        if len(rows) > 1:
+            return (
+                "ambiguous",
+                None,
+                tuple(
+                    f"{row.display_name} {format_employee_number(row.employee_number)}"
+                    for row in rows
+                ),
+            )
+        return ("ok", rows[0], ())
+
+    def _grant_fine_kickback(
+        self, session: Session, user: UserRecord, nominal: int, now: datetime
+    ) -> tuple[int, int]:
+        """风纪执法抽成：与部门津贴共享每日 5 币封顶台账；不发标准到账通知（罚款回执已含）。"""
+        allow_date = now.astimezone(BEIJING).date()
+        total = int(
+            session.scalar(
+                select(func.coalesce(func.sum(DepartmentAllowanceRecord.amount), 0)).where(
+                    DepartmentAllowanceRecord.user_id == user.id,
+                    DepartmentAllowanceRecord.allow_date == allow_date,
+                )
+            )
+            or 0
+        )
+        if nominal <= 0 or total >= DEPARTMENT_ALLOWANCE_DAILY_CAP:
+            return 0, total
+        granted = min(nominal, DEPARTMENT_ALLOWANCE_DAILY_CAP - total)
+        session.add(
+            DepartmentAllowanceRecord(
+                user_id=user.id,
+                allow_date=allow_date,
+                kind="dept_fine",
+                amount=granted,
+                created_at=now,
+            )
+        )
+        self._apply_balance_change(user, granted, "fine_kickback", now)
+        return granted, total + granted
+
+    def _send_fine_private(
+        self, session: Session, platform_id: str, text: str
+    ) -> None:
+        direct_chatroom_id = session.scalar(
+            select(DirectChatRecord.chatroom_id).where(
+                DirectChatRecord.platform_user_id == platform_id
+            )
+        )
+        if direct_chatroom_id is not None:
+            self.enqueue_system_outbound(
+                text,
+                destination_chatroom_id=direct_chatroom_id,
+                delivery_kind="direct",
+            )
+
+    def revoke_discipline_fine(self, record_id: UUID, now: datetime) -> str:
+        with self.transaction():
+            with self._session() as session:
+                record = session.get(DisciplineFineRecord, record_id)
+                if record is None:
+                    return "not_found"
+                if record.revoked_at is not None:
+                    return "already_revoked"
+                target = session.get(UserRecord, record.target_id)
+                if target is not None:
+                    self._apply_balance_change(
+                        target, record.amount, "discipline_fine_refund", now
+                    )
+                record.revoked_at = now.astimezone(BEIJING)
+                session.flush()
+                return "revoked"
+
+    def list_discipline_fine_records(
+        self, *, page: int, page_size: int
+    ) -> tuple[list[DisciplineFineRecordView], int]:
+        with self._session() as session:
+            total = int(
+                session.scalar(
+                    select(func.count()).select_from(DisciplineFineRecord)
+                )
+                or 0
+            )
+            issuer_user = aliased(UserRecord)
+            target_user = aliased(UserRecord)
+            rows = session.execute(
+                select(
+                    DisciplineFineRecord,
+                    issuer_user.display_name,
+                    target_user.display_name,
+                    GroupChatRecord.name,
+                )
+                .join(issuer_user, issuer_user.id == DisciplineFineRecord.issuer_id)
+                .join(target_user, target_user.id == DisciplineFineRecord.target_id)
+                .join(
+                    GroupChatRecord,
+                    GroupChatRecord.id == DisciplineFineRecord.group_chat_id,
+                )
+                .order_by(DisciplineFineRecord.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).all()
+            views = [
+                DisciplineFineRecordView(
+                    id=record.id,
+                    issuer_display_name=issuer_name,
+                    target_display_name=target_name,
+                    group_name=group_name,
+                    amount=record.amount,
+                    kickback=record.kickback,
+                    reason=record.reason,
+                    via_reply=record.via_reply,
+                    created_at=record.created_at,
+                    revoked_at=record.revoked_at,
+                )
+                for record, issuer_name, target_name, group_name in rows
+            ]
+            return views, total
+
+    def my_discipline_fines(self, platform_id: str) -> MyDisciplineFineView | None:
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return None
+            issuer_user = aliased(UserRecord)
+            total_row = session.execute(
+                select(
+                    func.coalesce(func.sum(DisciplineFineRecord.amount), 0),
+                    func.count(),
+                )
+                .select_from(DisciplineFineRecord)
+                .where(
+                    DisciplineFineRecord.target_id == user.id,
+                    DisciplineFineRecord.revoked_at.is_(None),
+                )
+            ).one()
+            rows = session.execute(
+                select(DisciplineFineRecord, issuer_user.display_name)
+                .join(issuer_user, issuer_user.id == DisciplineFineRecord.issuer_id)
+                .where(DisciplineFineRecord.target_id == user.id)
+                .order_by(DisciplineFineRecord.created_at.desc())
+                .limit(10)
+            ).all()
+            records = tuple(
+                DisciplineFineRecordView(
+                    id=record.id,
+                    issuer_display_name=issuer_name,
+                    target_display_name=user.display_name,
+                    group_name=None,
+                    amount=record.amount,
+                    kickback=record.kickback,
+                    reason=record.reason,
+                    via_reply=record.via_reply,
+                    created_at=record.created_at,
+                    revoked_at=record.revoked_at,
+                )
+                for record, issuer_name in rows
+            )
+            return MyDisciplineFineView(
+                total_amount=int(total_row[0] or 0),
+                total_count=int(total_row[1] or 0),
+                records=records,
+            )
+
     def _bump_department_game_plays(
         self,
         session: Session,
@@ -33065,6 +33569,20 @@ def _hide_and_seek_settings(record: HideAndSeekSettingsRecord) -> HideAndSeekSet
         win_reward=record.win_reward,
         daily_limit=record.daily_limit,
         selection_timeout_minutes=record.selection_timeout_minutes,
+    )
+
+
+def _discipline_fine_settings(
+    record: DisciplineFineSettingsRecord,
+) -> DisciplineFineSettings:
+    return DisciplineFineSettings(
+        enabled=record.enabled,
+        department_id=record.department_id,
+        amount=record.amount,
+        kickback_percent=record.kickback_percent,
+        rank_quotas=dict(record.rank_quotas or {}),
+        cooldown_minutes=record.cooldown_minutes,
+        target_daily_limit=record.target_daily_limit,
     )
 
 

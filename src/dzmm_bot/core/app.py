@@ -154,6 +154,11 @@ from .api_models import (
     BirthdayGreetResponse,
     BirthdayMemberResponse,
     SetBirthdaySettingsRequest,
+    DisciplineFineSettingsResponse,
+    DisciplineFineRecordResponse,
+    DisciplineFineRevokeResponse,
+    PaginatedDisciplineFineRecordsResponse,
+    SetDisciplineFineSettingsRequest,
     MemoryAssessmentSettingsResponse,
     SetMemoryAssessmentSettingsRequest,
     MemoryAssessmentLevelRuleModel,
@@ -2629,6 +2634,100 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _birthday_settings_response(settings)
+
+    @app.get(
+        "/internal/game/discipline-fine/settings",
+        response_model=DisciplineFineSettingsResponse,
+    )
+    def discipline_fine_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> DisciplineFineSettingsResponse:
+        settings = repository.get_discipline_fine_settings()
+        return DisciplineFineSettingsResponse(
+            enabled=settings.enabled,
+            department_id=settings.department_id,
+            amount=settings.amount,
+            kickback_percent=settings.kickback_percent,
+            rank_quotas=settings.rank_quotas,
+            cooldown_minutes=settings.cooldown_minutes,
+            target_daily_limit=settings.target_daily_limit,
+        )
+
+    @app.patch(
+        "/internal/game/discipline-fine/settings",
+        response_model=DisciplineFineSettingsResponse,
+    )
+    def set_discipline_fine_settings(
+        request: SetDisciplineFineSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> DisciplineFineSettingsResponse:
+        try:
+            settings = repository.set_discipline_fine_settings(
+                enabled=request.enabled,
+                department_id=request.department_id,
+                amount=request.amount,
+                kickback_percent=request.kickback_percent,
+                rank_quotas=request.rank_quotas,
+                cooldown_minutes=request.cooldown_minutes,
+                target_daily_limit=request.target_daily_limit,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return DisciplineFineSettingsResponse(
+            enabled=settings.enabled,
+            department_id=settings.department_id,
+            amount=settings.amount,
+            kickback_percent=settings.kickback_percent,
+            rank_quotas=settings.rank_quotas,
+            cooldown_minutes=settings.cooldown_minutes,
+            target_daily_limit=settings.target_daily_limit,
+        )
+
+    @app.get(
+        "/internal/game/discipline-fine/records",
+        response_model=PaginatedDisciplineFineRecordsResponse,
+    )
+    def discipline_fine_records(
+        _: Annotated[None, Depends(authorize)],
+        page: Annotated[int, Query(ge=1)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> PaginatedDisciplineFineRecordsResponse:
+        items, total = repository.list_discipline_fine_records(
+            page=page, page_size=page_size
+        )
+        return PaginatedDisciplineFineRecordsResponse(
+            items=[
+                DisciplineFineRecordResponse(
+                    id=item.id,
+                    issuer_display_name=item.issuer_display_name,
+                    target_display_name=item.target_display_name,
+                    group_name=item.group_name,
+                    amount=item.amount,
+                    kickback=item.kickback,
+                    reason=item.reason,
+                    via_reply=item.via_reply,
+                    created_at=item.created_at,
+                    revoked_at=item.revoked_at,
+                )
+                for item in items
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
+    @app.post(
+        "/internal/game/discipline-fine/records/{record_id}/revoke",
+        response_model=DisciplineFineRevokeResponse,
+    )
+    def revoke_discipline_fine_record(
+        record_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> DisciplineFineRevokeResponse:
+        result = repository.revoke_discipline_fine(record_id, clock())
+        if result == "not_found":
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "罚款记录不存在")
+        return DisciplineFineRevokeResponse(status=result)
 
     @app.get(
         "/internal/game/birthday/members",

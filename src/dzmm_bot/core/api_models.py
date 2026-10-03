@@ -1793,3 +1793,41 @@ class CompleteWorkerCommandRequest(ApiModel):
     lease_token: UUID
     status: Literal["completed", "failed"]
     now: AwareDatetime
+
+
+class DisciplineFineSettingsResponse(ApiModel):
+    enabled: bool
+    department_id: UUID | None = None
+    amount: int = Field(ge=1, le=999)
+    kickback_percent: int = Field(ge=0, le=100)
+    rank_quotas: dict[str, int] = Field(default_factory=dict)
+    cooldown_minutes: int = Field(ge=0, le=1440)
+    target_daily_limit: int = Field(ge=0, le=999)
+
+
+class SetDisciplineFineSettingsRequest(DisciplineFineSettingsResponse):
+    pass
+
+
+class DisciplineFineRecordResponse(ApiModel):
+    id: UUID
+    issuer_display_name: str
+    target_display_name: str
+    group_name: str | None = None
+    amount: int
+    kickback: int
+    reason: str | None = None
+    via_reply: bool
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+
+class PaginatedDisciplineFineRecordsResponse(ApiModel):
+    items: list[DisciplineFineRecordResponse]
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1)
+
+
+class DisciplineFineRevokeResponse(ApiModel):
+    status: Literal["revoked", "not_found", "already_revoked"]

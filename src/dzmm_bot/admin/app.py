@@ -2064,6 +2064,62 @@ def create_app(
             scope="group-birthdays",
         )
 
+    @app.get("/api/game/discipline-fine/settings")
+    def discipline_fine_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return {
+            **_relay_core(core.get_discipline_fine_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/discipline-fine/settings")
+    def set_discipline_fine_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "enabled",
+            "department_id",
+            "amount",
+            "kickback_percent",
+            "rank_quotas",
+            "cooldown_minutes",
+            "target_daily_limit",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_discipline_fine_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="discipline-fine-settings",
+        )
+
+    @app.get("/api/game/discipline-fine/records")
+    def discipline_fine_records(
+        _: Annotated[None, Depends(authorize)],
+        page: Annotated[int, Query(ge=1)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> dict:
+        return _relay_core(
+            lambda: core.list_discipline_fine_records(page, page_size)
+        )
+
+    @app.post("/api/game/discipline-fine/records/{record_id}/revoke")
+    def revoke_discipline_fine_record(
+        record_id: str,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return _relay_core(lambda: core.revoke_discipline_fine(record_id))
+
 
     @app.get("/api/game/hide-and-seek/settings")
     def hide_and_seek_settings(_: Annotated[None, Depends(authorize)]) -> dict:

@@ -14338,6 +14338,26 @@ class CoreRepository:
                 user.gender = gender
                 return True
 
+    def sync_platform_genders(self, genders: dict[str, str]) -> int:
+        """平台性别回填（dzmm_nuo `_gender_of` 的档案回写思路）：
+        只填 unknown 用户，显式 /设置性别 的档案值永远优先。"""
+        updated = 0
+        with self.transaction():
+            with self._session() as session:
+                for platform_id, gender in genders.items():
+                    if gender not in ("male", "female"):
+                        continue
+                    result = session.execute(
+                        update(UserRecord)
+                        .where(
+                            UserRecord.platform_id == platform_id,
+                            UserRecord.gender == "unknown",
+                        )
+                        .values(gender=gender)
+                    )
+                    updated += result.rowcount or 0
+        return updated
+
     def set_estrus_opt_out(
         self, platform_id: str, group_chat_id: UUID, opted_out: bool
     ) -> str | None:
@@ -14446,15 +14466,14 @@ class CoreRepository:
             user.display_name, user.gender or "unknown", chopper_name, threshold
         )
         try:
-            return (
-                self._estrus_text_client.complete(
-                    system,
-                    user_content,
-                    max_chars=CLIMAX_MAX_CHARS,
-                    timeout_seconds=CLIMAX_TIMEOUT_SECONDS,
-                ).strip()
-                or None
-            )
+            raw = self._estrus_text_client.complete(
+                system,
+                user_content,
+                max_chars=CLIMAX_MAX_CHARS,
+                timeout_seconds=CLIMAX_TIMEOUT_SECONDS,
+            ).strip()
+            # 高潮文字合并成一段发：去掉 AI 输出里的换行/空行
+            return re.sub(r"\s*\n+\s*", "", raw) or None
         except Exception:
             return None
 

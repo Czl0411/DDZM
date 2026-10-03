@@ -65,6 +65,10 @@ class DirectChatSyncRequest(ApiModel):
     now: AwareDatetime
 
 
+class PlatformGenderSyncRequest(ApiModel):
+    genders: dict[str, str] = Field(default_factory=dict)
+
+
 class DirectInboundRoomsResponse(ApiModel):
     chatroom_ids: list[str]
 

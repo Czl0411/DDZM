@@ -130,6 +130,7 @@ class BrowserWorker:
         self._pending_referrals_lock = Lock()
         self._group_targets: tuple[GroupChatTarget, ...] = ()
         self._next_group_target_sync_at: datetime | None = None
+        self._next_gender_sync_at: datetime | None = None
         self._disabled_group_updates: list[GroupChatRuntimeUpdate] = []
         self._group_connected_at: dict[str, datetime] = {}
         self._group_last_inbound_at: dict[str, datetime] = {}
@@ -224,6 +225,8 @@ class BrowserWorker:
 
         self._process_platform_nickname_refresh(gateway)
 
+        self._sync_platform_genders(gateway)
+
         recall = self._core.claim_outbound_recall(
             self._worker_id, self._clock(), self._lease_seconds
         )
@@ -270,6 +273,31 @@ class BrowserWorker:
             )
         except Exception:
             _LOGGER.warning("platform nickname refresh failed", exc_info=True)
+
+    def _sync_platform_genders(self, gateway: ChatGateway) -> None:
+        """平台性别回填（每 6 小时一次）：getMembers gender → core，
+        core 只回填 users.gender='unknown'，显式 /设置性别 优先。"""
+        now = self._clock()
+        if self._next_gender_sync_at is not None and now < self._next_gender_sync_at:
+            return
+        # 先拨快节流再尝试：平台故障时不逐轮重试
+        self._next_gender_sync_at = now + timedelta(hours=6)
+        genders: dict[str, str] = {}
+        for target in self._group_targets:
+            try:
+                found = gateway.member_genders(target.chatroom_id)
+            except Exception:
+                _LOGGER.exception(
+                    "member gender lookup failed chatroom=%s", target.chatroom_id
+                )
+                continue
+            genders.update(found)
+        if not genders:
+            return
+        try:
+            self._core.sync_platform_genders(genders)
+        except Exception:
+            _LOGGER.exception("platform gender sync failed")
 
     def _process_profile_image_upload(self, gateway: ChatGateway) -> None:
         claim = self._core.claim_profile_image_upload(

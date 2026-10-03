@@ -93,6 +93,8 @@ class CorePort(Protocol):
         self, platform_id: str, nickname: str | None, now: datetime
     ) -> bool: ...
 
+    def sync_platform_genders(self, genders: dict[str, str]) -> None: ...
+
     def group_chat_targets(self) -> tuple[GroupChatTarget, ...]: ...
 
     def sync_group_chat_runtime(
@@ -309,6 +311,9 @@ class CoreClient:
             {"nickname": nickname, "now": now.isoformat()},
         )
         return bool(data["accepted"])
+
+    def sync_platform_genders(self, genders: dict[str, str]) -> None:
+        self._post("/internal/users/platform-gender-sync", {"genders": genders})
 
     def group_chat_targets(self) -> tuple[GroupChatTarget, ...]:
         return tuple(

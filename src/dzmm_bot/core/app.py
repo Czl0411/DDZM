@@ -60,6 +60,7 @@ from .api_models import (
     GroupChatResponse,
     GroupChatRuntimeResponse,
     GroupChatTargetResponse,
+    PlatformGenderSyncRequest,
     PersonalProfileResponse,
     ProfileImageCleanupClaimResponse,
     ProfileImageUploadClaimResponse,
@@ -718,6 +719,17 @@ def create_app(
             [(room.platform_user_id, room.chatroom_id) for room in request.rooms],
             request.now,
         )
+        return AcceptedResponse(accepted=True)
+
+    @app.post(
+        "/internal/users/platform-gender-sync",
+        response_model=AcceptedResponse,
+    )
+    def sync_platform_genders(
+        request: PlatformGenderSyncRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        repository.sync_platform_genders(request.genders)
         return AcceptedResponse(accepted=True)
 
     @app.get(

@@ -108,6 +108,7 @@ class AikdaSocketGateway:
         self._joined_direct_chatroom_ids: set[str] = set()
         self._next_direct_room_join_index = 0
         self._member_directories: dict[str, tuple[datetime, dict[str, str]]] = {}
+        self._member_genders: dict[str, tuple[datetime, dict[str, str]]] = {}
 
     def configure_group_rooms(
         self, targets: tuple[GroupChatTarget, ...]
@@ -408,6 +409,44 @@ class AikdaSocketGateway:
                 directory[name.strip()] = uid
         self._member_directories[chatroom_id] = (now, directory)
         return directory
+
+    def member_genders(
+        self, chatroom_id: str, *, force_refresh: bool = False
+    ) -> dict[str, str]:
+        """platform uid → gender（male/female，10 分钟 TTL）。
+
+        平台 getMembers 的 gender 字段，用户在平台设置后才会非空；
+        空值/未知取值一律跳过。仅主循环线程调用。"""
+        now = self._clock()
+        cached = self._member_genders.get(chatroom_id)
+        if (
+            not force_refresh
+            and cached is not None
+            and (now - cached[0]).total_seconds() < 600
+        ):
+            return cached[1]
+        data = self._request(
+            "chatroom.getMembers",
+            {"chatroomId": chatroom_id, "limit": 1000},
+        )
+        genders: dict[str, str] = {}
+        members = data.get("members") if isinstance(data, dict) else None
+        for member in members or []:
+            if not isinstance(member, dict):
+                continue
+            uid = member.get("id")
+            raw = str(member.get("gender") or "").strip().lower()
+            # 取值映射照 dzmm_nuo runtime/members.py _gender_of
+            if raw in ("male", "man", "男", "m"):
+                gender = "male"
+            elif raw in ("female", "lesbian", "女", "f", "百合"):
+                gender = "female"
+            else:
+                continue
+            if isinstance(uid, str) and uid:
+                genders[uid] = gender
+        self._member_genders[chatroom_id] = (now, genders)
+        return genders
 
     def retract(self, message_id: str, *, chatroom_id: str | None = None) -> None:
         self._ensure_connected()

@@ -28,7 +28,7 @@ class _SeqRandom:
         return seq[0]
 
 
-def _service(*, estrus_random=None):
+def _service(*, estrus_random=None, estrus_text_client=None):
     from dzmm_bot.core.commands import GroupCommandHandler
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import Base
@@ -37,7 +37,10 @@ def _service(*, estrus_random=None):
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
-    repository = CoreRepository(factory, estrus_random=estrus_random)
+    repository = CoreRepository(
+        factory, estrus_random=estrus_random,
+        estrus_text_client=estrus_text_client,
+    )
     repository.bootstrap_primary_group(
         "https://www.aikda.com/chat?c=group-main", NOW
     )
@@ -304,3 +307,76 @@ def test_climax_prompt_splits_by_gender():
     assert "男性员工" in system_male
     assert "女性员工" in system_female
     assert "性别未知" in system_unknown
+
+
+def test_sync_platform_genders_fills_unknown_only():
+    service, repository, factory = _service()
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    repository.set_user_gender("user-0", "male")  # 显式档案优先
+
+    updated = repository.sync_platform_genders(
+        {
+            "user-0": "female",
+            "user-1": "female",
+            "user-9": "male",
+            "user-1x": "???",
+        }
+    )
+
+    assert updated == 1
+    assert repository.get_my_estrus("user-0", PRIMARY_GROUP_CHAT_ID, NOW)["gender"] == "male"
+    assert repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)["gender"] == "female"
+
+
+class _FakeClimaxClient:
+    def __init__(self, text):
+        self.text = text
+        self.calls = []
+
+    def complete(
+        self, system_prompt, user_content, *, history_messages=(),
+        max_chars, timeout_seconds,
+    ):
+        self.calls.append(
+            {
+                "system": system_prompt,
+                "user": user_content,
+                "max_chars": max_chars,
+            }
+        )
+        return self.text
+
+
+def test_climax_ai_text_merged_into_single_paragraph():
+    client = _FakeClimaxClient("第一段高潮。\n\n第二段高潮。\n第三段。")
+    service, repository, factory = _service(
+        estrus_random=_SeqRandom([0.90, 0.0] * 5), estrus_text_client=client
+    )
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    repository.set_estrus_settings(
+        enabled=True,
+        climax_threshold=10,
+        heat_p0=50,
+        heat_p1=30,
+        heat_p2=20,
+        coin_p0=50,
+        coin_p1=30,
+        coin_p2=20,
+        chop_cooldown_seconds=0,
+    )
+
+    for index in range(5):
+        _receive(
+            service, f"c{index}", "user-0", "/凿 乙",
+            NOW + timedelta(minutes=index),
+        )
+
+    assert client.calls, "AI client should be called on climax"
+    assert client.calls[0]["max_chars"] == 1000
+    # 凿者进入 prompt，可出场互动
+    assert "最后一凿的人：甲" in client.calls[0]["user"]
+    # 换行全部合并，整段单条发出
+    assert not any("\n\n第一段高潮。" in text for text in _replies(factory))
+    assert any("第一段高潮。第二段高潮。第三段。" in text for text in _replies(factory))

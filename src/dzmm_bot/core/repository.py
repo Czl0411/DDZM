@@ -14256,51 +14256,6 @@ class CoreRepository:
             for answer, user in ordered
         ]
 
-    def _truth_trade_game_leaders(
-        self, session: Session, game: TruthTradeGameRecord
-    ) -> tuple[tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]]:
-        """本局至今的提问/回答排行（含本局所有已收集问题）。"""
-        ask_rows = session.execute(
-            select(UserRecord.display_name, func.count())
-            .select_from(TruthTradeQuestionRecord)
-            .join(
-                TruthTradePlayerRecord,
-                TruthTradePlayerRecord.id == TruthTradeQuestionRecord.asker_player_id,
-            )
-            .join(UserRecord, UserRecord.id == TruthTradePlayerRecord.user_id)
-            .where(
-                TruthTradeQuestionRecord.game_id == game.id,
-                TruthTradeQuestionRecord.state == "collected",
-            )
-            .group_by(UserRecord.display_name)
-        ).all()
-        answer_rows = session.execute(
-            select(UserRecord.display_name, func.count())
-            .select_from(TruthTradeAnswerRecord)
-            .join(
-                TruthTradeQuestionRecord,
-                TruthTradeQuestionRecord.id == TruthTradeAnswerRecord.question_id,
-            )
-            .join(UserRecord, UserRecord.id == TruthTradeAnswerRecord.user_id)
-            .where(
-                TruthTradeQuestionRecord.game_id == game.id,
-                TruthTradeAnswerRecord.state == "answered",
-            )
-            .group_by(UserRecord.display_name)
-        ).all()
-
-        def leaders(rows) -> tuple[tuple[str, int], ...]:
-            if not rows:
-                return ()
-            highest = max(count for _, count in rows)
-            return tuple(
-                sorted(
-                    (name, count) for name, count in rows if count == highest
-                )
-            )
-
-        return leaders(ask_rows), leaders(answer_rows)
-
     def _truth_trade_advance(
         self,
         session: Session,
@@ -14335,21 +14290,10 @@ class CoreRepository:
             now,
             group_chat_id=game.group_chat_id,
         )
-        ask_leaders, answer_leaders = self._truth_trade_game_leaders(session, game)
-        lines = [
-            f"【真心换真心】第 {game.round_number} 轮结束。",
-            self._truth_trade_leaders_line("提问最多", ask_leaders),
-            self._truth_trade_leaders_line("回答最多", answer_leaders),
+        # 顺序发言下每人每轮固定一问一答，排行无意义，不再展示
+        return (
+            f"【真心换真心】第 {game.round_number} 轮结束。\n"
             "发送 /继续 开下一轮，/结束游戏 结束。",
-        ]
-        return ("\n".join(lines),)
-
-    @staticmethod
-    def _truth_trade_leaders_line(label: str, leaders: tuple[tuple[str, int], ...]) -> str:
-        if not leaders:
-            return f"{label}：暂无"
-        return f"{label}：" + "、".join(
-            f"{name}（{count} 次）" for name, count in leaders
         )
 
     def _truth_trade_enqueue_announcements(
@@ -14923,27 +14867,15 @@ class CoreRepository:
                 )
                 if player is None or player.state != "active":
                     return TruthTradeResult("not_participant")
-                ask_leaders, answer_leaders = self._truth_trade_game_leaders(
-                    session, game
-                )
                 self._truth_trade_finish_locked(
                     session, game, "finished", "participant_ended", now
                 )
                 lines = ["【真心换真心】本局已结束。"]
-                if ask_leaders or answer_leaders:
-                    lines.append(
-                        self._truth_trade_leaders_line("提问最多", ask_leaders)
-                    )
-                    lines.append(
-                        self._truth_trade_leaders_line("回答最多", answer_leaders)
-                    )
                 return self._truth_trade_result_locked(
                     session,
                     game,
                     "completed",
                     public_message="\n".join(lines),
-                    ask_leaders=ask_leaders,
-                    answer_leaders=answer_leaders,
                 )
 
     def continue_truth_trade(

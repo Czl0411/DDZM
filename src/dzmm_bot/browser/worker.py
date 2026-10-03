@@ -126,6 +126,8 @@ class BrowserWorker:
         self._main_account_cooldown_until = 0.0
         self._paused_messages: list[InboundMessage] = []
         self._paused_messages_lock = Lock()
+        self._pending_referrals: list[InboundMessage] = []
+        self._pending_referrals_lock = Lock()
         self._group_targets: tuple[GroupChatTarget, ...] = ()
         self._next_group_target_sync_at: datetime | None = None
         self._disabled_group_updates: list[GroupChatRuntimeUpdate] = []
@@ -215,6 +217,8 @@ class BrowserWorker:
                     continue
                 self._queue_inbound(message)
                 self._seen_message_ids.add(message.platform_message_id)
+
+        self._process_pending_referrals()
 
         self._run_daily_jobs(now)
 
@@ -313,40 +317,78 @@ class BrowserWorker:
         )
 
     def _queue_inbound(self, message: InboundMessage) -> None:
-        message = self._resolve_system_referral(message)
+        if self._needs_referral_resolution(message):
+            # 名字→uid 解析要碰 Playwright（member_directory 走 page.evaluate），
+            # 而消息回调运行在 socket.io 线程——sync API 跨线程会报
+            # "Cannot switch to a different thread"，先挂起等主循环线程解析。
+            with self._pending_referrals_lock:
+                self._pending_referrals.append(message)
+            return
+        self._enqueue_resolved(message)
+
+    @staticmethod
+    def _needs_referral_resolution(message: InboundMessage) -> bool:
+        metadata = message.metadata if isinstance(message.metadata, dict) else None
+        if message.content_type != "system" or not isinstance(metadata, dict):
+            return False
+        referral = metadata.get("referral")
+        return isinstance(referral, dict) and not metadata.get("referral_resolved")
+
+    def _enqueue_resolved(self, message: InboundMessage) -> None:
         if not self._listening:
             with self._paused_messages_lock:
                 self._paused_messages.append(message)
             return
         self._inbound_executor.submit(self._dispatch_inbound, message)
 
-    def _resolve_system_referral(self, message: InboundMessage) -> InboundMessage:
-        """入群系统消息归因：在主循环线程把名字解析成平台 uid。
-
-        socket 回调线程不能碰 Playwright page（sync API），所以解析放在
-        run_once → _queue_inbound 这条主线程路径上；成员表带 60s TTL 缓存。
-        """
-        metadata = message.metadata if isinstance(message.metadata, dict) else None
-        referral = (metadata or {}).get("referral")
-        if message.content_type != "system" or not isinstance(referral, dict):
-            return message
+    def _process_pending_referrals(self) -> None:
+        """主循环线程（Playwright 线程）把入群系统消息的名字解析成平台 uid。"""
+        with self._pending_referrals_lock:
+            pending, self._pending_referrals = self._pending_referrals, []
+        if not pending:
+            return
         gateway = self._gateway
-        chatroom_id = message.chatroom_id
-        if chatroom_id is None or gateway is None:
-            return message
+        for message in pending:
+            resolved_message = message
+            if gateway is not None and message.chatroom_id is not None:
+                referral = dict(message.metadata["referral"])
+                directory = self._member_directory_for(
+                    gateway, message.chatroom_id, referral
+                )
+                if directory is not None:
+                    newcomer_name = str(referral.get("newcomer") or "").strip()
+                    inviter_name = str(referral.get("inviter") or "").strip()
+                    if newcomer_name:
+                        referral["newcomer_id"] = directory.get(newcomer_name)
+                    if inviter_name:
+                        referral["inviter_id"] = directory.get(inviter_name)
+                    resolved_message = replace(
+                        message,
+                        metadata={"referral": referral, "referral_resolved": True},
+                    )
+            self._enqueue_resolved(resolved_message)
+
+    @staticmethod
+    def _member_directory_for(gateway, chatroom_id: str, referral: dict):
+        names = [
+            name
+            for key in ("newcomer", "inviter")
+            for name in [str(referral.get(key) or "").strip()]
+            if name
+        ]
         try:
             directory = gateway.member_directory(chatroom_id)
         except Exception:
             _LOGGER.exception("referral member directory lookup failed")
-            return message
-        resolved = dict(referral)
-        newcomer_name = str(referral.get("newcomer") or "").strip()
-        inviter_name = str(referral.get("inviter") or "").strip()
-        if newcomer_name:
-            resolved["newcomer_id"] = directory.get(newcomer_name)
-        if inviter_name:
-            resolved["inviter_id"] = directory.get(inviter_name)
-        return replace(message, metadata={"referral": resolved})
+            return None
+        if all(name in directory for name in names):
+            return directory
+        # 新人刚进群可能不在 60s TTL 缓存的成员表里，强制刷新一次再试
+        try:
+            return gateway.member_directory(chatroom_id, force_refresh=True)
+        except Exception:
+            _LOGGER.exception("referral member directory refresh failed")
+            return directory
 
     def _flush_paused_messages(self) -> None:
         if not self._listening:

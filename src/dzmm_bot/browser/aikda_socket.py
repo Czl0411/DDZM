@@ -376,11 +376,17 @@ class AikdaSocketGateway:
         nickname = profile.get("nickname")
         return nickname.strip() if isinstance(nickname, str) and nickname.strip() else None
 
-    def member_directory(self, chatroom_id: str) -> dict[str, str]:
+    def member_directory(
+        self, chatroom_id: str, *, force_refresh: bool = False
+    ) -> dict[str, str]:
         """fullName → platform uid（60s TTL 缓存）。入群系统消息归因用，仅主循环线程调用。"""
         now = self._clock()
         cached = self._member_directories.get(chatroom_id)
-        if cached is not None and (now - cached[0]).total_seconds() < 60:
+        if (
+            not force_refresh
+            and cached is not None
+            and (now - cached[0]).total_seconds() < 60
+        ):
             return cached[1]
         data = self._request(
             "chatroom.getMembers",

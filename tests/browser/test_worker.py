@@ -63,6 +63,10 @@ class FakeGateway:
     added_bots: list[tuple[str, str]] = field(default_factory=list)
     nickname_lookups: list[tuple[str, str]] = field(default_factory=list)
     nickname: str | None = "平台昵称"
+    member_directory_data: dict[str, dict[str, str]] = field(default_factory=dict)
+    member_directory_refresh_data: dict[str, dict[str, str]] | None = None
+    member_directory_calls: list[tuple[str, bool]] = field(default_factory=list)
+    member_directory_error: Exception | None = None
 
     def configure_group_rooms(self, targets):
         self.configured_groups = targets
@@ -171,6 +175,14 @@ class FakeGateway:
         self.nickname_lookups.append((chatroom_id, platform_user_id))
         return self.nickname
 
+    def member_directory(self, chatroom_id, *, force_refresh=False):
+        self.member_directory_calls.append((chatroom_id, force_refresh))
+        if self.member_directory_error is not None:
+            raise self.member_directory_error
+        if force_refresh and self.member_directory_refresh_data is not None:
+            return dict(self.member_directory_refresh_data)
+        return dict(self.member_directory_data.get(chatroom_id, {}))
+
 @dataclass
 class FakeSession:
     gateway: FakeGateway
@@ -225,6 +237,7 @@ class FakeCore:
     pending_recalls: list[OutboundRecallClaim] = field(default_factory=list)
     commands: list[WorkerCommand] = field(default_factory=list)
     submitted_ids: list[str] = field(default_factory=list)
+    submitted_messages: list[InboundMessage] = field(default_factory=list)
     confirmed: list[tuple] = field(default_factory=list)
     failed: list[tuple] = field(default_factory=list)
     recalls_confirmed: list[tuple] = field(default_factory=list)
@@ -265,6 +278,7 @@ class FakeCore:
 
     def submit_inbound(self, message):
         self.submitted_ids.append(message.platform_message_id)
+        self.submitted_messages.append(message)
         self.submitted_event.set()
 
     def claim_outbound(
@@ -576,6 +590,77 @@ def test_worker_dispatches_the_random_event_submission_entry_from_a_new_direct_r
         [DirectChatRoom("new-user", "new-direct")], NOW
     )
     assert core.submitted_ids == ["new-submission"]
+
+
+def _referral_message(message_id="sys-1"):
+    return InboundMessage(
+        message_id, "system-sender",
+        "新人乙 通过 甲 的链接加入了群聊", NOW,
+        source_type="group", chatroom_id="group-1",
+        content_type="system",
+        metadata={"referral": {"newcomer": "新人乙", "inviter": "甲"}},
+    )
+
+
+def test_worker_resolves_referral_names_before_dispatching_system_message(context):
+    """消息回调（socket 线程）投递的入群系统消息，由主循环线程解析名字后再上报。"""
+    worker, gateway, _, _, core, _ = context
+    worker.run_once()
+    gateway.member_directory_data["group-1"] = {"新人乙": "uid-new", "甲": "uid-inv"}
+
+    gateway.message_handler(_referral_message())
+    assert core.submitted_ids == []  # 未解析前不投递
+
+    worker.run_once()
+    assert core.submitted_event.wait(timeout=1)
+
+    assert core.submitted_ids == ["sys-1"]
+    [submitted] = core.submitted_messages
+    assert submitted.metadata == {
+        "referral": {
+            "newcomer": "新人乙",
+            "inviter": "甲",
+            "newcomer_id": "uid-new",
+            "inviter_id": "uid-inv",
+        },
+        "referral_resolved": True,
+    }
+    # 目录命中，无需强制刷新
+    assert gateway.member_directory_calls == [("group-1", False)]
+
+
+def test_worker_force_refreshes_member_directory_when_newcomer_is_missing(context):
+    """60s TTL 缓存的成员表可能没有刚进群的新人，未命中时强制刷新一次。"""
+    worker, gateway, _, _, core, _ = context
+    worker.run_once()
+    gateway.member_directory_data["group-1"] = {"甲": "uid-inv"}
+    gateway.member_directory_refresh_data = {"新人乙": "uid-new", "甲": "uid-inv"}
+
+    gateway.message_handler(_referral_message())
+    worker.run_once()
+    assert core.submitted_event.wait(timeout=1)
+
+    assert gateway.member_directory_calls == [("group-1", False), ("group-1", True)]
+    [submitted] = core.submitted_messages
+    assert submitted.metadata["referral"]["newcomer_id"] == "uid-new"
+    assert submitted.metadata["referral_resolved"] is True
+
+
+def test_worker_delivers_referral_message_even_when_directory_lookup_fails(context):
+    """成员表查询失败不阻塞消息上报，metadata 原样透传（core 端 amount=0 留痕）。"""
+    worker, gateway, _, _, core, _ = context
+    worker.run_once()
+    gateway.member_directory_error = RuntimeError("playwright thread boom")
+
+    gateway.message_handler(_referral_message())
+    worker.run_once()
+    assert core.submitted_event.wait(timeout=1)
+
+    assert core.submitted_ids == ["sys-1"]
+    [submitted] = core.submitted_messages
+    assert submitted.metadata == {
+        "referral": {"newcomer": "新人乙", "inviter": "甲"}
+    }
 
 
 @pytest.mark.parametrize(

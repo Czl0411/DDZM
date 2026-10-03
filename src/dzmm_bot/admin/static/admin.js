@@ -74,6 +74,8 @@ const groupGameOptions = [
   ["never_have_i_ever", "我有你没有", "never-have-i-ever"],
   ["king_game", "国王游戏", "king-game"],
   ["texas_holdem", "德州扑克", "texas-holdem"],
+  ["liar_dice", "大话骰子", "liar-dice"],
+  ["truth_trade", "真心换真心", "truth-trade"],
 ];
 
 const pageSizeOptions = [5, 10, 15, 20, 50];

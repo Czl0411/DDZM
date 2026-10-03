@@ -2082,7 +2082,6 @@ def create_app(
     ) -> JSONResponse:
         required = (
             "enabled",
-            "department_id",
             "amount",
             "kickback_percent",
             "rank_quotas",

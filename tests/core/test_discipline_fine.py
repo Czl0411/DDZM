@@ -81,6 +81,17 @@ def _assign_department(factory, platform_id, department_id):
         )
 
 
+def _bind_fine_department(factory, name="风纪监察部"):
+    from dzmm_bot.core.schema import DepartmentRecord
+
+    with factory.begin() as session:
+        session.execute(
+            update(DepartmentRecord)
+            .where(DepartmentRecord.name == name)
+            .values(fine_enabled=True)
+        )
+
+
 def _configure_fine(repository, factory, **overrides):
     """rank_quotas 缺省给全部职级配 5 次（按 rank_id UUID 为键）；
     传 rank_quota=N 可给全部职级统一配 N 次。"""
@@ -92,7 +103,6 @@ def _configure_fine(repository, factory, **overrides):
         ]
     values = dict(
         enabled=True,
-        department_id=_department_id(factory, "风纪监察部"),
         amount=5,
         kickback_percent=20,
         rank_quotas={rank_id: 5 for rank_id in rank_ids},
@@ -157,11 +167,14 @@ def _replied(factory, snippet=None, *, exact=None):
     return any(snippet in text for text in texts)
 
 
-def _setup(service, repository, factory, now, **setting_overrides):
+def _setup(service, repository, factory, now, bind=True, **setting_overrides):
     """建员工、开罚款、把 user-0 指派为风纪监察部，并给员工发余额。"""
     _join_employees(service, now, 3)
     _configure_fine(repository, factory, **setting_overrides)
-    _assign_department(factory, "user-0", _department_id(factory, "风纪监察部"))
+    fine_department = _department_id(factory, "风纪监察部")
+    if bind:
+        _bind_fine_department(factory)
+    _assign_department(factory, "user-0", fine_department)
     for index in range(3):
         _set_balance(factory, f"user-{index}", 100)
 
@@ -316,7 +329,7 @@ def test_fine_rejects_unauthorized_self_and_same_department():
     fine_department = _department_id(factory, "风纪监察部")
 
     _receive(service, "f1", "user-1", "/罚款 员工0 摸鱼", NOW)
-    assert _replied(factory, exact="只有风纪监察部成员可以执行罚款。")
+    assert _replied(factory, exact="只有风纪执法部门（后台勾选）的成员可以执行罚款。")
 
     _receive(service, "f2", "user-0", "/罚款 员工0 摸鱼", NOW)
     assert _replied(factory, exact="不能罚款自己。")
@@ -349,15 +362,33 @@ def test_fine_disabled_and_usage():
     _receive(service, "f1", "user-0", "/罚款 员工1 摸鱼", NOW)
     assert _replied(factory, exact="风纪罚款未开启。")
 
-    _configure_fine(repository, factory, enabled=True, department_id=None)
+    _configure_fine(repository, factory, enabled=True)
+    # 部门未勾选风纪执法 → 未配置
     _receive(service, "f2", "user-0", "/罚款 员工1 摸鱼", NOW)
     assert _replied(
-        factory, exact="风纪罚款未配置执法部门，请联系管理员在后台设置。"
+        factory,
+        exact="风纪罚款未配置执法部门，请在后台「职位与部门」中勾选风纪执法部门。",
     )
 
-    _configure_fine(repository, factory, enabled=True)
+    _bind_fine_department(factory)
     _receive(service, "f3", "user-0", "/罚款", NOW)
     assert _replied(factory, "用法：引用对方消息发送 /罚款 [理由]")
+
+
+def test_department_fine_enabled_crud_roundtrip():
+    service, repository, factory = _service()
+    department = repository.create_department(
+        "稽查队", "测试部门", fine_enabled=True
+    )
+    assert department.fine_enabled is True
+    updated = repository.update_department(
+        department.id,
+        name="稽查队",
+        description="测试部门",
+        enabled=True,
+        fine_enabled=False,
+    )
+    assert updated.fine_enabled is False
 
 
 def test_fine_revocation_refunds_and_my_fines():

@@ -1163,6 +1163,7 @@ def create_app(
                 request.name,
                 request.description,
                 allowance_kind=request.allowance_kind,
+                fine_enabled=request.fine_enabled,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -2645,7 +2646,6 @@ def create_app(
         settings = repository.get_discipline_fine_settings()
         return DisciplineFineSettingsResponse(
             enabled=settings.enabled,
-            department_id=settings.department_id,
             amount=settings.amount,
             kickback_percent=settings.kickback_percent,
             rank_quotas=settings.rank_quotas,
@@ -2664,7 +2664,6 @@ def create_app(
         try:
             settings = repository.set_discipline_fine_settings(
                 enabled=request.enabled,
-                department_id=request.department_id,
                 amount=request.amount,
                 kickback_percent=request.kickback_percent,
                 rank_quotas=request.rank_quotas,
@@ -2675,7 +2674,6 @@ def create_app(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return DisciplineFineSettingsResponse(
             enabled=settings.enabled,
-            department_id=settings.department_id,
             amount=settings.amount,
             kickback_percent=settings.kickback_percent,
             rank_quotas=settings.rank_quotas,
@@ -3664,6 +3662,7 @@ def _department_response(record) -> DepartmentResponse:
         is_default=record.is_default,
         enabled=record.enabled,
         allowance_kind=record.allowance_kind,
+        fine_enabled=record.fine_enabled,
     )
 
 

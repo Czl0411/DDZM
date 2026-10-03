@@ -2168,7 +2168,6 @@ class BoardBonusResult:
 @dataclass(frozen=True)
 class DisciplineFineSettings:
     enabled: bool
-    department_id: UUID | None
     amount: int
     kickback_percent: int
     rank_quotas: dict[str, int]
@@ -26003,7 +26002,6 @@ class CoreRepository:
             record = DisciplineFineSettingsRecord(
                 id=1,
                 enabled=False,
-                department_id=None,
                 amount=5,
                 kickback_percent=20,
                 rank_quotas={},
@@ -26018,7 +26016,6 @@ class CoreRepository:
         self,
         *,
         enabled: bool,
-        department_id: UUID | None,
         amount: int,
         kickback_percent: int,
         rank_quotas: dict[str, int],
@@ -26051,13 +26048,8 @@ class CoreRepository:
             quotas[normalized_key] = value
         with self.transaction():
             with self._session() as session:
-                if department_id is not None:
-                    department = session.get(DepartmentRecord, department_id)
-                    if department is None or not department.enabled:
-                        raise ValueError("执法部门不存在")
                 record = self._discipline_fine_settings_row(session)
                 record.enabled = enabled
-                record.department_id = department_id
                 record.amount = amount
                 record.kickback_percent = kickback_percent
                 record.rank_quotas = quotas
@@ -26083,26 +26075,33 @@ class CoreRepository:
                 settings_record = self._discipline_fine_settings_row(session)
                 if not settings_record.enabled:
                     return DisciplineFineResult("disabled")
-                enforcement_department = (
-                    session.get(DepartmentRecord, settings_record.department_id)
-                    if settings_record.department_id is not None
-                    else None
+                # 执法权走部门绑定：departments.fine_enabled
+                enforcement_ids = set(
+                    session.scalars(
+                        select(DepartmentRecord.id).where(
+                            DepartmentRecord.fine_enabled.is_(True),
+                            DepartmentRecord.enabled.is_(True),
+                        )
+                    )
                 )
-                if enforcement_department is None or not enforcement_department.enabled:
+                if not enforcement_ids:
                     return DisciplineFineResult("not_configured")
                 issuer_row = session.execute(
-                    select(UserRecord, RankRecord)
+                    select(UserRecord, RankRecord, DepartmentRecord)
                     .join(RankRecord, UserRecord.rank_id == RankRecord.id)
+                    .outerjoin(
+                        DepartmentRecord,
+                        DepartmentRecord.id == UserRecord.department_id,
+                    )
                     .where(UserRecord.platform_id == issuer_platform_id)
                 ).first()
                 if issuer_row is None:
                     return DisciplineFineResult("not_joined")
-                issuer, issuer_rank = issuer_row
-                if issuer.department_id != enforcement_department.id:
-                    return DisciplineFineResult(
-                        "not_authorized",
-                        department_name=enforcement_department.name,
-                    )
+                issuer, issuer_rank, issuer_department = issuer_row
+                if issuer_department is None or (
+                    issuer_department.id not in enforcement_ids
+                ):
+                    return DisciplineFineResult("not_authorized")
                 quota = int(
                     (settings_record.rank_quotas or {}).get(
                         str(issuer_rank.id),
@@ -26114,7 +26113,7 @@ class CoreRepository:
                 if quota <= 0:
                     return DisciplineFineResult(
                         "quota_zero",
-                        department_name=enforcement_department.name,
+                        department_name=issuer_department.name,
                     )
                 day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
                 day_end = day_start + timedelta(days=1)
@@ -26132,7 +26131,7 @@ class CoreRepository:
                     return DisciplineFineResult(
                         "quota_exhausted",
                         issuer_display_name=issuer.display_name,
-                        department_name=enforcement_department.name,
+                        department_name=issuer_department.name,
                     )
                 if settings_record.cooldown_minutes > 0:
                     last_created_at = session.scalar(
@@ -26161,7 +26160,7 @@ class CoreRepository:
                     return DisciplineFineResult("target_not_joined")
                 if target.id == issuer.id:
                     return DisciplineFineResult("self")
-                if target.department_id == enforcement_department.id:
+                if target.department_id in enforcement_ids:
                     return DisciplineFineResult("same_department")
                 if settings_record.target_daily_limit > 0:
                     fined_today = int(
@@ -26212,7 +26211,7 @@ class CoreRepository:
                 return DisciplineFineResult(
                     "granted",
                     issuer_display_name=issuer.display_name,
-                    department_name=enforcement_department.name,
+                    department_name=issuer_department.name,
                     target_display_name=target.display_name,
                     amount=amount,
                     actual_amount=actual,
@@ -27878,13 +27877,20 @@ class CoreRepository:
             return departments, total
 
     def create_department(
-        self, name: str, description: str, *, allowance_kind: str | None = None
+        self,
+        name: str,
+        description: str,
+        *,
+        allowance_kind: str | None = None,
+        fine_enabled: bool = False,
     ) -> DepartmentRecord:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("部门名称不能为空")
         if allowance_kind is not None and allowance_kind not in _DEPARTMENT_ALLOWANCE_BINDINGS:
             raise ValueError("无效的部门津贴类型")
+        if not isinstance(fine_enabled, bool):
+            raise ValueError("风纪执法标记无效")
         with self._session() as session:
             self._ensure_organization_defaults(session)
             if session.scalar(
@@ -27897,6 +27903,7 @@ class CoreRepository:
                 is_default=False,
                 enabled=True,
                 allowance_kind=allowance_kind,
+                fine_enabled=fine_enabled,
             )
             session.add(department)
             session.flush()
@@ -27910,12 +27917,15 @@ class CoreRepository:
         description: str,
         enabled: bool,
         allowance_kind: str | None = None,
+        fine_enabled: bool = False,
     ) -> DepartmentRecord | None:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("部门名称不能为空")
         if allowance_kind is not None and allowance_kind not in _DEPARTMENT_ALLOWANCE_BINDINGS:
             raise ValueError("无效的部门津贴类型")
+        if not isinstance(fine_enabled, bool):
+            raise ValueError("风纪执法标记无效")
         with self._session() as session:
             self._ensure_organization_defaults(session)
             department = session.get(DepartmentRecord, department_id)
@@ -27937,6 +27947,7 @@ class CoreRepository:
             department.description = description.strip()
             department.enabled = enabled
             department.allowance_kind = allowance_kind
+            department.fine_enabled = fine_enabled
             session.flush()
             return department
 
@@ -33577,7 +33588,6 @@ def _discipline_fine_settings(
 ) -> DisciplineFineSettings:
     return DisciplineFineSettings(
         enabled=record.enabled,
-        department_id=record.department_id,
         amount=record.amount,
         kickback_percent=record.kickback_percent,
         rank_quotas=dict(record.rank_quotas or {}),

@@ -469,12 +469,14 @@ class DepartmentResponse(ApiModel):
     is_default: bool
     enabled: bool
     allowance_kind: str | None = None
+    fine_enabled: bool = False
 
 
 class CreateDepartmentRequest(ApiModel):
     name: str = Field(min_length=1, max_length=64)
     description: str = Field(default="", max_length=2000)
     allowance_kind: str | None = None
+    fine_enabled: bool = False
 
 
 class UpdateDepartmentRequest(CreateDepartmentRequest):
@@ -1797,7 +1799,6 @@ class CompleteWorkerCommandRequest(ApiModel):
 
 class DisciplineFineSettingsResponse(ApiModel):
     enabled: bool
-    department_id: UUID | None = None
     amount: int = Field(ge=1, le=999)
     kickback_percent: int = Field(ge=0, le=100)
     rank_quotas: dict[str, int] = Field(default_factory=dict)

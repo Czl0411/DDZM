@@ -1986,7 +1986,7 @@ class GroupCommandHandler:
         )
         errors = {
             "disabled": "风纪罚款未开启。",
-            "not_configured": "风纪罚款未配置执法部门，请在后台「职位与部门」中勾选风纪执法部门。",
+            "not_configured": "风纪罚款未配置执法部门，请在后台「职位与部门」的部门津贴中选择风纪执法。",
             "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
             "quota_zero": "你的职级今日无可用的罚款次数（配额为 0）。",
             "quota_exhausted": "你今日的罚款次数已用完，明天再来吧。",
@@ -1998,7 +1998,7 @@ class GroupCommandHandler:
         if result.status in errors:
             return errors[result.status]
         if result.status == "not_authorized":
-            return "只有风纪执法部门（后台勾选）的成员可以执行罚款。"
+            return "只有风纪执法部门（部门津贴=风纪执法）的成员可以执行罚款。"
         if result.status == "cooldown":
             return f"罚款冷却中，请 {max(1, result.cooldown_remaining_seconds)} 秒后再试。"
         if result.status == "ambiguous_target":
@@ -2538,6 +2538,7 @@ class GroupCommandHandler:
         "submission": "随机事件投稿过审额外 +5 摸鱼币",
         "chat": "水群有 10% 概率掉落 1 摸鱼币",
         "referral": "每邀请新人通过链接进群 +1 摸鱼币",
+        "discipline": "风纪执法：成员可执行 /罚款 对违规员工处以罚款",
     }
 
     def _departments(self, received_at) -> str:

@@ -82,13 +82,14 @@ def _assign_department(factory, platform_id, department_id):
 
 
 def _bind_fine_department(factory, name="风纪监察部"):
+    """执法权绑定 = 部门津贴选 discipline。"""
     from dzmm_bot.core.schema import DepartmentRecord
 
     with factory.begin() as session:
         session.execute(
             update(DepartmentRecord)
             .where(DepartmentRecord.name == name)
-            .values(fine_enabled=True)
+            .values(allowance_kind="discipline")
         )
 
 
@@ -329,7 +330,9 @@ def test_fine_rejects_unauthorized_self_and_same_department():
     fine_department = _department_id(factory, "风纪监察部")
 
     _receive(service, "f1", "user-1", "/罚款 员工0 摸鱼", NOW)
-    assert _replied(factory, exact="只有风纪执法部门（后台勾选）的成员可以执行罚款。")
+    assert _replied(
+        factory, exact="只有风纪执法部门（部门津贴=风纪执法）的成员可以执行罚款。"
+    )
 
     _receive(service, "f2", "user-0", "/罚款 员工0 摸鱼", NOW)
     assert _replied(factory, exact="不能罚款自己。")
@@ -367,7 +370,7 @@ def test_fine_disabled_and_usage():
     _receive(service, "f2", "user-0", "/罚款 员工1 摸鱼", NOW)
     assert _replied(
         factory,
-        exact="风纪罚款未配置执法部门，请在后台「职位与部门」中勾选风纪执法部门。",
+        exact="风纪罚款未配置执法部门，请在后台「职位与部门」的部门津贴中选择风纪执法。",
     )
 
     _bind_fine_department(factory)
@@ -375,20 +378,21 @@ def test_fine_disabled_and_usage():
     assert _replied(factory, "用法：引用对方消息发送 /罚款 [理由]")
 
 
-def test_department_fine_enabled_crud_roundtrip():
+def test_department_discipline_binding_roundtrip():
     service, repository, factory = _service()
     department = repository.create_department(
-        "稽查队", "测试部门", fine_enabled=True
+        "稽查队", "测试部门", allowance_kind="discipline"
     )
-    assert department.fine_enabled is True
+    assert department.allowance_kind == "discipline"
+    # discipline 是合法津贴绑定值，但不参与任何津贴发放规则
     updated = repository.update_department(
         department.id,
         name="稽查队",
         description="测试部门",
         enabled=True,
-        fine_enabled=False,
+        allowance_kind=None,
     )
-    assert updated.fine_enabled is False
+    assert updated.allowance_kind is None
 
 
 def test_fine_revocation_refunds_and_my_fines():

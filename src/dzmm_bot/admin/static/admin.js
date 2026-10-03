@@ -2071,7 +2071,6 @@ function openDepartmentModal(department = null) {
   document.querySelector("#department-name").value = department?.name || "";
   document.querySelector("#department-description").value = department?.description || "";
   document.querySelector("#department-allowance").value = department?.allowance_kind || "";
-  document.querySelector("#department-fine-enabled").checked = department?.fine_enabled ?? false;
   document.querySelector("#department-enabled").checked = department?.enabled ?? true;
   document.querySelector("#department-name").disabled = Boolean(department?.is_default);
   document.querySelector("#department-enabled").disabled = Boolean(department?.is_default);
@@ -2099,7 +2098,7 @@ function renderRanks(ranks) {
 function renderDepartments(departments) {
   const filtered = filterList("departments", departments, (department) => `${department.name} ${department.description || ""}`);
   document.querySelector("#department-list").innerHTML = filtered.map((department) => `
-    <article class="data-row"><div><b>${escapeHtml(department.name)}</b>${department.fine_enabled ? '<small class="form-error">风纪执法</small>' : ""}<small>${statusBadge(department.enabled ? "已启用" : "已停用", department.enabled ? "success" : "warning")}</small><small>${escapeHtml(department.description || "暂无部门说明")}</small></div><div class="command-actions"><button class="secondary" data-department="${escapeHtml(JSON.stringify(department))}" data-department-action="edit" type="button">编辑</button>${department.is_default ? "" : `<button class="danger-button" data-department="${escapeHtml(JSON.stringify(department))}" data-department-action="delete" type="button">删除</button>`}</div></article>`).join("") || "<p class=\"muted\">没有符合条件的部门。</p>";
+    <article class="data-row"><div><b>${escapeHtml(department.name)}</b>${department.allowance_kind === "discipline" ? '<small class="form-error">风纪执法</small>' : ""}<small>${statusBadge(department.enabled ? "已启用" : "已停用", department.enabled ? "success" : "warning")}</small><small>${escapeHtml(department.description || "暂无部门说明")}</small></div><div class="command-actions"><button class="secondary" data-department="${escapeHtml(JSON.stringify(department))}" data-department-action="edit" type="button">编辑</button>${department.is_default ? "" : `<button class="danger-button" data-department="${escapeHtml(JSON.stringify(department))}" data-department-action="delete" type="button">删除</button>`}</div></article>`).join("") || "<p class=\"muted\">没有符合条件的部门。</p>";
 }
 
 function renderPromotions(promotions, currencyName) {
@@ -2390,7 +2389,7 @@ function renderDisciplineFinePanel(settings, ranks, records) {
     return `<tr><td>${formatHeartbeat(record.created_at)}</td><td>${escapeHtml(record.group_name || "—")}</td><td>${escapeHtml(record.issuer_display_name)}</td><td>${escapeHtml(record.target_display_name)}</td><td>${record.amount}</td><td>${record.kickback}</td><td>${reason}</td><td>${action}</td></tr>`;
   }).join("") || '<tr><td colspan="8" class="muted">还没有罚款记录。</td></tr>';
   panel.innerHTML = `
-    <div class="panel-heading"><div><h2>风纪罚款</h2><p class="muted">罚款即销毁，余额不足扣到 0；执法者抽成计入每人每日 5 币津贴封顶。执法部门在「职位与部门」里勾选"风纪执法部门"绑定；职级配额为 0 表示该职级不能罚款。</p></div><div class="command-actions"><button id="discipline-fine-save" class="primary" type="button">保存罚款设置</button></div></div>
+    <div class="panel-heading"><div><h2>风纪罚款</h2><p class="muted">罚款即销毁，余额不足扣到 0；执法者抽成计入每人每日 5 币津贴封顶。执法部门在「职位与部门」的部门津贴下拉里选"风纪执法"绑定；职级配额为 0 表示该职级不能罚款。</p></div><div class="command-actions"><button id="discipline-fine-save" class="primary" type="button">保存罚款设置</button></div></div>
     <div class="event-input-grid">
       <label><input id="discipline-fine-enabled" type="checkbox"${settings.enabled ? " checked" : ""}>开启风纪罚款</label>
     </div>
@@ -3065,7 +3064,6 @@ departmentModal.addEventListener("click", async (event) => {
     name: document.querySelector("#department-name").value.trim(),
     description: document.querySelector("#department-description").value.trim(),
     allowance_kind: document.querySelector("#department-allowance").value || null,
-    fine_enabled: document.querySelector("#department-fine-enabled").checked,
     enabled: document.querySelector("#department-enabled").checked,
   };
   try {

@@ -1163,7 +1163,6 @@ def create_app(
                 request.name,
                 request.description,
                 allowance_kind=request.allowance_kind,
-                fine_enabled=request.fine_enabled,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -3662,7 +3661,6 @@ def _department_response(record) -> DepartmentResponse:
         is_default=record.is_default,
         enabled=record.enabled,
         allowance_kind=record.allowance_kind,
-        fine_enabled=record.fine_enabled,
     )
 
 

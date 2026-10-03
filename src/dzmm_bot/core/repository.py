@@ -1258,7 +1258,7 @@ _DEPARTMENT_ALLOWANCE_LABELS = {
 }
 _DEPARTMENT_GAME_PLAY_STEP = 5
 _DEPARTMENT_ALLOWANCE_BINDINGS = frozenset(
-    {"checkin", "event", "game", "submission", "chat", "referral"}
+    {"checkin", "event", "game", "submission", "chat", "referral", "discipline"}
 )
 
 
@@ -26075,11 +26075,11 @@ class CoreRepository:
                 settings_record = self._discipline_fine_settings_row(session)
                 if not settings_record.enabled:
                     return DisciplineFineResult("disabled")
-                # 执法权走部门绑定：departments.fine_enabled
+                # 执法权走部门津贴绑定：allowance_kind = "discipline"
                 enforcement_ids = set(
                     session.scalars(
                         select(DepartmentRecord.id).where(
-                            DepartmentRecord.fine_enabled.is_(True),
+                            DepartmentRecord.allowance_kind == "discipline",
                             DepartmentRecord.enabled.is_(True),
                         )
                     )
@@ -27882,15 +27882,12 @@ class CoreRepository:
         description: str,
         *,
         allowance_kind: str | None = None,
-        fine_enabled: bool = False,
     ) -> DepartmentRecord:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("部门名称不能为空")
         if allowance_kind is not None and allowance_kind not in _DEPARTMENT_ALLOWANCE_BINDINGS:
             raise ValueError("无效的部门津贴类型")
-        if not isinstance(fine_enabled, bool):
-            raise ValueError("风纪执法标记无效")
         with self._session() as session:
             self._ensure_organization_defaults(session)
             if session.scalar(
@@ -27903,7 +27900,6 @@ class CoreRepository:
                 is_default=False,
                 enabled=True,
                 allowance_kind=allowance_kind,
-                fine_enabled=fine_enabled,
             )
             session.add(department)
             session.flush()
@@ -27917,15 +27913,12 @@ class CoreRepository:
         description: str,
         enabled: bool,
         allowance_kind: str | None = None,
-        fine_enabled: bool = False,
     ) -> DepartmentRecord | None:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("部门名称不能为空")
         if allowance_kind is not None and allowance_kind not in _DEPARTMENT_ALLOWANCE_BINDINGS:
             raise ValueError("无效的部门津贴类型")
-        if not isinstance(fine_enabled, bool):
-            raise ValueError("风纪执法标记无效")
         with self._session() as session:
             self._ensure_organization_defaults(session)
             department = session.get(DepartmentRecord, department_id)
@@ -27947,7 +27940,6 @@ class CoreRepository:
             department.description = description.strip()
             department.enabled = enabled
             department.allowance_kind = allowance_kind
-            department.fine_enabled = fine_enabled
             session.flush()
             return department
 

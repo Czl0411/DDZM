@@ -2654,9 +2654,6 @@ class DepartmentRecord(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allowance_kind: Mapped[str | None] = mapped_column(String(32))
-    fine_enabled: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=false(), nullable=False
-    )
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )

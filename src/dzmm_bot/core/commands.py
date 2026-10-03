@@ -100,6 +100,8 @@ class GroupCommandHandler:
             command = "/购买彩票"
         if command in {"/问", "/问吧"}:
             command = "/问题"
+        if command in {"/回答", "/答"}:
+            command = "/真心"
         if command not in _COMMANDS:
             dice_reply = self._liar_dice_call_step(message, content)
             if dice_reply is not None:
@@ -1911,8 +1913,13 @@ class GroupCommandHandler:
 
     def _truth_trade_answer(self, message, content, received_at, group_chat_id):
         if message.source_type != "group" or group_chat_id is None:
-            return "请在已启用的群聊中发送 /真心 内容。"
-        payload = content[len("/真心"):].strip()
+            return "请在已启用的群聊中发送 /回答 内容。"
+        # /回答、/答 是 /真心 的别名，handle 里归一化成 /真心 路由到这里；
+        # content 保留原文，按实际前缀剥离
+        prefix = next(
+            p for p in ("/回答", "/真心", "/答") if content.startswith(p)
+        )
+        payload = content[len(prefix):].strip()
         result = self._repository.answer_truth_trade(
             message.sender_platform_id,
             payload,
@@ -1927,7 +1934,7 @@ class GroupCommandHandler:
             "asker_cannot_answer": "这是你提的问题，等其他人的回答吧。",
             "not_required": "你加入晚于本题，无需回答。",
             "already_answered": "你已经回答过本题了。",
-            "empty_answer": "请发送 /真心 内容，回答不能为空。",
+            "empty_answer": "请发送 /回答 内容，回答不能为空。",
         }
         if result.status in errors:
             return errors[result.status]
@@ -4775,7 +4782,7 @@ class GroupCommandHandler:
                     ("/加入", "/加入：报名；对局中途加入者从下一个问题起参与"),
                     ("/开始", "/开始：至少 2 人后由发起者开局"),
                     ("/问", "轮到自己时 /问 内容：向其他人提问；/问 跳过：跳过本轮提问（/问题 也可）"),
-                    ("/真心", "其余玩家 /真心 内容：回答当前问题；/真心 跳过：记为拒答"),
+                    ("/回答", "其余玩家 /回答 内容：回答当前问题；/回答 跳过：记为拒答（/答、/真心 也可）"),
                     ("/继续", "/继续：本轮结算后任一参与者开下一轮"),
                     ("/当前游戏", "/当前游戏：查看当前进度、玩家名单与总人数"),
                     ("/真心换真心数据", "/真心换真心数据：查看本群总战绩"),

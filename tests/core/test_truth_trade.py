@@ -114,7 +114,7 @@ def test_truth_trade_wen_alias_for_ask():
     _setup_game(service, repository, factory, now)
 
     _receive(service, "q1", "user-0", "/问 今天吃了什么", now)
-    assert "其他人发送 /真心 你的回答" in _latest_reply(factory)
+    assert "其他人发送 /回答 你的回答" in _latest_reply(factory)
     from dzmm_bot.core.schema import TruthTradeQuestionRecord
 
     with repository._session() as session:
@@ -125,8 +125,8 @@ def test_truth_trade_wen_alias_for_ask():
         )
         assert question.content == "今天吃了什么"
 
-    _receive(service, "a1", "user-1", "/真心 米饭", now)
-    _receive(service, "a2", "user-2", "/真心 面条", now)
+    _receive(service, "a1", "user-1", "/回答 米饭", now)
+    _receive(service, "a2", "user-2", "/答 面条", now)
     _receive(service, "q2", "user-1", "/问 跳过", now)
     assert "已跳过本轮提问" in _latest_reply(factory)
 
@@ -148,7 +148,7 @@ def test_truth_trade_full_flow_round_complete_and_continue():
     # 1号 提问 → 2、3号回答 → 自动轮到 2号
     _receive(service, "q1", "user-0", "/问题 今天吃了什么", now)
     assert "今天吃了什么" in _latest_reply(factory)
-    assert "其他人发送 /真心 你的回答" in _latest_reply(factory)
+    assert "其他人发送 /回答 你的回答" in _latest_reply(factory)
     _receive(service, "a1", "user-1", "/真心 米饭", now)
     assert "已记录 2号 乙 的回答（1/2）" in _latest_reply(factory)
     _receive(service, "a2", "user-2", "/真心 面条", now)

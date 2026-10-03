@@ -2671,6 +2671,7 @@ def create_app(
             submission_amount=settings.submission_amount,
             chat_drop_percent=settings.chat_drop_percent,
             chat_drop_amount=settings.chat_drop_amount,
+            chat_drop_cooldown_seconds=settings.chat_drop_cooldown_seconds,
             referral_amount=settings.referral_amount,
             daily_cap=settings.daily_cap,
         )
@@ -2693,6 +2694,7 @@ def create_app(
                 submission_amount=request.submission_amount,
                 chat_drop_percent=request.chat_drop_percent,
                 chat_drop_amount=request.chat_drop_amount,
+                chat_drop_cooldown_seconds=request.chat_drop_cooldown_seconds,
                 referral_amount=request.referral_amount,
                 daily_cap=request.daily_cap,
             )
@@ -2707,6 +2709,7 @@ def create_app(
             submission_amount=settings.submission_amount,
             chat_drop_percent=settings.chat_drop_percent,
             chat_drop_amount=settings.chat_drop_amount,
+            chat_drop_cooldown_seconds=settings.chat_drop_cooldown_seconds,
             referral_amount=settings.referral_amount,
             daily_cap=settings.daily_cap,
         )

@@ -279,7 +279,7 @@ def test_fine_kickback_shares_daily_allowance_cap():
 
     _receive(service, "f1", "user-0", "/罚款 员工1 摸鱼", NOW)
 
-    assert _replied(factory, "稽查人获得 0 摸鱼币津贴（今日津贴已满 5 币）")
+    assert _replied(factory, "稽查人获得 0 摸鱼币津贴（今日津贴 5/5）")
     # 罚款照常执行（销毁）
     assert _balance(factory, "user-1") == target_before - 5
     assert _balance(factory, "user-0") == issuer_before

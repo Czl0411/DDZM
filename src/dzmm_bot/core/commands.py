@@ -2008,16 +2008,10 @@ class GroupCommandHandler:
             "" if result.actual_amount == result.amount
             else f"（余额不足，实扣 {result.actual_amount}）"
         )
-        if result.allowance_total >= result.allowance_cap:
-            allowance_note = (
-                f"稽查人获得 {result.kickback} 摸鱼币津贴"
-                f"（今日津贴已满 {result.allowance_cap} 币）"
-            )
-        else:
-            allowance_note = (
-                f"稽查人获得 {result.kickback} 摸鱼币津贴"
-                f"（今日津贴 {result.allowance_total}/{result.allowance_cap}）"
-            )
+        allowance_note = (
+            f"稽查人获得 {result.kickback} 摸鱼币津贴"
+            f"（今日津贴 {result.allowance_total}/{result.allowance_cap}）"
+        )
         return (
             f"【风纪罚款】{result.issuer_display_name}（{result.department_name}）对 "
             f"{result.target_display_name} 处以 {result.amount} 摸鱼币罚款"
@@ -2541,7 +2535,15 @@ class GroupCommandHandler:
                 f"每参与完成 {settings.game_play_step} 局 +{settings.game_play_amount}"
             ),
             "submission": f"随机事件投稿过审额外 +{settings.submission_amount} 摸鱼币",
-            "chat": f"水群有 {settings.chat_drop_percent}% 概率掉落 {settings.chat_drop_amount} 摸鱼币",
+            "chat": (
+                f"水群有 {settings.chat_drop_percent}% 概率掉落 "
+                f"{settings.chat_drop_amount} 摸鱼币"
+                + (
+                    f"（同人冷却 {settings.chat_drop_cooldown_seconds} 秒）"
+                    if settings.chat_drop_cooldown_seconds > 0
+                    else ""
+                )
+            ),
             "referral": f"每邀请新人通过链接进群 +{settings.referral_amount} 摸鱼币",
             "discipline": "风纪执法：成员可执行 /罚款 对违规员工处以罚款",
         }

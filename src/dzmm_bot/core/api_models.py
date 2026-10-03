@@ -1841,6 +1841,7 @@ class DepartmentAllowanceSettingsResponse(ApiModel):
     submission_amount: int = Field(ge=0, le=999)
     chat_drop_percent: int = Field(ge=0, le=100)
     chat_drop_amount: int = Field(ge=0, le=999)
+    chat_drop_cooldown_seconds: int = Field(ge=0, le=86400)
     referral_amount: int = Field(ge=0, le=999)
     daily_cap: int = Field(ge=1, le=9999)
 

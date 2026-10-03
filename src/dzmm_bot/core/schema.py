@@ -2687,6 +2687,9 @@ class DepartmentAllowanceSettingsRecord(Base):
     chat_drop_amount: Mapped[int] = mapped_column(
         Integer, default=1, server_default="1", nullable=False
     )
+    chat_drop_cooldown_seconds: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     referral_amount: Mapped[int] = mapped_column(
         Integer, default=1, server_default="1", nullable=False
     )

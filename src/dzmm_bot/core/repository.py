@@ -2186,6 +2186,7 @@ class DepartmentAllowanceSettings:
     submission_amount: int
     chat_drop_percent: int
     chat_drop_amount: int
+    chat_drop_cooldown_seconds: int
     referral_amount: int
     daily_cap: int
 
@@ -25936,7 +25937,7 @@ class CoreRepository:
             department,
             kind,
             granted,
-            total + granted >= daily_cap,
+            total + granted,
             daily_cap,
             group_chat_id,
             detail,
@@ -25950,12 +25951,12 @@ class CoreRepository:
         department: DepartmentRecord,
         kind: str,
         granted: int,
-        capped: bool,
+        total_after: int,
         daily_cap: int,
         group_chat_id: UUID | None,
         detail: str | None,
     ) -> None:
-        """津贴到账通知：员工名用系统注册名，金额为实发数。"""
+        """津贴到账通知：员工名用系统注册名，金额为实发数，附今日累计。"""
         label = _DEPARTMENT_ALLOWANCE_LABELS.get(kind)
         if label is None:
             return
@@ -25965,8 +25966,7 @@ class CoreRepository:
         )
         if detail:
             text += f"（{detail}）"
-        if capped:
-            text += f"（今日津贴已满 {daily_cap} 币）"
+        text += f"（今日已获得津贴：{total_after}/{daily_cap}）"
         if group_chat_id is not None:
             destination = self.group_chat_destination(group_chat_id)
             if destination is not None:
@@ -26040,6 +26040,7 @@ class CoreRepository:
         submission_amount: int,
         chat_drop_percent: int,
         chat_drop_amount: int,
+        chat_drop_cooldown_seconds: int,
         referral_amount: int,
         daily_cap: int,
     ) -> DepartmentAllowanceSettings:
@@ -26053,6 +26054,7 @@ class CoreRepository:
             ("投稿奖励", submission_amount, 0, 999),
             ("水群掉落概率", chat_drop_percent, 0, 100),
             ("水群掉落金额", chat_drop_amount, 0, 999),
+            ("水群掉落冷却秒数", chat_drop_cooldown_seconds, 0, 86400),
             ("拉新奖励", referral_amount, 0, 999),
             ("每日津贴封顶", daily_cap, 1, 9999),
         )
@@ -26070,6 +26072,7 @@ class CoreRepository:
                 record.submission_amount = submission_amount
                 record.chat_drop_percent = chat_drop_percent
                 record.chat_drop_amount = chat_drop_amount
+                record.chat_drop_cooldown_seconds = chat_drop_cooldown_seconds
                 record.referral_amount = referral_amount
                 record.daily_cap = daily_cap
                 session.flush()
@@ -26090,6 +26093,7 @@ class CoreRepository:
                 submission_amount=5,
                 chat_drop_percent=10,
                 chat_drop_amount=1,
+                chat_drop_cooldown_seconds=0,
                 referral_amount=1,
                 daily_cap=DEPARTMENT_ALLOWANCE_DAILY_CAP,
             )
@@ -26603,6 +26607,15 @@ class CoreRepository:
         with self._session() as session:
             percent = int(self._department_allowance_settings_row(session).chat_drop_percent)
         return self._chat_drop_random.random() < percent / 100
+
+    def chat_drop_cooldown_seconds(self) -> int:
+        """水群掉落同人冷却秒数；0 表示不冷却。"""
+        with self._session() as session:
+            return int(
+                self._department_allowance_settings_row(
+                    session
+                ).chat_drop_cooldown_seconds
+            )
 
     def record_referral_from_system(self, message: InboundMessage, now: datetime) -> None:
         """入群系统消息 → 拉新归因 + 部门津贴（dept_referral）。
@@ -33697,6 +33710,7 @@ def _department_allowance_settings(
         submission_amount=record.submission_amount,
         chat_drop_percent=record.chat_drop_percent,
         chat_drop_amount=record.chat_drop_amount,
+        chat_drop_cooldown_seconds=record.chat_drop_cooldown_seconds,
         referral_amount=record.referral_amount,
         daily_cap=record.daily_cap,
     )

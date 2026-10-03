@@ -33,7 +33,6 @@ _DIRECT_COMMANDS = {
 _RANDOM_EVENT_INDEPENDENT_COMMANDS = {
     "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏", "/随礼",
 }
-_CHAT_DROP_COOLDOWN_SECONDS = 600
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -469,16 +468,18 @@ class CoreService:
             return ReceiveResult(stored.id, True)
 
     def _chat_drop_due(self, message: InboundMessage) -> bool:
-        """摸鱼吃瓜部水群掉落判定：同人 10 分钟内只判一次。"""
+        """摸鱼吃瓜部水群掉落判定：同人冷却秒数后台可设，0 为不冷却。"""
         sender = message.sender_platform_id
         received_at = message.received_at
-        last = self._chat_drop_last_judged.get(sender)
-        if (
-            last is not None
-            and (received_at - last).total_seconds() < _CHAT_DROP_COOLDOWN_SECONDS
-        ):
-            return False
-        self._chat_drop_last_judged[sender] = received_at
+        cooldown = self._repository.chat_drop_cooldown_seconds()
+        if cooldown > 0:
+            last = self._chat_drop_last_judged.get(sender)
+            if (
+                last is not None
+                and (received_at - last).total_seconds() < cooldown
+            ):
+                return False
+            self._chat_drop_last_judged[sender] = received_at
         return self._repository.roll_chat_drop()
 
     @staticmethod

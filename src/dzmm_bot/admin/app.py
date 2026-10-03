@@ -2144,6 +2144,7 @@ def create_app(
             "submission_amount",
             "chat_drop_percent",
             "chat_drop_amount",
+            "chat_drop_cooldown_seconds",
             "referral_amount",
             "daily_cap",
         )

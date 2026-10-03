@@ -152,7 +152,11 @@ def test_checkin_allowance_notifies_the_group():
     _receive(service, "c1", "user-0", "/打卡", now)
 
     texts = _outbound_texts(factory)
-    assert any("【部门津贴】甲（核心技术部）打卡奖励 +5 摸鱼币" in text for text in texts)
+    assert any(
+        "【部门津贴】甲（核心技术部）打卡奖励 +5 摸鱼币（今日已获得津贴：5/5）"
+        in text
+        for text in texts
+    )
     from dzmm_bot.core.schema import OutboundRecord
 
     with factory() as session:
@@ -192,16 +196,9 @@ def test_allowance_settings_override_amounts_and_hints():
     _receive(service, "j0", "user-0", "/入职 甲", now)
     department_id = _bind_department(factory, "核心技术部", "checkin")
     _assign_department(factory, "user-0", department_id)
-    repository.set_department_allowance_settings(
+    _set_settings(
+        repository,
         checkin_amount=2,
-        event_amount=5,
-        game_host_amount=1,
-        game_play_amount=1,
-        game_play_step=5,
-        submission_amount=5,
-        chat_drop_percent=10,
-        chat_drop_amount=1,
-        referral_amount=1,
         daily_cap=3,
     )
 
@@ -213,6 +210,24 @@ def test_allowance_settings_override_amounts_and_hints():
 
     _receive(service, "dept", "user-0", "/部门", now)
     assert _replied_text(factory, "每日打卡额外 +2 摸鱼币")
+
+
+def _set_settings(repository, **overrides):
+    params = dict(
+        checkin_amount=5,
+        event_amount=5,
+        game_host_amount=1,
+        game_play_amount=1,
+        game_play_step=5,
+        submission_amount=5,
+        chat_drop_percent=10,
+        chat_drop_amount=1,
+        chat_drop_cooldown_seconds=0,
+        referral_amount=1,
+        daily_cap=5,
+    )
+    params.update(overrides)
+    return repository.set_department_allowance_settings(**params)
 
 
 def _replied_text(factory, snippet):
@@ -267,6 +282,7 @@ def test_chat_drop_with_cooldown():
     _receive(service, "j1", "user-1", "/入职 乙", now)
     department = repository.create_department("摸鱼吃瓜部", "", allowance_kind="chat")
     _assign_department(factory, "user-0", department.id)
+    _set_settings(repository, chat_drop_cooldown_seconds=600)
 
     _receive(service, "m1", "user-0", "今天好摸鱼", now)
     assert _balance(factory, "user-0") == _balance(factory, "user-1") + 1
@@ -294,6 +310,25 @@ def test_chat_drop_with_cooldown():
     # 未绑定部门的用户不发
     _receive(service, "m4", "user-1", "我也摸鱼", now)
     assert _balance(factory, "user-1") == _balance(factory, "user-1")
+
+
+def test_chat_drop_no_cooldown_by_default():
+    """默认不冷却：同人连续消息每次都判定（概率命中即发放）。"""
+    service, repository, factory = _service(chat_drop_random=_AlwaysHit())
+    now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    _receive(service, "j0", "user-0", "/入职 甲", now)
+    _receive(service, "j1", "user-1", "/入职 乙", now)
+    department = repository.create_department("摸鱼吃瓜部", "", allowance_kind="chat")
+    _assign_department(factory, "user-0", department.id)
+
+    _receive(service, "m1", "user-0", "今天好摸鱼", now)
+    _receive(
+        service, "m2", "user-0", "继续摸鱼", now + timedelta(seconds=5)
+    )
+    assert _balance(factory, "user-0") == _balance(factory, "user-1") + 2
 
 
 def test_chat_drop_miss_and_commands_skip():
@@ -379,15 +414,15 @@ def test_chat_drop_notification_with_cap_note():
 
     _receive(service, "m1", "user-0", "今天好摸鱼", now)
     assert any(
-        "【部门津贴】甲（摸鱼吃瓜部）水群掉落 +1 摸鱼币" in t
+        "【部门津贴】甲（摸鱼吃瓜部）水群掉落 +1 摸鱼币（今日已获得津贴：1/5）" in t
         for t in _outbound_texts(factory)
     )
 
-    # 当日已领 1（m1）+ 预置 3 = 4 币，本次实发 1 → 恰好封顶，文案带封顶标记
+    # 当日已领 1（m1）+ 预置 3 = 4 币，本次实发 1 → 恰好封顶
     _add_allowance(factory, "user-0", 3, now)
     _receive(service, "m2", "user-0", "继续摸鱼", now + timedelta(minutes=11))
     assert any(
-        "水群掉落 +1 摸鱼币（今日津贴已满 5 币）" in t
+        "水群掉落 +1 摸鱼币（今日已获得津贴：5/5）" in t
         for t in _outbound_texts(factory)
     )
 

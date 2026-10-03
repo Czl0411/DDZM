@@ -107,28 +107,37 @@ def _setup_game(service, repository, factory, now, players=3):
     assert "第 1 轮开始" in _latest_reply(factory)
 
 
-def test_truth_trade_wenba_alias_for_ask():
-    """/问吧 是 /问题 的别名：正常路由，且只剥离自身前缀。"""
+def test_truth_trade_wen_alias_for_ask():
+    """/问、/问吧 是 /问题 的别名：正常路由，且只剥离自身前缀。"""
     service, repository, factory = _service()
     now = NOW
     _setup_game(service, repository, factory, now)
 
-    _receive(service, "q1", "user-0", "/问吧 今天吃了什么", now)
+    _receive(service, "q1", "user-0", "/问 今天吃了什么", now)
     assert "其他人发送 /真心 你的回答" in _latest_reply(factory)
     from dzmm_bot.core.schema import TruthTradeQuestionRecord
 
     with repository._session() as session:
         question = session.scalar(
-            select(TruthTradeQuestionRecord).order_by(
-                TruthTradeQuestionRecord.id.desc()
+            select(TruthTradeQuestionRecord).where(
+                TruthTradeQuestionRecord.position == 1
             )
         )
         assert question.content == "今天吃了什么"
 
     _receive(service, "a1", "user-1", "/真心 米饭", now)
     _receive(service, "a2", "user-2", "/真心 面条", now)
-    _receive(service, "q2", "user-1", "/问吧 跳过", now)
+    _receive(service, "q2", "user-1", "/问 跳过", now)
     assert "已跳过本轮提问" in _latest_reply(factory)
+
+    # /问吧 同样可用
+    _receive(service, "q3", "user-2", "/问吧 最喜欢的游戏", now)
+    with repository._session() as session:
+        question = session.scalar(
+            select(TruthTradeQuestionRecord)
+            .order_by(TruthTradeQuestionRecord.position.desc())
+        )
+        assert question.content == "最喜欢的游戏"
 
 
 def test_truth_trade_full_flow_round_complete_and_continue():

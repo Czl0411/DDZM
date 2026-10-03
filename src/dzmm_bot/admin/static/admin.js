@@ -2241,7 +2241,7 @@ async function loadBirthday() {
     requestGame("/api/group-chats", {cache: "no-store"}),
   ]);
   birthdaySettings = settings;
-  renderBirthdayPanel(settings, members, groups);
+  renderBirthdayPanel(settings, members, groups.items);
 }
 
 function birthdayNumberField(id, label, value, min, max) {

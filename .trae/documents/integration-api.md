@@ -23,6 +23,7 @@
 | 2 | GET | `/users/{platform_id}/balance` | 查询余额 |
 | 3 | POST | `/coins/grant` | 发币 |
 | 4 | POST | `/coins/deduct` | 扣币 |
+| 5 | GET | `/users/{platform_id}/game-quota` | 查询小游戏每日发起额度 |
 
 ## 3. 接口详情
 
@@ -136,6 +137,41 @@ GET /api/integration/users/{platform_id}/balance
 ```
 
 （余额为 0 时 `actual_amount` 为 0，也返回 200。）
+
+### 3.5 小游戏发起额度 `GET /users/{platform_id}/game-quota`
+
+```
+GET /api/integration/users/{platform_id}/game-quota
+```
+
+```json
+{
+  "platform_id": "a56cbd67-...",
+  "display_name": "糯糯",
+  "employee_number": "#0001",
+  "rank_name": "核心董事会",
+  "rank_limit": -1,
+  "unlimited": true,
+  "used_today": { "blame_game": 0, "texas_holdem": 0 },
+  "used_today_total": 0,
+  "bonus_remaining": 0,
+  "remaining": null
+}
+```
+
+字段说明：
+
+| 字段 | 说明 |
+|---|---|
+| `rank_name` | 用户当前职级名（未定职级为 null） |
+| `rank_limit` | 职级每日开局上限；**-1 = 不限制**；null = 无职级（未知） |
+| `unlimited` | 是否不限制（rank_limit 为 -1 或 null 时为 true） |
+| `used_today` | 今日已发起次数，**按游戏类型分桶**（number_bomb / undercover / never_have_i_ever / memory_duel / blame_game / texas_holdem，只列出有记录的） |
+| `used_today_total` | 今日已发起合计 |
+| `bonus_remaining` | 商店加成剩余次数（超出职级上限后消耗，全游戏共享池） |
+| `remaining` | 每个游戏类型的基础剩余次数（= 上限 − 已用，下限 0）；**不限时为 null** |
+
+计数规则与游戏内一致：职级上限对 never_have_i_ever / number_bomb / undercover / memory_duel / blame_game 按游戏分桶计数；texas_holdem 使用德州自己的每日上限（此处只报已用）。员工不存在返回 404。
 
 ## 4. 幂等机制（重要）
 

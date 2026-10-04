@@ -390,3 +390,137 @@ def test_idempotency_key_is_global_across_actions(client, headers, app_context):
     assert grant.status_code == 200
     assert mixed.status_code == 409
     assert _balance(app_context, "plat-1") == 15
+
+
+# ---------------------------------------------------------------- 发起额度
+
+def test_game_quota_unknown_user_returns_404(client, headers):
+    response = client.get(
+        "/internal/integration/users/plat-none/game-quota", headers=headers
+    )
+    assert response.status_code == 404
+
+
+def test_game_quota_reports_rank_limit_and_daily_usage(client, headers, app_context):
+    from dzmm_bot.core.schema import (
+        BlameGameDailyStartRecord,
+        RankRecord,
+        ShopDailyBonusRecord,
+        ShopMultiplayerDailyStartRecord,
+        UserRecord,
+    )
+
+    with app_context.session_factory.begin() as session:
+        rank = RankRecord(
+            sort_order=98,
+            name="测试主管",
+            level_label="T9",
+            promotion_price=100,
+            checkin_reward=5,
+            vote_weight=1,
+            multiplayer_game_limit=2,
+        )
+        session.add(rank)
+        session.flush()
+        user = UserRecord(
+            platform_id="plat-1",
+            display_name="小明",
+            employee_number=1,
+            balance=0,
+            joined_at=NOW,
+            rank_id=rank.id,
+        )
+        session.add(user)
+        session.flush()
+        session.add(
+            ShopMultiplayerDailyStartRecord(
+                user_id=user.id,
+                play_date=NOW.date(),
+                game_type="number_bomb",
+                count=1,
+            )
+        )
+        session.add(
+            BlameGameDailyStartRecord(
+                user_id=user.id, play_date=NOW.date(), count=2
+            )
+        )
+        session.add(
+            ShopDailyBonusRecord(
+                user_id=user.id,
+                usage_date=NOW.date(),
+                multiplayer_total=3,
+                multiplayer_used=1,
+            )
+        )
+    # 另一位无职级用户（对照 unlimited 分支）
+    _add_user(app_context, "plat-2", "小红", 2)
+
+    response = client.get(
+        "/internal/integration/users/plat-1/game-quota", headers=headers
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rank_name"] == "测试主管"
+    assert body["rank_limit"] == 2
+    assert body["unlimited"] is False
+    assert body["used_today"] == {"number_bomb": 1, "blame_game": 2, "texas_holdem": 0}
+    assert body["used_today_total"] == 3
+    assert body["bonus_remaining"] == 2
+    assert body["remaining"]["number_bomb"] == 1
+    assert body["remaining"]["blame_game"] == 0
+    assert body["remaining"]["texas_holdem"] == 2
+
+
+def test_game_quota_without_rank_reads_unlimited(client, headers, app_context):
+    _add_user(app_context, "plat-1", "小明", 1)
+
+    response = client.get(
+        "/internal/integration/users/plat-1/game-quota", headers=headers
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rank_name"] is None
+    assert body["rank_limit"] is None
+    assert body["unlimited"] is True
+    assert body["remaining"] is None
+    assert body["used_today_total"] == 0
+
+
+def test_game_quota_negative_rank_limit_means_unlimited(client, headers, app_context):
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    with app_context.session_factory.begin() as session:
+        rank = RankRecord(
+            sort_order=99,
+            name="测试董事",
+            level_label="T10",
+            promotion_price=100,
+            checkin_reward=5,
+            vote_weight=1,
+            multiplayer_game_limit=-1,
+        )
+        session.add(rank)
+        session.flush()
+        session.add(
+            UserRecord(
+                platform_id="plat-1",
+                display_name="小明",
+                employee_number=1,
+                balance=0,
+                joined_at=NOW,
+                rank_id=rank.id,
+            )
+        )
+
+    response = client.get(
+        "/internal/integration/users/plat-1/game-quota", headers=headers
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rank_limit"] == -1
+    assert body["unlimited"] is True
+    assert body["remaining"] is None

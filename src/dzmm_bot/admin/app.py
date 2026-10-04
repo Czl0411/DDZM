@@ -2317,6 +2317,15 @@ def create_app(
             lambda: core.integration_balance(platform_id)
         )
 
+    @app.get("/api/integration/users/{platform_id}/game-quota")
+    def api_integration_game_quota(
+        platform_id: str,
+        _: Annotated[None, Depends(verify_integration_key)],
+    ) -> dict:
+        return forward_integration(
+            lambda: core.integration_game_quota(platform_id)
+        )
+
     @app.post("/api/integration/coins/grant")
     def api_integration_grant(
         payload: dict,

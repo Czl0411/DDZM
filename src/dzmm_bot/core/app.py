@@ -2894,6 +2894,18 @@ def create_app(
             )
         return view
 
+    @app.get("/internal/integration/users/{platform_id}/game-quota")
+    def integration_game_quota(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        quota = repository.integration_game_quota(platform_id, clock())
+        if quota is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"没找到员工（platform_id={platform_id}）",
+            )
+        return quota
+
     def _integration_coin(
         request: IntegrationCoinRequest, action: str
     ) -> JSONResponse:

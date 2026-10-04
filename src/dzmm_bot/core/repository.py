@@ -26432,6 +26432,94 @@ class CoreRepository:
                 return None
             return self._integration_user_view(user)
 
+    def integration_game_quota(self, platform_id: str, now: datetime) -> dict | None:
+        """小游戏每日发起额度：职级上限 + 各游戏分桶计数 + 商店加成余量。
+
+        - 职级上限 rank.multiplayer_game_limit 覆盖：never_have_i_ever /
+          number_bomb / undercover / memory_duel / blame_game（各游戏独立计数桶）
+        - texas_holdem 用自己的每日上限（texas 设置），此处只报已用次数
+        - 商店加成（ShopDailyBonus）是所有游戏共享的额外池
+        - rank_limit = -1 表示不限制；remaining 为 null
+        """
+        now = now.astimezone(BEIJING)
+        play_date = now.date()
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return None
+            rank = (
+                session.get(RankRecord, user.rank_id)
+                if user.rank_id is not None
+                else None
+            )
+            rank_limit = (
+                int(rank.multiplayer_game_limit) if rank is not None else None
+            )
+            unlimited = rank_limit is None or rank_limit < 0
+            multiplayer_rows = session.execute(
+                select(
+                    ShopMultiplayerDailyStartRecord.game_type,
+                    ShopMultiplayerDailyStartRecord.count,
+                ).where(
+                    ShopMultiplayerDailyStartRecord.user_id == user.id,
+                    ShopMultiplayerDailyStartRecord.play_date == play_date,
+                )
+            ).all()
+            used_today = {
+                game_type: int(count) for game_type, count in multiplayer_rows
+            }
+            blame_used = session.scalar(
+                select(BlameGameDailyStartRecord.count).where(
+                    BlameGameDailyStartRecord.user_id == user.id,
+                    BlameGameDailyStartRecord.play_date == play_date,
+                )
+            )
+            used_today["blame_game"] = int(blame_used or 0)
+            texas_used = session.scalar(
+                select(TexasHoldemDailyStartRecord.count).where(
+                    TexasHoldemDailyStartRecord.user_id == user.id,
+                    TexasHoldemDailyStartRecord.play_date == play_date,
+                )
+            )
+            used_today["texas_holdem"] = int(texas_used or 0)
+            bonus_row = session.scalar(
+                select(ShopDailyBonusRecord).where(
+                    ShopDailyBonusRecord.user_id == user.id,
+                    ShopDailyBonusRecord.usage_date == play_date,
+                )
+            )
+            bonus_remaining = (
+                0
+                if bonus_row is None
+                else max(
+                    int(bonus_row.multiplayer_total)
+                    - int(bonus_row.multiplayer_used),
+                    0,
+                )
+            )
+            remaining = (
+                None
+                if unlimited
+                else {
+                    game_type: max(rank_limit - count, 0)
+                    for game_type, count in used_today.items()
+                }
+            )
+            return {
+                "platform_id": user.platform_id,
+                "display_name": user.display_name,
+                "employee_number": format_employee_number(user.employee_number),
+                "rank_name": rank.name if rank is not None else None,
+                "rank_limit": rank_limit,
+                "unlimited": unlimited,
+                "used_today": used_today,
+                "used_today_total": sum(used_today.values()),
+                "bonus_remaining": bonus_remaining,
+                "remaining": remaining,
+            }
+
     def integration_coin_adjust(
         self,
         *,

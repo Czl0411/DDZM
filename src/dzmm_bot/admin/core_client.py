@@ -265,6 +265,8 @@ class AdminCorePort(Protocol):
 
     def integration_balance(self, platform_id: str) -> dict: ...
 
+    def integration_game_quota(self, platform_id: str) -> dict: ...
+
     def integration_grant(self, payload: dict) -> dict: ...
 
     def integration_deduct(self, payload: dict) -> dict: ...
@@ -978,6 +980,11 @@ class CoreClient:
     def integration_balance(self, platform_id: str) -> dict:
         return self._get(
             f"/internal/integration/users/{platform_id}/balance"
+        )
+
+    def integration_game_quota(self, platform_id: str) -> dict:
+        return self._get(
+            f"/internal/integration/users/{platform_id}/game-quota"
         )
 
     def integration_grant(self, payload: dict) -> dict:

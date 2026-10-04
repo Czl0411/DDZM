@@ -980,6 +980,10 @@ class FakeCore:
         self.integration_calls.append(("balance", platform_id))
         return {"platform_id": platform_id, "balance": 7}
 
+    def integration_game_quota(self, platform_id):
+        self.integration_calls.append(("quota", platform_id))
+        return {"unlimited": True, "used_today_total": 0}
+
     def integration_grant(self, payload):
         self.integration_calls.append(("grant", payload))
         return {"ok": True, "balance_after": 12}
@@ -4047,3 +4051,28 @@ def test_integration_endpoints_disabled_without_key(core, console, websocket_con
     response = client.get("/api/integration/users/plat-1/balance")
 
     assert response.status_code == 503
+
+def test_integration_game_quota_route(core, console, websocket_connection, admin_repository):
+    from dzmm_bot.admin.app import create_app
+
+    client = TestClient(
+        create_app(
+            "admin-secret",
+            core,
+            repository=admin_repository,
+            console_client=console,
+            websocket_connector=websocket_connection.connect,
+            integration_api_key="integration-secret",
+        )
+    )
+
+    no_key = client.get("/api/integration/users/plat-1/game-quota")
+    found = client.get(
+        "/api/integration/users/plat-1/game-quota",
+        headers={"X-Api-Key": "integration-secret"},
+    )
+
+    assert no_key.status_code == 401
+    assert found.status_code == 200
+    assert found.json()["unlimited"] is True
+    assert core.integration_calls == [("quota", "plat-1")]

@@ -2489,7 +2489,7 @@ _COMMAND_DEFINITIONS = (
     ("/允许被凿", "/允许被凿", "允许别人凿自己（默认开启）"),
     ("/拒绝被凿", "/拒绝被凿", "拒绝被凿：之后被 /凿 时对方会吃一杵子"),
     ("/我的发情值", "/我的发情值", "查看自己的发情值、被凿次数与高潮次数"),
-    ("/发情值排名", "/发情值排名", "查看本群发情值排行前 5 名"),
+    ("/最受欢迎", "/最受欢迎", "查看今日最受欢迎榜前 5 名（按今日被凿次数）"),
     ("/设置性别", "/设置性别 男|女", "设置自己的性别（/修改性别 等效），影响高潮文字文风"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
@@ -14243,6 +14243,14 @@ class CoreRepository:
             session.flush()
         return row
 
+    @staticmethod
+    def _estrus_daily_reset(state: EstrusStateRecord, today: date) -> None:
+        """发情值跨天清零（今日高潮一并重置）；累计被凿/总高潮不受影响。"""
+        if state.last_active_date != today:
+            state.heat = 0
+            state.today_climaxes = 0
+            state.last_active_date = today
+
     def _roll_estrus_pair(
         self, settings: EstrusSettingsRecord
     ) -> tuple[int, int]:
@@ -14382,77 +14390,82 @@ class CoreRepository:
     def get_my_estrus(
         self, platform_id: str, group_chat_id: UUID, now: datetime
     ) -> dict | None:
-        with self._session() as session:
-            threshold = int(self._estrus_settings_row(session).climax_threshold)
-            row = session.execute(
-                select(UserRecord, EstrusStateRecord)
-                .outerjoin(
-                    EstrusStateRecord,
-                    (EstrusStateRecord.user_id == UserRecord.id)
-                    & (EstrusStateRecord.group_chat_id == group_chat_id),
+        now = now.astimezone(BEIJING)
+        today = now.date()
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        with self.transaction():
+            with self._session() as session:
+                threshold = int(
+                    self._estrus_settings_row(session).climax_threshold
                 )
-                .where(UserRecord.platform_id == platform_id)
-            ).first()
-            if row is None:
-                return None
-            user, state = row
-            today = now.astimezone(BEIJING).date()
-            today_climaxes = (
-                state.today_climaxes
-                if state is not None and state.last_climax_date == today
-                else 0
-            )
-            return {
-                "display_name": user.display_name,
-                "heat": state.heat if state is not None else 0,
-                "threshold": threshold,
-                "chopped_count": state.chopped_count if state is not None else 0,
-                "today_climaxes": today_climaxes,
-                "total_climaxes": (
-                    state.total_climaxes if state is not None else 0
-                ),
-                "opted_out": state.opted_out if state is not None else False,
-                "gender": user.gender or "unknown",
-            }
+                row = session.execute(
+                    select(UserRecord, EstrusStateRecord)
+                    .outerjoin(
+                        EstrusStateRecord,
+                        (EstrusStateRecord.user_id == UserRecord.id)
+                        & (EstrusStateRecord.group_chat_id == group_chat_id),
+                    )
+                    .where(UserRecord.platform_id == platform_id)
+                ).first()
+                if row is None:
+                    return None
+                user, state = row
+                if state is not None:
+                    self._estrus_daily_reset(state, today)
+                today_chopped = int(
+                    session.scalar(
+                        select(func.count()).select_from(EstrusChopRecord).where(
+                            EstrusChopRecord.target_user_id == user.id,
+                            EstrusChopRecord.group_chat_id == group_chat_id,
+                            EstrusChopRecord.created_at >= day_start,
+                            EstrusChopRecord.created_at < day_start + timedelta(days=1),
+                        )
+                    )
+                    or 0
+                )
+                return {
+                    "display_name": user.display_name,
+                    "heat": state.heat if state is not None else 0,
+                    "threshold": threshold,
+                    "chopped_count": state.chopped_count if state is not None else 0,
+                    "today_chopped": today_chopped,
+                    "today_climaxes": (
+                        state.today_climaxes if state is not None else 0
+                    ),
+                    "total_climaxes": (
+                        state.total_climaxes if state is not None else 0
+                    ),
+                    "opted_out": state.opted_out if state is not None else False,
+                    "gender": user.gender or "unknown",
+                }
 
-    def estrus_rankings(
+    def estrus_popularity_rankings(
         self, group_chat_id: UUID, now: datetime
     ) -> list[dict]:
-        """发情值排行（前 5）：今日高潮 > 总高潮 > 发情值 > 被凿次数。"""
-        today = now.astimezone(BEIJING).date()
+        """今日最受欢迎榜（前 5）：按当日被凿次数，从 estrus_chops 按天统计。"""
+        day_start = now.astimezone(BEIJING).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         with self._session() as session:
             rows = session.execute(
-                select(EstrusStateRecord, UserRecord)
+                select(UserRecord.display_name, func.count())
                 .join(
-                    UserRecord, UserRecord.id == EstrusStateRecord.user_id
+                    EstrusChopRecord,
+                    EstrusChopRecord.target_user_id == UserRecord.id,
                 )
-                .where(EstrusStateRecord.group_chat_id == group_chat_id)
+                .where(
+                    EstrusChopRecord.group_chat_id == group_chat_id,
+                    EstrusChopRecord.created_at >= day_start,
+                    EstrusChopRecord.created_at < day_start + timedelta(days=1),
+                )
+                .group_by(UserRecord.id, UserRecord.display_name)
+                .order_by(func.count().desc(), UserRecord.id)
+                .limit(5)
             ).all()
-        entries = []
-        for state, user in rows:
-            today_climaxes = (
-                state.today_climaxes
-                if state.last_climax_date == today
-                else 0
-            )
-            entries.append(
-                {
-                    "display_name": user.display_name,
-                    "heat": int(state.heat),
-                    "chopped_count": int(state.chopped_count),
-                    "today_climaxes": int(today_climaxes),
-                    "total_climaxes": int(state.total_climaxes),
-                }
-            )
-        entries.sort(
-            key=lambda item: (
-                -item["today_climaxes"],
-                -item["total_climaxes"],
-                -item["heat"],
-                -item["chopped_count"],
-            )
-        )
-        return entries[:5]
+        return [
+            {"display_name": name, "today_chopped": int(count)}
+            for name, count in rows
+        ]
 
     def _estrus_climax_text(
         self,
@@ -14561,8 +14574,7 @@ class CoreRepository:
                 state = self._estrus_state_row(
                     session, group_chat_id, target.id
                 )
-                if state.last_climax_date != now.date():
-                    state.today_climaxes = 0
+                self._estrus_daily_reset(state, now.date())
                 if state.opted_out:
                     return EstrusChopResult(
                         "refused",
@@ -14589,7 +14601,6 @@ class CoreRepository:
                     state.heat = 0
                     state.total_climaxes = int(state.total_climaxes) + 1
                     state.today_climaxes = int(state.today_climaxes) + 1
-                    state.last_climax_date = now.date()
                 if coins > 0:
                     self._apply_balance_change(
                         target, coins, "estrus_gain", now
@@ -27695,7 +27706,7 @@ class CoreRepository:
                     if existing is not None:
                         continue
                     destination = self.group_chat_destination(group_chat_id)
-                    estrus_text = self._estrus_rank_text(
+                    estrus_text = self._estrus_popularity_text(
                         group_chat_id, report_time, now
                     )
                     if estrus_text:
@@ -27729,19 +27740,17 @@ class CoreRepository:
                         )
                     )
 
-    def _estrus_rank_text(
+    def _estrus_popularity_text(
         self, group_chat_id: UUID, report_time: str, now: datetime
     ) -> str | None:
-        entries = self.estrus_rankings(group_chat_id, now)
+        entries = self.estrus_popularity_rankings(group_chat_id, now)
         if not entries:
             return None
-        lines = [f"【发情值排名】（{report_time}）"]
-        for index, entry in enumerate(entries, 1):
-            lines.append(
-                f"{index}. {entry['display_name']} · 发情 {entry['heat']}"
-                f" · 被凿 {entry['chopped_count']}"
-                f" · 高潮 今{entry['today_climaxes']}/总{entry['total_climaxes']}"
-            )
+        lines = [f"【今日最受欢迎榜】（{report_time}）"]
+        lines.extend(
+            f"{entry['display_name']}：今日被凿{entry['today_chopped']}次"
+            for entry in entries
+        )
         return "\n".join(lines)
 
     def _income_rankings(self, session: Session, now: datetime) -> list[tuple[str, int]]:

@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, select
@@ -258,7 +258,7 @@ def test_chopper_cooldown_blocks_second_chop():
     assert _joined_text(factory, "凿冷却中，请")
 
 
-def test_my_estrus_and_ranking():
+def test_my_estrus_and_popularity_ranking():
     service, repository, factory = _service(
         estrus_random=_SeqRandom([0.90, 0.60, 0.90, 0.60])
     )
@@ -270,14 +270,63 @@ def test_my_estrus_and_ranking():
 
     _receive(service, "q1", "user-1", "/我的发情值", NOW)
     texts = _replies(factory)
-    assert any("当前发情值：4" in text for text in texts)
-    assert any("被凿次数：2" in text for text in texts)
+    assert any("发情值：4/100（每日清零）" in text for text in texts)
+    assert any("被凿：今日 2 次 / 累计 2 次" in text for text in texts)
     assert any("状态：允许被凿" in text for text in texts)
 
-    _receive(service, "q2", "user-0", "/发情值排名", NOW)
+    _receive(service, "q2", "user-0", "/最受欢迎", NOW)
     texts = _replies(factory)
-    assert any("【发情值排名】" in text for text in texts)
-    assert any("1. 乙 · 发情 4 · 被凿 2" in text for text in texts)
+    assert any("【今日最受欢迎榜】" in text for text in texts)
+    assert any("乙：今日被凿2次" in text for text in texts)
+    # 旧指令归一化到新榜
+    _receive(service, "q3", "user-0", "/发情值排名", NOW)
+    assert any("【今日最受欢迎榜】" in text for text in _replies(factory))
+
+
+def test_popularity_board_counts_today_only_and_resets_heat_daily():
+    service, repository, factory = _service(
+        estrus_random=_SeqRandom([0.90, 0.60] * 6)
+    )
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _join(service, "j2", "user-2", "丙", NOW)
+
+    # 昨天：乙被凿 2 次（发情值 4）
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+    _receive(service, "c2", "user-0", "/凿 乙", NOW + timedelta(minutes=1))
+    # 今天：乙被凿 1 次、丙被凿 1 次
+    tomorrow = NOW + timedelta(days=1)
+    _receive(service, "c3", "user-0", "/凿 乙", tomorrow)
+    _receive(service, "c4", "user-1", "/凿 丙", tomorrow)
+
+    _receive(service, "q1", "user-0", "/最受欢迎", tomorrow)
+    texts = _replies(factory)
+    assert any("乙：今日被凿1次" in text for text in texts)
+    assert any("丙：今日被凿1次" in text for text in texts)
+    assert not any("今日被凿2次" in text for text in texts)
+
+    # 发情值跨天清零：乙昨天剩 4，今天被凿后从 0 起算
+    info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, tomorrow)
+    assert info["heat"] == 2  # 今天这一凿 +2
+    assert info["chopped_count"] == 3  # 累计不清零
+    assert info["today_chopped"] == 1
+
+    # 甲/乙昨天的高潮计数在今日榜里不再参与（榜单只剩今日被凿）
+
+
+def test_heat_resets_without_chop_on_new_day():
+    service, repository, factory = _service(
+        estrus_random=_SeqRandom([0.90, 0.60])
+    )
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+    tomorrow = NOW + timedelta(days=1)
+    info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, tomorrow)
+    assert info["heat"] == 0  # 查询即触发跨天懒重置
+    assert info["today_climaxes"] == 0
+    assert info["chopped_count"] == 1
 
 
 def test_set_gender_command():

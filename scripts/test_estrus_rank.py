@@ -35,22 +35,22 @@ for row in rows:
 if not rows:
     print("  （暂无任何 estrus_states 记录）")
 
-print("===== 2. estrus_rankings() 前 5 =====")
-entries = repo.estrus_rankings(PRIMARY_GROUP_CHAT_ID, NOW)
+print("===== 2. estrus_popularity_rankings() 前 5 =====")
+entries = repo.estrus_popularity_rankings(PRIMARY_GROUP_CHAT_ID, NOW)
 for entry in entries:
     print(" ", entry)
 if not entries:
-    print("  （无人上榜）")
+    print("  （今日无人被凿）")
 
-print("===== 3. 定时推送文案（_estrus_rank_text 干跑） =====")
-print(repo._estrus_rank_text(PRIMARY_GROUP_CHAT_ID, NOW.strftime("%H:%M"), NOW))
+print("===== 3. 定时推送文案（_estrus_popularity_text 干跑） =====")
+print(repo._estrus_popularity_text(PRIMARY_GROUP_CHAT_ID, NOW.strftime("%H:%M"), NOW))
 
 print("===== 4. 指令种子是否启用 =====")
 with engine.connect() as conn:
     rows = conn.execute(
         sql_text(
             "SELECT command, enabled FROM command_definitions "
-            "WHERE command IN ('/我的发情值', '/发情值排名')"
+            "WHERE command IN ('/我的发情值', '/最受欢迎')"
         )
     ).all()
 for row in rows:

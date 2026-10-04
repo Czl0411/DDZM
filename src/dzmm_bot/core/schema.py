@@ -2726,7 +2726,7 @@ class EstrusStateRecord(Base):
     chopped_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_climaxes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     today_climaxes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    last_climax_date: Mapped[date | None] = mapped_column(Date)
+    last_active_date: Mapped[date | None] = mapped_column(Date)
     opted_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False

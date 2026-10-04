@@ -55,7 +55,7 @@ _COMMANDS = {
     "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据",
     "/真心换真心", "/真心换真心数据", "/问题", "/真心",
     "/罚款", "/我的罚款", "/我的津贴",
-    "/凿", "/允许被凿", "/拒绝被凿", "/我的发情值", "/发情值排名",
+    "/凿", "/允许被凿", "/拒绝被凿", "/我的发情值", "/最受欢迎",
     "/设置性别", "/修改性别",
 }
 
@@ -110,6 +110,8 @@ class GroupCommandHandler:
             command = "/罚款"
         if command == "/修改性别":
             command = "/设置性别"
+        if command in {"/今日最受欢迎", "/发情值排名"}:
+            command = "/最受欢迎"
         if command not in _COMMANDS:
             dice_reply = self._liar_dice_call_step(message, content)
             if dice_reply is not None:
@@ -402,8 +404,8 @@ class GroupCommandHandler:
             return self._set_estrus_opt_out(message, received_at, group_chat_id, True)
         if command == "/我的发情值":
             return self._my_estrus(message, received_at, group_chat_id)
-        if command == "/发情值排名":
-            return self._estrus_rank(message, received_at, group_chat_id)
+        if command == "/最受欢迎":
+            return self._estrus_popularity(message, received_at, group_chat_id)
         if command in ("/设置性别", "/修改性别"):
             return self._set_gender(message, content, received_at)
         if command == "/看牌":
@@ -2172,25 +2174,25 @@ class GroupCommandHandler:
             return "请先用 /入职 名字 加入摸鱼公司。"
         return (
             "【我的发情值】\n"
-            f"当前发情值：{info['heat']}/{info['threshold']}\n"
-            f"被凿次数：{info['chopped_count']} ｜ "
+            f"发情值：{info['heat']}/{info['threshold']}（每日清零）\n"
+            f"被凿：今日 {info['today_chopped']} 次 / 累计 {info['chopped_count']} 次 ｜ "
             f"高潮：今日 {info['today_climaxes']} 次 / 总 {info['total_climaxes']} 次\n"
             f"状态：{'拒绝被凿' if info['opted_out'] else '允许被凿'}"
         )
 
-    def _estrus_rank(self, message, received_at, group_chat_id):
+    def _estrus_popularity(self, message, received_at, group_chat_id):
         if group_chat_id is None:
             return "请在已启用的群聊中查询。"
-        entries = self._repository.estrus_rankings(group_chat_id, received_at)
+        entries = self._repository.estrus_popularity_rankings(
+            group_chat_id, received_at
+        )
         if not entries:
-            return "还没有人被凿过，快用 /凿 开张吧。"
-        lines = ["【发情值排名】"]
-        for index, entry in enumerate(entries, 1):
-            lines.append(
-                f"{index}. {entry['display_name']} · 发情 {entry['heat']}"
-                f" · 被凿 {entry['chopped_count']}"
-                f" · 高潮 今{entry['today_climaxes']}/总{entry['total_climaxes']}"
-            )
+            return "今天还没人被凿，快用 /凿 开张吧。"
+        lines = ["【今日最受欢迎榜】"]
+        lines.extend(
+            f"{entry['display_name']}：今日被凿{entry['today_chopped']}次"
+            for entry in entries
+        )
         return "\n".join(lines)
 
     def _set_gender(self, message, content, received_at):
@@ -5167,7 +5169,7 @@ class GroupCommandHandler:
                     ("/拒绝被凿", "/拒绝被凿：不再接受被凿，凿你的人会吃一杵子"),
                     ("/允许被凿", "/允许被凿：重新接受被凿"),
                     ("/我的发情值", "/我的发情值：查看自己的发情值、被凿次数与高潮次数"),
-                    ("/发情值排名", "/发情值排名：查看本群排行前 5（每日随收益榜推送）"),
+                    ("/最受欢迎", "/最受欢迎：查看今日最受欢迎榜前 5（按今日被凿次数，每日随收益榜推送）"),
                     ("/设置性别", "/设置性别 男|女：设置自己的性别（/修改性别 等效），影响高潮文风"),
                 ),
             ),

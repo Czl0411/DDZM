@@ -268,19 +268,28 @@ def test_my_estrus_and_popularity_ranking():
     _receive(service, "c1", "user-0", "/凿 乙", NOW)
     _receive(service, "c2", "user-0", "/凿 乙", NOW + timedelta(minutes=1))
 
-    _receive(service, "q1", "user-1", "/我的发情值", NOW)
+    _receive(service, "q1", "user-1", "/我的凿", NOW)
     texts = _replies(factory)
+    assert any("【我的凿】" in text for text in texts)
     assert any("发情值：4/100（每日清零）" in text for text in texts)
     assert any("被凿：今日 2 次 / 累计 2 次" in text for text in texts)
+    assert any("凿人：今日 0 次 / 累计 0 次" in text for text in texts)
     assert any("状态：允许被凿" in text for text in texts)
 
-    _receive(service, "q2", "user-0", "/最受欢迎", NOW)
+    # 甲凿了两次：凿人次数统计
+    _receive(service, "q2", "user-0", "/我的凿", NOW)
+    assert any("被凿：今日 0 次 / 累计 0 次" in text for text in _replies(factory))
+    assert any("凿人：今日 2 次 / 累计 2 次" in text for text in _replies(factory))
+
+    _receive(service, "q3", "user-0", "/最受欢迎", NOW)
     texts = _replies(factory)
     assert any("【今日最受欢迎榜】" in text for text in texts)
     assert any("乙：今日被凿2次" in text for text in texts)
-    # 旧指令归一化到新榜
-    _receive(service, "q3", "user-0", "/发情值排名", NOW)
+    # 旧指令归一化到新榜 / 新查询
+    _receive(service, "q4", "user-0", "/发情值排名", NOW)
     assert any("【今日最受欢迎榜】" in text for text in _replies(factory))
+    _receive(service, "q5", "user-1", "/我的发情值", NOW)
+    assert any("【我的凿】" in text for text in _replies(factory))
 
 
 def test_popularity_board_counts_today_only_and_resets_heat_daily():
@@ -327,6 +336,57 @@ def test_heat_resets_without_chop_on_new_day():
     assert info["heat"] == 0  # 查询即触发跨天懒重置
     assert info["today_climaxes"] == 0
     assert info["chopped_count"] == 1
+
+
+def test_chopper_daily_limit_blocks_and_counts():
+    service, repository, factory = _service(
+        estrus_random=_SeqRandom([0.60, 0.60] * 6)
+    )
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _join(service, "j2", "user-2", "丙", NOW)
+    repository.set_estrus_settings(
+        enabled=True,
+        climax_threshold=100,
+        heat_p0=50,
+        heat_p1=30,
+        heat_p2=20,
+        coin_p0=50,
+        coin_p1=30,
+        coin_p2=20,
+        chop_cooldown_seconds=0,
+        chopper_daily_limit=2,
+    )
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+    _receive(service, "c2", "user-0", "/凿 丙", NOW + timedelta(minutes=1))
+    _receive(service, "c3", "user-0", "/凿 乙", NOW + timedelta(minutes=2))
+
+    texts = _replies(factory)
+    assert any("你今天已经凿了 2 次，达到每日上限（2 次），明天再来吧。" in text for text in texts)
+    # 第 3 凿被拒：乙只被凿 1 次、发情值 1（被拒的不计入）
+    info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)
+    assert info["chopped_count"] == 1
+    assert info["heat"] == 1
+
+    # 甲自己的凿人统计：今日 2 次（被拒的不计）
+    _receive(service, "q1", "user-0", "/我的凿", NOW)
+    assert any("凿人：今日 2 次 / 累计 2 次" in text for text in _replies(factory))
+
+    # 上限设回 0 = 不限制
+    repository.set_estrus_settings(
+        enabled=True,
+        climax_threshold=100,
+        heat_p0=50,
+        heat_p1=30,
+        heat_p2=20,
+        coin_p0=50,
+        coin_p1=30,
+        coin_p2=20,
+        chop_cooldown_seconds=0,
+    )
+    _receive(service, "c4", "user-0", "/凿 乙", NOW + timedelta(minutes=3))
+    assert any("【凿】甲凿了一下乙" in text for text in _replies(factory))
 
 
 def test_set_gender_command():

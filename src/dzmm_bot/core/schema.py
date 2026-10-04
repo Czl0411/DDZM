@@ -2790,6 +2790,9 @@ class EstrusSettingsRecord(Base):
     chop_cooldown_seconds: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )
+    chopper_daily_limit: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
 
 
 class DepartmentAllowanceRecord(Base):

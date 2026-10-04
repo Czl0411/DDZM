@@ -2526,6 +2526,7 @@ function renderEstrusSettingsPanel(settings) {
       <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-enabled" type="checkbox" ${settings.enabled ? "checked" : ""}> 启用凿与发情值玩法</label>
       ${birthdayNumberField("estrus-threshold", "高潮阈值（发情值满多少触发）", settings.climax_threshold, 10, 1000)}
       ${birthdayNumberField("estrus-cooldown", "凿者冷却（秒，0=无限制）", settings.chop_cooldown_seconds, 0, 86400)}
+      ${birthdayNumberField("estrus-daily-limit", "每人每日凿人上限（0=不限）", settings.chopper_daily_limit, 0, 999)}
     </div>
     <div class="panel-heading"><div><h2>发情值增量概率（0/1/2）</h2></div></div>
     <div class="event-input-grid">
@@ -2554,6 +2555,7 @@ async function saveEstrusSettings() {
     coin_p1: Number(document.querySelector("#estrus-coin-p1").value),
     coin_p2: Number(document.querySelector("#estrus-coin-p2").value),
     chop_cooldown_seconds: Number(document.querySelector("#estrus-cooldown").value),
+    chopper_daily_limit: Number(document.querySelector("#estrus-daily-limit").value),
   };
   try {
     await runMutation(button, "保存中…", async () => {

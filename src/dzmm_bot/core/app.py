@@ -282,6 +282,7 @@ def _estrus_settings_response(settings) -> EstrusSettingsResponse:
         coin_p1=settings.coin_p1,
         coin_p2=settings.coin_p2,
         chop_cooldown_seconds=settings.chop_cooldown_seconds,
+        chopper_daily_limit=settings.chopper_daily_limit,
     )
 
 
@@ -2846,6 +2847,7 @@ def create_app(
                 coin_p1=request.coin_p1,
                 coin_p2=request.coin_p2,
                 chop_cooldown_seconds=request.chop_cooldown_seconds,
+                chopper_daily_limit=request.chopper_daily_limit,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))

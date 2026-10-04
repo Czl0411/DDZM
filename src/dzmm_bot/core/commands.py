@@ -55,7 +55,7 @@ _COMMANDS = {
     "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据",
     "/真心换真心", "/真心换真心数据", "/问题", "/真心",
     "/罚款", "/我的罚款", "/我的津贴",
-    "/凿", "/允许被凿", "/拒绝被凿", "/我的发情值", "/最受欢迎",
+    "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/最受欢迎",
     "/设置性别", "/修改性别",
 }
 
@@ -112,6 +112,8 @@ class GroupCommandHandler:
             command = "/设置性别"
         if command in {"/今日最受欢迎", "/发情值排名"}:
             command = "/最受欢迎"
+        if command == "/我的发情值":
+            command = "/我的凿"
         if command not in _COMMANDS:
             dice_reply = self._liar_dice_call_step(message, content)
             if dice_reply is not None:
@@ -402,7 +404,7 @@ class GroupCommandHandler:
             return self._set_estrus_opt_out(message, received_at, group_chat_id, False)
         if command == "/拒绝被凿":
             return self._set_estrus_opt_out(message, received_at, group_chat_id, True)
-        if command == "/我的发情值":
+        if command == "/我的凿":
             return self._my_estrus(message, received_at, group_chat_id)
         if command == "/最受欢迎":
             return self._estrus_popularity(message, received_at, group_chat_id)
@@ -2123,6 +2125,11 @@ class GroupCommandHandler:
             return f"重名员工，请按工号凿：\n{candidates}"
         if result.status == "cooldown":
             return f"凿冷却中，请 {max(1, result.cooldown_remaining_seconds)} 秒后再试。"
+        if result.status == "chopper_limit":
+            return (
+                f"你今天已经凿了 {result.today_chops_given} 次，"
+                f"达到每日上限（{result.daily_chops_limit} 次），明天再来吧。"
+            )
         if result.status == "refused":
             return (
                 f"{result.target_name} 拒绝了 {result.chopper_name} 的凿，"
@@ -2173,10 +2180,11 @@ class GroupCommandHandler:
         if info is None:
             return "请先用 /入职 名字 加入摸鱼公司。"
         return (
-            "【我的发情值】\n"
+            "【我的凿】\n"
             f"发情值：{info['heat']}/{info['threshold']}（每日清零）\n"
             f"被凿：今日 {info['today_chopped']} 次 / 累计 {info['chopped_count']} 次 ｜ "
             f"高潮：今日 {info['today_climaxes']} 次 / 总 {info['total_climaxes']} 次\n"
+            f"凿人：今日 {info['today_chops_given']} 次 / 累计 {info['total_chops_given']} 次\n"
             f"状态：{'拒绝被凿' if info['opted_out'] else '允许被凿'}"
         )
 
@@ -5168,7 +5176,7 @@ class GroupCommandHandler:
                     ("/凿", "被凿者发情值随机 +0~2、获得随机摸鱼币；发情值攒满 100 触发高潮"),
                     ("/拒绝被凿", "/拒绝被凿：不再接受被凿，凿你的人会吃一杵子"),
                     ("/允许被凿", "/允许被凿：重新接受被凿"),
-                    ("/我的发情值", "/我的发情值：查看自己的发情值、被凿次数与高潮次数"),
+                    ("/我的凿", "/我的凿：查看自己的发情值、被凿/凿人与高潮次数"),
                     ("/最受欢迎", "/最受欢迎：查看今日最受欢迎榜前 5（按今日被凿次数，每日随收益榜推送）"),
                     ("/设置性别", "/设置性别 男|女：设置自己的性别（/修改性别 等效），影响高潮文风"),
                 ),

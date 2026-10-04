@@ -1882,6 +1882,7 @@ class EstrusSettingsResponse(ApiModel):
     coin_p1: int = Field(ge=0, le=100)
     coin_p2: int = Field(ge=0, le=100)
     chop_cooldown_seconds: int = Field(ge=0, le=86400)
+    chopper_daily_limit: int = Field(ge=0, le=999)
 
 
 class SetEstrusSettingsRequest(EstrusSettingsResponse):

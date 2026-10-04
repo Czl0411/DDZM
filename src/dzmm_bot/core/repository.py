@@ -1253,6 +1253,7 @@ class EstrusSettings:
     coin_p1: int
     coin_p2: int
     chop_cooldown_seconds: int
+    chopper_daily_limit: int
 
 
 @dataclass(frozen=True)
@@ -1270,6 +1271,8 @@ class EstrusChopResult:
     today_climaxes: int = 0
     total_climaxes: int = 0
     cooldown_remaining_seconds: int = 0
+    today_chops_given: int = 0
+    daily_chops_limit: int = 0
     candidate_labels: tuple[str, ...] = ()
 
 
@@ -2488,7 +2491,7 @@ _COMMAND_DEFINITIONS = (
     ("/凿", "/凿 名字 [附言]", "凿一下别人：目标发情值随机上涨并获得随机摸鱼币，可引用回复目标消息"),
     ("/允许被凿", "/允许被凿", "允许别人凿自己（默认开启）"),
     ("/拒绝被凿", "/拒绝被凿", "拒绝被凿：之后被 /凿 时对方会吃一杵子"),
-    ("/我的发情值", "/我的发情值", "查看自己的发情值、被凿次数与高潮次数"),
+    ("/我的凿", "/我的凿", "查看自己的发情值、被凿/凿人与高潮次数"),
     ("/最受欢迎", "/最受欢迎", "查看今日最受欢迎榜前 5 名（按今日被凿次数）"),
     ("/设置性别", "/设置性别 男|女", "设置自己的性别（/修改性别 等效），影响高潮文字文风"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
@@ -14284,6 +14287,7 @@ class CoreRepository:
                 coin_p1=int(row.coin_p1),
                 coin_p2=int(row.coin_p2),
                 chop_cooldown_seconds=int(row.chop_cooldown_seconds),
+                chopper_daily_limit=int(row.chopper_daily_limit),
             )
 
     def set_estrus_settings(
@@ -14298,6 +14302,7 @@ class CoreRepository:
         coin_p1: int,
         coin_p2: int,
         chop_cooldown_seconds: int,
+        chopper_daily_limit: int = 0,
     ) -> EstrusSettings:
         if sum((heat_p0, heat_p1, heat_p2)) != 100:
             raise ValueError("发情值三档概率之和必须等于 100")
@@ -14312,6 +14317,7 @@ class CoreRepository:
             ("摸鱼币 1 档概率", coin_p1, 0, 100),
             ("摸鱼币 2 档概率", coin_p2, 0, 100),
             ("凿者冷却秒数", chop_cooldown_seconds, 0, 86400),
+            ("每人每日凿人上限", chopper_daily_limit, 0, 999),
         )
         for label, value, low, high in checks:
             if not isinstance(value, int) or not low <= value <= high:
@@ -14328,6 +14334,7 @@ class CoreRepository:
                 row.coin_p1 = coin_p1
                 row.coin_p2 = coin_p2
                 row.chop_cooldown_seconds = chop_cooldown_seconds
+                row.chopper_daily_limit = chopper_daily_limit
                 session.flush()
                 return self.get_estrus_settings()
 
@@ -14423,12 +14430,34 @@ class CoreRepository:
                     )
                     or 0
                 )
+                today_chops_given = int(
+                    session.scalar(
+                        select(func.count()).select_from(EstrusChopRecord).where(
+                            EstrusChopRecord.chopper_user_id == user.id,
+                            EstrusChopRecord.group_chat_id == group_chat_id,
+                            EstrusChopRecord.created_at >= day_start,
+                            EstrusChopRecord.created_at < day_start + timedelta(days=1),
+                        )
+                    )
+                    or 0
+                )
+                total_chops_given = int(
+                    session.scalar(
+                        select(func.count()).select_from(EstrusChopRecord).where(
+                            EstrusChopRecord.chopper_user_id == user.id,
+                            EstrusChopRecord.group_chat_id == group_chat_id,
+                        )
+                    )
+                    or 0
+                )
                 return {
                     "display_name": user.display_name,
                     "heat": state.heat if state is not None else 0,
                     "threshold": threshold,
                     "chopped_count": state.chopped_count if state is not None else 0,
                     "today_chopped": today_chopped,
+                    "today_chops_given": today_chops_given,
+                    "total_chops_given": total_chops_given,
                     "today_climaxes": (
                         state.today_climaxes if state is not None else 0
                     ),
@@ -14571,6 +14600,32 @@ class CoreRepository:
                                 "cooldown",
                                 cooldown_remaining_seconds=remaining,
                             )
+                daily_limit = int(settings.chopper_daily_limit)
+                if daily_limit > 0:
+                    day_start = now.replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    )
+                    given_today = int(
+                        session.scalar(
+                            select(func.count())
+                            .select_from(EstrusChopRecord)
+                            .where(
+                                EstrusChopRecord.chopper_user_id == chopper.id,
+                                EstrusChopRecord.group_chat_id == group_chat_id,
+                                EstrusChopRecord.created_at >= day_start,
+                                EstrusChopRecord.created_at
+                                < day_start + timedelta(days=1),
+                            )
+                        )
+                        or 0
+                    )
+                    if given_today >= daily_limit:
+                        return EstrusChopResult(
+                            "chopper_limit",
+                            chopper_name=chopper.display_name,
+                            today_chops_given=given_today,
+                            daily_chops_limit=daily_limit,
+                        )
                 state = self._estrus_state_row(
                     session, group_chat_id, target.id
                 )

@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 import tempfile
+import time
 from secrets import compare_digest, token_urlsafe
 from typing import Annotated, Callable
 from uuid import UUID
@@ -89,6 +90,7 @@ def create_app_from_environment() -> FastAPI:
         repository=AdminRepository(create_session_factory(settings.database_url)),
         console_client=NoVNCClient(settings.novnc_port),
         websocket_connector=NoVNCWebSocketConnector(settings.novnc_port),
+        integration_api_key=settings.integration_api_key,
     )
 
 
@@ -100,6 +102,7 @@ def create_app(
     console_client: NoVNCClient | None = None,
     websocket_connector: Callable | None = None,
     profile_upload_dir: Path | None = None,
+    integration_api_key: str | None = None,
 ) -> FastAPI:
     if not admin_token:
         raise ValueError("admin_token must be nonempty")
@@ -131,6 +134,41 @@ def create_app(
         if identity.role != "super_admin":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "super admin required")
         return identity
+
+    integration_call_times: list[float] = []
+
+    def verify_integration_key(
+        x_api_key: Annotated[str | None, Header()] = None,
+    ) -> None:
+        """集成接口鉴权：独立 API Key + 简单滑动窗口限流（60 次/分钟）。"""
+        if not integration_api_key:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "integration disabled"
+            )
+        if x_api_key is None or not compare_digest(x_api_key, integration_api_key):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unauthorized")
+        now_mono = time.monotonic()
+        while integration_call_times and now_mono - integration_call_times[0] > 60:
+            integration_call_times.pop(0)
+        if len(integration_call_times) >= 60:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS, "rate limit exceeded"
+            )
+        integration_call_times.append(now_mono)
+
+    def forward_integration(call: Callable[[], dict]) -> dict:
+        """转发 core 集成端点，把 HTTPStatusError 还原为原状态码与 detail。"""
+        try:
+            return call()
+        except HTTPStatusError as error:
+            response = error.response
+            try:
+                detail = response.json()
+                if isinstance(detail, dict) and "detail" in detail:
+                    detail = detail["detail"]
+            except Exception:
+                detail = response.text
+            raise HTTPException(response.status_code, detail) from error
 
     def idempotent_response(
         identity: AdminIdentity,
@@ -2247,6 +2285,7 @@ def create_app(
             "coin_p1",
             "coin_p2",
             "chop_cooldown_seconds",
+            "chopper_daily_limit",
         )
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
@@ -2261,6 +2300,36 @@ def create_app(
             ),
             scope="estrus-settings",
         )
+
+    @app.post("/api/integration/users/match")
+    def api_integration_match(
+        payload: dict,
+        _: Annotated[None, Depends(verify_integration_key)],
+    ) -> dict:
+        return forward_integration(lambda: core.integration_match(payload))
+
+    @app.get("/api/integration/users/{platform_id}/balance")
+    def api_integration_balance(
+        platform_id: str,
+        _: Annotated[None, Depends(verify_integration_key)],
+    ) -> dict:
+        return forward_integration(
+            lambda: core.integration_balance(platform_id)
+        )
+
+    @app.post("/api/integration/coins/grant")
+    def api_integration_grant(
+        payload: dict,
+        _: Annotated[None, Depends(verify_integration_key)],
+    ) -> dict:
+        return forward_integration(lambda: core.integration_grant(payload))
+
+    @app.post("/api/integration/coins/deduct")
+    def api_integration_deduct(
+        payload: dict,
+        _: Annotated[None, Depends(verify_integration_key)],
+    ) -> dict:
+        return forward_integration(lambda: core.integration_deduct(payload))
 
     @app.get("/api/game/hide-and-seek/settings")
     def hide_and_seek_settings(_: Annotated[None, Depends(authorize)]) -> dict:

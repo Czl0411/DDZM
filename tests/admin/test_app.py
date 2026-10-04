@@ -59,6 +59,7 @@ class FakeCore:
     platform_nickname_refresh_requests: int = 0
     balance_ledgers: dict[str, dict] = field(default_factory=dict)
     balance_ledger_requests: list[tuple[str, int, int]] = field(default_factory=list)
+    integration_calls: list[tuple[str, object]] = field(default_factory=list)
     employee_group_messages: dict[str, dict] = field(default_factory=dict)
     employee_group_message_requests: list[tuple[str, int, int, str | None]] = field(
         default_factory=list
@@ -970,6 +971,22 @@ class FakeCore:
         self.red_packet_settings_requests.append(settings)
         self.red_packet_settings = settings
         return self.red_packet_settings
+
+    def integration_match(self, payload):
+        self.integration_calls.append(("match", payload))
+        return {"status": "matched", "matches": [{"platform_id": "plat-1"}]}
+
+    def integration_balance(self, platform_id):
+        self.integration_calls.append(("balance", platform_id))
+        return {"platform_id": platform_id, "balance": 7}
+
+    def integration_grant(self, payload):
+        self.integration_calls.append(("grant", payload))
+        return {"ok": True, "balance_after": 12}
+
+    def integration_deduct(self, payload):
+        self.integration_calls.append(("deduct", payload))
+        return {"ok": True, "balance_after": 2}
 
     def get_current_gameplay(self):
         return self.gameplay_current
@@ -3942,3 +3959,91 @@ def test_admin_relays_memory_guild_current_history_and_detail(
     assert history.json()["page"] == 2
     assert history.json()["page_size"] == 10
     assert detail.json()["teams"][0]["name"] == "红队"
+
+def test_integration_endpoints_require_key_and_forward(core, console, websocket_connection, admin_repository):
+    from dzmm_bot.admin.app import create_app
+
+    client = TestClient(
+        create_app(
+            "admin-secret",
+            core,
+            repository=admin_repository,
+            console_client=console,
+            websocket_connector=websocket_connection.connect,
+            integration_api_key="integration-secret",
+        )
+    )
+    key_headers = {"X-Api-Key": "integration-secret"}
+
+    no_key = client.post("/api/integration/users/match", json={"name": "小明"})
+    wrong_key = client.post(
+        "/api/integration/users/match",
+        headers={"X-Api-Key": "wrong"},
+        json={"name": "小明"},
+    )
+    assert no_key.status_code == 401
+    assert wrong_key.status_code == 401
+
+    matched = client.post(
+        "/api/integration/users/match", headers=key_headers, json={"name": "小明"}
+    )
+    assert matched.status_code == 200
+    assert matched.json()["status"] == "matched"
+
+    balance = client.get(
+        "/api/integration/users/plat-1/balance", headers=key_headers
+    )
+    assert balance.status_code == 200
+    assert balance.json()["balance"] == 7
+
+    granted = client.post(
+        "/api/integration/coins/grant",
+        headers=key_headers,
+        json={
+            "platform_id": "plat-1",
+            "amount": 5,
+            "reason": "x",
+            "idempotency_key": "admin-grant-001",
+        },
+    )
+    assert granted.status_code == 200
+    assert granted.json()["ok"] is True
+
+    deducted = client.post(
+        "/api/integration/coins/deduct",
+        headers=key_headers,
+        json={
+            "platform_id": "plat-1",
+            "amount": 5,
+            "reason": "x",
+            "idempotency_key": "admin-deduct-01",
+            "allow_partial": True,
+        },
+    )
+    assert deducted.status_code == 200
+    assert deducted.json()["balance_after"] == 2
+
+    assert [name for name, _ in core.integration_calls] == [
+        "match",
+        "balance",
+        "grant",
+        "deduct",
+    ]
+
+
+def test_integration_endpoints_disabled_without_key(core, console, websocket_connection, admin_repository):
+    from dzmm_bot.admin.app import create_app
+
+    client = TestClient(
+        create_app(
+            "admin-secret",
+            core,
+            repository=admin_repository,
+            console_client=console,
+            websocket_connector=websocket_connection.connect,
+        )
+    )
+
+    response = client.get("/api/integration/users/plat-1/balance")
+
+    assert response.status_code == 503

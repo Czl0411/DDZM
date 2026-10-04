@@ -1887,3 +1887,19 @@ class EstrusSettingsResponse(ApiModel):
 
 class SetEstrusSettingsRequest(EstrusSettingsResponse):
     pass
+
+
+class IntegrationMatchRequest(ApiModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    platform_id: str | None = Field(default=None, min_length=1, max_length=255)
+    employee_number: str | None = Field(
+        default=None, min_length=1, max_length=16
+    )
+
+
+class IntegrationCoinRequest(ApiModel):
+    platform_id: str = Field(min_length=1, max_length=255)
+    amount: int = Field(ge=1, le=10000)
+    reason: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    allow_partial: bool = False

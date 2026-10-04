@@ -6,6 +6,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from uvicorn import Config, Server
@@ -60,8 +61,10 @@ from .api_models import (
     GroupChatResponse,
     GroupChatRuntimeResponse,
     GroupChatTargetResponse,
-    PlatformGenderSyncRequest,
+    IntegrationMatchRequest,
+    IntegrationCoinRequest,
     PersonalProfileResponse,
+    PlatformGenderSyncRequest,
     ProfileImageCleanupClaimResponse,
     ProfileImageUploadClaimResponse,
     ProfileImageUploadStatusResponse,
@@ -2852,6 +2855,72 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _estrus_settings_response(settings)
+
+    @app.post("/internal/integration/users/match")
+    def integration_match_users(
+        request: IntegrationMatchRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        provided = [
+            value
+            for value in (
+                request.name,
+                request.platform_id,
+                request.employee_number,
+            )
+            if value
+        ]
+        if len(provided) != 1:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "name / platform_id / employee_number 三选一",
+            )
+        match_status, matches = repository.integration_match_users(
+            name=request.name,
+            platform_id=request.platform_id,
+            employee_number=request.employee_number,
+        )
+        return {"status": match_status, "matches": matches}
+
+    @app.get("/internal/integration/users/{platform_id}/balance")
+    def integration_get_balance(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        view = repository.integration_get_balance(platform_id)
+        if view is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"没找到员工（platform_id={platform_id}）",
+            )
+        return view
+
+    def _integration_coin(
+        request: IntegrationCoinRequest, action: str
+    ) -> JSONResponse:
+        _, status_code, body = repository.integration_coin_adjust(
+            platform_id=request.platform_id,
+            amount=request.amount,
+            action=action,
+            reason=request.reason,
+            idempotency_key=request.idempotency_key,
+            allow_partial=request.allow_partial,
+            now=clock(),
+        )
+        return JSONResponse(body, status_code=status_code)
+
+    @app.post("/internal/integration/coins/grant")
+    def integration_grant_coins(
+        request: IntegrationCoinRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> JSONResponse:
+        return _integration_coin(request, "grant")
+
+    @app.post("/internal/integration/coins/deduct")
+    def integration_deduct_coins(
+        request: IntegrationCoinRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> JSONResponse:
+        return _integration_coin(request, "deduct")
 
     @app.patch(
         "/internal/game/discipline-fine/settings",

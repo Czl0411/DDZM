@@ -261,6 +261,14 @@ class AdminCorePort(Protocol):
     def greet_birthday(self, payload: dict) -> dict: ...
     def set_group_birthdays(self, group_id: str, payload: dict) -> dict: ...
 
+    def integration_match(self, payload: dict) -> dict: ...
+
+    def integration_balance(self, platform_id: str) -> dict: ...
+
+    def integration_grant(self, payload: dict) -> dict: ...
+
+    def integration_deduct(self, payload: dict) -> dict: ...
+
     def get_discipline_fine_settings(self) -> dict: ...
 
     def set_discipline_fine_settings(self, settings: dict) -> dict: ...
@@ -963,6 +971,20 @@ class CoreClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def integration_match(self, payload: dict) -> dict:
+        return self._post("/internal/integration/users/match", payload)
+
+    def integration_balance(self, platform_id: str) -> dict:
+        return self._get(
+            f"/internal/integration/users/{platform_id}/balance"
+        )
+
+    def integration_grant(self, payload: dict) -> dict:
+        return self._post("/internal/integration/coins/grant", payload)
+
+    def integration_deduct(self, payload: dict) -> dict:
+        return self._post("/internal/integration/coins/deduct", payload)
 
     def get_discipline_fine_settings(self) -> dict:
         return self._get("/internal/game/discipline-fine/settings")

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
+import hashlib
 import logging
 from random import SystemRandom
 import re
@@ -230,6 +231,7 @@ from .schema import (
     BirthdaySettingsRecord,
     BirthdayTipRecord,
     EmployeeBirthdayRecord,
+    IntegrationIdempotencyRecord,
     IncomeReportDeliveryRecord,
     IncomeReportScheduleRecord,
     InboundRecord,
@@ -26313,6 +26315,7 @@ class CoreRepository:
         occurred_at: datetime,
         *,
         dark_market_listing_id: UUID | None = None,
+        memo: str | None = None,
     ) -> None:
         if amount == 0:
             return
@@ -26333,6 +26336,7 @@ class CoreRepository:
                 user_id=user.id,
                 amount=amount,
                 source=source,
+                memo=memo,
                 occurred_at=occurred_at,
                 dark_market_listing_id=dark_market_listing_id,
             )
@@ -26347,6 +26351,231 @@ class CoreRepository:
                 if user is None:
                     raise ValueError("员工不存在")
                 self._apply_balance_change(user, amount, source, occurred_at)
+
+    # ------------------------------------------------------------------
+    # 集成接口（/internal/integration/*）：名字匹配 + 摸鱼币查/发/扣
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _integration_user_view(user: UserRecord) -> dict:
+        return {
+            "platform_id": user.platform_id,
+            "display_name": user.display_name,
+            "employee_number": format_employee_number(user.employee_number),
+            "platform_nickname": user.platform_nickname,
+            "balance": int(user.balance),
+        }
+
+    def integration_match_users(
+        self,
+        *,
+        name: str | None = None,
+        platform_id: str | None = None,
+        employee_number: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """按 用户名 / platform_id / 工号 匹配注册员工。
+
+        名字匹配规则与 /凿 一致：display_name 精确 → platform_nickname 精确
+        （命中多个即 ambiguous）。工号接受 #0001 / 0001 / 1 三种写法。
+        返回 (status, matches)，status ∈ matched / ambiguous / not_found。
+        """
+        with self._session() as session:
+            if platform_id:
+                user = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                matches = [user] if user is not None else []
+            elif employee_number is not None:
+                cleaned = employee_number.strip().lstrip("#")
+                try:
+                    number = int(cleaned)
+                except ValueError:
+                    return "not_found", []
+                user = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.employee_number == number
+                    )
+                )
+                matches = [user] if user is not None else []
+            else:
+                cleaned = (name or "").strip()
+                if not cleaned:
+                    return "not_found", []
+                matches = list(
+                    session.scalars(
+                        select(UserRecord).where(
+                            UserRecord.display_name == cleaned
+                        )
+                    )
+                )
+                if not matches:
+                    matches = list(
+                        session.scalars(
+                            select(UserRecord).where(
+                                UserRecord.platform_nickname == cleaned
+                            )
+                        )
+                    )
+        if not matches:
+            return "not_found", []
+        status = "matched" if len(matches) == 1 else "ambiguous"
+        return status, [self._integration_user_view(user) for user in matches]
+
+    def integration_get_balance(self, platform_id: str) -> dict | None:
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return None
+            return self._integration_user_view(user)
+
+    def integration_coin_adjust(
+        self,
+        *,
+        platform_id: str,
+        amount: int,
+        action: str,
+        reason: str,
+        idempotency_key: str,
+        now: datetime,
+        allow_partial: bool = False,
+    ) -> tuple[bool, int, dict]:
+        """发/扣币（带幂等）。action ∈ grant / deduct。
+
+        返回 (replayed, status_code, body)：
+        - 同 key 重放 → (True, 首次 status_code, 首次 body)
+        - 同 key 但请求指纹不同 → (True, 409, conflict body)
+        首次执行：not_found(404) / insufficient(409) / ok(200)。
+        """
+        now = now.astimezone(BEIJING)
+        request_hash = hashlib.sha256(
+            f"{action}:{platform_id}:{amount}:{int(allow_partial)}".encode()
+        ).hexdigest()
+        key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()
+        with self.transaction():
+            with self._session() as session:
+                session.execute(
+                    delete(IntegrationIdempotencyRecord).where(
+                        IntegrationIdempotencyRecord.created_at
+                        < now - timedelta(hours=24)
+                    )
+                )
+                existing = session.scalar(
+                    select(IntegrationIdempotencyRecord).where(
+                        IntegrationIdempotencyRecord.key_hash == key_hash
+                    )
+                )
+                if existing is not None:
+                    if existing.request_hash != request_hash:
+                        return (
+                            True,
+                            409,
+                            {
+                                "ok": False,
+                                "error": {
+                                    "code": "idempotency_conflict",
+                                    "message": "同一 Idempotency-Key 已用于不同请求",
+                                },
+                            },
+                        )
+                    return True, int(existing.status_code), dict(
+                        existing.response_body
+                    )
+                session.add(
+                    IntegrationIdempotencyRecord(
+                        key_hash=key_hash,
+                        action=action,
+                        request_hash=request_hash,
+                        status_code=0,
+                        response_body={},
+                        created_at=now,
+                    )
+                )
+                session.flush()
+
+                user = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                if user is None:
+                    body = {
+                        "ok": False,
+                        "error": {
+                            "code": "user_not_found",
+                            "message": f"没找到员工（platform_id={platform_id}）",
+                        },
+                    }
+                    result = (False, 404, body)
+                elif action == "grant":
+                    self._apply_balance_change(
+                        user, amount, "api_grant", now, memo=reason
+                    )
+                    body = {
+                        "ok": True,
+                        "platform_id": user.platform_id,
+                        "display_name": user.display_name,
+                        "amount": amount,
+                        "balance_after": int(user.balance),
+                    }
+                    result = (False, 200, body)
+                else:
+                    current = int(user.balance)
+                    if allow_partial:
+                        actual = min(current, amount)
+                        if actual > 0:
+                            self._apply_balance_change(
+                                user,
+                                -actual,
+                                "api_deduct",
+                                now,
+                                memo=reason,
+                            )
+                        body = {
+                            "ok": True,
+                            "platform_id": user.platform_id,
+                            "display_name": user.display_name,
+                            "requested": amount,
+                            "actual_amount": actual,
+                            "balance_after": int(user.balance),
+                        }
+                        result = (False, 200, body)
+                    elif current < amount:
+                        body = {
+                            "ok": False,
+                            "error": {
+                                "code": "insufficient_balance",
+                                "message": "余额不足",
+                            },
+                            "balance": current,
+                            "requested": amount,
+                        }
+                        result = (False, 409, body)
+                    else:
+                        self._apply_balance_change(
+                            user, -amount, "api_deduct", now, memo=reason
+                        )
+                        body = {
+                            "ok": True,
+                            "platform_id": user.platform_id,
+                            "display_name": user.display_name,
+                            "amount": amount,
+                            "balance_after": int(user.balance),
+                        }
+                        result = (False, 200, body)
+
+                _, status_code, body = result
+                record = session.scalar(
+                    select(IntegrationIdempotencyRecord).where(
+                        IntegrationIdempotencyRecord.key_hash == key_hash
+                    )
+                )
+                record.status_code = status_code
+                record.response_body = body
+                return result
 
     def grant_board_bonus(
         self,

@@ -21,6 +21,7 @@ class Settings:
     deepseek_api_key: str | None = None
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_base_url: str = "https://api.deepseek.com"
+    integration_api_key: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -54,6 +55,7 @@ class Settings:
             deepseek_base_url=os.environ.get(
                 "DZMM_DEEPSEEK_BASE_URL", "https://api.deepseek.com"
             ),
+            integration_api_key=_optional("DZMM_INTEGRATION_API_KEY"),
         )
 
 

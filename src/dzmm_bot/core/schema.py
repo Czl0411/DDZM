@@ -2991,9 +2991,26 @@ class BalanceTransactionRecord(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
+    memo: Mapped[str | None] = mapped_column(String(200))
     occurred_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     dark_market_listing_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("dark_market_listings.id")
+    )
+
+
+class IntegrationIdempotencyRecord(Base):
+    """集成接口幂等记录：同一 key 重放返回首次响应（TTL 由写入方清理）。"""
+
+    __tablename__ = "integration_idempotencies"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_body: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
     )
 
 

@@ -1321,9 +1321,11 @@ class EstrusChopResult:
 
 # /凿 特殊目标：群体称呼、自称与机器人不是可凿对象，给出专属文案而不是
 # 笼统的「没找到员工」；老板/人事等职称词在未入职时给彩蛋提示。
-_CHOP_GROUP_WORDS = frozenset({
-    "所有人", "全体员工", "全体", "全员", "大家", "你们", "各位", "同志们",
-})
+# 群体词用宽松正则：拦下「全体的家人们」「所有人！！」这类变体（人名撞词概率极低）。
+_CHOP_GROUP_PATTERN = re.compile(
+    r"所有人|全体|全员|大家|大伙|各位|诸位|家人们|兄弟们|姐妹们|小伙伴们"
+    r"|同事们|同学们|老板们|你们|他们|她们|ta们|每人|每一个|全部|挨个|一个不留"
+)
 _CHOP_SELF_WORDS = frozenset({"我", "我自己", "本人"})
 _CHOP_BOSS_WORDS = ("老板", "董事长", "总裁", "总经理", "人事", "hr")
 # 群里的「总监事」就是机器人账号，按 bot 目标处理
@@ -1332,7 +1334,7 @@ _CHOP_BOT_NAMES = frozenset({"总监事"})
 
 def _classify_chop_target(name: str) -> str | None:
     lowered = name.lower()
-    if name in _CHOP_GROUP_WORDS:
+    if _CHOP_GROUP_PATTERN.search(name):
         return "group"
     if name in _CHOP_SELF_WORDS:
         return "self_word"

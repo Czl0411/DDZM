@@ -906,6 +906,10 @@ def test_chop_special_targets_get_dedicated_replies():
     _receive(service, "c2", "user-0", "/凿 全体员工", NOW)
     assert _joined_text(factory, "你有几个牛子？还想凿这么多！")
 
+    for word in ("全体的家人们", "所有人！！", "家人们", "挨个凿一遍", "全部"):
+        _receive(service, f"c2-{word}", "user-0", f"/凿 {word}", NOW)
+        assert _joined_text(factory, "你有几个牛子？还想凿这么多！")
+
     _receive(service, "c3", "user-0", "/凿 我", NOW)
     assert _joined_text(factory, "不能凿自己。")
 

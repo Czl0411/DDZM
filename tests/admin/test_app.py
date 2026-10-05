@@ -2018,11 +2018,13 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert "formatEmployeeNumber" in script
     assert "employee.employee_number" in script
     assert "/api/game/users?page=${page}&page_size=${pageSizeFor(\"employees\")}" in script
-    assert "/api/game/items?page=${page}&page_size=${pageSizeFor(\"shop\")}" in script
+    assert "/api/game/shop/catalog?include_deleted=" in script
+    assert 'renderLocalPagination(document.querySelector("#shop-pagination")' in script
     assert "data-item-description" in script
     assert 'description: row.querySelector("[data-item-description]").value.trim()' in script
     assert '"保存中…"' in script
-    assert '"上架中…"' in script
+    assert '"校验中…"' in script
+    assert "previewShopRows" in script
     assert "请填写场景名称、报名公告和每个事件的名称、开场白" in script
     assert "weekly_attendance_reward" in script
     assert "/api/game/ranks" in script
@@ -2063,6 +2065,130 @@ def test_admin_updates_an_existing_item_description(client, headers):
 
     assert response.status_code == 200
     assert response.json()["description"] == "使用后增加一次小游戏发起次数。"
+
+
+@pytest.fixture
+def estrus_core_settings(core, monkeypatch):
+    settings = {
+        "enabled": True,
+        "climax_threshold": 100,
+        "heat_p0": 50,
+        "heat_p1": 30,
+        "heat_p2": 20,
+        "coin_p0": 50,
+        "coin_p1": 30,
+        "coin_p2": 20,
+        "chop_cooldown_seconds": 0,
+        "chopper_daily_limit": 0,
+        "chopper_coin_p0": 50,
+        "chopper_coin_p1": 30,
+        "chopper_coin_p2": 20,
+        "coins_linked": True,
+        "target_daily_limit": 0,
+        "chopper_fixed_coins": None,
+        "target_fixed_coins": None,
+    }
+
+    def set_settings(updated):
+        settings.update(updated)
+        return settings.copy()
+
+    monkeypatch.setattr(core, "get_estrus_settings", lambda: settings.copy(), raising=False)
+    monkeypatch.setattr(core, "set_estrus_settings", set_settings, raising=False)
+    return settings
+
+
+def test_admin_proxies_estrus_deductions_and_limits_with_versioning(client, headers, estrus_core_settings):
+    initial = client.get("/api/game/estrus/settings", headers=headers)
+    payload = {
+        **estrus_core_settings,
+        "chopper_coin_p0": 10,
+        "chopper_coin_p1": 20,
+        "chopper_coin_p2": 70,
+        "coins_linked": False,
+        "target_daily_limit": 8,
+    }
+
+    response = client.patch("/api/game/estrus/settings", headers=headers, json=payload)
+
+    assert initial.status_code == 200
+    assert initial.json()["coins_linked"] is True
+    assert initial.json()["target_daily_limit"] == 0
+    assert response.status_code == 200
+    assert response.json() == {**payload, "version": 1}
+    assert estrus_core_settings == payload
+    assert client.get("/api/game/estrus/settings", headers=headers).json() == response.json()
+
+    stale = client.patch(
+        "/api/game/estrus/settings",
+        headers={**headers, "Idempotency-Key": "stale-estrus-settings"},
+        json={**payload, "target_daily_limit": 9},
+    )
+    assert stale.status_code == 409
+    assert estrus_core_settings == payload
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["chopper_coin_p0", "chopper_coin_p1", "chopper_coin_p2", "coins_linked", "target_daily_limit"],
+)
+def test_admin_rejects_incomplete_estrus_settings(client, headers, estrus_core_settings, missing_field):
+    payload = estrus_core_settings.copy()
+    del payload[missing_field]
+
+    response = client.patch("/api/game/estrus/settings", headers=headers, json=payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(("deduction", "gain"), [(5, 7), (0, 0), (None, None)])
+def test_admin_proxies_estrus_fixed_amounts(client, headers, estrus_core_settings, deduction, gain):
+    payload = {
+        **estrus_core_settings,
+        "chopper_fixed_coins": deduction,
+        "target_fixed_coins": gain,
+    }
+
+    response = client.patch("/api/game/estrus/settings", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    assert response.json() == {**payload, "version": 1}
+    assert response.json()["coins_linked"] is True
+    assert client.get("/api/game/estrus/settings", headers=headers).json() == response.json()
+
+
+def test_admin_estrus_fixed_fields_are_optional(client, headers, estrus_core_settings):
+    payload = {
+        key: value for key, value in estrus_core_settings.items()
+        if key not in {"chopper_fixed_coins", "target_fixed_coins"}
+    }
+
+    response = client.patch("/api/game/estrus/settings", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["chopper_fixed_coins"] is None
+    assert response.json()["target_fixed_coins"] is None
+    assert response.json()["coins_linked"] is True
+
+
+def test_admin_estrus_panel_exposes_deductions_linking_and_target_limit(client):
+    script = client.get("/static/admin.js").text
+
+    assert '"estrus-target-daily-limit"' in script
+    assert 'id="estrus-coins-linked"' in script
+    for probability in (0, 1, 2):
+        assert f'"estrus-chopper-coin-p{probability}"' in script
+        assert f"chopper_coin_p{probability}: Number" in script
+    assert "coins_linked: document.querySelector" in script
+    assert "target_daily_limit: Number" in script
+    assert ".disabled = chopperFixed || linkedRandom" in script
+    assert 'id="estrus-chopper-fixed"' in script
+    assert 'id="estrus-target-fixed"' in script
+    assert '"estrus-chopper-fixed-coins"' in script
+    assert '"estrus-target-fixed-coins"' in script
+    assert "chopper_fixed_coins: document.querySelector" in script
+    assert "target_fixed_coins: document.querySelector" in script
+    assert ".disabled = targetFixed || chopperFixed" in script
 
 
 def test_admin_proxies_game_settings(client, headers, core):

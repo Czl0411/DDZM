@@ -11,6 +11,7 @@ from fastapi import (
     Depends,
     FastAPI,
     File,
+    Form,
     Header,
     HTTPException,
     Query,
@@ -23,6 +24,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from httpx import HTTPStatusError
 from sqlalchemy.exc import IntegrityError
+from starlette.concurrency import run_in_threadpool
 
 from dzmm_bot.core.database import create_session_factory
 from dzmm_bot.core.group_games import GROUP_GAME_TYPES
@@ -40,6 +42,12 @@ from .repository import (
     AdminRepository,
     ConfigVersionConflictError,
     IdempotencyInProgressError,
+)
+from .shop_excel import (
+    CONTENT_TYPE as SHOP_EXCEL_CONTENT_TYPE, MAX_UPLOAD_BYTES,
+    ShopExcelUploadLimitMiddleware,
+    error_report as shop_error_report, export_workbook as export_shop_workbook,
+    parse_workbook as parse_shop_workbook,
 )
 
 
@@ -107,6 +115,7 @@ def create_app(
     if not admin_token:
         raise ValueError("admin_token must be nonempty")
     app = FastAPI()
+    app.add_middleware(ShopExcelUploadLimitMiddleware)
     console = console_client or NoVNCClient()
     connect_websocket = websocket_connector or NoVNCWebSocketConnector()
     upload_dir = profile_upload_dir or Path(tempfile.gettempdir()) / "dzmm-profile-images"
@@ -907,6 +916,76 @@ def create_app(
             lambda: (200, core.update_game_item(public_number, request)),
             scope=f"game-items:{public_number}",
         )
+
+    def shop_actor(identity: AdminIdentity) -> dict:
+        return {"actor": f"{identity.username}:{identity.account_id or 'super_admin'}",
+                "super_admin": identity.role == "super_admin"}
+
+    def relay_shop(operation: Callable[[], dict]) -> dict:
+        try:
+            return operation()
+        except HTTPStatusError as error:
+            try:
+                detail = error.response.json().get("detail", "商品操作失败")
+            except (ValueError, AttributeError):
+                detail = "商品服务暂时不可用，请稍后重试"
+            raise HTTPException(error.response.status_code, detail) from error
+
+    @app.get("/api/game/shop/catalog")
+    def shop_catalog(
+        _: Annotated[AdminIdentity, Depends(authorize)], include_deleted: bool = False,
+    ) -> dict:
+        return relay_shop(lambda: core.get_shop_catalog(include_deleted))
+
+    @app.get("/api/game/shop/excel/export")
+    def export_shop_excel(
+        _: Annotated[AdminIdentity, Depends(authorize)], include_deleted: bool = False,
+    ) -> Response:
+        catalog = relay_shop(lambda: core.get_shop_catalog(include_deleted))
+        return Response(export_shop_workbook(catalog["items"]), media_type=SHOP_EXCEL_CONTENT_TYPE,
+                        headers={"Content-Disposition": 'attachment; filename="shop-products.xlsx"', "Cache-Control": "no-store"})
+
+    @app.get("/api/game/shop/excel/template")
+    def shop_excel_template(_: Annotated[AdminIdentity, Depends(authorize)]) -> Response:
+        return Response(export_shop_workbook([]), media_type=SHOP_EXCEL_CONTENT_TYPE,
+                        headers={"Content-Disposition": 'attachment; filename="shop-template.xlsx"', "Cache-Control": "no-store"})
+
+    @app.post("/api/game/shop/excel/preview")
+    async def preview_shop_excel(
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        file: UploadFile = File(), synchronize_stock: bool = Form(False),
+    ) -> dict:
+        try:
+            data = await file.read(MAX_UPLOAD_BYTES + 1)
+            rows, errors, report_rows = await run_in_threadpool(parse_shop_workbook, data, file.filename)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        finally:
+            await file.close()
+        preview = await run_in_threadpool(relay_shop, lambda: core.preview_shop_changes({
+            "rows": rows, "parser_errors": errors, "synchronize_stock": synchronize_stock,
+            **shop_actor(identity),
+        }))
+        if preview["errors"]:
+            preview["error_report"] = await run_in_threadpool(shop_error_report, report_rows, preview["errors"])
+        return preview
+
+    @app.post("/api/game/shop/changes/preview")
+    def preview_shop_changes(
+        request: dict, identity: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
+        if set(request) - {"rows", "synchronize_stock"} or not isinstance(request.get("rows"), list) or len(request["rows"]) > 2000 or type(request.get("synchronize_stock", False)) is not bool:
+            raise HTTPException(422, "商品操作格式无效，请重新编辑")
+        return relay_shop(lambda: core.preview_shop_changes({**request, **shop_actor(identity)}))
+
+    @app.post("/api/game/shop/changes/{batch_id}/confirm")
+    def confirm_shop_changes(
+        batch_id: UUID, request: dict, identity: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
+        acknowledgements = request.get("acknowledgements", [])
+        if set(request) - {"acknowledgements"} or not isinstance(acknowledgements, list) or len(acknowledgements) > 4000 or any(not isinstance(value, str) for value in acknowledgements):
+            raise HTTPException(422, "风险确认格式无效，请重新预览")
+        return relay_shop(lambda: core.confirm_shop_changes(str(batch_id), {"acknowledgements": acknowledgements, **shop_actor(identity)}))
 
     @app.get("/api/game/shop/activity")
     def shop_activity(
@@ -2286,6 +2365,11 @@ def create_app(
             "coin_p2",
             "chop_cooldown_seconds",
             "chopper_daily_limit",
+            "chopper_coin_p0",
+            "chopper_coin_p1",
+            "chopper_coin_p2",
+            "coins_linked",
+            "target_daily_limit",
         )
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
@@ -2295,7 +2379,14 @@ def create_app(
             if_match,
             lambda: _relay_core(
                 lambda: core.set_estrus_settings(
-                    {key: request[key] for key in required}
+                    {
+                        **{key: request[key] for key in required},
+                        **{
+                            key: request[key]
+                            for key in ("chopper_fixed_coins", "target_fixed_coins")
+                            if key in request
+                        },
+                    }
                 )
             ),
             scope="estrus-settings",

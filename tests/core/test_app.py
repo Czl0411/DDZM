@@ -2408,6 +2408,13 @@ def test_estrus_settings_are_managed_over_core_api(client, headers):
     assert initial.json()["climax_threshold"] == 100
     assert initial.json()["heat_p0"] == 50
     assert initial.json()["coin_p0"] == 50
+    assert initial.json()["chopper_coin_p0"] == 50
+    assert initial.json()["chopper_coin_p1"] == 30
+    assert initial.json()["chopper_coin_p2"] == 20
+    assert initial.json()["coins_linked"] is True
+    assert initial.json()["target_daily_limit"] == 0
+    assert initial.json()["chopper_fixed_coins"] is None
+    assert initial.json()["target_fixed_coins"] is None
 
     updated = client.patch(
         "/internal/game/estrus/settings",
@@ -2423,12 +2430,27 @@ def test_estrus_settings_are_managed_over_core_api(client, headers):
             "coin_p2": 20,
             "chop_cooldown_seconds": 120,
             "chopper_daily_limit": 5,
+            "chopper_coin_p0": 10,
+            "chopper_coin_p1": 20,
+            "chopper_coin_p2": 70,
+            "coins_linked": False,
+            "target_daily_limit": 7,
+            "chopper_fixed_coins": 5,
+            "target_fixed_coins": 7,
         },
     )
     assert updated.status_code == 200
     assert updated.json()["climax_threshold"] == 200
     assert updated.json()["chop_cooldown_seconds"] == 120
     assert updated.json()["chopper_daily_limit"] == 5
+    assert updated.json()["chopper_coin_p0"] == 10
+    assert updated.json()["chopper_coin_p1"] == 20
+    assert updated.json()["chopper_coin_p2"] == 70
+    assert updated.json()["coins_linked"] is False
+    assert updated.json()["target_daily_limit"] == 7
+    assert updated.json()["chopper_fixed_coins"] == 5
+    assert updated.json()["target_fixed_coins"] == 7
+    assert client.get("/internal/game/estrus/settings", headers=headers).json() == updated.json()
 
     bad_sum = client.patch(
         "/internal/game/estrus/settings",
@@ -2447,6 +2469,62 @@ def test_estrus_settings_are_managed_over_core_api(client, headers):
         },
     )
     assert bad_sum.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("chopper_coin_p0", -1),
+        ("chopper_coin_p1", 101),
+        ("chopper_coin_p2", 21),
+        ("target_daily_limit", -1),
+        ("target_daily_limit", 1000),
+        ("coins_linked", "invalid"),
+        ("chopper_fixed_coins", -1),
+        ("chopper_fixed_coins", 100000),
+        ("target_fixed_coins", -1),
+        ("target_fixed_coins", 100000),
+        ("chopper_fixed_coins", 1.5),
+        ("target_fixed_coins", 1.5),
+    ],
+)
+def test_estrus_settings_reject_invalid_deductions_and_target_limits(client, headers, field, value):
+    initial = client.get("/internal/game/estrus/settings", headers=headers).json()
+
+    response = client.patch(
+        "/internal/game/estrus/settings",
+        headers=headers,
+        json={**initial, field: value},
+    )
+
+    assert response.status_code == 422
+    assert client.get("/internal/game/estrus/settings", headers=headers).json() == initial
+
+
+@pytest.mark.parametrize("amount", [None, 0, 7])
+def test_estrus_fixed_coin_settings_round_trip_without_changing_linkage(client, headers, amount):
+    initial = client.get("/internal/game/estrus/settings", headers=headers).json()
+    payload = {**initial, "chopper_fixed_coins": amount, "target_fixed_coins": amount}
+
+    response = client.patch("/internal/game/estrus/settings", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    assert response.json() == payload
+    assert response.json()["coins_linked"] is True
+    assert client.get("/internal/game/estrus/settings", headers=headers).json() == payload
+
+
+def test_estrus_settings_without_fixed_fields_keep_random_linked_defaults(client, headers):
+    initial = client.get("/internal/game/estrus/settings", headers=headers).json()
+    payload = {
+        key: value for key, value in initial.items()
+        if key not in {"chopper_fixed_coins", "target_fixed_coins"}
+    }
+
+    response = client.patch("/internal/game/estrus/settings", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    assert response.json() == initial
 
 
 def test_daily_jobs_require_the_core_token(client, headers):

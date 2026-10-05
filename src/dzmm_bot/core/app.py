@@ -234,6 +234,7 @@ from .repository import (
 )
 from .reply_templates import definitions_for_command, template_definition
 from .performance import HttpCoverImageValidator
+from .shop_management import ShopChangesConfirmRequest, ShopChangesPreviewRequest
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
 
@@ -286,6 +287,13 @@ def _estrus_settings_response(settings) -> EstrusSettingsResponse:
         coin_p2=settings.coin_p2,
         chop_cooldown_seconds=settings.chop_cooldown_seconds,
         chopper_daily_limit=settings.chopper_daily_limit,
+        chopper_coin_p0=settings.chopper_coin_p0,
+        chopper_coin_p1=settings.chopper_coin_p1,
+        chopper_coin_p2=settings.chopper_coin_p2,
+        coins_linked=settings.coins_linked,
+        target_daily_limit=settings.target_daily_limit,
+        chopper_fixed_coins=settings.chopper_fixed_coins,
+        target_fixed_coins=settings.target_fixed_coins,
     )
 
 
@@ -1402,6 +1410,33 @@ def create_app(
             pages=(history.total + page_size - 1) // page_size,
         )
 
+    @app.get("/internal/game/shop/catalog")
+    def shop_catalog(
+        _: Annotated[None, Depends(authorize)], include_deleted: bool = False,
+    ) -> dict:
+        return repository.get_shop_catalog(include_deleted)
+
+    @app.post("/internal/game/shop/changes/preview")
+    def preview_shop_changes(
+        request: ShopChangesPreviewRequest, _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return repository.preview_shop_changes(**request.model_dump(), now=clock())
+
+    @app.post("/internal/game/shop/changes/{batch_id}/confirm")
+    def confirm_shop_changes(
+        batch_id: UUID, request: ShopChangesConfirmRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        try:
+            return repository.confirm_shop_changes(batch_id, **request.model_dump(), now=clock())
+        except LookupError as error:
+            raise HTTPException(404, str(error)) from error
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except (ValueError, SQLAlchemyError) as error:
+            message = str(error) if isinstance(error, ValueError) else "商品发生并发冲突，请重新预览；本批次已回滚"
+            raise HTTPException(409, message) from error
+
     @app.get("/internal/game/items", response_model=PaginatedItemsResponse)
     def game_items(
         _: Annotated[None, Depends(authorize)],
@@ -1457,6 +1492,8 @@ def create_app(
             )
         except LookupError as error:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(error))
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
         return _item_response(record)
 
     @app.get(
@@ -2851,6 +2888,13 @@ def create_app(
                 coin_p2=request.coin_p2,
                 chop_cooldown_seconds=request.chop_cooldown_seconds,
                 chopper_daily_limit=request.chopper_daily_limit,
+                chopper_coin_p0=request.chopper_coin_p0,
+                chopper_coin_p1=request.chopper_coin_p1,
+                chopper_coin_p2=request.chopper_coin_p2,
+                coins_linked=request.coins_linked,
+                target_daily_limit=request.target_daily_limit,
+                chopper_fixed_coins=request.chopper_fixed_coins,
+                target_fixed_coins=request.target_fixed_coins,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))

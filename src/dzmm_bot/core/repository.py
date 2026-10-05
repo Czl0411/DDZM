@@ -142,11 +142,11 @@ from .liar_dice import (
 )
 from .shop_cards import (
     SYSTEM_SHOP_ITEMS,
-    adult_item,
-    item_by_key,
     item_category,
     item_daily_purchase_limit,
 )
+from .shop_effects import default_effect_config, effect_definition, effective_config, item_effect_snapshot
+from .shop_management import ShopManagementMixin
 from .red_packet import RandomSource, generate_red_packet_allocation
 from .texas_holdem import (
     BettingPlayer,
@@ -1256,6 +1256,13 @@ class EstrusSettings:
     coin_p2: int
     chop_cooldown_seconds: int
     chopper_daily_limit: int
+    chopper_coin_p0: int
+    chopper_coin_p1: int
+    chopper_coin_p2: int
+    coins_linked: bool
+    target_daily_limit: int
+    chopper_fixed_coins: int | None
+    target_fixed_coins: int | None
 
 
 @dataclass(frozen=True)
@@ -1268,6 +1275,7 @@ class EstrusChopResult:
     heat_now: int = 0
     threshold: int = 100
     coins: int = 0
+    coins_deducted: int = 0
     climax_triggered: bool = False
     climax_text: str | None = None
     today_climaxes: int = 0
@@ -1275,6 +1283,8 @@ class EstrusChopResult:
     cooldown_remaining_seconds: int = 0
     today_chops_given: int = 0
     daily_chops_limit: int = 0
+    today_chops_received: int = 0
+    daily_received_limit: int = 0
     candidate_labels: tuple[str, ...] = ()
 
 
@@ -2755,7 +2765,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository:
+class CoreRepository(ShopManagementMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -14259,7 +14269,7 @@ class CoreRepository:
     def _roll_estrus_pair(
         self, settings: EstrusSettingsRecord
     ) -> tuple[int, int]:
-        """按后台概率分布 roll (发情值增量, 摸鱼币)，各档 0/1/2。"""
+        """发情值按概率抽样，币额按后台选择使用随机或固定金额。"""
         heat_roll = self._estrus_random.random() * 100
         if heat_roll < settings.heat_p0:
             heat_gain = 0
@@ -14267,13 +14277,16 @@ class CoreRepository:
             heat_gain = 1
         else:
             heat_gain = 2
-        coin_roll = self._estrus_random.random() * 100
-        if coin_roll < settings.coin_p0:
-            coins = 0
-        elif coin_roll < settings.coin_p0 + settings.coin_p1:
-            coins = 1
+        if settings.target_fixed_coins is not None:
+            coins = settings.target_fixed_coins
         else:
-            coins = 2
+            coin_roll = self._estrus_random.random() * 100
+            if coin_roll < settings.coin_p0:
+                coins = 0
+            elif coin_roll < settings.coin_p0 + settings.coin_p1:
+                coins = 1
+            else:
+                coins = 2
         return heat_gain, coins
 
     def get_estrus_settings(self) -> EstrusSettings:
@@ -14290,6 +14303,13 @@ class CoreRepository:
                 coin_p2=int(row.coin_p2),
                 chop_cooldown_seconds=int(row.chop_cooldown_seconds),
                 chopper_daily_limit=int(row.chopper_daily_limit),
+                chopper_coin_p0=int(row.chopper_coin_p0),
+                chopper_coin_p1=int(row.chopper_coin_p1),
+                chopper_coin_p2=int(row.chopper_coin_p2),
+                coins_linked=bool(row.coins_linked),
+                target_daily_limit=int(row.target_daily_limit),
+                chopper_fixed_coins=row.chopper_fixed_coins,
+                target_fixed_coins=row.target_fixed_coins,
             )
 
     def set_estrus_settings(
@@ -14305,11 +14325,30 @@ class CoreRepository:
         coin_p2: int,
         chop_cooldown_seconds: int,
         chopper_daily_limit: int = 0,
+        chopper_coin_p0: int = 50,
+        chopper_coin_p1: int = 30,
+        chopper_coin_p2: int = 20,
+        coins_linked: bool = True,
+        target_daily_limit: int = 0,
+        chopper_fixed_coins: int | None = None,
+        target_fixed_coins: int | None = None,
     ) -> EstrusSettings:
         if sum((heat_p0, heat_p1, heat_p2)) != 100:
             raise ValueError("发情值三档概率之和必须等于 100")
         if sum((coin_p0, coin_p1, coin_p2)) != 100:
             raise ValueError("摸鱼币三档概率之和必须等于 100")
+        if sum((chopper_coin_p0, chopper_coin_p1, chopper_coin_p2)) != 100:
+            raise ValueError("凿者扣币三档概率之和必须等于 100")
+        if not isinstance(coins_linked, bool):
+            raise ValueError("扣币与发币关联必须为布尔值")
+        for label, amount in (
+            ("凿者固定扣币金额", chopper_fixed_coins),
+            ("被凿者固定发币金额", target_fixed_coins),
+        ):
+            if amount is not None and (
+                type(amount) is not int or not 0 <= amount <= 99999
+            ):
+                raise ValueError(f"{label}必须在 0~99999 之间，或留空使用随机概率")
         checks = (
             ("高潮阈值", climax_threshold, 10, 1000),
             ("发情值 0 档概率", heat_p0, 0, 100),
@@ -14320,6 +14359,10 @@ class CoreRepository:
             ("摸鱼币 2 档概率", coin_p2, 0, 100),
             ("凿者冷却秒数", chop_cooldown_seconds, 0, 86400),
             ("每人每日凿人上限", chopper_daily_limit, 0, 999),
+            ("凿者扣币 0 档概率", chopper_coin_p0, 0, 100),
+            ("凿者扣币 1 档概率", chopper_coin_p1, 0, 100),
+            ("凿者扣币 2 档概率", chopper_coin_p2, 0, 100),
+            ("每人每日被凿上限", target_daily_limit, 0, 999),
         )
         for label, value, low, high in checks:
             if not isinstance(value, int) or not low <= value <= high:
@@ -14337,6 +14380,13 @@ class CoreRepository:
                 row.coin_p2 = coin_p2
                 row.chop_cooldown_seconds = chop_cooldown_seconds
                 row.chopper_daily_limit = chopper_daily_limit
+                row.chopper_coin_p0 = chopper_coin_p0
+                row.chopper_coin_p1 = chopper_coin_p1
+                row.chopper_coin_p2 = chopper_coin_p2
+                row.coins_linked = coins_linked
+                row.target_daily_limit = target_daily_limit
+                row.chopper_fixed_coins = chopper_fixed_coins
+                row.target_fixed_coins = target_fixed_coins
                 session.flush()
                 return self.get_estrus_settings()
 
@@ -14585,6 +14635,22 @@ class CoreRepository:
                     return EstrusChopResult(
                         "self", chopper_name=chopper.display_name
                     )
+                locked_users = {
+                    user.id: user
+                    for user in session.scalars(
+                        select(UserRecord)
+                        .where(UserRecord.id.in_((chopper.id, target.id)))
+                        .order_by(UserRecord.id)
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    ).all()
+                }
+                chopper = locked_users.get(chopper.id)
+                target = locked_users.get(target.id)
+                if chopper is None:
+                    return EstrusChopResult("not_joined")
+                if target is None:
+                    return EstrusChopResult("target_not_joined")
                 cooldown = int(settings.chop_cooldown_seconds)
                 if cooldown > 0:
                     last_created = session.scalar(
@@ -14638,7 +14704,47 @@ class CoreRepository:
                         chopper_name=chopper.display_name,
                         target_name=target.display_name,
                     )
+                target_daily_limit = int(settings.target_daily_limit)
+                if target_daily_limit > 0:
+                    day_start = now.replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    )
+                    received_today = int(
+                        session.scalar(
+                            select(func.count())
+                            .select_from(EstrusChopRecord)
+                            .where(
+                                EstrusChopRecord.target_user_id == target.id,
+                                EstrusChopRecord.group_chat_id == group_chat_id,
+                                EstrusChopRecord.created_at >= day_start,
+                                EstrusChopRecord.created_at
+                                < day_start + timedelta(days=1),
+                            )
+                        )
+                        or 0
+                    )
+                    if received_today >= target_daily_limit:
+                        return EstrusChopResult(
+                            "target_limit",
+                            target_name=target.display_name,
+                            today_chops_received=received_today,
+                            daily_received_limit=target_daily_limit,
+                        )
                 heat_gain, coins = self._roll_estrus_pair(settings)
+                if settings.chopper_fixed_coins is not None:
+                    coins_deducted = settings.chopper_fixed_coins
+                elif settings.coins_linked and settings.target_fixed_coins is None:
+                    coins_deducted = coins
+                else:
+                    deduction_roll = self._estrus_random.random() * 100
+                    if deduction_roll < settings.chopper_coin_p0:
+                        coins_deducted = 0
+                    elif deduction_roll < (
+                        settings.chopper_coin_p0 + settings.chopper_coin_p1
+                    ):
+                        coins_deducted = 1
+                    else:
+                        coins_deducted = 2
                 state.heat = int(state.heat) + heat_gain
                 state.chopped_count = int(state.chopped_count) + 1
                 threshold = int(settings.climax_threshold)
@@ -14662,6 +14768,10 @@ class CoreRepository:
                     self._apply_balance_change(
                         target, coins, "estrus_gain", now
                     )
+                if coins_deducted > 0:
+                    self._apply_balance_change(
+                        chopper, -coins_deducted, "estrus_chop_cost", now
+                    )
                 state.updated_at = now
                 session.add(
                     EstrusChopRecord(
@@ -14670,6 +14780,7 @@ class CoreRepository:
                         target_user_id=target.id,
                         heat_gain=heat_gain,
                         coins=coins,
+                        coins_deducted=coins_deducted,
                         climax_triggered=climax_triggered,
                         note=note[:200] if note else None,
                         created_at=now,
@@ -14685,6 +14796,7 @@ class CoreRepository:
                     heat_now=threshold if climax_triggered else int(state.heat),
                     threshold=threshold,
                     coins=coins,
+                    coins_deducted=coins_deducted,
                     climax_triggered=climax_triggered,
                     climax_text=climax_text,
                     today_climaxes=int(state.today_climaxes),
@@ -30118,6 +30230,7 @@ class CoreRepository:
         )
         with self.transaction():
             with self._session() as session:
+                self._lock_shop_catalog(session)
                 self._ensure_shop_catalog(session)
                 record = ItemRecord(
                     public_number=self._next_item_public_number(session),
@@ -30160,6 +30273,13 @@ class CoreRepository:
         missing = [item for item in SYSTEM_SHOP_ITEMS if item.key not in existing_keys]
         if not missing:
             return
+        self._lock_shop_catalog(session)
+        existing_keys = set(session.scalars(
+            select(ItemRecord.system_key).where(ItemRecord.system_key.is_not(None))
+        ))
+        missing = [item for item in SYSTEM_SHOP_ITEMS if item.key not in existing_keys]
+        if not missing:
+            return
         existing_names = {
             record.name: record
             for record in session.scalars(
@@ -30188,6 +30308,7 @@ class CoreRepository:
             next_number += 1
             record.system_key = definition.key
             record.effect_type = definition.effect_type
+            record.effect_config = default_effect_config(definition.effect_type, definition.key)
             record.price = definition.price
             record.description = definition.description
             record.minimum_rank_order = definition.minimum_rank_order
@@ -30197,17 +30318,17 @@ class CoreRepository:
         session.flush()
 
     @staticmethod
-    def _shop_catalog_item(record: ItemRecord) -> ShopCatalogItem:
+    def _shop_catalog_item(record: ItemRecord, snapshot=None) -> ShopCatalogItem:
         return ShopCatalogItem(
             public_number=record.public_number,
-            name=record.name,
+            name=(snapshot or {}).get("name", record.name),
             description=record.description,
-            price=record.price,
+            price=(snapshot or {}).get("price", record.price),
             stock=record.stock,
             unlimited_stock=record.unlimited_stock,
             enabled=record.enabled,
             system_key=record.system_key,
-            effect_type=record.effect_type,
+            effect_type=snapshot["effect_type"] if snapshot else record.effect_type,
             minimum_rank_order=record.minimum_rank_order,
             category=record.category,
             daily_purchase_limit=record.daily_purchase_limit,
@@ -30225,7 +30346,7 @@ class CoreRepository:
                 group = session.get(GroupChatRecord, group_chat_id)
                 if group is not None and group.deleted_at is not None:
                     return []
-                query = select(ItemRecord)
+                query = select(ItemRecord).where(ItemRecord.deleted_at.is_(None))
                 if not include_disabled:
                     query = query.where(ItemRecord.enabled.is_(True))
                 records = session.scalars(query.order_by(ItemRecord.public_number))
@@ -30275,7 +30396,7 @@ class CoreRepository:
                     user = session.get(UserRecord, existing.user_id)
                     return ShopPurchaseResult(
                         "purchased",
-                        None if item is None else self._shop_catalog_item(item),
+                        None if item is None else self._shop_catalog_item(item, existing.item_snapshot),
                         None if user is None else user.balance,
                         None if inventory is None else inventory.quantity,
                     )
@@ -30296,14 +30417,12 @@ class CoreRepository:
                     .where(ItemRecord.public_number == public_number)
                     .with_for_update()
                 )
-                if item is None:
+                if item is None or item.deleted_at is not None:
                     return ShopPurchaseResult("not_found")
                 view = self._shop_catalog_item(item)
                 if not item.enabled:
                     return ShopPurchaseResult("disabled", view)
-                if item.system_key is not None and adult_item(
-                    item_by_key(item.system_key)
-                ):
+                if (item.effect_type or "").startswith("adult_"):
                     if not group.adult_shop_enabled:
                         return ShopPurchaseResult("adult_disabled", view)
                 if (
@@ -30371,6 +30490,7 @@ class CoreRepository:
                         item_id=item.id,
                         group_chat_id=group_chat_id,
                         price=charged,
+                        item_snapshot=item_effect_snapshot(item),
                         created_at=now,
                     )
                 )
@@ -30417,7 +30537,7 @@ class CoreRepository:
                     result = existing.result or {}
                     return ShopUseResult(
                         existing.state,
-                        None if item is None else self._shop_catalog_item(item),
+                        None if item is None else self._shop_catalog_item(item, existing.item_snapshot),
                         result.get("reward"),
                         result.get("target_display_name"),
                         result.get("session_number"),
@@ -30433,9 +30553,9 @@ class CoreRepository:
                 if group is None or group.deleted_at is not None:
                     return ShopUseResult("wrong_group")
                 item = session.scalar(
-                    select(ItemRecord).where(ItemRecord.public_number == public_number)
+                    select(ItemRecord).where(ItemRecord.public_number == public_number).with_for_update()
                 )
-                if item is None:
+                if item is None or item.deleted_at is not None:
                     return ShopUseResult("not_found")
                 view = self._shop_catalog_item(item)
                 inventory = session.scalar(
@@ -30466,7 +30586,7 @@ class CoreRepository:
                         return ShopUseResult("target_not_joined", view)
                     if target.id == user.id:
                         return ShopUseResult("self_target", view)
-                    definition = item_by_key(item.system_key or "")
+                    definition = effect_definition(item)
                     reward = int(definition.reward or 0)
                     self._apply_balance_change(target, reward, "shop_gift", now)
                     result = {
@@ -30474,7 +30594,7 @@ class CoreRepository:
                         "target_display_name": target.display_name,
                     }
                 elif item.effect_type == "scratch":
-                    definition = item_by_key(item.system_key or "")
+                    definition = effect_definition(item)
                     low, high = definition.reward_range or (0, 0)
                     reward = low + self._shop_random.randrange(high - low + 1)
                     self._apply_balance_change(user, reward, "shop_scratch", now)
@@ -30499,11 +30619,12 @@ class CoreRepository:
                             multiplayer_used=0,
                         )
                         session.add(bonus)
+                    quota = effective_config(item)["quota"]
                     if item.effect_type == "ai_quota":
-                        bonus.ai_total += 1
+                        bonus.ai_total += quota
                     else:
-                        bonus.multiplayer_total += 1
-                    result = {"reward": 1}
+                        bonus.multiplayer_total += quota
+                    result = {"reward": quota}
                 else:
                     return ShopUseResult("unsupported", view)
                 inventory.quantity -= 1
@@ -30515,6 +30636,7 @@ class CoreRepository:
                         target_user_id=None if target is None else target.id,
                         group_chat_id=group_chat_id,
                         state="completed",
+                        item_snapshot=item_effect_snapshot(item),
                         result=result,
                         created_at=now,
                         completed_at=now,
@@ -30568,7 +30690,7 @@ class CoreRepository:
                     )
                     return ShopUseResult(
                         existing.state,
-                        None if item is None else self._shop_catalog_item(item),
+                        None if item is None else self._shop_catalog_item(item, existing.item_snapshot),
                         session_number=(
                             None if adult_session is None else adult_session.public_number
                         ),
@@ -30584,9 +30706,9 @@ class CoreRepository:
                 if group is None or group.deleted_at is not None:
                     return ShopUseResult("wrong_group")
                 item = session.scalar(
-                    select(ItemRecord).where(ItemRecord.public_number == public_number)
+                    select(ItemRecord).where(ItemRecord.public_number == public_number).with_for_update()
                 )
-                if item is None:
+                if item is None or item.deleted_at is not None:
                     return ShopUseResult("not_found")
                 view = self._shop_catalog_item(item)
                 if not (item.effect_type or "").startswith("adult_"):
@@ -30600,7 +30722,7 @@ class CoreRepository:
                 )
                 if direct_room is None:
                     return ShopUseResult("direct_chat_required", view)
-                definition = item_by_key(item.system_key or "")
+                definition = effect_definition(item)
                 active_setup = session.scalar(
                     select(AdultCardSessionRecord.public_number).where(
                         AdultCardSessionRecord.owner_user_id == user.id,
@@ -30649,7 +30771,10 @@ class CoreRepository:
                             .join(ItemRecord, ItemRecord.id == ShopItemUseRecord.item_id)
                             .where(
                                 ShopItemUseRecord.target_user_id == target.id,
-                                ItemRecord.effect_type == "adult_common",
+                                or_(
+                                    ShopItemUseRecord.item_snapshot["effect_type"].as_string() == "adult_common",
+                                    and_(ShopItemUseRecord.item_snapshot.is_(None), ItemRecord.effect_type == "adult_common"),
+                                ),
                                 AdultCardSessionRecord.state.in_(
                                     (
                                         "collecting_scene",
@@ -30688,6 +30813,7 @@ class CoreRepository:
                     target_user_id=None if target is None else target.id,
                     group_chat_id=group_chat_id,
                     state="reserved",
+                    item_snapshot=item_effect_snapshot(item),
                     result={"session_number": session_number},
                     created_at=now,
                 )
@@ -30753,11 +30879,11 @@ class CoreRepository:
                 item = None if item_use is None else session.get(ItemRecord, item_use.item_id)
                 if item is None or item_use is None:
                     raise RuntimeError("成人卡片商品消失")
-                view = self._shop_catalog_item(item)
+                view = self._shop_catalog_item(item, item_use.item_snapshot)
                 if now >= card_session.stage_deadline:
                     self._cancel_adult_card_session(session, card_session, item_use, now)
                     return ShopUseResult("expired", view, session_number=card_session.public_number)
-                definition = item_by_key(item.system_key or "")
+                definition = effect_definition(item, item_use.item_snapshot)
                 if card_session.state == "collecting_m_count":
                     if (
                         not scene.isascii()
@@ -30838,6 +30964,8 @@ class CoreRepository:
         item: ItemRecord,
         now: datetime,
     ) -> None:
+        item_use = session.get(ShopItemUseRecord, card_session.item_use_id)
+        item_name = (item_use.item_snapshot or {}).get("name", item.name)
         owner = session.get(UserRecord, card_session.owner_user_id)
         group = session.get(GroupChatRecord, card_session.group_chat_id)
         participants = list(
@@ -30856,7 +30984,7 @@ class CoreRepository:
         for participant, participant_user in participants:
             notice = self.enqueue_system_outbound(
                 f"【卡片授权 #{card_session.public_number}】{participant_user.display_name}\n"
-                f"{owner.display_name} 使用 {item.name}；参与者：{owner.display_name}、{names}\n"
+                f"{owner.display_name} 使用 {item_name}；参与者：{owner.display_name}、{names}\n"
                 f"场景：{card_session.scene}\n"
                 "请在 10 分钟内回复本通知发送 /同意使用 或 /拒绝使用。"
                 "发送 /同意使用 表示确认本人已成年并同意本次具体场景。",
@@ -30892,7 +31020,7 @@ class CoreRepository:
                     return ShopUseResult("session_not_found")
                 item_use = session.get(ShopItemUseRecord, card_session.item_use_id)
                 item = None if item_use is None else session.get(ItemRecord, item_use.item_id)
-                view = None if item is None else self._shop_catalog_item(item)
+                view = None if item is None else self._shop_catalog_item(item, item_use.item_snapshot)
                 if (
                     group_chat_id is not None
                     and card_session.group_chat_id != group_chat_id
@@ -30975,7 +31103,7 @@ class CoreRepository:
                     return ShopUseResult("session_not_found")
                 item_use = session.get(ShopItemUseRecord, card_session.item_use_id)
                 item = None if item_use is None else session.get(ItemRecord, item_use.item_id)
-                view = None if item is None else self._shop_catalog_item(item)
+                view = None if item is None else self._shop_catalog_item(item, item_use.item_snapshot)
                 if (
                     group_chat_id is not None
                     and card_session.group_chat_id != group_chat_id
@@ -31001,6 +31129,7 @@ class CoreRepository:
         item_use: ShopItemUseRecord,
         now: datetime,
     ) -> None:
+        session.get(ItemRecord, item_use.item_id, with_for_update=True)
         inventory = session.scalar(
             select(UserItemRecord)
             .where(
@@ -31069,7 +31198,7 @@ class CoreRepository:
                     return ShopUseResult("authorization_not_found")
                 item_use = session.get(ShopItemUseRecord, card_session.item_use_id)
                 item = None if item_use is None else session.get(ItemRecord, item_use.item_id)
-                view = None if item is None else self._shop_catalog_item(item)
+                view = None if item is None else self._shop_catalog_item(item, item_use.item_snapshot)
                 if (
                     group_chat_id is not None
                     and card_session.group_chat_id != group_chat_id
@@ -31136,7 +31265,7 @@ class CoreRepository:
         owner = session.get(UserRecord, card_session.owner_user_id, with_for_update=True)
         if owner is None:
             raise RuntimeError("成人卡片发起人消失")
-        compensation = item.price // 2
+        compensation = (item_use.item_snapshot or {}).get("price", item.price) // 2
         self._apply_balance_change(owner, compensation, "shop_compensation", now)
         item_use.state = "voided"
         item_use.result = {
@@ -31165,7 +31294,7 @@ class CoreRepository:
         item: ItemRecord,
         now: datetime,
     ) -> None:
-        definition = item_by_key(item.system_key or "")
+        definition = effect_definition(item, item_use.item_snapshot)
         card_session.state = "active" if definition.effect_type == "adult_common" else "generating"
         card_session.consent_deadline = None
         card_session.updated_at = now
@@ -31381,7 +31510,8 @@ class CoreRepository:
                         "使用自然中文，正文最多800字，只输出正文。"
                     ),
                     user_content=(
-                        f"卡片：{item.name}\n来源群：{group.name}\n"
+                        f"卡片：{(item_use.item_snapshot or {}).get('name', item.name)}\n"
+                        f"模板：{effect_definition(item, item_use.item_snapshot).name}\n来源群：{group.name}\n"
                         f"参与者档案：\n{profiles}\n已同意场景：{card_session.scene}"
                     ),
                     max_response_chars=800,
@@ -31485,7 +31615,7 @@ class CoreRepository:
                     "created_at": record.created_at,
                     "user_name": user.display_name,
                     "item_number": item.public_number,
-                    "item_name": item.name,
+                    "item_name": (record.item_snapshot or {}).get("name", item.name),
                     "group_name": group.name,
                     "price": record.price,
                 }
@@ -31514,7 +31644,7 @@ class CoreRepository:
                     "user_name": user.display_name,
                     "target_name": None if target is None else target.display_name,
                     "item_number": item.public_number,
-                    "item_name": item.name,
+                    "item_name": (record.item_snapshot or {}).get("name", item.name),
                     "group_name": group.name,
                     "state": record.state,
                     "result": record.result,
@@ -31690,7 +31820,7 @@ class CoreRepository:
                 return list(
                     session.scalars(
                         select(ItemRecord)
-                        .where(ItemRecord.enabled.is_(True))
+                        .where(ItemRecord.enabled.is_(True), ItemRecord.deleted_at.is_(None))
                         .order_by(ItemRecord.public_number)
                     )
                 )
@@ -31701,7 +31831,7 @@ class CoreRepository:
         with self.transaction():
             with self._session() as session:
                 self._ensure_shop_catalog(session)
-                query = select(ItemRecord)
+                query = select(ItemRecord).where(ItemRecord.deleted_at.is_(None))
                 total = int(
                     session.scalar(select(func.count()).select_from(query.subquery())) or 0
                 )
@@ -31749,6 +31879,8 @@ class CoreRepository:
                 )
                 if item is None:
                     raise LookupError("item_not_found")
+                if item.deleted_at is not None:
+                    raise ValueError("已删除商品必须先恢复")
                 item.description = description
                 item.enabled = enabled
                 item.minimum_rank_order = minimum_rank_order
@@ -31757,6 +31889,7 @@ class CoreRepository:
                 item.price = price
                 item.category = category
                 item.daily_purchase_limit = daily_purchase_limit
+                item.configuration_version += 1
                 session.flush()
                 return item
 

@@ -1,11 +1,17 @@
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from dzmm_bot.core.estrus import build_climax_messages
-from dzmm_bot.core.schema import PRIMARY_GROUP_CHAT_ID
+from dzmm_bot.core.schema import (
+    BalanceTransactionRecord,
+    EstrusChopRecord,
+    PRIMARY_GROUP_CHAT_ID,
+)
 from dzmm_bot.runtime.contracts import InboundMessage, MessageReference
 
 
@@ -14,7 +20,7 @@ NOW = datetime(2026, 10, 3, 15, 0, tzinfo=BEIJING)
 
 
 class _SeqRandom:
-    """按序列吐 random() 值：_roll_estrus_pair 每次凿消耗两个（先热后币）。"""
+    """关联模式每次消耗两个抽样值；非关联模式再抽一次扣币。"""
 
     def __init__(self, values):
         self.values = list(values)
@@ -104,8 +110,348 @@ def test_chop_by_name_with_probabilistic_gains():
     texts = _replies(factory, "c1")
     assert any("【凿】甲凿了一下乙（试一试）" in text for text in texts)
     assert any("乙 发情值 +1（当前 1/100），获得 1 摸鱼币。" in text for text in texts)
-    # 乙 = 甲的入职奖励 + 1 枚被凿币（两人入职奖励相同）
-    assert _balance(factory, "user-1") == _balance(factory, "user-0") + 1
+    assert any("甲 扣除 1 摸鱼币。" in text for text in texts)
+    assert _balance(factory, "user-1") == _balance(factory, "user-0") + 2
+
+
+def _configure_estrus_settings(repository, **changes):
+    return repository.set_estrus_settings(
+        **{**asdict(repository.get_estrus_settings()), **changes}
+    )
+
+
+@pytest.mark.parametrize(
+    ("coin_roll", "expected_coins"),
+    [(0.0, 0), (0.499, 0), (0.50, 1), (0.799, 1), (0.80, 2), (0.999, 2)],
+)
+def test_linked_chop_shares_coin_roll_and_records_both_sides(coin_roll, expected_coins):
+    random = _SeqRandom([0.0, coin_roll, 0.42])
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(
+        repository, chopper_coin_p0=100, chopper_coin_p1=0, chopper_coin_p2=0
+    )
+    chopper_before = _balance(factory, "user-0")
+    target_before = _balance(factory, "user-1")
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+
+    assert _balance(factory, "user-0") == chopper_before - expected_coins
+    assert _balance(factory, "user-1") == target_before + expected_coins
+    assert random.values == [0.42]
+    assert _joined_text(factory, f"甲 扣除 {expected_coins} 摸鱼币。")
+    with factory() as session:
+        chop = session.scalar(select(EstrusChopRecord))
+        assert chop.coins == expected_coins
+        assert chop.coins_deducted == expected_coins
+        transactions = session.scalars(
+            select(BalanceTransactionRecord).where(
+                BalanceTransactionRecord.source.in_(("estrus_gain", "estrus_chop_cost"))
+            )
+        ).all()
+        assert sorted((entry.source, entry.amount) for entry in transactions) == (
+            [("estrus_chop_cost", -expected_coins), ("estrus_gain", expected_coins)]
+            if expected_coins else []
+        )
+
+
+@pytest.mark.parametrize(
+    ("gain_roll", "deduction_roll", "gain", "deduction"),
+    [(0.0, 0.60, 0, 1), (0.60, 0.0, 1, 0), (0.90, 0.60, 2, 1), (0.60, 0.90, 1, 2)],
+)
+def test_unlinked_chop_rolls_coins_independently(gain_roll, deduction_roll, gain, deduction):
+    random = _SeqRandom([0.0, gain_roll, deduction_roll, 0.42])
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(repository, coins_linked=False)
+    chopper_before = _balance(factory, "user-0")
+    target_before = _balance(factory, "user-1")
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+
+    assert _balance(factory, "user-0") == chopper_before - deduction
+    assert _balance(factory, "user-1") == target_before + gain
+    assert random.values == [0.42]
+    assert _joined_text(factory, f"甲 扣除 {deduction} 摸鱼币。")
+    with factory() as session:
+        chop = session.scalar(select(EstrusChopRecord))
+        assert (chop.coins, chop.coins_deducted) == (gain, deduction)
+
+
+@pytest.mark.parametrize(
+    ("probabilities", "expected_deduction"),
+    [((100, 0, 0), 0), ((0, 100, 0), 1), ((0, 0, 100), 2)],
+)
+def test_unlinked_chop_respects_custom_deduction_probabilities(probabilities, expected_deduction):
+    service, repository, factory = _service(estrus_random=_SeqRandom([0.0, 0.60, 0.60]))
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(
+        repository,
+        coins_linked=False,
+        chopper_coin_p0=probabilities[0],
+        chopper_coin_p1=probabilities[1],
+        chopper_coin_p2=probabilities[2],
+    )
+    chopper_before = _balance(factory, "user-0")
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+
+    assert _balance(factory, "user-0") == chopper_before - expected_deduction
+    with factory() as session:
+        chop = session.scalar(select(EstrusChopRecord))
+        assert (chop.coins, chop.coins_deducted) == (1, expected_deduction)
+
+
+@pytest.mark.parametrize("coins_linked", [True, False])
+@pytest.mark.parametrize(
+    ("chopper_fixed", "target_fixed", "rolls", "deduction", "gain"),
+    [
+        (5, None, [0.60, 0.90], 5, 2),
+        (None, 7, [0.60, 0.60], 1, 7),
+        (5, 7, [0.60], 5, 7),
+        (0, 0, [0.60], 0, 0),
+        (0, None, [0.60, 0.90], 0, 2),
+        (None, 0, [0.60, 0.90], 2, 0),
+        (99999, 99999, [0.60], 99999, 99999),
+    ],
+)
+def test_fixed_chop_coins_override_random_and_linked_rolls(
+    coins_linked, chopper_fixed, target_fixed, rolls, deduction, gain
+):
+    random = _SeqRandom([*rolls, 0.42])
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(
+        repository,
+        coins_linked=coins_linked,
+        chopper_fixed_coins=chopper_fixed,
+        target_fixed_coins=target_fixed,
+    )
+    chopper_before = _balance(factory, "user-0")
+    target_before = _balance(factory, "user-1")
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+
+    assert random.values == [0.42]
+    assert _balance(factory, "user-0") == chopper_before - deduction
+    assert _balance(factory, "user-1") == target_before + gain
+    assert _joined_text(factory, f"甲 扣除 {deduction} 摸鱼币。")
+    if gain > 0:
+        assert _joined_text(factory, f"获得 {gain} 摸鱼币。")
+    with factory() as session:
+        chop = session.scalar(select(EstrusChopRecord))
+        assert (chop.coins, chop.coins_deducted) == (gain, deduction)
+        assert chop.heat_gain == 1
+        transactions = session.scalars(
+            select(BalanceTransactionRecord).where(
+                BalanceTransactionRecord.source.in_(("estrus_gain", "estrus_chop_cost"))
+            )
+        ).all()
+        expected_transactions = []
+        if deduction:
+            expected_transactions.append(("estrus_chop_cost", -deduction))
+        if gain:
+            expected_transactions.append(("estrus_gain", gain))
+        assert sorted((entry.source, entry.amount) for entry in transactions) == expected_transactions
+
+
+def test_disabling_fixed_coins_restores_existing_random_linked_settings():
+    random = _SeqRandom([0.60, 0.60, 0.60, 0.42])
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(repository, chopper_fixed_coins=5, target_fixed_coins=7)
+
+    _receive(service, "fixed", "user-0", "/凿 乙", NOW)
+    settings = _configure_estrus_settings(
+        repository, chopper_fixed_coins=None, target_fixed_coins=None
+    )
+    _receive(service, "random", "user-0", "/凿 乙", NOW + timedelta(minutes=1))
+
+    assert settings.coins_linked is True
+    assert (settings.coin_p0, settings.coin_p1, settings.coin_p2) == (50, 30, 20)
+    assert _balance(factory, "user-0") == -6
+    assert _balance(factory, "user-1") == 8
+    assert random.values == [0.42]
+
+
+def test_default_chop_settings_link_coins_and_leave_target_unlimited():
+    _, repository, _ = _service()
+    settings = repository.get_estrus_settings()
+
+    assert settings.coins_linked is True
+    assert settings.target_daily_limit == 0
+    assert settings.chopper_fixed_coins is None
+    assert settings.target_fixed_coins is None
+    assert (settings.chopper_coin_p0, settings.chopper_coin_p1, settings.chopper_coin_p2) == (
+        settings.coin_p0, settings.coin_p1, settings.coin_p2
+    )
+
+
+def test_chop_deducts_even_when_chopper_has_zero_balance():
+    service, _, factory = _service(estrus_random=_SeqRandom([0.0, 0.90]))
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    assert _balance(factory, "user-0") == 0
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+
+    assert _balance(factory, "user-0") == -2
+    assert _balance(factory, "user-1") == 2
+
+
+@pytest.mark.parametrize(
+    "rejection", ["self", "refused", "disabled", "cooldown", "chopper_limit", "target_limit"]
+)
+@pytest.mark.parametrize("fixed_coins", [False, True])
+def test_rejected_chops_do_not_roll_charge_or_count(rejection, fixed_coins):
+    random = _SeqRandom([0.0, 0.90, 0.90, 0.90])
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    if fixed_coins:
+        _configure_estrus_settings(repository, chopper_fixed_coins=5, target_fixed_coins=7)
+    if rejection == "refused":
+        _receive(service, "refuse", "user-1", "/拒绝被凿", NOW)
+    elif rejection == "disabled":
+        _configure_estrus_settings(repository, enabled=False)
+    elif rejection in {"cooldown", "chopper_limit", "target_limit"}:
+        _receive(service, "first", "user-0", "/凿 乙", NOW)
+        changes = {
+            "cooldown": {"chop_cooldown_seconds": 60},
+            "chopper_limit": {"chopper_daily_limit": 1},
+            "target_limit": {"target_daily_limit": 1},
+        }
+        _configure_estrus_settings(repository, **changes[rejection])
+    balances = (_balance(factory, "user-0"), _balance(factory, "user-1"))
+    values_before = random.values.copy()
+    info_before = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)
+
+    _receive(service, "rejected", "user-0", "/凿 甲" if rejection == "self" else "/凿 乙", NOW)
+
+    assert (_balance(factory, "user-0"), _balance(factory, "user-1")) == balances
+    assert random.values == values_before
+    info_after = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)
+    assert info_after["chopped_count"] == info_before["chopped_count"]
+    assert info_after["heat"] == info_before["heat"]
+    with factory() as session:
+        assert len(session.scalars(select(EstrusChopRecord)).all()) == (
+            1 if rejection in {"cooldown", "chopper_limit", "target_limit"} else 0
+        )
+
+
+@pytest.mark.parametrize("fixed_coins", [False, True])
+def test_replayed_chop_does_not_deduct_twice(fixed_coins):
+    service, repository, factory = _service(estrus_random=_SeqRandom([0.60, 0.60]))
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    if fixed_coins:
+        _configure_estrus_settings(repository, chopper_fixed_coins=5, target_fixed_coins=7)
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+    balances = (_balance(factory, "user-0"), _balance(factory, "user-1"))
+    result = _receive(service, "c1", "user-0", "/凿 乙", NOW)
+
+    assert result.inserted is False
+    assert (_balance(factory, "user-0"), _balance(factory, "user-1")) == balances
+    assert repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)["chopped_count"] == 1
+
+
+@pytest.mark.parametrize("fixed_coins", [False, True])
+def test_chop_deduction_failure_rolls_back_gain_and_chop(monkeypatch, fixed_coins):
+    service, repository, factory = _service(estrus_random=_SeqRandom([0.60, 0.60]))
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    if fixed_coins:
+        _configure_estrus_settings(repository, chopper_fixed_coins=5, target_fixed_coins=7)
+    balances = (_balance(factory, "user-0"), _balance(factory, "user-1"))
+    apply_balance_change = repository._apply_balance_change
+
+    def fail_deduction(user, amount, source, occurred_at, **kwargs):
+        if source == "estrus_chop_cost":
+            raise RuntimeError("deduction failed")
+        return apply_balance_change(user, amount, source, occurred_at, **kwargs)
+
+    monkeypatch.setattr(repository, "_apply_balance_change", fail_deduction)
+    with pytest.raises(RuntimeError, match="deduction failed"):
+        _receive(service, "c1", "user-0", "/凿 乙", NOW)
+
+    assert (_balance(factory, "user-0"), _balance(factory, "user-1")) == balances
+    with factory() as session:
+        assert session.scalar(select(EstrusChopRecord)) is None
+        assert session.scalar(
+            select(BalanceTransactionRecord).where(
+                BalanceTransactionRecord.source.in_(("estrus_gain", "estrus_chop_cost"))
+            )
+        ) is None
+    info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)
+    assert info["chopped_count"] == 0
+    assert info["heat"] == 0
+
+
+def test_target_daily_limit_counts_all_choppers_without_charging_blocked_chops():
+    random = _SeqRandom([0.60, 0.60] * 3)
+    service, repository, factory = _service(estrus_random=random)
+    for index, name in enumerate(("甲", "乙", "丙", "丁")):
+        _join(service, f"j{index}", f"user-{index}", name, NOW)
+    _configure_estrus_settings(repository, target_daily_limit=2, chopper_daily_limit=1)
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+    _receive(service, "c2", "user-2", "/凿 乙", NOW + timedelta(minutes=1))
+    balances = (_balance(factory, "user-3"), _balance(factory, "user-1"))
+    _receive(service, "c3", "user-3", "/凿 乙", NOW + timedelta(minutes=2))
+
+    assert _joined_text(factory, "乙 今天已经被凿了 2 次，达到每日上限（2 次），明天再来吧。")
+    assert (_balance(factory, "user-3"), _balance(factory, "user-1")) == balances
+    assert random.values == [0.60, 0.60]
+    info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)
+    assert info["chopped_count"] == 2
+    assert info["heat"] == 2
+
+    _receive(service, "c4", "user-3", "/凿 甲", NOW + timedelta(minutes=3))
+
+    assert random.values == []
+    assert _balance(factory, "user-3") == balances[0] - 1
+
+
+def test_target_daily_limit_resets_at_beijing_midnight():
+    service, repository, factory = _service(estrus_random=_SeqRandom([0.60, 0.60] * 2))
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(repository, target_daily_limit=1)
+    late = NOW.replace(hour=23, minute=59)
+
+    _receive(service, "c1", "user-0", "/凿 乙", late)
+    _receive(service, "c2", "user-0", "/凿 乙", late + timedelta(seconds=30))
+    _receive(service, "c3", "user-0", "/凿 乙", late + timedelta(minutes=1))
+
+    assert _joined_text(factory, "乙 今天已经被凿了 1 次，达到每日上限（1 次）")
+    info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, late + timedelta(minutes=1))
+    assert info["chopped_count"] == 2
+    assert info["heat"] == 1
+
+
+def test_target_daily_limit_is_isolated_by_group_and_zero_disables_it():
+    service, repository, factory = _service(estrus_random=_SeqRandom([0.60, 0.60] * 3))
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    group = repository.create_group_chat(
+        "二群", "https://www.aikda.com/chat?c=group-second", True, True, True, True, NOW
+    )
+    _configure_estrus_settings(repository, target_daily_limit=1)
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+    _receive(service, "c2", "user-0", "/凿 乙", NOW, chatroom_id="group-second")
+
+    assert repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)["chopped_count"] == 1
+    assert repository.get_my_estrus("user-1", group.id, NOW)["chopped_count"] == 1
+    _configure_estrus_settings(repository, target_daily_limit=0)
+    _receive(service, "c3", "user-0", "/凿 乙", NOW)
+    assert repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)["chopped_count"] == 2
 
 
 def test_chop_with_zero_gains_reads_as_nothing():

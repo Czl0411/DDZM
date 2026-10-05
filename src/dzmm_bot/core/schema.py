@@ -2741,6 +2741,14 @@ class EstrusStateRecord(Base):
 
 class EstrusChopRecord(Base):
     __tablename__ = "estrus_chops"
+    __table_args__ = (
+        Index(
+            "ix_estrus_chops_group_target_created",
+            "group_chat_id",
+            "target_user_id",
+            "created_at",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     group_chat_id: Mapped[UUID] = mapped_column(
@@ -2754,6 +2762,9 @@ class EstrusChopRecord(Base):
     )
     heat_gain: Mapped[int] = mapped_column(Integer, nullable=False)
     coins: Mapped[int] = mapped_column(Integer, nullable=False)
+    coins_deducted: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     climax_triggered: Mapped[bool] = mapped_column(Boolean, nullable=False)
     note: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(
@@ -2787,12 +2798,29 @@ class EstrusSettingsRecord(Base):
     coin_p2: Mapped[int] = mapped_column(
         Integer, default=20, server_default="20", nullable=False
     )
+    chopper_coin_p0: Mapped[int] = mapped_column(
+        Integer, default=50, server_default="50", nullable=False
+    )
+    chopper_coin_p1: Mapped[int] = mapped_column(
+        Integer, default=30, server_default="30", nullable=False
+    )
+    chopper_coin_p2: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    coins_linked: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
     chop_cooldown_seconds: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )
     chopper_daily_limit: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )
+    target_daily_limit: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    chopper_fixed_coins: Mapped[int | None] = mapped_column(Integer)
+    target_fixed_coins: Mapped[int | None] = mapped_column(Integer)
 
 
 class DepartmentAllowanceRecord(Base):
@@ -3026,6 +3054,9 @@ class ItemRecord(Base):
     unlimited_stock: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     system_key: Mapped[str | None] = mapped_column(String(64), unique=True)
     effect_type: Mapped[str | None] = mapped_column(String(32))
+    effect_config: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    configuration_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     minimum_rank_order: Mapped[int | None] = mapped_column(Integer)
     category: Mapped[str | None] = mapped_column(String(32))
     daily_purchase_limit: Mapped[int | None] = mapped_column(Integer)
@@ -3033,6 +3064,23 @@ class ItemRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
+
+
+class ShopCatalogStateRecord(Base):
+    __tablename__ = "shop_catalog_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class ShopChangeBatchRecord(Base):
+    __tablename__ = "shop_change_batches"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    plan: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
 class UserItemRecord(Base):
@@ -3050,6 +3098,8 @@ class UserItemRecord(Base):
 
 class ShopPurchaseRecord(Base):
     __tablename__ = "shop_purchases"
+
+    item_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     inbound_message_id: Mapped[UUID] = mapped_column(
@@ -3101,6 +3151,8 @@ class ShopMultiplayerDailyStartRecord(Base):
 
 class ShopItemUseRecord(Base):
     __tablename__ = "shop_item_uses"
+
+    item_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     inbound_message_id: Mapped[UUID] = mapped_column(

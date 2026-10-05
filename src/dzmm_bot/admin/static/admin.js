@@ -2135,25 +2135,130 @@ async function loadOrganization(departmentTarget = departmentPage, promotionTarg
   renderPagination(document.querySelector("#department-request-pagination"), departmentRequests, "条申请", (page) => loadOrganization(departmentPage, promotionPage, page));
 }
 
+let shopCatalogItems = new Map();
+let shopEffectMetadata = null;
+let shopChangePreview = null;
+let shopPreviewGeneration = 0;
+const shopFieldLabels = {
+  name: "商品名称", description: "商品描述", price: "价格", stock: "库存",
+  unlimited_stock: "无限库存", enabled: "上架状态", category: "分类",
+  daily_purchase_limit: "每日限购", minimum_rank_order: "最低职位序号",
+  effect_type: "效果类型", effect_config: "效果参数", deleted_at: "删除时间",
+};
+const shopOperationLabels = {create: "新增", update: "更新", delete: "删除", restore: "恢复"};
+
+function shopEffectOptions(code) {
+  return (shopEffectMetadata?.types || []).map((effect) => `<option value="${escapeHtml(effect.code)}" ${effect.code === (code || "none") ? "selected" : ""}>${escapeHtml(effect.label)}</option>`).join("");
+}
+
+function shopEffectFields(code, config = {}, disabled = false) {
+  const effect = shopEffectMetadata?.types.find((item) => item.code === (code || "none"));
+  return (effect?.fields || []).map((field) => {
+    const label = shopEffectMetadata.parameter_labels[field];
+    const value = config[field] ?? "";
+    if (field === "template") {
+      const templates = shopEffectMetadata.templates.filter((template) => template.effect_type === code);
+      return `<label>${escapeHtml(label)}<select data-effect-parameter="${field}" ${disabled ? "disabled" : ""}>${templates.map((template) => `<option value="${escapeHtml(template.code)}" ${template.code === value ? "selected" : ""}>${escapeHtml(template.label)}</option>`).join("")}</select></label>`;
+    }
+    const minimum = ["quota", "recipient_count", "duration_minutes"].includes(field) ? 1 : 0;
+    const maximum = {quota: 999, recipient_count: 5, duration_minutes: 10080}[field] || 99999;
+    return `<label>${escapeHtml(label)}<input data-effect-parameter="${field}" type="number" step="1" min="${minimum}" max="${maximum}" value="${escapeHtml(String(value))}" ${disabled ? "disabled" : ""}></label>`;
+  }).join("");
+}
+
+function readShopEffectFields(container) {
+  return Object.fromEntries([...container.querySelectorAll("[data-effect-parameter]")].map((input) => [
+    input.dataset.effectParameter, input.dataset.effectParameter === "template" ? input.value : (input.value.trim() === "" ? null : Number(input.value)),
+  ]));
+}
+
+function shopDisplayValue(value) {
+  if (value == null) return "空";
+  if (typeof value === "boolean") return value ? "是" : "否";
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+function invalidateShopPreview() {
+  shopPreviewGeneration += 1;
+  shopChangePreview = null;
+  document.querySelector("#shop-import-preview").hidden = true;
+}
+
+function renderShopPreview(preview) {
+  shopChangePreview = preview;
+  const panel = document.querySelector("#shop-import-preview");
+  panel.hidden = false;
+  const summary = preview.summary;
+  panel.innerHTML = `
+    <div class="panel-heading"><div><h3>商品操作预览</h3><p>新增 ${summary.create} · 更新 ${summary.update} · 无变化 ${summary.unchanged} · 删除 ${summary.delete} · 恢复 ${summary.restore} · 错误 ${summary.errors}（${summary.error_rows} 行）</p></div><button class="secondary" data-shop-preview-close type="button">关闭预览</button></div>
+    <p class="muted">尚未写入商品配置。预览 30 分钟内有效；有错误需修正后重新上传，确认时再次校验并发变化。</p>
+    ${preview.errors.length ? `<h4>错误及修改建议</h4><div class="list-scroll"><table><thead><tr><th>位置</th><th>填写值</th><th>错误原因</th><th>修改建议</th></tr></thead><tbody>${preview.errors.map((issue) => `<tr><td>${escapeHtml(issue.sheet)} 第 ${issue.row} 行 · ${escapeHtml(issue.column)}</td><td>${escapeHtml(shopDisplayValue(issue.value))}</td><td>${escapeHtml(issue.message)}</td><td>${escapeHtml(issue.suggestion)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    ${preview.error_report ? '<button class="secondary" data-shop-error-report type="button">下载带标记的错误报告</button>' : ""}
+    ${preview.warnings.length ? `<h4>需逐项确认的风险</h4>${preview.warnings.map((warning) => `<label class="data-row"><input data-shop-risk="${escapeHtml(warning.code)}" type="checkbox">第 ${warning.row} 行：${escapeHtml(warning.message)}</label>`).join("")}` : ""}
+    <details><summary>查看全部变更（${preview.changes.length} 行）</summary><div class="list-scroll">${preview.changes.map((change) => `<article class="data-row"><div><b>第 ${change.row} 行 · ${escapeHtml(shopOperationLabels[change.operation])} · ${change.public_number ? `#${change.public_number}` : "新商品"} ${escapeHtml(change.after.name)}</b>${Object.entries(change.diff).map(([field, diff]) => `<small>${escapeHtml(shopFieldLabels[field] || field)}：${escapeHtml(shopDisplayValue(diff.before))} → ${escapeHtml(shopDisplayValue(diff.after))}</small>`).join("") || "<small>无变化</small>"}<small>持有人 ${change.impact.holders} · 持有量 ${change.impact.quantity} · ${change.impact.has_active_use ? "有未完成流程" : "无未完成流程"}</small></div></article>`).join("")}</div></details>
+    <button class="primary" data-shop-preview-confirm type="button" ${preview.errors.length || !preview.batch_id ? "disabled" : ""}>确认整批执行</button>`;
+  updateShopConfirmButton();
+  document.querySelector('[data-management-tabs="shop"] [data-management-tab="items"]').click();
+  panel.scrollIntoView({behavior: "smooth", block: "start"});
+}
+
+function updateShopConfirmButton() {
+  const panel = document.querySelector("#shop-import-preview");
+  const button = panel.querySelector("[data-shop-preview-confirm]");
+  if (button) button.disabled = !shopChangePreview?.batch_id || shopChangePreview.errors.length > 0 || [...panel.querySelectorAll("[data-shop-risk]")].some((checkbox) => !checkbox.checked);
+}
+
+async function previewShopRows(rows, synchronizeStock = false) {
+  const generation = ++shopPreviewGeneration;
+  shopChangePreview = null;
+  document.querySelector("#shop-import-preview").hidden = true;
+  const preview = await requestGame("/api/game/shop/changes/preview", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({rows, synchronize_stock: synchronizeStock}),
+  });
+  if (generation === shopPreviewGeneration) renderShopPreview(preview);
+}
+
+function downloadShopBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function loadShop(page = shopPage) {
   const settings = gameSettings || await loadSettings();
   const [items, activity, ranks] = await Promise.all([
-    requestGame(`/api/game/items?page=${page}&page_size=${pageSizeFor("shop")}`),
+    requestGame(`/api/game/shop/catalog?include_deleted=${document.querySelector("#shop-include-deleted").checked}`),
     requestGame("/api/game/shop/activity?limit=100"),
     requestGame("/api/game/ranks"),
   ]);
   rankDefinitions = ranks;
-  shopPage = items.page;
+  shopCatalogItems = new Map(items.items.map((item) => [item.public_number, item]));
+  shopEffectMetadata = items.effects;
+  const createEffect = document.querySelector("#shop-create-effect");
+  const createCode = createEffect.value;
+  createEffect.innerHTML = shopEffectOptions(createCode);
+  createEffect.disabled = identity?.role !== "super_admin";
+  const createFields = document.querySelector("#shop-create-effect-fields");
+  if (!createFields.children.length) createFields.innerHTML = shopEffectFields(createCode, shopEffectMetadata.types.find((effect) => effect.code === createCode)?.defaults, identity?.role !== "super_admin");
   const categoryFiltered = shopCategoryFilter
     ? items.items.filter((item) => (item.category || "") === shopCategoryFilter)
     : items.items;
   const filtered = filterList("shop", categoryFiltered, (item) => `${item.name} ${item.description} ${item.category || ""}`);
-  document.querySelector("#shop-list").innerHTML = filtered.map((item) => `
+  const pageData = renderLocalPagination(document.querySelector("#shop-pagination"), filtered, page, pageSizeFor("shop"), "件商品", loadShop);
+  shopPage = pageData.page;
+  document.querySelector("#shop-list").innerHTML = pageData.items.map((item) => `
     <article class="data-row shop-item-card" data-shop-item="${item.public_number}">
       <div class="shop-item-heading">
-        <div class="shop-item-title"><b>#${item.public_number} ${escapeHtml(item.name)}</b><div class="shop-item-badges">${statusBadge(item.enabled ? "已上架" : "已下架", item.enabled ? "success" : "warning")}<span class="status-badge">${escapeHtml(item.category || "未分类")}</span><small>${item.system_key ? `系统效果：${escapeHtml(item.effect_type || "-")}` : "管理员普通商品（无使用效果）"}</small></div></div>
-        <label class="shop-item-toggle"><input data-item-enabled type="checkbox" ${item.enabled ? "checked" : ""}> 上架</label>
+        <div class="shop-item-title"><b>#${item.public_number} ${escapeHtml(item.name)}</b><div class="shop-item-badges">${statusBadge(item.deleted_at ? "已删除" : item.enabled ? "已上架" : "已下架", item.enabled && !item.deleted_at ? "success" : "warning")}<span class="status-badge">${escapeHtml(item.category || "未分类")}</span><small>${item.system_key ? `系统标识：${escapeHtml(item.system_key)}` : "普通商品"}</small><small>持有人 ${item.holders} · 持有量 ${item.quantity} · ${item.has_active_use ? "有未完成流程" : "无未完成流程"}</small></div></div>
+        <label class="shop-item-toggle"><input data-item-enabled type="checkbox" ${item.enabled ? "checked" : ""} ${item.deleted_at ? "disabled" : ""}> 上架</label>
       </div>
+      <label>商品名称<input data-item-name maxlength="64" value="${escapeHtml(item.name)}" ${item.deleted_at ? "disabled" : ""}></label>
       <label>商品描述<textarea data-item-description maxlength="200" rows="2">${escapeHtml(item.description)}</textarea></label>
       <div class="shop-item-grid">
         <label>价格<input data-item-price type="number" min="0" max="999" value="${item.price}"></label>
@@ -2163,9 +2268,10 @@ async function loadShop(page = shopPage) {
         <label>每日限购<input data-item-daily-limit type="number" min="0" max="99" value="${item.daily_purchase_limit ?? ""}" placeholder="不限"></label>
         <label>最低职位<select data-item-rank aria-label="最低职位"><option value="">不限职位</option>${rankDefinitions.map((rank) => `<option value="${rank.sort_order}" ${item.minimum_rank_order === rank.sort_order ? "selected" : ""}>${escapeHtml(rank.level_label)} ${escapeHtml(rank.name)}</option>`).join("")}</select></label>
       </div>
-      <div class="command-actions"><small class="muted">分类相同的商品共用每日限购额度；留空分类时按单个商品计数。</small><button class="secondary" data-save-shop-item type="button">保存</button></div>
+      <label>效果类型<select data-item-effect ${identity?.role !== "super_admin" || item.deleted_at ? "disabled" : ""}>${shopEffectOptions(item.effect_type)}</select></label>
+      <div class="shop-item-grid" data-item-effect-fields>${shopEffectFields(item.effect_type, item.effect_config, identity?.role !== "super_admin" || !!item.deleted_at)}</div>
+      <div class="command-actions"><small class="muted">同分类共用每日限购；效果变更影响未使用背包，进行中的流程保留旧效果。</small>${item.deleted_at ? (identity?.role === "super_admin" ? '<button class="secondary" data-restore-shop-item type="button">预览恢复</button>' : "") : `<button class="secondary" data-save-shop-item type="button">预览保存</button>${identity?.role === "super_admin" ? '<button class="danger-button" data-delete-shop-item type="button">预览删除</button>' : ""}`}</div>
     </article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
-  renderPagination(document.querySelector("#shop-pagination"), items, "件物品", loadShop);
   document.querySelector("#shop-purchase-log").innerHTML = activity.purchases.map((entry) => `
     <article class="data-row"><div><b>${escapeHtml(entry.user_name)} 购买 #${entry.item_number} ${escapeHtml(entry.item_name)}</b><small>${escapeHtml(entry.group_name)} · ${entry.price} 摸鱼币 · ${escapeHtml(entry.created_at)}</small></div></article>`).join("") || "<p class=\"muted\">暂无购买记录。</p>";
   document.querySelector("#shop-use-log").innerHTML = activity.uses.map((entry) => `
@@ -2527,6 +2633,7 @@ function renderEstrusSettingsPanel(settings) {
       ${birthdayNumberField("estrus-threshold", "高潮阈值（发情值满多少触发）", settings.climax_threshold, 10, 1000)}
       ${birthdayNumberField("estrus-cooldown", "凿者冷却（秒，0=无限制）", settings.chop_cooldown_seconds, 0, 86400)}
       ${birthdayNumberField("estrus-daily-limit", "每人每日凿人上限（0=不限）", settings.chopper_daily_limit, 0, 999)}
+      ${birthdayNumberField("estrus-target-daily-limit", "每人每日被凿上限（按群，0=不限）", settings.target_daily_limit, 0, 999)}
     </div>
     <div class="panel-heading"><div><h2>发情值增量概率（0/1/2）</h2></div></div>
     <div class="event-input-grid">
@@ -2534,13 +2641,43 @@ function renderEstrusSettingsPanel(settings) {
       ${birthdayNumberField("estrus-heat-p1", "发情值 +1 概率(%)", settings.heat_p1, 0, 100)}
       ${birthdayNumberField("estrus-heat-p2", "发情值 +2 概率(%)", settings.heat_p2, 0, 100)}
     </div>
-    <div class="panel-heading"><div><h2>摸鱼币概率（0/1/2）</h2></div></div>
+    <div class="panel-heading"><div><h2>被凿者发币概率（0/1/2）</h2></div></div>
     <div class="event-input-grid">
+      <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-target-fixed" type="checkbox" ${settings.target_fixed_coins != null ? "checked" : ""}> 固定金额</label>
+      ${birthdayNumberField("estrus-target-fixed-coins", "每次被凿固定获得（币）", settings.target_fixed_coins ?? 0, 0, 99999)}
       ${birthdayNumberField("estrus-coin-p0", "摸鱼币 0 概率(%)", settings.coin_p0, 0, 100)}
       ${birthdayNumberField("estrus-coin-p1", "摸鱼币 1 概率(%)", settings.coin_p1, 0, 100)}
       ${birthdayNumberField("estrus-coin-p2", "摸鱼币 2 概率(%)", settings.coin_p2, 0, 100)}
+    </div>
+    <div class="panel-heading"><div><h2>凿者扣币概率（0/1/2）</h2><p>默认随机且关联。双方随机时可关联抽样；任一方启用固定金额后，固定金额优先，另一方按自己的配置结算。</p></div></div>
+    <div class="event-input-grid">
+      <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-coins-linked" type="checkbox" ${settings.coins_linked ? "checked" : ""}> 扣币与发币关联</label>
+      <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-chopper-fixed" type="checkbox" ${settings.chopper_fixed_coins != null ? "checked" : ""}> 固定金额</label>
+      ${birthdayNumberField("estrus-chopper-fixed-coins", "每次凿固定扣除（币）", settings.chopper_fixed_coins ?? 0, 0, 99999)}
+      ${birthdayNumberField("estrus-chopper-coin-p0", "凿者扣 0 币概率(%)", settings.chopper_coin_p0, 0, 100)}
+      ${birthdayNumberField("estrus-chopper-coin-p1", "凿者扣 1 币概率(%)", settings.chopper_coin_p1, 0, 100)}
+      ${birthdayNumberField("estrus-chopper-coin-p2", "凿者扣 2 币概率(%)", settings.chopper_coin_p2, 0, 100)}
     </div>`;
   document.querySelector("#estrus-save").addEventListener("click", saveEstrusSettings);
+  const linkedCheckbox = document.querySelector("#estrus-coins-linked");
+  const targetFixedCheckbox = document.querySelector("#estrus-target-fixed");
+  const chopperFixedCheckbox = document.querySelector("#estrus-chopper-fixed");
+  const updateCoinInputs = () => {
+    const targetFixed = targetFixedCheckbox.checked;
+    const chopperFixed = chopperFixedCheckbox.checked;
+    const linkedRandom = linkedCheckbox.checked && !targetFixed && !chopperFixed;
+    linkedCheckbox.disabled = targetFixed || chopperFixed;
+    document.querySelector("#estrus-target-fixed-coins").disabled = !targetFixed;
+    document.querySelector("#estrus-chopper-fixed-coins").disabled = !chopperFixed;
+    for (const probability of [0, 1, 2]) {
+      document.querySelector(`#estrus-coin-p${probability}`).disabled = targetFixed;
+      document.querySelector(`#estrus-chopper-coin-p${probability}`).disabled = chopperFixed || linkedRandom;
+    }
+  };
+  linkedCheckbox.addEventListener("change", updateCoinInputs);
+  targetFixedCheckbox.addEventListener("change", updateCoinInputs);
+  chopperFixedCheckbox.addEventListener("change", updateCoinInputs);
+  updateCoinInputs();
 }
 
 async function saveEstrusSettings() {
@@ -2556,6 +2693,15 @@ async function saveEstrusSettings() {
     coin_p2: Number(document.querySelector("#estrus-coin-p2").value),
     chop_cooldown_seconds: Number(document.querySelector("#estrus-cooldown").value),
     chopper_daily_limit: Number(document.querySelector("#estrus-daily-limit").value),
+    chopper_coin_p0: Number(document.querySelector("#estrus-chopper-coin-p0").value),
+    chopper_coin_p1: Number(document.querySelector("#estrus-chopper-coin-p1").value),
+    chopper_coin_p2: Number(document.querySelector("#estrus-chopper-coin-p2").value),
+    coins_linked: document.querySelector("#estrus-coins-linked").checked,
+    target_daily_limit: Number(document.querySelector("#estrus-target-daily-limit").value),
+    chopper_fixed_coins: document.querySelector("#estrus-chopper-fixed").checked
+      ? Number(document.querySelector("#estrus-chopper-fixed-coins").value) : null,
+    target_fixed_coins: document.querySelector("#estrus-target-fixed").checked
+      ? Number(document.querySelector("#estrus-target-fixed-coins").value) : null,
   };
   try {
     await runMutation(button, "保存中…", async () => {
@@ -4741,35 +4887,35 @@ document.querySelector("#item-form").addEventListener("submit", async (event) =>
   const values = Object.fromEntries(new FormData(event.currentTarget));
   const button = event.currentTarget.querySelector("button[type=submit]");
   try {
-    await runMutation(button, "上架中…", async () => {
+    await runMutation(button, "校验中…", async () => {
       const limitValue = (values.daily_purchase_limit || "").trim();
-      await requestGame("/api/game/items", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          ...values,
+      await previewShopRows([{row: 2, operation: "create", public_number: null, values: {
+          name: values.name.trim(), description: values.description.trim(),
           price: Number(values.price),
           stock: Number(values.stock),
+          enabled: true, unlimited_stock: values.unlimited_stock === "on",
           category: (values.category || "").trim() || null,
           daily_purchase_limit: limitValue === "" ? null : Number(limitValue),
-        }),
-      });
-      event.currentTarget.reset();
-      await loadShop(shopPage);
+          minimum_rank_order: null,
+          effect_type: values.effect_type === "none" ? null : values.effect_type,
+          effect_config: readShopEffectFields(document.querySelector("#shop-create-effect-fields")),
+      }}]);
     });
-    setResult("物品已上架", "success");
   } catch (error) {
-    setResult(`上架失败（${error.message}）`, "error");
+    setResult(`预览失败（${error.message}）`, "error");
   }
 });
 
 document.querySelector("#shop-list").addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-save-shop-item]");
+  const button = event.target.closest("button[data-save-shop-item], button[data-delete-shop-item], button[data-restore-shop-item]");
   if (!button) return;
   const row = button.closest("[data-shop-item]");
+  const item = shopCatalogItems.get(Number(row.dataset.shopItem));
+  const operation = button.hasAttribute("data-delete-shop-item") ? "delete" : button.hasAttribute("data-restore-shop-item") ? "restore" : "update";
   const rankValue = row.querySelector("[data-item-rank]").value;
   const limitValue = row.querySelector("[data-item-daily-limit]").value.trim();
   const payload = {
+    name: row.querySelector("[data-item-name]").value.trim(),
     description: row.querySelector("[data-item-description]").value.trim(),
     enabled: row.querySelector("[data-item-enabled]").checked,
     minimum_rank_order: rankValue ? Number(rankValue) : null,
@@ -4778,19 +4924,103 @@ document.querySelector("#shop-list").addEventListener("click", async (event) => 
     price: Number(row.querySelector("[data-item-price]").value),
     category: row.querySelector("[data-item-category]").value.trim() || null,
     daily_purchase_limit: limitValue === "" ? null : Number(limitValue),
+    effect_type: row.querySelector("[data-item-effect]").value === "none" ? null : row.querySelector("[data-item-effect]").value,
+    effect_config: readShopEffectFields(row.querySelector("[data-item-effect-fields]")),
   };
   try {
-    await runMutation(button, "保存中…", async () => {
-      await requestGame(`/api/game/items/${row.dataset.shopItem}`, {
-        method: "PATCH",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(payload),
-      });
-      await loadShop(shopPage);
+    await runMutation(button, "校验中…", async () => {
+      await previewShopRows([{row: 2, operation, public_number: item.public_number,
+        id: item.id, configuration_version: item.configuration_version, system_key: item.system_key,
+        base_stock: item.stock, values: operation === "update" ? payload : {},
+      }], operation === "update" && payload.stock !== item.stock);
     });
-    setResult("商品配置已保存", "success");
   } catch (error) {
-    setResult(`保存失败（${error.message}）`, "error");
+    setResult(`预览失败（${error.message}）`, "error");
+  }
+});
+
+document.querySelector("#shop-list").addEventListener("change", (event) => {
+  invalidateShopPreview();
+  if (!event.target.matches("[data-item-effect]")) return;
+  const row = event.target.closest("[data-shop-item]");
+  const effect = shopEffectMetadata.types.find((item) => item.code === event.target.value);
+  row.querySelector("[data-item-effect-fields]").innerHTML = shopEffectFields(effect.code, effect.defaults);
+});
+document.querySelector("#shop-list").addEventListener("input", invalidateShopPreview);
+document.querySelector("#item-form").addEventListener("input", invalidateShopPreview);
+document.querySelector("#shop-create-effect").addEventListener("change", (event) => {
+  invalidateShopPreview();
+  const effect = shopEffectMetadata.types.find((item) => item.code === event.target.value);
+  document.querySelector("#shop-create-effect-fields").innerHTML = shopEffectFields(effect.code, effect.defaults);
+});
+document.querySelector("#shop-include-deleted").addEventListener("change", () => void loadShop(1));
+document.querySelector("#shop-sync-stock").addEventListener("change", invalidateShopPreview);
+for (const [selector, endpoint, filename] of [
+  ["#shop-excel-export", "export", "商品列表.xlsx"],
+  ["#shop-excel-template", "template", "商品导入模板.xlsx"],
+]) {
+  document.querySelector(selector).addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await runMutation(button, "下载中…", async () => {
+        const response = await fetch(`/api/game/shop/excel/${endpoint}?include_deleted=${document.querySelector("#shop-include-deleted").checked}`, {headers: headers()});
+        if (!response.ok) throw new Error(await responseError(response));
+        downloadShopBlob(await response.blob(), filename);
+      });
+    } catch (error) {
+      setResult(`下载失败（${error.message}）`, "error");
+    }
+  });
+}
+document.querySelector("#shop-excel-import").addEventListener("click", () => document.querySelector("#shop-excel-file").click());
+document.querySelector("#shop-excel-file").addEventListener("change", async (event) => {
+  const input = event.currentTarget;
+  const file = input.files[0];
+  if (!file) return;
+  invalidateShopPreview();
+  const generation = shopPreviewGeneration;
+  try {
+    if (!file.name.toLowerCase().endsWith(".xlsx") || file.size > 5 * 1024 * 1024) throw new Error("请选择不超过 5MB 的 .xlsx 文件");
+    await runMutation(document.querySelector("#shop-excel-import"), "上传校验中…", async () => {
+      const payload = new FormData();
+      payload.append("file", file);
+      payload.append("synchronize_stock", String(document.querySelector("#shop-sync-stock").checked));
+      const preview = await requestGame("/api/game/shop/excel/preview", {method: "POST", body: payload});
+      if (generation === shopPreviewGeneration) renderShopPreview(preview);
+    });
+  } catch (error) {
+    setResult(`上传校验失败（${error.message}）`, "error");
+  } finally {
+    input.value = "";
+  }
+});
+document.querySelector("#shop-import-preview").addEventListener("change", updateShopConfirmButton);
+document.querySelector("#shop-import-preview").addEventListener("click", async (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.hasAttribute("data-shop-preview-close")) return invalidateShopPreview();
+  if (button.hasAttribute("data-shop-error-report")) {
+    const bytes = Uint8Array.from(atob(shopChangePreview.error_report), (character) => character.charCodeAt(0));
+    return downloadShopBlob(new Blob([bytes], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), "商品导入错误报告.xlsx");
+  }
+  if (!button.hasAttribute("data-shop-preview-confirm") || !shopChangePreview?.batch_id) return;
+  const batchId = shopChangePreview.batch_id;
+  const acknowledgements = [...document.querySelectorAll("[data-shop-risk]:checked")].map((checkbox) => checkbox.dataset.shopRisk);
+  try {
+    await runMutation(button, "执行中…", async () => {
+      const result = await requestGame(`/api/game/shop/changes/${batchId}/confirm`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({acknowledgements}),
+      });
+      invalidateShopPreview();
+      document.querySelector("#item-form").reset();
+      document.querySelector("#shop-create-effect-fields").innerHTML = "";
+      await loadShop(shopPage);
+      setResult(`商品操作已完成，共处理 ${result.count} 件商品`, "success");
+    });
+  } catch (error) {
+    setResult(`执行失败（${error.message}）；如提示冲突，请重新预览`, "error");
+  } finally {
+    updateShopConfirmButton();
   }
 });
 

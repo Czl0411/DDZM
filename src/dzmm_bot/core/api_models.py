@@ -583,7 +583,7 @@ class CreateItemRequest(ApiModel):
     name: str = Field(min_length=1, max_length=64)
     description: str = Field(min_length=1, max_length=200)
     price: int = Field(ge=0, le=999)
-    stock: int = Field(ge=0, le=999)
+    stock: int = Field(ge=0, le=99999)
     category: str | None = Field(default=None, max_length=32)
     daily_purchase_limit: int | None = Field(default=None, ge=0, le=99)
 
@@ -1883,6 +1883,13 @@ class EstrusSettingsResponse(ApiModel):
     coin_p2: int = Field(ge=0, le=100)
     chop_cooldown_seconds: int = Field(ge=0, le=86400)
     chopper_daily_limit: int = Field(ge=0, le=999)
+    chopper_coin_p0: int = Field(default=50, ge=0, le=100)
+    chopper_coin_p1: int = Field(default=30, ge=0, le=100)
+    chopper_coin_p2: int = Field(default=20, ge=0, le=100)
+    coins_linked: bool = True
+    target_daily_limit: int = Field(default=0, ge=0, le=999)
+    chopper_fixed_coins: int | None = Field(default=None, ge=0, le=99999)
+    target_fixed_coins: int | None = Field(default=None, ge=0, le=99999)
 
 
 class SetEstrusSettingsRequest(EstrusSettingsResponse):

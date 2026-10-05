@@ -59,6 +59,12 @@ class AdminCorePort(Protocol):
 
     def update_game_item(self, public_number: int, item: dict) -> dict: ...
 
+    def get_shop_catalog(self, include_deleted: bool = False) -> dict: ...
+
+    def preview_shop_changes(self, payload: dict) -> dict: ...
+
+    def confirm_shop_changes(self, batch_id: str, payload: dict) -> dict: ...
+
     def get_shop_activity(self, limit: int = 100) -> dict: ...
 
     def retry_shop_scene_job(self, job_id: str) -> dict: ...
@@ -513,6 +519,19 @@ class CoreClient:
         response = self._client.patch(
             f"/internal/game/items/{public_number}", json=item
         )
+        response.raise_for_status()
+        return response.json()
+
+    def get_shop_catalog(self, include_deleted: bool = False) -> dict:
+        return self._get("/internal/game/shop/catalog", params={"include_deleted": include_deleted})
+
+    def preview_shop_changes(self, payload: dict) -> dict:
+        response = self._client.post("/internal/game/shop/changes/preview", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def confirm_shop_changes(self, batch_id: str, payload: dict) -> dict:
+        response = self._client.post(f"/internal/game/shop/changes/{batch_id}/confirm", json=payload)
         response.raise_for_status()
         return response.json()
 

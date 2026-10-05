@@ -2130,6 +2130,11 @@ class GroupCommandHandler:
                 f"你今天已经凿了 {result.today_chops_given} 次，"
                 f"达到每日上限（{result.daily_chops_limit} 次），明天再来吧。"
             )
+        if result.status == "target_limit":
+            return (
+                f"{result.target_name} 今天已经被凿了 {result.today_chops_received} 次，"
+                f"达到每日上限（{result.daily_received_limit} 次），明天再来吧。"
+            )
         if result.status == "refused":
             return (
                 f"{result.target_name} 拒绝了 {result.chopper_name} 的凿，"
@@ -2138,6 +2143,7 @@ class GroupCommandHandler:
         lines = [f"【凿】{result.chopper_name}凿了一下{result.target_name}"]
         if result.note:
             lines[0] += f"（{result.note}）"
+        lines.append(f"{result.chopper_name} 扣除 {result.coins_deducted} 摸鱼币。")
         if result.coins > 0:
             lines.append(
                 f"{result.target_name} 发情值 +{result.heat_gain}"

@@ -951,7 +951,7 @@ class _FakeClimaxClient:
 
     def complete(
         self, system_prompt, user_content, *, history_messages=(),
-        max_chars, timeout_seconds,
+        max_chars, timeout_seconds, temperature=None,
     ):
         self.calls.append(
             {

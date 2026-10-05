@@ -14643,10 +14643,13 @@ class CoreRepository(ShopManagementMixin):
                 user_content,
                 max_chars=CLIMAX_MAX_CHARS,
                 timeout_seconds=CLIMAX_TIMEOUT_SECONDS,
+                # 高温抽样：低温下模型对同一 prompt 的输出会高度趋同
+                temperature=1.3,
             ).strip()
             # 高潮文字合并成一段发：去掉 AI 输出里的换行/空行
             return re.sub(r"\s*\n+\s*", "", raw) or None
-        except Exception:
+        except Exception as error:
+            logger.warning("estrus climax AI text failed: %s", error)
             return None
 
     def execute_estrus_chop(

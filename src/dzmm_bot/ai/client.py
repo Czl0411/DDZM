@@ -32,23 +32,27 @@ class DeepSeekChatClient:
         history_messages=(),
         max_chars: int,
         timeout_seconds: int,
+        temperature: float | None = None,
     ) -> str:
+        request_body: dict = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                *(
+                    {"role": message.role, "content": message.content}
+                    for message in history_messages
+                ),
+                {"role": "user", "content": user_content},
+            ],
+            "thinking": {"type": "enabled"},
+            "max_tokens": max_chars,
+        }
+        if temperature is not None:
+            request_body["temperature"] = temperature
         try:
             response = self._client.post(
                 "/chat/completions",
-                json={
-                    "model": self._model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        *(
-                            {"role": message.role, "content": message.content}
-                            for message in history_messages
-                        ),
-                        {"role": "user", "content": user_content},
-                    ],
-                    "thinking": {"type": "enabled"},
-                    "max_tokens": max_chars,
-                },
+                json=request_body,
                 timeout=timeout_seconds,
             )
             response.raise_for_status()

@@ -2489,27 +2489,7 @@ class GroupCommandHandler:
         activity = self._repository.personal_activity(platform_id, received_at)
         if activity is None:
             raise RuntimeError("employee disappeared")
-        rendered = self._reply(
-            "/我",
-            "shown",
-            received_at,
-            {
-                "{昵称}": employee.display_name,
-                "{工号}": format_employee_number(employee.employee_number),
-                "{余额}": employee.balance,
-                "{活跃等级}": f"LV{activity.level}",
-                "{今日收益}": self._repository.today_income(employee.id, received_at),
-                "{连续打卡天数}": self._repository.consecutive_checkin_days(
-                    employee.id, received_at
-                ),
-                "{职位}": profile.rank.name,
-                "{职级}": profile.rank.level_label,
-                "{部门}": profile.department.name,
-            },
-        )
-        allowance = self._repository.department_allowance_summary(
-            platform_id, received_at
-        )
+        currency = self._repository.get_game_settings().currency_name
         birthday_view = self._repository.get_employee_birthday(
             platform_id, received_at
         )
@@ -2529,11 +2509,26 @@ class GroupCommandHandler:
             gender_line = "性别：女"
         else:
             gender_line = "性别：未设置，用 /设置性别 男 或 女 标记一下"
-        rendered = f"{rendered}\n{birthday_line}\n{gender_line}"
-        if allowance is None:
-            return rendered
-        cap = self._repository.get_department_allowance_settings().daily_cap
-        return f"{rendered}\n今日部门津贴：{allowance}/{cap}"
+        lines = [
+            f"工号：{format_employee_number(employee.employee_number)}",
+            gender_line,
+            birthday_line,
+            f"职位：{profile.rank.name}（{profile.rank.level_label}）",
+            f"部门：{profile.department.name}",
+            f"当前余额：{employee.balance} {currency}。",
+            f"今日活跃度：LV{activity.level}。",
+            f"今日收益：{self._repository.today_income(employee.id, received_at)} {currency}。",
+        ]
+        allowance = self._repository.department_allowance_summary(
+            platform_id, received_at
+        )
+        if allowance is not None:
+            cap = self._repository.get_department_allowance_settings().daily_cap
+            lines.append(f"今日部门津贴：{allowance}/{cap}")
+        lines.append(
+            f"连续打卡：{self._repository.consecutive_checkin_days(employee.id, received_at)} 天。"
+        )
+        return "\n".join(lines)
 
     def _edit_profile(self, platform_id: str, content: str, received_at) -> str:
         profile_text = content[len("/编辑档案"):].strip()

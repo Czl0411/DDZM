@@ -958,6 +958,24 @@ def test_me_shows_birthday_and_gender_with_reminders():
     texts = _replies(factory)
     assert any("生日：12 月 25 日（还有" in text for text in texts)
     assert any("性别：女" in text for text in texts)
+    # 顺序：工号 → 性别 → 生日 → 职位 → 部门 → 余额 → 活跃度 → 收益 → 打卡
+    me_text = [
+        text
+        for text in texts
+        if "工号：" in text and "今日活跃度：" in text
+    ][-1]
+    positions = [
+        me_text.index("工号："),
+        me_text.index("性别："),
+        me_text.index("生日："),
+        me_text.index("职位："),
+        me_text.index("部门："),
+        me_text.index("当前余额："),
+        me_text.index("今日活跃度："),
+        me_text.index("今日收益："),
+        me_text.index("连续打卡："),
+    ]
+    assert positions == sorted(positions)
 
 
 def test_set_gender_command():

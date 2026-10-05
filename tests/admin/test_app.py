@@ -2079,7 +2079,10 @@ def estrus_core_settings(core, monkeypatch):
         "coin_p1": 30,
         "coin_p2": 20,
         "chop_cooldown_seconds": 0,
-        "chopper_daily_limit": 0,
+        "chopper_rank_quotas": {},
+        "combo_chop_enabled": False,
+        "g_spot_percent": 10,
+        "g_spot_heat_bonus": 10,
         "chopper_coin_p0": 50,
         "chopper_coin_p1": 30,
         "chopper_coin_p2": 20,
@@ -2130,7 +2133,8 @@ def test_admin_proxies_estrus_deductions_and_limits_with_versioning(client, head
 
 @pytest.mark.parametrize(
     "missing_field",
-    ["chopper_coin_p0", "chopper_coin_p1", "chopper_coin_p2", "coins_linked", "target_daily_limit"],
+    ["chopper_coin_p0", "chopper_coin_p1", "chopper_coin_p2", "coins_linked", "target_daily_limit",
+     "chopper_rank_quotas", "combo_chop_enabled", "g_spot_percent", "g_spot_heat_bonus"],
 )
 def test_admin_rejects_incomplete_estrus_settings(client, headers, estrus_core_settings, missing_field):
     payload = estrus_core_settings.copy()
@@ -2188,6 +2192,14 @@ def test_admin_estrus_panel_exposes_deductions_linking_and_target_limit(client):
     assert '"estrus-target-fixed-coins"' in script
     assert "chopper_fixed_coins: document.querySelector" in script
     assert "target_fixed_coins: document.querySelector" in script
+    assert 'id="estrus-combo"' in script
+    assert "combo_chop_enabled: document.querySelector" in script
+    assert '"estrus-g-spot-percent"' in script
+    assert '"estrus-g-spot-bonus"' in script
+    assert "g_spot_percent: Number" in script
+    assert "g_spot_heat_bonus: Number" in script
+    assert "data-estrus-quota" in script
+    assert "chopper_rank_quotas: rankQuotas" in script
     assert ".disabled = targetFixed || chopperFixed" in script
 
 

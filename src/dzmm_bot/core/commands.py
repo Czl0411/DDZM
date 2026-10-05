@@ -2082,26 +2082,39 @@ class GroupCommandHandler:
             return "请在已启用的群聊中使用 /凿。"
         payload = content[len("/凿"):].strip()
         reference = message.reference
+        times = 1
         if reference is not None and reference.sender_platform_id:
-            # 引用形态：引用优先于名字参数，payload 整体作为附言
+            # 引用形态：引用优先于名字参数；payload 为纯数字时表示连凿次数
             target_platform_id = reference.sender_platform_id
             target_name = None
-            note = payload or None
+            if payload.isdigit():
+                times = int(payload)
+                note = None
+            else:
+                note = payload or None
         else:
-            parts = payload.split(None, 1)
+            parts = payload.split()
             if not parts:
                 return (
-                    "用法：引用对方消息发送 /凿 [附言]，"
-                    "或发送 /凿 名字 [附言]。"
+                    "用法：引用对方消息发送 /凿 [附言] 或 /凿 [次数]，"
+                    "或发送 /凿 名字 [附言] [次数]。"
                 )
+            if parts[-1].isdigit() and len(parts) >= 2:
+                times = int(parts[-1])
+                parts = parts[:-1]
             target_name = parts[0]
-            note = parts[1].strip() if len(parts) > 1 else None
+            note = " ".join(parts[1:]).strip() or None
             target_platform_id = None
+        if times < 1:
+            times = 1
+        elif times > 50:
+            times = 50
         result = self._repository.execute_estrus_chop(
             message.sender_platform_id,
             target_platform_id=target_platform_id,
             target_name=target_name,
             note=note,
+            times=times,
             now=received_at,
             group_chat_id=group_chat_id,
         )
@@ -2111,8 +2124,8 @@ class GroupCommandHandler:
             return "请先用 /入职 名字 加入摸鱼公司。"
         if result.status == "missing_target":
             return (
-                "用法：引用对方消息发送 /凿 [附言]，"
-                "或发送 /凿 名字 [附言]。"
+                "用法：引用对方消息发送 /凿 [附言] 或 /凿 [次数]，"
+                "或发送 /凿 名字 [附言] [次数]。"
             )
         if result.status == "target_not_found":
             return f"没找到员工「{target_name}」。"
@@ -2125,10 +2138,15 @@ class GroupCommandHandler:
             return f"重名员工，请按工号凿：\n{candidates}"
         if result.status == "cooldown":
             return f"凿冷却中，请 {max(1, result.cooldown_remaining_seconds)} 秒后再试。"
+        if result.status == "combo_disabled":
+            return (
+                f"连续凿未开启，{result.chopper_name} 只能一下一下地凿"
+                f"（后台可开启「允许连续凿」）。"
+            )
         if result.status == "chopper_limit":
             return (
                 f"你今天已经凿了 {result.today_chops_given} 次，"
-                f"达到每日上限（{result.daily_chops_limit} 次），明天再来吧。"
+                f"达到职级配额（{result.daily_chops_limit} 次），明天再来吧。"
             )
         if result.status == "target_limit":
             return (
@@ -2140,10 +2158,19 @@ class GroupCommandHandler:
                 f"{result.target_name} 拒绝了 {result.chopper_name} 的凿，"
                 f"并且给了 {result.chopper_name} 一杵子。"
             )
-        lines = [f"【凿】{result.chopper_name}凿了一下{result.target_name}"]
+        action = (
+            f"凿了 {result.times_executed} 次"
+            if result.times_executed > 1
+            else "凿了一下"
+        )
+        lines = [f"【凿】{result.chopper_name}{action}{result.target_name}"]
         if result.note:
             lines[0] += f"（{result.note}）"
-        lines.append(f"{result.chopper_name} 扣除 {result.coins_deducted} 摸鱼币。")
+        if result.g_spot_hits > 0:
+            lines.append(f"🎯 凿中G点 {result.g_spot_hits} 次！")
+        lines.append(
+            f"{result.chopper_name} 共被扣除 {result.coins_deducted} 摸鱼币。"
+        )
         if result.coins > 0:
             lines.append(
                 f"{result.target_name} 发情值 +{result.heat_gain}"
@@ -2159,9 +2186,18 @@ class GroupCommandHandler:
             lines.append(f"🔥 {result.target_name} 发情值爆表！")
             if result.climax_text:
                 lines.append(result.climax_text)
+            climax_note = (
+                f"（连凿爆表 {result.climax_count} 次，"
+                if result.times_executed > 1
+                else "（"
+            )
             lines.append(
-                f"（今日第 {result.today_climaxes} 次 / "
+                f"{climax_note}今日第 {result.today_climaxes} 次 / "
                 f"总第 {result.total_climaxes} 次）"
+            )
+        if result.stopped_reason == "target_limit":
+            lines.append(
+                f"（连续凿提前停止：{result.target_name} 今日被凿次数已达上限）"
             )
         return "\n".join(lines)
 
@@ -2187,7 +2223,7 @@ class GroupCommandHandler:
             return "请先用 /入职 名字 加入摸鱼公司。"
         return (
             "【我的凿】\n"
-            f"发情值：{info['heat']}/{info['threshold']}（每日清零）\n"
+            f"发情值：{info['heat']}/{info['threshold']}\n"
             f"被凿：今日 {info['today_chopped']} 次 / 累计 {info['chopped_count']} 次 ｜ "
             f"高潮：今日 {info['today_climaxes']} 次 / 总 {info['total_climaxes']} 次\n"
             f"凿人：今日 {info['today_chops_given']} 次 / 累计 {info['total_chops_given']} 次\n"

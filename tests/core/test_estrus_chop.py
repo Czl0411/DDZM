@@ -34,7 +34,7 @@ class _SeqRandom:
         return seq[0]
 
 
-def _service(*, estrus_random=None, estrus_text_client=None):
+def _service(*, estrus_random=None, estrus_text_client=None, default_gspot_off=True):
     from dzmm_bot.core.commands import GroupCommandHandler
     from dzmm_bot.core.repository import CoreRepository
     from dzmm_bot.core.schema import Base
@@ -50,6 +50,15 @@ def _service(*, estrus_random=None, estrus_text_client=None):
     repository.bootstrap_primary_group(
         "https://www.aikda.com/chat?c=group-main", NOW
     )
+    if default_gspot_off:
+        # G 点默认概率 10% 会额外消耗随机序列；非 G 点用例统一关闭，G 点用例显式开启
+        settings = asdict(repository.get_estrus_settings())
+        settings["g_spot_percent"] = 0
+        # 入职自动分配 LV1（默认配额 1 次/日）；给所有职级宽松配额，配额用例显式覆盖
+        settings["chopper_rank_quotas"] = {
+            str(rank.id): 50 for rank in repository.list_ranks()
+        }
+        repository.set_estrus_settings(**settings)
     return (
         CoreService(repository, GroupCommandHandler(repository)),
         repository,
@@ -110,7 +119,7 @@ def test_chop_by_name_with_probabilistic_gains():
     texts = _replies(factory, "c1")
     assert any("【凿】甲凿了一下乙（试一试）" in text for text in texts)
     assert any("乙 发情值 +1（当前 1/100），获得 1 摸鱼币。" in text for text in texts)
-    assert any("甲 扣除 1 摸鱼币。" in text for text in texts)
+    assert any("甲 共被扣除 1 摸鱼币。" in text for text in texts)
     assert _balance(factory, "user-1") == _balance(factory, "user-0") + 2
 
 
@@ -118,6 +127,30 @@ def _configure_estrus_settings(repository, **changes):
     return repository.set_estrus_settings(
         **{**asdict(repository.get_estrus_settings()), **changes}
     )
+
+
+def _rank_id(factory, sort_order):
+    from dzmm_bot.core.schema import RankRecord
+
+    with factory() as session:
+        return session.scalar(
+            select(RankRecord).where(RankRecord.sort_order == sort_order)
+        ).id
+
+
+def _assign_rank(repository, factory, platform_id, sort_order):
+    """把用户挂到指定职级（list_ranks 负责种子默认职级）。"""
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    repository.list_ranks()
+    with factory.begin() as session:
+        rank = session.scalar(
+            select(RankRecord).where(RankRecord.sort_order == sort_order)
+        )
+        user = session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == platform_id)
+        )
+        user.rank_id = rank.id
 
 
 @pytest.mark.parametrize(
@@ -140,7 +173,7 @@ def test_linked_chop_shares_coin_roll_and_records_both_sides(coin_roll, expected
     assert _balance(factory, "user-0") == chopper_before - expected_coins
     assert _balance(factory, "user-1") == target_before + expected_coins
     assert random.values == [0.42]
-    assert _joined_text(factory, f"甲 扣除 {expected_coins} 摸鱼币。")
+    assert _joined_text(factory, f"甲 共被扣除 {expected_coins} 摸鱼币。")
     with factory() as session:
         chop = session.scalar(select(EstrusChopRecord))
         assert chop.coins == expected_coins
@@ -174,7 +207,7 @@ def test_unlinked_chop_rolls_coins_independently(gain_roll, deduction_roll, gain
     assert _balance(factory, "user-0") == chopper_before - deduction
     assert _balance(factory, "user-1") == target_before + gain
     assert random.values == [0.42]
-    assert _joined_text(factory, f"甲 扣除 {deduction} 摸鱼币。")
+    assert _joined_text(factory, f"甲 共被扣除 {deduction} 摸鱼币。")
     with factory() as session:
         chop = session.scalar(select(EstrusChopRecord))
         assert (chop.coins, chop.coins_deducted) == (gain, deduction)
@@ -239,7 +272,7 @@ def test_fixed_chop_coins_override_random_and_linked_rolls(
     assert random.values == [0.42]
     assert _balance(factory, "user-0") == chopper_before - deduction
     assert _balance(factory, "user-1") == target_before + gain
-    assert _joined_text(factory, f"甲 扣除 {deduction} 摸鱼币。")
+    assert _joined_text(factory, f"甲 共被扣除 {deduction} 摸鱼币。")
     if gain > 0:
         assert _joined_text(factory, f"获得 {gain} 摸鱼币。")
     with factory() as session:
@@ -280,13 +313,17 @@ def test_disabling_fixed_coins_restores_existing_random_linked_settings():
 
 
 def test_default_chop_settings_link_coins_and_leave_target_unlimited():
-    _, repository, _ = _service()
+    _, repository, _ = _service(default_gspot_off=False)
     settings = repository.get_estrus_settings()
 
     assert settings.coins_linked is True
     assert settings.target_daily_limit == 0
     assert settings.chopper_fixed_coins is None
     assert settings.target_fixed_coins is None
+    assert settings.combo_chop_enabled is False
+    assert settings.g_spot_percent == 10
+    assert settings.g_spot_heat_bonus == 10
+    assert settings.chopper_rank_quotas is None
     assert (settings.chopper_coin_p0, settings.chopper_coin_p1, settings.chopper_coin_p2) == (
         settings.coin_p0, settings.coin_p1, settings.coin_p2
     )
@@ -319,11 +356,18 @@ def test_rejected_chops_do_not_roll_charge_or_count(rejection, fixed_coins):
         _receive(service, "refuse", "user-1", "/拒绝被凿", NOW)
     elif rejection == "disabled":
         _configure_estrus_settings(repository, enabled=False)
-    elif rejection in {"cooldown", "chopper_limit", "target_limit"}:
+    elif rejection == "chopper_limit":
+        # LV1 显式配额 1 次：首凿用掉，次凿被拒
+        _assign_rank(repository, factory, "user-0", 1)
+        _configure_estrus_settings(
+            repository,
+            chopper_rank_quotas={str(_rank_id(factory, 1)): 1},
+        )
+        _receive(service, "first", "user-0", "/凿 乙", NOW)
+    elif rejection in {"cooldown", "target_limit"}:
         _receive(service, "first", "user-0", "/凿 乙", NOW)
         changes = {
             "cooldown": {"chop_cooldown_seconds": 60},
-            "chopper_limit": {"chopper_daily_limit": 1},
             "target_limit": {"target_daily_limit": 1},
         }
         _configure_estrus_settings(repository, **changes[rejection])
@@ -398,7 +442,7 @@ def test_target_daily_limit_counts_all_choppers_without_charging_blocked_chops()
     service, repository, factory = _service(estrus_random=random)
     for index, name in enumerate(("甲", "乙", "丙", "丁")):
         _join(service, f"j{index}", f"user-{index}", name, NOW)
-    _configure_estrus_settings(repository, target_daily_limit=2, chopper_daily_limit=1)
+    _configure_estrus_settings(repository, target_daily_limit=2)
 
     _receive(service, "c1", "user-0", "/凿 乙", NOW)
     _receive(service, "c2", "user-2", "/凿 乙", NOW + timedelta(minutes=1))
@@ -432,7 +476,7 @@ def test_target_daily_limit_resets_at_beijing_midnight():
     assert _joined_text(factory, "乙 今天已经被凿了 1 次，达到每日上限（1 次）")
     info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, late + timedelta(minutes=1))
     assert info["chopped_count"] == 2
-    assert info["heat"] == 1
+    assert info["heat"] == 2  # 发情值跨天不清零：两次各 +2
 
 
 def test_target_daily_limit_is_isolated_by_group_and_zero_disables_it():
@@ -494,8 +538,8 @@ def test_chop_climax_triggers_resets_and_counts():
     )
     _join(service, "j0", "user-0", "甲", NOW)
     _join(service, "j1", "user-1", "乙", NOW)
-    repository.set_estrus_settings(
-        enabled=True,
+    _configure_estrus_settings(
+        repository,
         climax_threshold=10,
         heat_p0=50,
         heat_p1=30,
@@ -595,6 +639,7 @@ def test_chopper_cooldown_blocks_second_chop():
         coin_p1=30,
         coin_p2=20,
         chop_cooldown_seconds=600,
+        g_spot_percent=0,
     )
 
     _receive(service, "c1", "user-0", "/凿 乙", NOW)
@@ -617,7 +662,7 @@ def test_my_estrus_and_popularity_ranking():
     _receive(service, "q1", "user-1", "/我的凿", NOW)
     texts = _replies(factory)
     assert any("【我的凿】" in text for text in texts)
-    assert any("发情值：4/100（每日清零）" in text for text in texts)
+    assert any("发情值：4/100" in text for text in texts)
     assert any("被凿：今日 2 次 / 累计 2 次" in text for text in texts)
     assert any("凿人：今日 0 次 / 累计 0 次" in text for text in texts)
     assert any("状态：允许被凿" in text for text in texts)
@@ -638,7 +683,7 @@ def test_my_estrus_and_popularity_ranking():
     assert any("【我的凿】" in text for text in _replies(factory))
 
 
-def test_popularity_board_counts_today_only_and_resets_heat_daily():
+def test_popularity_board_counts_today_only_and_keeps_heat():
     service, repository, factory = _service(
         estrus_random=_SeqRandom([0.90, 0.60] * 6)
     )
@@ -660,16 +705,16 @@ def test_popularity_board_counts_today_only_and_resets_heat_daily():
     assert any("丙：今日被凿1次" in text for text in texts)
     assert not any("今日被凿2次" in text for text in texts)
 
-    # 发情值跨天清零：乙昨天剩 4，今天被凿后从 0 起算
+    # 发情值跨天不清零：乙昨天 4，今天再 +2 → 6
     info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, tomorrow)
-    assert info["heat"] == 2  # 今天这一凿 +2
+    assert info["heat"] == 6
     assert info["chopped_count"] == 3  # 累计不清零
     assert info["today_chopped"] == 1
 
     # 甲/乙昨天的高潮计数在今日榜里不再参与（榜单只剩今日被凿）
 
 
-def test_heat_resets_without_chop_on_new_day():
+def test_heat_persists_across_days_without_chop():
     service, repository, factory = _service(
         estrus_random=_SeqRandom([0.90, 0.60])
     )
@@ -679,18 +724,20 @@ def test_heat_resets_without_chop_on_new_day():
     _receive(service, "c1", "user-0", "/凿 乙", NOW)
     tomorrow = NOW + timedelta(days=1)
     info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, tomorrow)
-    assert info["heat"] == 0  # 查询即触发跨天懒重置
-    assert info["today_climaxes"] == 0
+    assert info["heat"] == 2  # 发情值跨天不清零
+    assert info["today_climaxes"] == 0  # 今日高潮仍跨天重置
     assert info["chopped_count"] == 1
 
 
-def test_chopper_daily_limit_blocks_and_counts():
+def test_chopper_rank_quota_blocks_and_counts():
     service, repository, factory = _service(
         estrus_random=_SeqRandom([0.60, 0.60] * 6)
     )
     _join(service, "j0", "user-0", "甲", NOW)
     _join(service, "j1", "user-1", "乙", NOW)
     _join(service, "j2", "user-2", "丙", NOW)
+    _assign_rank(repository, factory, "user-0", 1)  # LV1
+    rank_key = str(_rank_id(factory, 1))
     repository.set_estrus_settings(
         enabled=True,
         climax_threshold=100,
@@ -701,38 +748,151 @@ def test_chopper_daily_limit_blocks_and_counts():
         coin_p1=30,
         coin_p2=20,
         chop_cooldown_seconds=0,
-        chopper_daily_limit=2,
+        chopper_rank_quotas={rank_key: 1},
+        g_spot_percent=0,
     )
 
     _receive(service, "c1", "user-0", "/凿 乙", NOW)
     _receive(service, "c2", "user-0", "/凿 丙", NOW + timedelta(minutes=1))
-    _receive(service, "c3", "user-0", "/凿 乙", NOW + timedelta(minutes=2))
 
     texts = _replies(factory)
-    assert any("你今天已经凿了 2 次，达到每日上限（2 次），明天再来吧。" in text for text in texts)
-    # 第 3 凿被拒：乙只被凿 1 次、发情值 1（被拒的不计入）
+    assert any("你今天已经凿了 1 次，达到职级配额（1 次），明天再来吧。" in text for text in texts)
+    # 第 2 凿被拒：乙只被凿 1 次（被拒的不计入）
     info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)
     assert info["chopped_count"] == 1
     assert info["heat"] == 1
 
-    # 甲自己的凿人统计：今日 2 次（被拒的不计）
+    # 甲自己的凿人统计：今日 1 次（被拒的不计）
     _receive(service, "q1", "user-0", "/我的凿", NOW)
-    assert any("凿人：今日 2 次 / 累计 2 次" in text for text in _replies(factory))
+    assert any("凿人：今日 1 次 / 累计 1 次" in text for text in _replies(factory))
 
-    # 上限设回 0 = 不限制
-    repository.set_estrus_settings(
-        enabled=True,
-        climax_threshold=100,
-        heat_p0=50,
-        heat_p1=30,
-        heat_p2=20,
-        coin_p0=50,
-        coin_p1=30,
-        coin_p2=20,
-        chop_cooldown_seconds=0,
+    # 显式职级配额覆盖：LV1 提高到 3 次后可继续凿
+    settings = asdict(repository.get_estrus_settings())
+    settings["chopper_rank_quotas"] = {rank_key: 3}
+    repository.set_estrus_settings(**settings)
+    _receive(service, "c3", "user-0", "/凿 乙", NOW + timedelta(minutes=2))
+    _receive(service, "c4", "user-0", "/凿 丙", NOW + timedelta(minutes=3))
+    assert any("【凿】甲凿了一下丙" in text for text in _replies(factory))
+    with factory() as session:
+        assert len(session.scalars(select(EstrusChopRecord)).all()) == 3
+
+
+def test_combo_chop_disabled_by_default():
+    service, repository, factory = _service(estrus_random=_SeqRandom([0.60, 0.60]))
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    balances = (_balance(factory, "user-0"), _balance(factory, "user-1"))
+
+    _receive(service, "c1", "user-0", "/凿 乙 3", NOW)
+
+    assert _joined_text(factory, "连续凿未开启，甲 只能一下一下地凿")
+    assert (_balance(factory, "user-0"), _balance(factory, "user-1")) == balances
+    with factory() as session:
+        assert session.scalar(select(EstrusChopRecord)) is None
+
+
+def test_combo_chop_executes_and_aggregates_reply():
+    random = _SeqRandom([0.60, 0.60] * 3)
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(repository, combo_chop_enabled=True)
+
+    _receive(service, "c1", "user-0", "/凿 乙 3", NOW)
+
+    texts = _replies(factory)
+    assert any("【凿】甲凿了 3 次乙" in text for text in texts)
+    assert any("甲 共被扣除 3 摸鱼币。" in text for text in texts)
+    assert any("乙 发情值 +3（当前 3/100），获得 3 摸鱼币。" in text for text in texts)
+    assert _balance(factory, "user-1") == _balance(factory, "user-0") + 6
+    assert random.values == []
+    with factory() as session:
+        assert len(session.scalars(select(EstrusChopRecord)).all()) == 3
+
+
+def test_combo_chop_named_form_with_note_and_count():
+    random = _SeqRandom([0.60, 0.60] * 2)
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(repository, combo_chop_enabled=True)
+
+    _receive(service, "c1", "user-0", "/凿 乙 接招 2", NOW)
+
+    assert any("【凿】甲凿了 2 次乙（接招）" in text for text in _replies(factory))
+    assert random.values == []
+
+
+def test_combo_chop_reference_form():
+    random = _SeqRandom([0.90, 0.0] * 2)
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(repository, combo_chop_enabled=True)
+    reference = MessageReference(
+        sender_platform_id="user-1",
+        message_id="ref-1",
+        content_type="text",
     )
-    _receive(service, "c4", "user-0", "/凿 乙", NOW + timedelta(minutes=3))
+
+    _receive(service, "c1", "user-0", "/凿 2", NOW, reference=reference)
+
+    texts = _replies(factory)
+    assert any("【凿】甲凿了 2 次乙" in text for text in texts)
+    assert any("乙 发情值 +4（当前 4/100），一无所获。" in text for text in texts)
+
+
+def test_combo_chop_truncated_by_target_daily_limit():
+    random = _SeqRandom([0.60, 0.60] * 4)
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(repository, combo_chop_enabled=True, target_daily_limit=2)
+
+    _receive(service, "c1", "user-0", "/凿 乙 5", NOW)
+
+    texts = _replies(factory)
+    assert any("【凿】甲凿了 2 次乙" in text for text in texts)
+    assert any("（连续凿提前停止：乙 今日被凿次数已达上限）" in text for text in texts)
+    assert random.values == [0.60, 0.60] * 2
+
+
+def test_combo_chop_truncated_by_rank_quota():
+    random = _SeqRandom([0.60, 0.60] * 3)
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _assign_rank(repository, factory, "user-0", 1)  # LV1
+    _configure_estrus_settings(
+        repository,
+        combo_chop_enabled=True,
+        chopper_rank_quotas={str(_rank_id(factory, 1)): 1},
+    )
+
+    _receive(service, "c1", "user-0", "/凿 乙 5", NOW)
+
+    # 连凿自动截断到职级剩余配额：只执行 1 次
     assert any("【凿】甲凿了一下乙" in text for text in _replies(factory))
+    assert random.values == [0.60, 0.60] * 2
+
+
+def test_g_spot_hit_grants_bonus_heat():
+    random = _SeqRandom([0.0, 0.60])  # G 点 roll 0 → 命中；币 roll 0.60 → 1
+    service, repository, factory = _service(estrus_random=random)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _configure_estrus_settings(repository, g_spot_percent=100, g_spot_heat_bonus=10)
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+
+    texts = _replies(factory)
+    assert any("🎯 凿中G点 1 次！" in text for text in texts)
+    assert any("乙 发情值 +10（当前 10/100），获得 1 摸鱼币。" in text for text in texts)
+    assert _balance(factory, "user-1") == 1
+    assert _balance(factory, "user-0") == -1
+    with factory() as session:
+        chop = session.scalar(select(EstrusChopRecord))
+        assert chop.heat_gain == 10
 
 
 def test_set_gender_command():
@@ -810,8 +970,8 @@ def test_climax_ai_text_merged_into_single_paragraph():
     )
     _join(service, "j0", "user-0", "甲", NOW)
     _join(service, "j1", "user-1", "乙", NOW)
-    repository.set_estrus_settings(
-        enabled=True,
+    _configure_estrus_settings(
+        repository,
         climax_threshold=10,
         heat_p0=50,
         heat_p1=30,
@@ -821,7 +981,6 @@ def test_climax_ai_text_merged_into_single_paragraph():
         coin_p2=20,
         chop_cooldown_seconds=0,
     )
-
     for index in range(5):
         _receive(
             service, f"c{index}", "user-0", "/凿 乙",

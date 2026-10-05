@@ -286,7 +286,14 @@ def _estrus_settings_response(settings) -> EstrusSettingsResponse:
         coin_p1=settings.coin_p1,
         coin_p2=settings.coin_p2,
         chop_cooldown_seconds=settings.chop_cooldown_seconds,
-        chopper_daily_limit=settings.chopper_daily_limit,
+        chopper_rank_quotas=(
+            dict(settings.chopper_rank_quotas)
+            if settings.chopper_rank_quotas is not None
+            else {}
+        ),
+        combo_chop_enabled=settings.combo_chop_enabled,
+        g_spot_percent=settings.g_spot_percent,
+        g_spot_heat_bonus=settings.g_spot_heat_bonus,
         chopper_coin_p0=settings.chopper_coin_p0,
         chopper_coin_p1=settings.chopper_coin_p1,
         chopper_coin_p2=settings.chopper_coin_p2,
@@ -2887,7 +2894,14 @@ def create_app(
                 coin_p1=request.coin_p1,
                 coin_p2=request.coin_p2,
                 chop_cooldown_seconds=request.chop_cooldown_seconds,
-                chopper_daily_limit=request.chopper_daily_limit,
+                chopper_rank_quotas=(
+                    dict(request.chopper_rank_quotas)
+                    if request.chopper_rank_quotas
+                    else None
+                ),
+                combo_chop_enabled=request.combo_chop_enabled,
+                g_spot_percent=request.g_spot_percent,
+                g_spot_heat_bonus=request.g_spot_heat_bonus,
                 chopper_coin_p0=request.chopper_coin_p0,
                 chopper_coin_p1=request.chopper_coin_p1,
                 chopper_coin_p2=request.chopper_coin_p2,

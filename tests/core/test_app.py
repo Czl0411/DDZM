@@ -2429,7 +2429,10 @@ def test_estrus_settings_are_managed_over_core_api(client, headers):
             "coin_p1": 30,
             "coin_p2": 20,
             "chop_cooldown_seconds": 120,
-            "chopper_daily_limit": 5,
+            "chopper_rank_quotas": {"rank-1": 5},
+            "combo_chop_enabled": True,
+            "g_spot_percent": 20,
+            "g_spot_heat_bonus": 15,
             "chopper_coin_p0": 10,
             "chopper_coin_p1": 20,
             "chopper_coin_p2": 70,
@@ -2442,7 +2445,10 @@ def test_estrus_settings_are_managed_over_core_api(client, headers):
     assert updated.status_code == 200
     assert updated.json()["climax_threshold"] == 200
     assert updated.json()["chop_cooldown_seconds"] == 120
-    assert updated.json()["chopper_daily_limit"] == 5
+    assert updated.json()["chopper_rank_quotas"] == {"rank-1": 5}
+    assert updated.json()["combo_chop_enabled"] is True
+    assert updated.json()["g_spot_percent"] == 20
+    assert updated.json()["g_spot_heat_bonus"] == 15
     assert updated.json()["chopper_coin_p0"] == 10
     assert updated.json()["chopper_coin_p1"] == 20
     assert updated.json()["chopper_coin_p2"] == 70
@@ -2465,7 +2471,6 @@ def test_estrus_settings_are_managed_over_core_api(client, headers):
             "coin_p1": 30,
             "coin_p2": 20,
             "chop_cooldown_seconds": 0,
-            "chopper_daily_limit": 0,
         },
     )
     assert bad_sum.status_code == 422
@@ -2477,6 +2482,9 @@ def test_estrus_settings_are_managed_over_core_api(client, headers):
         ("chopper_coin_p0", -1),
         ("chopper_coin_p1", 101),
         ("chopper_coin_p2", 21),
+        ("g_spot_percent", -1),
+        ("g_spot_percent", 101),
+        ("g_spot_heat_bonus", 1001),
         ("target_daily_limit", -1),
         ("target_daily_limit", 1000),
         ("coins_linked", "invalid"),

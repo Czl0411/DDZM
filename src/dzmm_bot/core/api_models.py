@@ -1882,7 +1882,10 @@ class EstrusSettingsResponse(ApiModel):
     coin_p1: int = Field(ge=0, le=100)
     coin_p2: int = Field(ge=0, le=100)
     chop_cooldown_seconds: int = Field(ge=0, le=86400)
-    chopper_daily_limit: int = Field(ge=0, le=999)
+    chopper_rank_quotas: dict[str, int] = Field(default_factory=dict)
+    combo_chop_enabled: bool = False
+    g_spot_percent: int = Field(default=10, ge=0, le=100)
+    g_spot_heat_bonus: int = Field(default=10, ge=0, le=1000)
     chopper_coin_p0: int = Field(default=50, ge=0, le=100)
     chopper_coin_p1: int = Field(default=30, ge=0, le=100)
     chopper_coin_p2: int = Field(default=20, ge=0, le=100)

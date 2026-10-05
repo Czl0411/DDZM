@@ -574,6 +574,21 @@ _DEFAULT_FINE_QUOTAS_BY_SORT_ORDER = {
     10: 10,
     11: 20,
 }
+# /凿 凿者每日次数默认配额：LV1 一次、每升一级多一次；
+# 董事会（sort_order 11 及以上）固定 20 次；显式 rank_quotas 优先
+_DEFAULT_CHOPPER_QUOTAS_BY_SORT_ORDER = {
+    1: 1,
+    2: 2,
+    3: 3,
+    4: 4,
+    5: 5,
+    6: 6,
+    7: 7,
+    8: 8,
+    9: 9,
+    10: 10,
+}
+_DEFAULT_CHOPPER_QUOTA_FOR_BOARD = 20
 _FINE_FEEDBACK_HINT = "如对本次罚款有异议，请保存截图并向经理或总监职级以上的员工反馈。"
 _DEFAULT_RED_PACKET_EXPIRY_MINUTES = 10
 _DEFAULT_RED_PACKET_EMPTY_PROBABILITY_PERCENT = 5
@@ -1255,7 +1270,10 @@ class EstrusSettings:
     coin_p1: int
     coin_p2: int
     chop_cooldown_seconds: int
-    chopper_daily_limit: int
+    chopper_rank_quotas: dict[str, int] | None
+    combo_chop_enabled: bool
+    g_spot_percent: int
+    g_spot_heat_bonus: int
     chopper_coin_p0: int
     chopper_coin_p1: int
     chopper_coin_p2: int
@@ -1271,13 +1289,17 @@ class EstrusChopResult:
     chopper_name: str | None = None
     target_name: str | None = None
     note: str | None = None
+    times_requested: int = 1
+    times_executed: int = 1
     heat_gain: int = 0
     heat_now: int = 0
     threshold: int = 100
     coins: int = 0
     coins_deducted: int = 0
     climax_triggered: bool = False
+    climax_count: int = 0
     climax_text: str | None = None
+    g_spot_hits: int = 0
     today_climaxes: int = 0
     total_climaxes: int = 0
     cooldown_remaining_seconds: int = 0
@@ -1286,6 +1308,7 @@ class EstrusChopResult:
     today_chops_received: int = 0
     daily_received_limit: int = 0
     candidate_labels: tuple[str, ...] = ()
+    stopped_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -14260,11 +14283,45 @@ class CoreRepository(ShopManagementMixin):
 
     @staticmethod
     def _estrus_daily_reset(state: EstrusStateRecord, today: date) -> None:
-        """发情值跨天清零（今日高潮一并重置）；累计被凿/总高潮不受影响。"""
+        """跨天只重置"今日高潮"计数；发情值保留累计（每日不清零）。"""
         if state.last_active_date != today:
-            state.heat = 0
             state.today_climaxes = 0
             state.last_active_date = today
+
+    def _roll_estrus_coins(self, settings: EstrusSettingsRecord) -> int:
+        coin_roll = self._estrus_random.random() * 100
+        if coin_roll < settings.coin_p0:
+            return 0
+        if coin_roll < settings.coin_p0 + settings.coin_p1:
+            return 1
+        return 2
+
+    def _estrus_chopper_daily_quota(
+        self,
+        session: Session,
+        user: UserRecord,
+        settings: EstrusSettingsRecord,
+    ) -> int | None:
+        """凿者今日可凿次数（None = 不限）。
+
+        显式 chopper_rank_quotas[rank_id] 优先；否则按职级 sort_order 默认表
+        （LV1 一次、每升一级多一次，董事会及以上 20 次）；无职级不限制。
+        """
+        if user.rank_id is None:
+            return None
+        quotas = settings.chopper_rank_quotas or {}
+        explicit = quotas.get(str(user.rank_id))
+        if explicit is not None:
+            return int(explicit)
+        rank = session.get(RankRecord, user.rank_id)
+        if rank is None:
+            return None
+        sort_order = int(rank.sort_order)
+        if sort_order >= 11:
+            return _DEFAULT_CHOPPER_QUOTA_FOR_BOARD
+        return _DEFAULT_CHOPPER_QUOTAS_BY_SORT_ORDER.get(
+            sort_order, _DEFAULT_CHOPPER_QUOTA_FOR_BOARD
+        )
 
     def _roll_estrus_pair(
         self, settings: EstrusSettingsRecord
@@ -14280,13 +14337,7 @@ class CoreRepository(ShopManagementMixin):
         if settings.target_fixed_coins is not None:
             coins = settings.target_fixed_coins
         else:
-            coin_roll = self._estrus_random.random() * 100
-            if coin_roll < settings.coin_p0:
-                coins = 0
-            elif coin_roll < settings.coin_p0 + settings.coin_p1:
-                coins = 1
-            else:
-                coins = 2
+            coins = self._roll_estrus_coins(settings)
         return heat_gain, coins
 
     def get_estrus_settings(self) -> EstrusSettings:
@@ -14302,7 +14353,14 @@ class CoreRepository(ShopManagementMixin):
                 coin_p1=int(row.coin_p1),
                 coin_p2=int(row.coin_p2),
                 chop_cooldown_seconds=int(row.chop_cooldown_seconds),
-                chopper_daily_limit=int(row.chopper_daily_limit),
+                chopper_rank_quotas=(
+                    dict(row.chopper_rank_quotas)
+                    if row.chopper_rank_quotas is not None
+                    else None
+                ),
+                combo_chop_enabled=bool(row.combo_chop_enabled),
+                g_spot_percent=int(row.g_spot_percent),
+                g_spot_heat_bonus=int(row.g_spot_heat_bonus),
                 chopper_coin_p0=int(row.chopper_coin_p0),
                 chopper_coin_p1=int(row.chopper_coin_p1),
                 chopper_coin_p2=int(row.chopper_coin_p2),
@@ -14324,7 +14382,10 @@ class CoreRepository(ShopManagementMixin):
         coin_p1: int,
         coin_p2: int,
         chop_cooldown_seconds: int,
-        chopper_daily_limit: int = 0,
+        chopper_rank_quotas: dict[str, int] | None = None,
+        combo_chop_enabled: bool = False,
+        g_spot_percent: int = 10,
+        g_spot_heat_bonus: int = 10,
         chopper_coin_p0: int = 50,
         chopper_coin_p1: int = 30,
         chopper_coin_p2: int = 20,
@@ -14341,6 +14402,18 @@ class CoreRepository(ShopManagementMixin):
             raise ValueError("凿者扣币三档概率之和必须等于 100")
         if not isinstance(coins_linked, bool):
             raise ValueError("扣币与发币关联必须为布尔值")
+        if not isinstance(combo_chop_enabled, bool):
+            raise ValueError("允许连续凿必须为布尔值")
+        if chopper_rank_quotas is not None:
+            if not isinstance(chopper_rank_quotas, dict):
+                raise ValueError("职级配额必须为对象")
+            for rank_key, quota in chopper_rank_quotas.items():
+                if (
+                    not isinstance(quota, int)
+                    or isinstance(quota, bool)
+                    or not 0 <= quota <= 999
+                ):
+                    raise ValueError("职级配额需在 0~999 之间")
         for label, amount in (
             ("凿者固定扣币金额", chopper_fixed_coins),
             ("被凿者固定发币金额", target_fixed_coins),
@@ -14358,7 +14431,8 @@ class CoreRepository(ShopManagementMixin):
             ("摸鱼币 1 档概率", coin_p1, 0, 100),
             ("摸鱼币 2 档概率", coin_p2, 0, 100),
             ("凿者冷却秒数", chop_cooldown_seconds, 0, 86400),
-            ("每人每日凿人上限", chopper_daily_limit, 0, 999),
+            ("凿中G点概率", g_spot_percent, 0, 100),
+            ("G点发情值加成", g_spot_heat_bonus, 0, 1000),
             ("凿者扣币 0 档概率", chopper_coin_p0, 0, 100),
             ("凿者扣币 1 档概率", chopper_coin_p1, 0, 100),
             ("凿者扣币 2 档概率", chopper_coin_p2, 0, 100),
@@ -14379,7 +14453,10 @@ class CoreRepository(ShopManagementMixin):
                 row.coin_p1 = coin_p1
                 row.coin_p2 = coin_p2
                 row.chop_cooldown_seconds = chop_cooldown_seconds
-                row.chopper_daily_limit = chopper_daily_limit
+                row.chopper_rank_quotas = chopper_rank_quotas
+                row.combo_chop_enabled = combo_chop_enabled
+                row.g_spot_percent = g_spot_percent
+                row.g_spot_heat_bonus = g_spot_heat_bonus
                 row.chopper_coin_p0 = chopper_coin_p0
                 row.chopper_coin_p1 = chopper_coin_p1
                 row.chopper_coin_p2 = chopper_coin_p2
@@ -14579,6 +14656,7 @@ class CoreRepository(ShopManagementMixin):
         target_platform_id: str | None = None,
         target_name: str | None = None,
         note: str | None = None,
+        times: int = 1,
         now: datetime,
         group_chat_id: UUID,
     ) -> EstrusChopResult:
@@ -14668,8 +14746,16 @@ class CoreRepository(ShopManagementMixin):
                                 "cooldown",
                                 cooldown_remaining_seconds=remaining,
                             )
-                daily_limit = int(settings.chopper_daily_limit)
-                if daily_limit > 0:
+                if times > 1 and not settings.combo_chop_enabled:
+                    return EstrusChopResult(
+                        "combo_disabled",
+                        chopper_name=chopper.display_name,
+                        target_name=target.display_name,
+                        times_requested=times,
+                    )
+                quota = self._estrus_chopper_daily_quota(session, chopper, settings)
+                given_today = 0
+                if quota is not None:
                     day_start = now.replace(
                         hour=0, minute=0, second=0, microsecond=0
                     )
@@ -14687,13 +14773,15 @@ class CoreRepository(ShopManagementMixin):
                         )
                         or 0
                     )
-                    if given_today >= daily_limit:
+                    if given_today >= quota:
                         return EstrusChopResult(
                             "chopper_limit",
                             chopper_name=chopper.display_name,
                             today_chops_given=given_today,
-                            daily_chops_limit=daily_limit,
+                            daily_chops_limit=quota,
                         )
+                    # 连凿自动截断到今日剩余配额
+                    times = min(times, quota - given_today)
                 state = self._estrus_state_row(
                     session, group_chat_id, target.id
                 )
@@ -14705,6 +14793,7 @@ class CoreRepository(ShopManagementMixin):
                         target_name=target.display_name,
                     )
                 target_daily_limit = int(settings.target_daily_limit)
+                received_today = 0
                 if target_daily_limit > 0:
                     day_start = now.replace(
                         hour=0, minute=0, second=0, microsecond=0
@@ -14730,27 +14819,92 @@ class CoreRepository(ShopManagementMixin):
                             today_chops_received=received_today,
                             daily_received_limit=target_daily_limit,
                         )
-                heat_gain, coins = self._roll_estrus_pair(settings)
-                if settings.chopper_fixed_coins is not None:
-                    coins_deducted = settings.chopper_fixed_coins
-                elif settings.coins_linked and settings.target_fixed_coins is None:
-                    coins_deducted = coins
-                else:
-                    deduction_roll = self._estrus_random.random() * 100
-                    if deduction_roll < settings.chopper_coin_p0:
-                        coins_deducted = 0
-                    elif deduction_roll < (
-                        settings.chopper_coin_p0 + settings.chopper_coin_p1
-                    ):
-                        coins_deducted = 1
-                    else:
-                        coins_deducted = 2
-                state.heat = int(state.heat) + heat_gain
-                state.chopped_count = int(state.chopped_count) + 1
                 threshold = int(settings.climax_threshold)
-                climax_triggered = state.heat >= threshold
+                g_spot_percent = int(settings.g_spot_percent)
+                g_spot_bonus = int(settings.g_spot_heat_bonus)
+                total_heat_gain = 0
+                total_coins = 0
+                total_coins_deducted = 0
+                g_spot_hits = 0
+                climax_count = 0
+                executed = 0
+                stopped_reason = None
+                for _ in range(times):
+                    if (
+                        target_daily_limit > 0
+                        and received_today >= target_daily_limit
+                    ):
+                        stopped_reason = "target_limit"
+                        break
+                    if (
+                        g_spot_percent > 0
+                        and self._estrus_random.random() * 100 < g_spot_percent
+                    ):
+                        g_spot_hits += 1
+                        heat_gain = g_spot_bonus
+                        coins = self._roll_estrus_coins(settings)
+                    else:
+                        heat_gain, coins = self._roll_estrus_pair(settings)
+                    if settings.chopper_fixed_coins is not None:
+                        coins_deducted = settings.chopper_fixed_coins
+                    elif settings.coins_linked and settings.target_fixed_coins is None:
+                        coins_deducted = coins
+                    else:
+                        deduction_roll = self._estrus_random.random() * 100
+                        if deduction_roll < settings.chopper_coin_p0:
+                            coins_deducted = 0
+                        elif deduction_roll < (
+                            settings.chopper_coin_p0 + settings.chopper_coin_p1
+                        ):
+                            coins_deducted = 1
+                        else:
+                            coins_deducted = 2
+                    state.heat = int(state.heat) + heat_gain
+                    state.chopped_count = int(state.chopped_count) + 1
+                    climax_triggered = state.heat >= threshold
+                    if climax_triggered:
+                        climax_count += 1
+                        state.heat = 0
+                        state.total_climaxes = int(state.total_climaxes) + 1
+                        state.today_climaxes = int(state.today_climaxes) + 1
+                    if coins > 0:
+                        self._apply_balance_change(
+                            target, coins, "estrus_gain", now
+                        )
+                    if coins_deducted > 0:
+                        self._apply_balance_change(
+                            chopper, -coins_deducted, "estrus_chop_cost", now
+                        )
+                    state.updated_at = now
+                    session.add(
+                        EstrusChopRecord(
+                            group_chat_id=group_chat_id,
+                            chopper_user_id=chopper.id,
+                            target_user_id=target.id,
+                            heat_gain=heat_gain,
+                            coins=coins,
+                            coins_deducted=coins_deducted,
+                            climax_triggered=climax_triggered,
+                            note=note[:200] if note else None,
+                            created_at=now,
+                        )
+                    )
+                    total_heat_gain += heat_gain
+                    total_coins += coins
+                    total_coins_deducted += coins_deducted
+                    received_today += 1
+                    executed += 1
+                if executed == 0 and stopped_reason == "target_limit":
+                    return EstrusChopResult(
+                        "target_limit",
+                        chopper_name=chopper.display_name,
+                        target_name=target.display_name,
+                        today_chops_received=received_today,
+                        daily_received_limit=target_daily_limit,
+                    )
+                # 连凿中无论爆表几次，高潮长文只生成一段（最后一击视角）
                 climax_text = None
-                if climax_triggered:
+                if climax_count > 0:
                     climax_text = self._estrus_climax_text(
                         target, chopper.display_name, threshold
                     )
@@ -14761,46 +14915,32 @@ class CoreRepository(ShopManagementMixin):
                             self._estrus_random,
                             chopper.display_name,
                         )
-                    state.heat = 0
-                    state.total_climaxes = int(state.total_climaxes) + 1
-                    state.today_climaxes = int(state.today_climaxes) + 1
-                if coins > 0:
-                    self._apply_balance_change(
-                        target, coins, "estrus_gain", now
-                    )
-                if coins_deducted > 0:
-                    self._apply_balance_change(
-                        chopper, -coins_deducted, "estrus_chop_cost", now
-                    )
-                state.updated_at = now
-                session.add(
-                    EstrusChopRecord(
-                        group_chat_id=group_chat_id,
-                        chopper_user_id=chopper.id,
-                        target_user_id=target.id,
-                        heat_gain=heat_gain,
-                        coins=coins,
-                        coins_deducted=coins_deducted,
-                        climax_triggered=climax_triggered,
-                        note=note[:200] if note else None,
-                        created_at=now,
-                    )
-                )
                 return EstrusChopResult(
                     "ok",
                     chopper_name=chopper.display_name,
                     target_name=target.display_name,
                     note=note,
-                    heat_gain=heat_gain,
-                    # 爆表这一次要显示满值 100/100（状态里的 heat 已清零）
-                    heat_now=threshold if climax_triggered else int(state.heat),
+                    times_requested=times,
+                    times_executed=executed,
+                    heat_gain=total_heat_gain,
+                    # 单凿爆表显示满值 X/X（heat 已清零）；连凿显示当前累计
+                    heat_now=(
+                        threshold
+                        if executed == 1 and climax_count
+                        else int(state.heat)
+                    ),
                     threshold=threshold,
-                    coins=coins,
-                    coins_deducted=coins_deducted,
-                    climax_triggered=climax_triggered,
+                    coins=total_coins,
+                    coins_deducted=total_coins_deducted,
+                    climax_triggered=climax_count > 0,
+                    climax_count=climax_count,
                     climax_text=climax_text,
+                    g_spot_hits=g_spot_hits,
                     today_climaxes=int(state.today_climaxes),
                     total_climaxes=int(state.total_climaxes),
+                    stopped_reason=stopped_reason,
+                    today_chops_given=given_today + executed,
+                    daily_chops_limit=quota if quota is not None else 0,
                 )
 
     def _truth_trade_settings_row(

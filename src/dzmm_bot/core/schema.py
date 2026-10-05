@@ -2813,9 +2813,16 @@ class EstrusSettingsRecord(Base):
     chop_cooldown_seconds: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )
-    chopper_daily_limit: Mapped[int] = mapped_column(
-        Integer, default=0, server_default="0", nullable=False
+    combo_chop_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
     )
+    g_spot_percent: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10", nullable=False
+    )
+    g_spot_heat_bonus: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10", nullable=False
+    )
+    chopper_rank_quotas: Mapped[dict | None] = mapped_column(JSON)
     target_daily_limit: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )

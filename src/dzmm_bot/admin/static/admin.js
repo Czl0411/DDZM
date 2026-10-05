@@ -2614,26 +2614,40 @@ async function saveTruthTradeSettings() {
 }
 
 async function loadEstrusSettings() {
-  const [settings, groups] = await Promise.all([
+  const [settings, groups, ranks] = await Promise.all([
     requestGame("/api/game/estrus/settings"),
     requestGame("/api/group-chats", {cache: "no-store"}),
+    requestGame("/api/game/ranks"),
   ]);
   configurationVersion = groups.version;
-  renderEstrusSettingsPanel(settings);
+  renderEstrusSettingsPanel(settings, ranks);
 }
 
-function renderEstrusSettingsPanel(settings) {
+function renderEstrusSettingsPanel(settings, ranks) {
   const panel = document.querySelector("#estrus-panel");
   if (!panel) return;
+  const defaultQuotas = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10};
+  const quotaInputs = (ranks || []).map((rank) => {
+    const quota = settings.chopper_rank_quotas?.[String(rank.id)]
+      ?? (rank.sort_order >= 11 ? 20 : defaultQuotas[rank.sort_order] ?? 20);
+    return `<label>${escapeHtml(rank.level_label)} ${escapeHtml(rank.name)}<input data-estrus-quota="${rank.id}" type="number" min="0" max="999" value="${quota}"></label>`;
+  }).join("");
   panel.innerHTML = `
     <div class="panel-heading"><div><h2>凿与发情值参数</h2><p class="muted">/凿 玩法的开关、概率与限制；概率三档之和必须等于 100。</p></div><div class="command-actions"><button id="estrus-save" class="primary" type="button">保存设置</button></div></div>
     <div class="panel-heading"><div><h2>总开关与限制</h2></div></div>
     <div class="event-input-grid">
       <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-enabled" type="checkbox" ${settings.enabled ? "checked" : ""}> 启用凿与发情值玩法</label>
+      <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-combo" type="checkbox" ${settings.combo_chop_enabled ? "checked" : ""}> 允许连续凿（/凿 名字 次数 或引用后 /凿 次数）</label>
       ${birthdayNumberField("estrus-threshold", "高潮阈值（发情值满多少触发）", settings.climax_threshold, 10, 1000)}
       ${birthdayNumberField("estrus-cooldown", "凿者冷却（秒，0=无限制）", settings.chop_cooldown_seconds, 0, 86400)}
-      ${birthdayNumberField("estrus-daily-limit", "每人每日凿人上限（0=不限）", settings.chopper_daily_limit, 0, 999)}
       ${birthdayNumberField("estrus-target-daily-limit", "每人每日被凿上限（按群，0=不限）", settings.target_daily_limit, 0, 999)}
+    </div>
+    <div class="panel-heading"><div><h2>职级每日凿人次数</h2><p class="muted">默认 LV1 一次、每升一级多一次，董事会 20 次；此处可按职级覆盖，0 表示该职级不能凿。</p></div></div>
+    <div class="event-input-grid">${quotaInputs}</div>
+    <div class="panel-heading"><div><h2>G 点（发情值大奖）</h2></div></div>
+    <div class="event-input-grid">
+      ${birthdayNumberField("estrus-g-spot-percent", "凿中G点概率(%)", settings.g_spot_percent, 0, 100)}
+      ${birthdayNumberField("estrus-g-spot-bonus", "G点发情值加成", settings.g_spot_heat_bonus, 0, 1000)}
     </div>
     <div class="panel-heading"><div><h2>发情值增量概率（0/1/2）</h2></div></div>
     <div class="event-input-grid">
@@ -2641,7 +2655,7 @@ function renderEstrusSettingsPanel(settings) {
       ${birthdayNumberField("estrus-heat-p1", "发情值 +1 概率(%)", settings.heat_p1, 0, 100)}
       ${birthdayNumberField("estrus-heat-p2", "发情值 +2 概率(%)", settings.heat_p2, 0, 100)}
     </div>
-    <div class="panel-heading"><div><h2>被凿者发币概率（0/1/2）</h2></div></div>
+    <div class="panel-heading"><div><h2>被凿者获得摸鱼币概率（0/1/2）</h2></div></div>
     <div class="event-input-grid">
       <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-target-fixed" type="checkbox" ${settings.target_fixed_coins != null ? "checked" : ""}> 固定金额</label>
       ${birthdayNumberField("estrus-target-fixed-coins", "每次被凿固定获得（币）", settings.target_fixed_coins ?? 0, 0, 99999)}
@@ -2649,7 +2663,7 @@ function renderEstrusSettingsPanel(settings) {
       ${birthdayNumberField("estrus-coin-p1", "摸鱼币 1 概率(%)", settings.coin_p1, 0, 100)}
       ${birthdayNumberField("estrus-coin-p2", "摸鱼币 2 概率(%)", settings.coin_p2, 0, 100)}
     </div>
-    <div class="panel-heading"><div><h2>凿者扣币概率（0/1/2）</h2><p>默认随机且关联。双方随机时可关联抽样；任一方启用固定金额后，固定金额优先，另一方按自己的配置结算。</p></div></div>
+    <div class="panel-heading"><div><h2>凿者扣除摸鱼币概率（0/1/2）</h2><p>默认随机且关联。双方随机时可关联抽样；任一方启用固定金额后，固定金额优先，另一方按自己的配置结算。</p></div></div>
     <div class="event-input-grid">
       <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-coins-linked" type="checkbox" ${settings.coins_linked ? "checked" : ""}> 扣币与发币关联</label>
       <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-chopper-fixed" type="checkbox" ${settings.chopper_fixed_coins != null ? "checked" : ""}> 固定金额</label>
@@ -2682,6 +2696,10 @@ function renderEstrusSettingsPanel(settings) {
 
 async function saveEstrusSettings() {
   const button = document.querySelector("#estrus-save");
+  const rankQuotas = {};
+  for (const input of document.querySelectorAll("[data-estrus-quota]")) {
+    rankQuotas[input.dataset.estrusQuota] = Number(input.value);
+  }
   const payload = {
     enabled: document.querySelector("#estrus-enabled").checked,
     climax_threshold: Number(document.querySelector("#estrus-threshold").value),
@@ -2692,7 +2710,10 @@ async function saveEstrusSettings() {
     coin_p1: Number(document.querySelector("#estrus-coin-p1").value),
     coin_p2: Number(document.querySelector("#estrus-coin-p2").value),
     chop_cooldown_seconds: Number(document.querySelector("#estrus-cooldown").value),
-    chopper_daily_limit: Number(document.querySelector("#estrus-daily-limit").value),
+    chopper_rank_quotas: rankQuotas,
+    combo_chop_enabled: document.querySelector("#estrus-combo").checked,
+    g_spot_percent: Number(document.querySelector("#estrus-g-spot-percent").value),
+    g_spot_heat_bonus: Number(document.querySelector("#estrus-g-spot-bonus").value),
     chopper_coin_p0: Number(document.querySelector("#estrus-chopper-coin-p0").value),
     chopper_coin_p1: Number(document.querySelector("#estrus-chopper-coin-p1").value),
     chopper_coin_p2: Number(document.querySelector("#estrus-chopper-coin-p2").value),

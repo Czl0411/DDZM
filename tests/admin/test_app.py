@@ -702,6 +702,9 @@ class FakeCore:
     def set_board_membership(self, platform_id, member):
         return {"platform_id": platform_id, "member": member}
 
+    def set_bot_flag(self, platform_id, is_bot):
+        return {"platform_id": platform_id, "is_bot": is_bot}
+
     def get_game_settings(self):
         return self.game_settings
 
@@ -2201,6 +2204,30 @@ def test_admin_estrus_panel_exposes_deductions_linking_and_target_limit(client):
     assert "data-estrus-quota" in script
     assert "chopper_rank_quotas: rankQuotas" in script
     assert ".disabled = targetFixed || chopperFixed" in script
+
+
+def test_admin_proxies_user_bot_flag(client, headers):
+    granted = client.post(
+        "/api/game/users/user-1/bot-flag",
+        headers={**headers, "Idempotency-Key": "bot-flag-1"},
+        json={"is_bot": True},
+    )
+    revoked = client.post(
+        "/api/game/users/user-1/bot-flag",
+        headers=headers,
+        json={"is_bot": False},
+    )
+    invalid = client.post(
+        "/api/game/users/user-1/bot-flag",
+        headers=headers,
+        json={"is_bot": "yes"},
+    )
+
+    assert granted.status_code == 200
+    assert granted.json()["is_bot"] is True
+    assert revoked.status_code == 200
+    assert revoked.json()["is_bot"] is False
+    assert invalid.status_code == 422
 
 
 def test_admin_proxies_game_settings(client, headers, core):

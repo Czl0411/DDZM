@@ -2371,6 +2371,9 @@ class UserRecord(Base):
     gender: Mapped[str] = mapped_column(
         String(16), default="unknown", server_default="unknown", nullable=False
     )
+    is_bot: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
     platform_nickname_synced_at: Mapped[datetime | None] = mapped_column(
         BeijingDateTime
     )

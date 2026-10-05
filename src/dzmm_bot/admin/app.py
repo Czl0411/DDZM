@@ -823,6 +823,30 @@ def create_app(
             scope=f"board-membership:{platform_id}",
         )
 
+    @app.post("/api/game/users/{platform_id}/bot-flag")
+    def set_user_bot_flag(
+        platform_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> JSONResponse:
+        if not isinstance(request.get("is_bot"), bool):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid bot flag")
+        return idempotent_response(
+            identity,
+            idempotency_key,
+            lambda: (
+                200,
+                {
+                    **_relay_core(
+                        lambda: core.set_bot_flag(platform_id, request["is_bot"])
+                    ),
+                    "is_bot": request["is_bot"],
+                },
+            ),
+            scope=f"bot-flag:{platform_id}",
+        )
+
     @app.get("/api/game/items")
     def game_items(
         _: Annotated[None, Depends(authorize)],

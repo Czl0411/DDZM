@@ -914,15 +914,17 @@ def test_chop_special_targets_get_dedicated_replies():
     assert _joined_text(factory, "不能凿自己。")
 
     _receive(service, "c4", "user-0", "/凿 机器人", NOW)
+    assert _joined_text(factory, "没找到员工「机器人」。")
+
+    # Bot 由后台配置（users.is_bot）决定：标记后按机器人处理，含关键词但未标记的照常
+    repository.set_user_bot_flag("user-1", True)
+    _receive(service, "c4b", "user-0", "/凿 乙", NOW)
     assert _joined_text(
         factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
     )
-
-    for word in ("总监事", "大总监事", "总监事小号", "挂bot的"):
-        _receive(service, f"c4-{word}", "user-0", f"/凿 {word}", NOW)
-        assert _joined_text(
-            factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
-        )
+    repository.set_user_bot_flag("user-1", False)
+    _receive(service, "c4c", "user-0", "/凿 乙", NOW)
+    assert _joined_text(factory, "【凿】甲凿了一下乙")
 
     _receive(service, "c5", "user-0", "/凿 老板", NOW)
     assert _joined_text(
@@ -937,7 +939,8 @@ def test_chop_special_targets_get_dedicated_replies():
     assert _joined_text(factory, "【凿】甲凿了一下乙")
     with factory() as session:
         records = session.scalars(select(EstrusChopRecord)).all()
-        assert len(records) == 1
+        # c7 + c4c（取消 Bot 标记后）两次成功凿
+        assert len(records) == 2
 
 
 def test_me_shows_birthday_and_gender_with_reminders():

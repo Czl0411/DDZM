@@ -939,6 +939,27 @@ def test_chop_special_targets_get_dedicated_replies():
         factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
     )
 
+    # 引用未入职的 Bot 平台 ID（名单内 platform_id）→ 按机器人处理，
+    # 而不是「目标还未入职摸鱼公司」
+    ghost_reference = MessageReference(
+        sender_platform_id="acb22871-3895-4e7d-83e5-14b5ca421561",
+        message_id="ref-ghost-bot",
+        content_type="text",
+    )
+    _receive(service, "c4d", "user-0", "/凿", NOW, reference=ghost_reference)
+    assert _joined_text(
+        factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
+    )
+
+    # 名单外的未入职用户仍是原提示
+    plain_reference = MessageReference(
+        sender_platform_id="user-ghost",
+        message_id="ref-ghost",
+        content_type="text",
+    )
+    _receive(service, "c4e", "user-0", "/凿", NOW, reference=plain_reference)
+    assert _joined_text(factory, "目标还未入职摸鱼公司。")
+
     _receive(service, "c5", "user-0", "/凿 老板", NOW)
     assert _joined_text(
         factory, "胆子不小，连 TA 都敢凿？不过 TA 还没入职摸鱼公司。"

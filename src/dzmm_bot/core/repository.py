@@ -1331,6 +1331,9 @@ _CHOP_BOSS_WORDS = ("老板", "董事长", "总裁", "总经理", "人事", "hr"
 # 群里的 Bot 账号名单（用户 2026-10-05 提供，按昵称精确匹配，增删直接改这里）：
 # 名单内的用户被 /凿 时按机器人处理。
 _CHOP_BOT_ACCOUNT_NAMES = frozenset({"不问天", "总监事【测试】"})
+# Bot 的平台 ID（bot 未入职，回复它的消息按 platform_id 查不到用户；
+# 该账号在 inbound_messages 里有统计播报记录）。
+_CHOP_BOT_PLATFORM_IDS = frozenset({"acb22871-3895-4e7d-83e5-14b5ca421561"})
 
 
 def _classify_chop_target(name: str) -> str | None:
@@ -14817,6 +14820,8 @@ class CoreRepository(ShopManagementMixin):
                         )
                     )
                     if target is None:
+                        if target_platform_id in _CHOP_BOT_PLATFORM_IDS:
+                            return EstrusChopResult("bot_target")
                         return EstrusChopResult("target_not_joined")
                 else:
                     cleaned = (target_name or "").strip().lstrip("@").strip()

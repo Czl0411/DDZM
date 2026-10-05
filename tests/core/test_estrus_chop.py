@@ -918,10 +918,11 @@ def test_chop_special_targets_get_dedicated_replies():
         factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
     )
 
-    _receive(service, "c4b", "user-0", "/凿 总监事", NOW)
-    assert _joined_text(
-        factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
-    )
+    for word in ("总监事", "大总监事", "总监事小号", "挂bot的"):
+        _receive(service, f"c4-{word}", "user-0", f"/凿 {word}", NOW)
+        assert _joined_text(
+            factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
+        )
 
     _receive(service, "c5", "user-0", "/凿 老板", NOW)
     assert _joined_text(

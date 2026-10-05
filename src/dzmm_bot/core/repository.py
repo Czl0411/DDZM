@@ -1328,8 +1328,8 @@ _CHOP_GROUP_PATTERN = re.compile(
 )
 _CHOP_SELF_WORDS = frozenset({"我", "我自己", "本人"})
 _CHOP_BOSS_WORDS = ("老板", "董事长", "总裁", "总经理", "人事", "hr")
-# 群里的「总监事」就是机器人账号，按 bot 目标处理
-_CHOP_BOT_NAMES = frozenset({"总监事"})
+# 群里的「总监事」就是机器人账号：名字**含**总监事（如“XX总监事”）一律按 bot 处理
+_CHOP_BOT_NAMES = ("总监事",)
 
 
 def _classify_chop_target(name: str) -> str | None:
@@ -1339,7 +1339,7 @@ def _classify_chop_target(name: str) -> str | None:
     if name in _CHOP_SELF_WORDS:
         return "self_word"
     if (
-        name in _CHOP_BOT_NAMES
+        any(word in name for word in _CHOP_BOT_NAMES)
         or "机器人" in name
         or "bot" in lowered
         or lowered in ("ai", "a.i.")

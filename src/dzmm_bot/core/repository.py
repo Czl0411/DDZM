@@ -1328,22 +1328,17 @@ _CHOP_GROUP_PATTERN = re.compile(
 )
 _CHOP_SELF_WORDS = frozenset({"我", "我自己", "本人"})
 _CHOP_BOSS_WORDS = ("老板", "董事长", "总裁", "总经理", "人事", "hr")
-# 群里的「总监事」就是机器人账号：名字**含**总监事（如“XX总监事”）一律按 bot 处理
-_CHOP_BOT_NAMES = ("总监事",)
+# 群里的 Bot 账号名单（用户 2026-10-05 提供，按昵称精确匹配，增删直接改这里）：
+# 名单内的用户被 /凿 时按机器人处理。
+_CHOP_BOT_ACCOUNT_NAMES = frozenset({"不问天", "总监事【测试】"})
 
 
 def _classify_chop_target(name: str) -> str | None:
-    lowered = name.lower()
     if _CHOP_GROUP_PATTERN.search(name):
         return "group"
     if name in _CHOP_SELF_WORDS:
         return "self_word"
-    if (
-        any(word in name for word in _CHOP_BOT_NAMES)
-        or "机器人" in name
-        or "bot" in lowered
-        or lowered in ("ai", "a.i.")
-    ):
+    if name in _CHOP_BOT_ACCOUNT_NAMES:
         return "bot"
     return None
 
@@ -14866,6 +14861,9 @@ class CoreRepository(ShopManagementMixin):
                     return EstrusChopResult(
                         "self", chopper_name=chopper.display_name
                     )
+                # 引用消息凿 Bot 账号：名单按昵称精确匹配
+                if target.display_name in _CHOP_BOT_ACCOUNT_NAMES:
+                    return EstrusChopResult("bot_target")
                 locked_users = {
                     user.id: user
                     for user in session.scalars(

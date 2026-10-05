@@ -913,16 +913,31 @@ def test_chop_special_targets_get_dedicated_replies():
     _receive(service, "c3", "user-0", "/凿 我", NOW)
     assert _joined_text(factory, "不能凿自己。")
 
+    # Bot 名单（代码内固定）：不问天、总监事【测试】，按昵称精确匹配；
+    # 入职与否都按机器人处理，含 bot 字样但不在名单的名字不拦
     _receive(service, "c4", "user-0", "/凿 机器人", NOW)
+    assert _joined_text(factory, "没找到员工「机器人」。")
+
+    _receive(service, "c4a", "user-0", "/凿 总监事【测试】", NOW)
     assert _joined_text(
         factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
     )
 
-    for word in ("总监事", "大总监事", "总监事小号", "挂bot的"):
-        _receive(service, f"c4-{word}", "user-0", f"/凿 {word}", NOW)
-        assert _joined_text(
-            factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
-        )
+    _join(service, "j2", "user-bot", "不问天", NOW)
+    _receive(service, "c4b", "user-0", "/凿 不问天", NOW)
+    assert _joined_text(
+        factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
+    )
+
+    bot_reference = MessageReference(
+        sender_platform_id="user-bot",
+        message_id="ref-bot",
+        content_type="text",
+    )
+    _receive(service, "c4c", "user-0", "/凿", NOW, reference=bot_reference)
+    assert _joined_text(
+        factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
+    )
 
     _receive(service, "c5", "user-0", "/凿 老板", NOW)
     assert _joined_text(

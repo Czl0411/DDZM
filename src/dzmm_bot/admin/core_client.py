@@ -91,8 +91,6 @@ class AdminCorePort(Protocol):
 
     def set_board_membership(self, platform_id: str, member: bool) -> dict: ...
 
-    def set_bot_flag(self, platform_id: str, is_bot: bool) -> dict: ...
-
     def get_game_settings(self) -> dict: ...
 
     def set_game_settings(self, settings: dict) -> dict: ...
@@ -603,13 +601,6 @@ class CoreClient:
     def set_board_membership(self, platform_id: str, member: bool) -> dict:
         response = self._client.post(
             f"/internal/game/users/{platform_id}/board-membership", json={"member": member}
-        )
-        response.raise_for_status()
-        return response.json()
-
-    def set_bot_flag(self, platform_id: str, is_bot: bool) -> dict:
-        response = self._client.post(
-            f"/internal/game/users/{platform_id}/bot-flag", json={"is_bot": is_bot}
         )
         response.raise_for_status()
         return response.json()

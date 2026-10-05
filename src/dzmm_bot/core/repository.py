@@ -1319,22 +1319,32 @@ class EstrusChopResult:
     stopped_reason: str | None = None
 
 
-# /凿 特殊目标：群体称呼与自称不是可凿对象，给出专属文案而不是
+# /凿 特殊目标：群体称呼、自称与机器人不是可凿对象，给出专属文案而不是
 # 笼统的「没找到员工」；老板/人事等职称词在未入职时给彩蛋提示。
-# Bot 用户由后台配置（users.is_bot），不再按名字关键词猜测。
+# 群体词用宽松正则：拦下「全体的家人们」「所有人！！」这类变体（人名撞词概率极低）。
 _CHOP_GROUP_PATTERN = re.compile(
     r"所有人|全体|全员|大家|大伙|各位|诸位|家人们|兄弟们|姐妹们|小伙伴们"
     r"|同事们|同学们|老板们|你们|他们|她们|ta们|每人|每一个|全部|挨个|一个不留"
 )
 _CHOP_SELF_WORDS = frozenset({"我", "我自己", "本人"})
 _CHOP_BOSS_WORDS = ("老板", "董事长", "总裁", "总经理", "人事", "hr")
+# 群里的「总监事」就是机器人账号：名字**含**总监事（如“XX总监事”）一律按 bot 处理
+_CHOP_BOT_NAMES = ("总监事",)
 
 
 def _classify_chop_target(name: str) -> str | None:
+    lowered = name.lower()
     if _CHOP_GROUP_PATTERN.search(name):
         return "group"
     if name in _CHOP_SELF_WORDS:
         return "self_word"
+    if (
+        any(word in name for word in _CHOP_BOT_NAMES)
+        or "机器人" in name
+        or "bot" in lowered
+        or lowered in ("ai", "a.i.")
+    ):
+        return "bot"
     return None
 
 
@@ -14856,8 +14866,6 @@ class CoreRepository(ShopManagementMixin):
                     return EstrusChopResult(
                         "self", chopper_name=chopper.display_name
                     )
-                if target.is_bot:
-                    return EstrusChopResult("bot_target")
                 locked_users = {
                     user.id: user
                     for user in session.scalars(
@@ -29502,27 +29510,6 @@ class CoreRepository(ShopManagementMixin):
                 employee.rank_id = target_rank.id
                 session.flush()
                 return UserProfile(employee, target_rank, department)
-
-    def set_user_bot_flag(
-        self, platform_id: str, is_bot: bool
-    ) -> UserProfile | None:
-        """后台把某个用户标记为 Bot 账号（/凿 时按机器人处理）。"""
-        with self.transaction():
-            with self._session() as session:
-                employee = session.scalar(
-                    select(UserRecord)
-                    .where(UserRecord.platform_id == platform_id)
-                    .with_for_update()
-                )
-                if employee is None:
-                    return None
-                employee.is_bot = is_bot
-                session.flush()
-                rank = session.get(RankRecord, employee.rank_id)
-                department = session.get(DepartmentRecord, employee.department_id)
-                if rank is None or department is None:
-                    raise RuntimeError("organization defaults are missing")
-                return UserProfile(employee, rank, department)
 
     def join_department(
         self, platform_id: str, department_name: str

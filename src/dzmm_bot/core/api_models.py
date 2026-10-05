@@ -402,11 +402,6 @@ class UserResponse(ApiModel):
     rank_name: str
     rank_level_label: str
     department_name: str
-    is_bot: bool = False
-
-
-class SetBotFlagRequest(ApiModel):
-    is_bot: bool
 
 
 class BalanceTransactionResponse(ApiModel):

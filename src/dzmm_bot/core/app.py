@@ -209,7 +209,6 @@ from .api_models import (
     RankResponse,
     DepartmentResponse,
     SetBoardMembershipRequest,
-    SetBotFlagRequest,
     UpdateDepartmentRequest,
     UpdateGroupChatRequest,
     UpdateRankRequest,
@@ -1316,20 +1315,6 @@ def create_app(
         _: Annotated[None, Depends(authorize)],
     ) -> UserProfileResponse:
         profile = repository.set_board_membership(platform_id, request.member)
-        if profile is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
-        return _user_profile_response(profile)
-
-    @app.post(
-        "/internal/game/users/{platform_id}/bot-flag",
-        response_model=UserProfileResponse,
-    )
-    def set_bot_flag(
-        platform_id: str,
-        request: SetBotFlagRequest,
-        _: Annotated[None, Depends(authorize)],
-    ) -> UserProfileResponse:
-        profile = repository.set_user_bot_flag(platform_id, request.is_bot)
         if profile is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
         return _user_profile_response(profile)
@@ -4032,7 +4017,6 @@ def _user_response(profile) -> UserResponse:
         rank_name=profile.rank.name,
         rank_level_label=profile.rank.level_label,
         department_name=profile.department.name,
-        is_bot=bool(profile.user.is_bot),
     )
 
 

@@ -2046,7 +2046,7 @@ async function loadEmployees(page = employeePage) {
   employeePage = employees.page;
   const filtered = filterList("employees", employees.items, (employee) => `${employee.display_name} ${employee.platform_nickname || ""} ${formatEmployeeNumber(employee.employee_number)} ${employee.employee_number} ${employee.rank_name || ""} ${employee.department_name || ""}`);
   document.querySelector("#employee-list").innerHTML = filtered.map((employee) => `
-    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>平台昵称：${escapeHtml(employee.platform_nickname || "暂未获取")}</small><small>工号：${formatEmployeeNumber(employee.employee_number)} · ${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong><button class="secondary" data-balance-ledger="${escapeHtml(employee.platform_id)}" type="button">摸鱼币流水</button><button class="secondary" data-employee-group-messages="${escapeHtml(employee.platform_id)}" type="button">群聊记录</button><button class="secondary" data-personal-profile="${escapeHtml(employee.platform_id)}" data-personal-profile-name="${escapeHtml(employee.display_name)}" type="button">档案</button><button class="secondary" data-ai-memory="${escapeHtml(employee.platform_id)}" data-ai-memory-name="${escapeHtml(employee.display_name)}" type="button">AI 记忆</button>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}<button class="secondary" data-bot-flag="${escapeHtml(employee.platform_id)}" data-bot-active="${employee.is_bot ? "true" : "false"}" type="button">${employee.is_bot ? "取消 Bot" : "设为 Bot"}</button></div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
+    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>平台昵称：${escapeHtml(employee.platform_nickname || "暂未获取")}</small><small>工号：${formatEmployeeNumber(employee.employee_number)} · ${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong><button class="secondary" data-balance-ledger="${escapeHtml(employee.platform_id)}" type="button">摸鱼币流水</button><button class="secondary" data-employee-group-messages="${escapeHtml(employee.platform_id)}" type="button">群聊记录</button><button class="secondary" data-personal-profile="${escapeHtml(employee.platform_id)}" data-personal-profile-name="${escapeHtml(employee.display_name)}" type="button">档案</button><button class="secondary" data-ai-memory="${escapeHtml(employee.platform_id)}" data-ai-memory-name="${escapeHtml(employee.display_name)}" type="button">AI 记忆</button>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
   renderPagination(document.querySelector("#employee-pagination"), employees, "位员工", loadEmployees);
 }
 
@@ -3375,25 +3375,6 @@ document.querySelector("#employee-list").addEventListener("click", async (event)
       await loadEmployees();
     });
     setResult(member ? "已授予核心董事会身份" : "已撤销核心董事会身份", "success");
-  } catch (error) {
-    setResult(`操作失败（${error.message}）`, "error");
-  }
-});
-document.querySelector("#employee-list").addEventListener("click", async (event) => {
-  const botButton = event.target.closest("button[data-bot-flag]");
-  if (!botButton) return;
-  const isBot = botButton.dataset.botActive !== "true";
-  if (!window.confirm(isBot ? "确认把该用户标记为 Bot？（/凿 TA 时会按机器人处理）" : "确认取消该用户的 Bot 标记？")) return;
-  try {
-    await runMutation(botButton, "处理中…", async () => {
-      await requestGame(`/api/game/users/${botButton.dataset.botFlag}/bot-flag`, {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({is_bot: isBot}),
-      });
-      await loadEmployees();
-    });
-    setResult(isBot ? "已标记为 Bot" : "已取消 Bot 标记", "success");
   } catch (error) {
     setResult(`操作失败（${error.message}）`, "error");
   }

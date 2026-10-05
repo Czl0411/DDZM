@@ -672,13 +672,13 @@ def test_my_estrus_and_popularity_ranking():
     assert any("被凿：今日 0 次 / 累计 0 次" in text for text in _replies(factory))
     assert any("凿人：今日 2 次 / 累计 2 次" in text for text in _replies(factory))
 
-    _receive(service, "q3", "user-0", "/最受欢迎", NOW)
+    _receive(service, "q3", "user-0", "/人气榜", NOW)
     texts = _replies(factory)
-    assert any("【今日最受欢迎榜】" in text for text in texts)
+    assert any("【人气榜】" in text for text in texts)
     assert any("乙：今日被凿2次" in text for text in texts)
     # 旧指令归一化到新榜 / 新查询
-    _receive(service, "q4", "user-0", "/发情值排名", NOW)
-    assert any("【今日最受欢迎榜】" in text for text in _replies(factory))
+    _receive(service, "q4", "user-0", "/最受欢迎", NOW)
+    assert any("【人气榜】" in text for text in _replies(factory))
     _receive(service, "q5", "user-1", "/我的发情值", NOW)
     assert any("【我的凿】" in text for text in _replies(factory))
 
@@ -895,13 +895,68 @@ def test_g_spot_hit_grants_bonus_heat():
         assert chop.heat_gain == 10
 
 
+def test_chop_special_targets_get_dedicated_replies():
+    service, repository, factory = _service(estrus_random=_SeqRandom([]))
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+
+    _receive(service, "c1", "user-0", "/凿 所有人", NOW)
+    assert _joined_text(factory, "你有几个牛子？还想凿这么多！")
+
+    _receive(service, "c2", "user-0", "/凿 全体员工", NOW)
+    assert _joined_text(factory, "你有几个牛子？还想凿这么多！")
+
+    _receive(service, "c3", "user-0", "/凿 我", NOW)
+    assert _joined_text(factory, "不能凿自己。")
+
+    _receive(service, "c4", "user-0", "/凿 机器人", NOW)
+    assert _joined_text(
+        factory, "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
+    )
+
+    _receive(service, "c5", "user-0", "/凿 老板", NOW)
+    assert _joined_text(
+        factory, "胆子不小，连 TA 都敢凿？不过 TA 还没入职摸鱼公司。"
+    )
+
+    _receive(service, "c6", "user-0", "/凿 /我", NOW)
+    assert _joined_text(factory, "那是指令，不是人名。")
+
+    # 正常目标不受影响，被拒的特殊目标不产生任何记录
+    _receive(service, "c7", "user-0", "/凿 乙", NOW)
+    assert _joined_text(factory, "【凿】甲凿了一下乙")
+    with factory() as session:
+        records = session.scalars(select(EstrusChopRecord)).all()
+        assert len(records) == 1
+
+
+def test_me_shows_birthday_and_gender_with_reminders():
+    service, repository, factory = _service(estrus_random=_SeqRandom([]))
+    _join(service, "j0", "user-0", "甲", NOW)
+
+    _receive(service, "m0", "user-0", "/我", NOW)
+    texts = _replies(factory)
+    assert any(
+        "生日：未设置，用 /设置生日 月-日 告诉人事吧" in text for text in texts
+    )
+    assert any(
+        "性别：未设置，用 /设置性别 男 或 女 标记一下" in text for text in texts
+    )
+
+    _receive(service, "g1", "user-0", "/设置性别 女", NOW)
+    _receive(service, "b1", "user-0", "/设置生日 12-25", NOW)
+    _receive(service, "m1", "user-0", "/我", NOW)
+    texts = _replies(factory)
+    assert any("生日：12 月 25 日（还有" in text for text in texts)
+    assert any("性别：女" in text for text in texts)
+
+
 def test_set_gender_command():
     service, repository, factory = _service(estrus_random=_SeqRandom([]))
     _join(service, "j0", "user-0", "甲", NOW)
 
     _receive(service, "g1", "user-0", "/设置性别 女", NOW)
     assert _joined_text(factory, "已将你的性别设置为女。")
-
     info = repository.get_my_estrus("user-0", PRIMARY_GROUP_CHAT_ID, NOW)
     assert info["gender"] == "female"
 
@@ -964,7 +1019,11 @@ class _FakeClimaxClient:
 
 
 def test_climax_ai_text_merged_into_single_paragraph():
-    client = _FakeClimaxClient("第一段高潮。\n\n第二段高潮。\n第三段。")
+    # v3 质量门要求正文里有器官词 + 体液/拟声词，假文本按真实尺度给
+    client = _FakeClimaxClient(
+        "第一段：穴口被凿得又软又烫，穴肉一层层绞上来。"
+        "\n\n第二段：汁水喷了一桌面，粘腻的水声还没停。\n第三段收尾。"
+    )
     service, repository, factory = _service(
         estrus_random=_SeqRandom([0.90, 0.0] * 5), estrus_text_client=client
     )
@@ -992,5 +1051,9 @@ def test_climax_ai_text_merged_into_single_paragraph():
     # 凿者进入 prompt，可出场互动
     assert "最后一凿的人：甲" in client.calls[0]["user"]
     # 换行全部合并，整段单条发出
-    assert not any("\n\n第一段高潮。" in text for text in _replies(factory))
-    assert any("第一段高潮。第二段高潮。第三段。" in text for text in _replies(factory))
+    assert not any("\n\n第二段：" in text for text in _replies(factory))
+    assert any(
+        "第一段：穴口被凿得又软又烫，穴肉一层层绞上来。"
+        "第二段：汁水喷了一桌面，粘腻的水声还没停。第三段收尾。" in text
+        for text in _replies(factory)
+    )

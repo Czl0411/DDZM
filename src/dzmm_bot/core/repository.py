@@ -9,6 +9,7 @@ import logging
 from random import SystemRandom
 import re
 from secrets import choice, randbelow
+from time import monotonic
 import unicodedata
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
@@ -61,9 +62,16 @@ from .birthday import (
 )
 from .birthday import format_tenure as birthday_format_tenure
 from .estrus import (
+    CLIMAX_CONTINUE_ROUNDS,
     CLIMAX_MAX_CHARS,
+    CLIMAX_MAX_TOKENS,
+    CLIMAX_TEMPERATURE,
     CLIMAX_TIMEOUT_SECONDS,
+    CLIMAX_TOTAL_BUDGET_SECONDS,
+    CONTINUE_INSTRUCTION,
+    HistoryMessage,
     build_climax_messages,
+    climax_text_passes,
     fallback_climax_text,
 )
 
@@ -1311,6 +1319,31 @@ class EstrusChopResult:
     stopped_reason: str | None = None
 
 
+# /凿 特殊目标：群体称呼、自称与机器人不是可凿对象，给出专属文案而不是
+# 笼统的「没找到员工」；老板/人事等职称词在未入职时给彩蛋提示。
+_CHOP_GROUP_WORDS = frozenset({
+    "所有人", "全体员工", "全体", "全员", "大家", "你们", "各位", "同志们",
+})
+_CHOP_SELF_WORDS = frozenset({"我", "我自己", "本人"})
+_CHOP_BOSS_WORDS = ("老板", "董事长", "总裁", "总经理", "人事", "hr")
+
+
+def _classify_chop_target(name: str) -> str | None:
+    lowered = name.lower()
+    if name in _CHOP_GROUP_WORDS:
+        return "group"
+    if name in _CHOP_SELF_WORDS:
+        return "self_word"
+    if "机器人" in name or "bot" in lowered or lowered in ("ai", "a.i."):
+        return "bot"
+    return None
+
+
+def _is_boss_word(name: str) -> bool:
+    lowered = name.lower()
+    return any(word in lowered for word in _CHOP_BOSS_WORDS)
+
+
 @dataclass(frozen=True)
 class TruthTradeSettings:
     question_timeout_seconds: int
@@ -2527,7 +2560,7 @@ _COMMAND_DEFINITIONS = (
     ("/允许被凿", "/允许被凿", "允许别人凿自己（默认开启）"),
     ("/拒绝被凿", "/拒绝被凿", "拒绝被凿：之后被 /凿 时对方会吃一杵子"),
     ("/我的凿", "/我的凿", "查看自己的发情值、被凿/凿人与高潮次数"),
-    ("/最受欢迎", "/最受欢迎", "查看今日最受欢迎榜前 5 名（按今日被凿次数）"),
+    ("/人气榜", "/人气榜", "查看今日被凿人气前 5 名（按今日被凿次数）"),
     ("/设置性别", "/设置性别 男|女", "设置自己的性别（/修改性别 等效），影响高潮文字文风"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
@@ -14600,7 +14633,7 @@ class CoreRepository(ShopManagementMixin):
     def estrus_popularity_rankings(
         self, group_chat_id: UUID, now: datetime
     ) -> list[dict]:
-        """今日最受欢迎榜（前 5）：按当日被凿次数，从 estrus_chops 按天统计。"""
+        """人气榜（前 5）：按当日被凿次数，从 estrus_chops 按天统计。"""
         day_start = now.astimezone(BEIJING).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
@@ -14630,27 +14663,124 @@ class CoreRepository(ShopManagementMixin):
         user: UserRecord,
         chopper_name: str | None = None,
         threshold: int = 100,
+        chopper_gender: str | None = None,
     ) -> str | None:
-        """AI 高潮长文；主角是被凿者，`chopper_name` 是最后一凿的人。"""
-        if self._estrus_text_client is None:
+        """AI 高潮长文；主角是被凿者，`chopper_name` 是最后一凿的人。
+
+        v3（2026-10-05）：关思考模式提速、`finish_reason=length` 自动续写、
+        过质量门（器官词/体液拟声词下限 + 含糊代称黑名单）；第一次不达标
+        追加「上一版太含蓄」的退回说明再要一次，两次都不行就返回 None，
+        由调用方走直白兜底。整段共用 `CLIMAX_TOTAL_BUDGET_SECONDS` 预算，
+        避免同步路径把群卡太久。
+        """
+        client = self._estrus_text_client
+        if client is None:
             return None
-        system, user_content = build_climax_messages(
-            user.display_name, user.gender or "unknown", chopper_name, threshold
+        gender = user.gender or "unknown"
+        started = monotonic()
+        for strict in (False, True):
+            remaining = CLIMAX_TOTAL_BUDGET_SECONDS - (monotonic() - started)
+            if remaining <= 2:
+                break
+            text = self._estrus_complete(
+                client,
+                user,
+                gender,
+                chopper_name,
+                chopper_gender,
+                threshold,
+                strict,
+                remaining,
+            )
+            if text and climax_text_passes(text, gender):
+                return text
+            logger.info("estrus climax text below the v3 scale bar (strict=%s)", strict)
+        return None
+
+    def _estrus_call(
+        self,
+        client,
+        system: str,
+        user_content: str,
+        history: tuple[HistoryMessage, ...],
+        max_chars: int,
+        timeout_seconds: int,
+    ) -> tuple[str, str]:
+        """调一次 AI：优先用能拿到 finish_reason 的新接口（支持被截断后续写），
+        没有该方法的客户端（测试替身等）退回老的 complete。"""
+        with_reason = getattr(client, "complete_with_reason", None)
+        if with_reason is None:
+            return (
+                client.complete(
+                    system,
+                    user_content,
+                    history_messages=history,
+                    max_chars=max_chars,
+                    timeout_seconds=timeout_seconds,
+                    temperature=CLIMAX_TEMPERATURE,
+                ),
+                "",
+            )
+        return with_reason(
+            system,
+            user_content,
+            history_messages=history,
+            max_chars=max_chars,
+            timeout_seconds=timeout_seconds,
+            temperature=CLIMAX_TEMPERATURE,
+            # 关掉思考模式：token 预算全留给正文，长文更快出
+            thinking_enabled=False,
+            max_tokens=CLIMAX_MAX_TOKENS,
         )
-        try:
-            raw = self._estrus_text_client.complete(
-                system,
-                user_content,
-                max_chars=CLIMAX_MAX_CHARS,
-                timeout_seconds=CLIMAX_TIMEOUT_SECONDS,
-                # 高温抽样：低温下模型对同一 prompt 的输出会高度趋同
-                temperature=1.3,
-            ).strip()
-            # 高潮文字合并成一段发：去掉 AI 输出里的换行/空行
-            return re.sub(r"\s*\n+\s*", "", raw) or None
-        except Exception as error:
-            logger.warning("estrus climax AI text failed: %s", error)
-            return None
+
+    def _estrus_complete(
+        self,
+        client,
+        user: UserRecord,
+        gender: str,
+        chopper_name: str | None,
+        chopper_gender: str | None,
+        threshold: int,
+        strict: bool,
+        remaining: float,
+    ) -> str | None:
+        """单次生成（含被 max_tokens 掐断时的一次续写）。"""
+        system, user_content = build_climax_messages(
+            user.display_name,
+            gender,
+            chopper_name,
+            threshold,
+            chopper_gender,
+            self._estrus_random,
+            strict,
+        )
+        history: tuple[HistoryMessage, ...] = ()
+        text = ""
+        local_started = monotonic()
+        for _ in range(CLIMAX_CONTINUE_ROUNDS + 1):
+            budget = remaining - (monotonic() - local_started)
+            if budget <= 1:
+                break
+            try:
+                chunk, finish_reason = self._estrus_call(
+                    client,
+                    system,
+                    user_content,
+                    history,
+                    max(150, CLIMAX_MAX_CHARS - len(text)),
+                    int(min(CLIMAX_TIMEOUT_SECONDS, budget)),
+                )
+            except Exception as error:
+                logger.warning("estrus climax AI text failed: %s", error)
+                break
+            text += chunk
+            if finish_reason != "length" or len(text) >= CLIMAX_MAX_CHARS:
+                break
+            history = (HistoryMessage("assistant", text),)
+            user_content = CONTINUE_INSTRUCTION
+        # 高潮文字合并成一段发：去掉 AI 输出里的换行/空行
+        collapsed = re.sub(r"\s*\n+\s*", "", text)[:CLIMAX_MAX_CHARS]
+        return collapsed or None
 
     def execute_estrus_chop(
         self,
@@ -14688,6 +14818,15 @@ class CoreRepository(ShopManagementMixin):
                     cleaned = (target_name or "").strip().lstrip("@").strip()
                     if not cleaned:
                         return EstrusChopResult("missing_target")
+                    special = _classify_chop_target(cleaned)
+                    if special == "group":
+                        return EstrusChopResult("group_target")
+                    if special == "self_word":
+                        return EstrusChopResult(
+                            "self", chopper_name=chopper.display_name
+                        )
+                    if special == "bot":
+                        return EstrusChopResult("bot_target")
                     target = session.scalar(
                         select(UserRecord).where(
                             UserRecord.display_name == cleaned
@@ -14711,6 +14850,8 @@ class CoreRepository(ShopManagementMixin):
                                 ),
                             )
                         else:
+                            if _is_boss_word(cleaned):
+                                return EstrusChopResult("boss_not_found")
                             return EstrusChopResult("target_not_found")
                 if target.id == chopper.id:
                     return EstrusChopResult(
@@ -14909,7 +15050,10 @@ class CoreRepository(ShopManagementMixin):
                 climax_text = None
                 if climax_count > 0:
                     climax_text = self._estrus_climax_text(
-                        target, chopper.display_name, threshold
+                        target,
+                        chopper.display_name,
+                        threshold,
+                        chopper.gender,
                     )
                     if not climax_text:
                         climax_text = fallback_climax_text(
@@ -28373,7 +28517,7 @@ class CoreRepository(ShopManagementMixin):
         entries = self.estrus_popularity_rankings(group_chat_id, now)
         if not entries:
             return None
-        lines = [f"【今日最受欢迎榜】（{report_time}）"]
+        lines = [f"【人气榜】（{report_time}）"]
         lines.extend(
             f"{entry['display_name']}：今日被凿{entry['today_chopped']}次"
             for entry in entries

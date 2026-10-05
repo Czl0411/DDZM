@@ -55,7 +55,7 @@ _COMMANDS = {
     "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据",
     "/真心换真心", "/真心换真心数据", "/问题", "/真心",
     "/罚款", "/我的罚款", "/我的津贴",
-    "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/最受欢迎",
+    "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/人气榜",
     "/设置性别", "/修改性别",
 }
 
@@ -110,8 +110,8 @@ class GroupCommandHandler:
             command = "/罚款"
         if command == "/修改性别":
             command = "/设置性别"
-        if command in {"/今日最受欢迎", "/发情值排名"}:
-            command = "/最受欢迎"
+        if command in {"/今日最受欢迎", "/发情值排名", "/最受欢迎"}:
+            command = "/人气榜"
         if command == "/我的发情值":
             command = "/我的凿"
         if command not in _COMMANDS:
@@ -406,7 +406,7 @@ class GroupCommandHandler:
             return self._set_estrus_opt_out(message, received_at, group_chat_id, True)
         if command == "/我的凿":
             return self._my_estrus(message, received_at, group_chat_id)
-        if command == "/最受欢迎":
+        if command == "/人气榜":
             return self._estrus_popularity(message, received_at, group_chat_id)
         if command in ("/设置性别", "/修改性别"):
             return self._set_gender(message, content, received_at)
@@ -2103,6 +2103,8 @@ class GroupCommandHandler:
                 times = int(parts[-1])
                 parts = parts[:-1]
             target_name = parts[0]
+            if target_name.startswith("/"):
+                return "那是指令，不是人名。"
             note = " ".join(parts[1:]).strip() or None
             target_platform_id = None
         if times < 1:
@@ -2129,6 +2131,12 @@ class GroupCommandHandler:
             )
         if result.status == "target_not_found":
             return f"没找到员工「{target_name}」。"
+        if result.status == "boss_not_found":
+            return "胆子不小，连 TA 都敢凿？不过 TA 还没入职摸鱼公司。"
+        if result.status == "group_target":
+            return "你有几个牛子？还想凿这么多！"
+        if result.status == "bot_target":
+            return "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
         if result.status == "target_not_joined":
             return "目标还未入职摸鱼公司。"
         if result.status == "self":
@@ -2238,7 +2246,7 @@ class GroupCommandHandler:
         )
         if not entries:
             return "今天还没人被凿，快用 /凿 开张吧。"
-        lines = ["【今日最受欢迎榜】"]
+        lines = ["【人气榜】"]
         lines.extend(
             f"{entry['display_name']}：今日被凿{entry['today_chopped']}次"
             for entry in entries
@@ -2502,6 +2510,26 @@ class GroupCommandHandler:
         allowance = self._repository.department_allowance_summary(
             platform_id, received_at
         )
+        birthday_view = self._repository.get_employee_birthday(
+            platform_id, received_at
+        )
+        if birthday_view is None:
+            birthday_line = "生日：未设置，用 /设置生日 月-日 告诉人事吧"
+        else:
+            days_left = (
+                birthday_view.next_occurrence - received_at.date()
+            ).days
+            countdown = "就是今天！" if days_left == 0 else f"还有 {days_left} 天"
+            birthday_line = (
+                f"生日：{self._format_birthday(birthday_view)}（{countdown}）"
+            )
+        if employee.gender == "male":
+            gender_line = "性别：男"
+        elif employee.gender == "female":
+            gender_line = "性别：女"
+        else:
+            gender_line = "性别：未设置，用 /设置性别 男 或 女 标记一下"
+        rendered = f"{rendered}\n{birthday_line}\n{gender_line}"
         if allowance is None:
             return rendered
         cap = self._repository.get_department_allowance_settings().daily_cap
@@ -5219,7 +5247,7 @@ class GroupCommandHandler:
                     ("/拒绝被凿", "/拒绝被凿：不再接受被凿，凿你的人会吃一杵子"),
                     ("/允许被凿", "/允许被凿：重新接受被凿"),
                     ("/我的凿", "/我的凿：查看自己的发情值、被凿/凿人与高潮次数"),
-                    ("/最受欢迎", "/最受欢迎：查看今日最受欢迎榜前 5（按今日被凿次数，每日随收益榜推送）"),
+                    ("/人气榜", "/人气榜：查看今日被凿人气前 5（按今日被凿次数，每日随收益榜推送）"),
                     ("/设置性别", "/设置性别 男|女：设置自己的性别（/修改性别 等效），影响高潮文风"),
                 ),
             ),

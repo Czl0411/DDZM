@@ -14,17 +14,63 @@ AI 失败/超时/空结果时，按性别从兜底文案库**按槽位随机组�
 
 调教库（`DIAOJIAO_LIBRARY`）与词库（`LEXICON`）同时喂给 AI prompt（当素材）
 和兜底组装（当槽位文案），改词只改本文件。
+
+v3 尺度加码（2026-10-05 用户拍板，四处都照 dzmm_nuo 的实测做法）：
+- **词表点名**：dzmm_nuo 的 `INSULT_STYLES` 直接把脏词写进 prompt；这里同样把
+  器官词、器官贬称、器官导向动作、行为动词、体液、拟声、羞辱称呼列进 system prompt。
+- **尺度锚点示例**：prompt 末尾给一段 120~180 字的示例，把尺度对齐（比只写规则有效）。
+- **骰子随机**：在原有的场景/开头/节奏之外，再抽 体位 × 道具 × 玩法 注入本次请求。
+- **质量门**：`climax_text_passes` 校验器官词/体液拟声词并拉黑含糊代称，不达标退回重写
+  一次，两次都不行就走直白兜底 —— 露骨度是可保证的结果，不靠模型当天心情。
+
+性别分路：被凿者（M 方）的器官词与称呼按 `users.gender` 三档给，**只给本档的词**，
+避免给男员工用「母狗」这类写错性别的词；凿者（S 方）的性别也一起传进来
+（`chopper_gender`），用于称呼与人称代词。
+
+长度：250~400 字；正文合并成一段发（平台侧不换行），所以骨架按 ①→④ 的次序写、
+不靠分段。
 """
 
 from __future__ import annotations
 
 import random
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from random import SystemRandom
 
-# AI 那一路的预算：1000 字符上限 + 20 秒超时（同步调用，只在爆表那一刻发生）。
+# AI 那一路的预算：1000 字符上限 + 12 秒单次超时（同步调用，只在爆表那一刻发生）。
 # 上限同时充当 max_tokens，600 曾在 300+ 字长文处硬截断（实测），提到 1000 留足余量。
 CLIMAX_MAX_CHARS = 1000
-CLIMAX_TIMEOUT_SECONDS = 20
+CLIMAX_MAX_TOKENS = 1000
+CLIMAX_TIMEOUT_SECONDS = 12
+# 首答 + 续写 + 不合格重试的总预算：同步路径不能让一个群等太久。
+CLIMAX_TOTAL_BUDGET_SECONDS = 20
+# 高温抽样：低温下模型对同一 prompt 的输出会高度趋同（f1bd713 实测结论）。
+CLIMAX_TEMPERATURE = 1.3
+# finish_reason=length 时最多续写几轮（长文被 max_tokens 掐断的补救）。
+CLIMAX_CONTINUE_ROUNDS = 1
+# 质量门下限：正文里至少要有几个器官词、几个体液/拟声词。
+CLIMAX_MIN_ORGAN_WORDS = 2
+CLIMAX_MIN_AUDIO_WORDS = 1
+
+CONTINUE_INSTRUCTION = (
+    "上一段被长度截断了。接着上文继续写，不要重复已经写过的内容，"
+    "直接续写正文，保持同样的露骨尺度，仍然不要换行。"
+)
+
+STRICT_RETRY_INSTRUCTION = (
+    "【上一版太含蓄，被退回重写】这一版必须更直白："
+    "把器官名称、具体的性动作、体液和水声直接写出来，"
+    "禁止任何含糊代称（那里／下面／私处／敏感部位／那个／做了）。"
+)
+
+
+@dataclass(frozen=True)
+class HistoryMessage:
+    """续写时塞回 messages 的助手消息（只要 role / content 两个属性）。"""
+
+    role: str
+    content: str
 
 
 # --------------------------------------------------------------------------
@@ -100,6 +146,109 @@ _GENDER_LABELS = {
 
 
 # --------------------------------------------------------------------------
+# v3 词库 · 器官 / 器官贬称 / 行为 / 体液 / 拟声（按性别分档，只给本档的词）
+#
+# 为什么要点名到词：v2 只写「直白露骨、写出身体部位」，模型一律退化成
+# 「湿意、热流、那里」这种含糊写法（用户实测反馈）。dzmm_nuo 的
+# `INSULT_STYLES` 是把脏词直接写进 prompt 才稳住尺度的，这里照做。
+# --------------------------------------------------------------------------
+ORGAN_WORDS: dict[str, tuple[str, ...]] = {
+    "female": (
+        "阴唇", "阴蒂", "穴口", "穴肉", "宫颈口", "乳尖", "乳晕", "会阴",
+        "淫水", "潮吹",
+    ),
+    "male": (
+        "阴茎", "龟头", "马眼", "囊袋", "后穴", "肠壁", "会阴", "前液", "精液",
+    ),
+    "unknown": (
+        "下体", "穴口", "穴肉", "硬挺", "湿得一塌糊涂", "顶到最里面的那一点",
+    ),
+}
+
+ORGAN_SLANG: dict[str, tuple[str, ...]] = {
+    "female": ("骚穴", "小穴", "淫穴", "骚逼"),
+    "male": ("肉棒", "大屌", "骚鸡巴", "鸡巴"),
+    "unknown": ("下体", "那根", "那处"),
+}
+
+ACTION_WORDS: tuple[str, ...] = (
+    "插进去", "抽送", "碾", "顶", "含住", "舔", "抠", "揉", "夹紧", "绞",
+    "射", "喷", "按着腰往里送", "掐着腰往深处顶",
+)
+
+FLUID_WORDS: tuple[str, ...] = (
+    "淫水顺着腿根淌", "白浊", "前液", "汗湿", "湿透", "拉丝", "汁水喷了一桌面",
+)
+
+SOUND_WORDS: tuple[str, ...] = (
+    "噗嗤", "咕叽", "啪啪", "水声", "粘腻的水声",
+)
+
+# 质量门用的关键词（单个词，避免用整句短语做子串匹配时漏判）
+AUDIO_KEYWORDS: tuple[str, ...] = (
+    "淫水", "白浊", "前液", "湿透", "汗湿", "拉丝", "汁水",
+    "噗嗤", "咕叽", "啪啪", "水声",
+)
+
+# 器官导向动作：按性别给，避免把身体写错（AI 与兜底都用这一份）
+ORGAN_ACTS: dict[str, tuple[str, ...]] = {
+    "female": (
+        "两指抠进穴口，指腹碾着阴蒂打转，另一只手按住小腹往下压",
+        "一边抽送一边用拇指碾着阴蒂，穴肉被搅得又软又烫",
+        "把跳蛋按在阴蒂上不许拿走，自己却从后面顶进去",
+        "含住乳尖用牙轻轻磨，手下的抽送一下比一下重",
+    ),
+    "male": (
+        "一手握住阴茎上下撸动，拇指反复碾过龟头和马眼",
+        "手指蘸着前液顶进后穴，一节一节往里送，另一只手握着他的阴茎",
+        "把跳蛋按在马眼上不许拿走，另一只手在后穴里抽送",
+        "从背后顶进后穴，一手绕到身前握住阴茎同时套弄",
+    ),
+    "unknown": (
+        "两指抠进穴口，指腹碾着最敏感的那一点打转，另一只手按住小腹往下压",
+        "一边抽送一边用拇指碾着最敏感的那一点，穴肉被搅得又软又烫",
+        "把跳蛋按在最敏感的那一点上不许拿走，另一只手不停",
+        "从背后顶进去，一手绕到身前同时套弄",
+    ),
+}
+
+# 称呼：被凿者（M 方）按被凿者性别分档；凿者（S 方）按凿者性别分档。
+# 男档按用户拍板砍掉最重的三个（贱狗／精牛／肉便器），未知档只用弱标记词。
+CALL_NAMES: dict[str, tuple[str, ...]] = {
+    "female": ("骚货", "小骚货", "母狗", "小母狗", "欠凿的", "发情的猫", "淫娃", "骚穴"),
+    "male": ("骚货", "小骚货", "公狗", "小公狗", "骚狗", "欠操的", "发情的公狗"),
+    "unknown": ("骚货", "贱货", "欠凿的", "发情的", "小骚东西"),
+}
+
+DOM_NAMES: dict[str, tuple[str, ...]] = {
+    "male": ("主人", "哥哥", "爸爸", "老爷"),
+    "female": ("主人", "姐姐", "女王", "妈咪"),
+    "unknown": (),
+}
+
+# 含糊词黑名单：质量门见到即判不合格（不含「那一点」这类被迫的中性说法）
+HEDGE_WORDS: tuple[str, ...] = (
+    "那里", "下面", "私处", "敏感部位", "敏感处", "那个", "做了",
+    "合为一体", "隐秘处", "不可描述",
+)
+
+# v3 骰子：场景/开头/节奏之外再抽三维，逼出具体动作与道具
+_CLIMAX_POSITIONS = (
+    "后入（按在桌面上）", "骑乘（被按着腰自己动）", "面对面抱起来",
+    "跪着口交", "压在转椅上侧入", "站着顶在墙上",
+)
+
+_CLIMAX_PROPS = (
+    "项圈与牵引绳", "跳蛋", "按摩棒", "领带", "签字笔", "打印机旁的胶带",
+)
+
+_CLIMAX_PLAYS = (
+    "一路插到底", "跳蛋＋插入双管齐下", "一边下命令一边动",
+    "逼着念羞耻台词", "手不许碰、只能挨着", "中途停下来逼 TA 求",
+)
+
+
+# --------------------------------------------------------------------------
 # 风格指令池：每次随机各抽一项写进 user prompt，逼 AI 换场景、换开头、换节奏，
 # 避免固定 prompt 下模型收敛到同一套句子。
 # --------------------------------------------------------------------------
@@ -138,17 +287,30 @@ def _library_block(gender: str) -> str:
 
     每次只随机抽一部分素材喂给 AI：全量喂 12 条动作时模型总会挑同一批，
     抽样后每凿拿到的素材组合都不同，成品才不会句句撞车。
+    例外是**器官词与器官贬称**：质量门要求正文里必须出现，所以整份都给。
     """
     key = gender if gender in _BODY_WORDS else "unknown"
     actions = random.sample(DIAOJIAO_LIBRARY["动作"], k=4)
+    organ_acts = random.sample(ORGAN_ACTS[key], k=3)
     props = random.sample(DIAOJIAO_LIBRARY["道具"], k=3)
     orders = random.sample(DIAOJIAO_LIBRARY["命令"], k=3)
+    verbs = random.sample(ACTION_WORDS, k=8)
     sounds = random.sample(LEXICON["声音"], k=3)
     bodies = random.sample(LEXICON["身体反应"], k=4)
     looks = random.sample(LEXICON["神态"], k=3)
-    fluids = random.sample(LEXICON["体液"], k=2)
+    fluids = random.sample(FLUID_WORDS, k=4)
+    onomatopoeia = random.sample(SOUND_WORDS, k=3)
+    calls = random.sample(CALL_NAMES[key], k=4)
     peaks = random.sample(LEXICON["顶点"], k=2)
-    lines = ["【调教库 · 只是意思参考，本次严禁照抄任何原句】"]
+    lines = [f"【器官词 · 必须直写，至少用到 {CLIMAX_MIN_ORGAN_WORDS} 个】"]
+    lines.append("· 器官：" + "、".join(ORGAN_WORDS[key]))
+    lines.append("· 器官贬称：" + "、".join(ORGAN_SLANG[key]))
+    lines.append("· 器官导向动作：" + "；".join(organ_acts))
+    lines.append("· 行为动词：" + "、".join(verbs))
+    lines.append("· 体液：" + "、".join(fluids))
+    lines.append("· 拟声：" + "、".join(onomatopoeia))
+    lines.append("· 称呼（对被凿者）：" + "、".join(calls))
+    lines.append("【调教库 · 只是意思参考，本次严禁照抄任何原句】")
     lines.append("· 动作：" + "；".join(actions))
     lines.append("· 道具：" + "；".join(props))
     lines.append("· 命令：" + "；".join(orders))
@@ -156,9 +318,7 @@ def _library_block(gender: str) -> str:
     lines.append(f"· 声音：" + "、".join(sounds))
     lines.append(f"· 身体反应：" + "、".join(bodies))
     lines.append(f"· 神态：" + "、".join(looks))
-    lines.append(f"· 体液：" + "、".join(fluids))
     lines.append(f"· 顶点：" + "、".join(peaks))
-    lines.append("· 身体词汇：" + "、".join(LEXICON[key]))
     return "\n".join(lines)
 
 
@@ -178,19 +338,26 @@ _BASE_SYSTEMS = {
 }
 
 _RULES = (
-    "\n\n写作要求：\n"
+    "\n\n【硬性尺度清单 · 每条都要满足】\n"
     "- 长度 250~400 字，像一段写满的小黄文，不要一句话敷衍\n"
     "- 整段文字必须放在同一段里：不分段、不换行、不要空行，"
     "系统会原样发出\n"
-    "- 主角 = 被凿者：重点写 TA 挨了这一下之后的反应、身体细节、失态和高潮，"
-    "把过程写透；镜头始终对着被凿者\n"
-    "- 最后一凿的人可以出场互动（按住、掐下巴、反扣手腕、贴耳命令、调教、起哄），"
-    "写 TA 被这个人摆弄、命令、玩到失神都可以；但不要写成凿者的个人秀，"
-    "落点必须回到被凿者的高潮\n"
-    "- 直白露骨：动作、身体部位、体液、声音、神态都写出来，"
-    "禁止用「那里」「那个」含糊过去\n"
-    "- 第三人称，用两人的真实昵称称呼，不要用「我」；"
-    "不确定凿者性别时用昵称或「那人」，不要滥用「他/她」\n"
+    "- 必须直写器官名（用下面素材库里的器官词），"
+    f"全篇至少出现 {CLIMAX_MIN_ORGAN_WORDS} 个不同器官词、"
+    "至少 1 个具体性动作、至少 1 个体液或拟声词\n"
+    "- 禁止含糊代称：「那里／下面／私处／敏感部位／那个／做了／"
+    "合为一体」一律不许出现，宁可写得脏也不许绕\n"
+    "- 按这个次序写、但不要换行：① 被凿那一下（器官特写＋第一波身体反应）"
+    "→ ② 凿者动手（点名最后一凿的人，写清 TA 的手/道具/命令落在哪里）"
+    "→ ③ 顶到满值那一刻（痉挛、绞紧、喷出来、失态）"
+    "→ ④ 余韵失神（一句对着凿者说的话）\n"
+    "- 主角 = 被凿者：镜头始终对着被凿者，"
+    "不要把镜头让给凿人的一方，也别写成凿者的个人秀\n"
+    "- 最后一凿的人可以出场互动（按住、掐下巴、反扣手腕、贴耳命令、上手、"
+    "起哄），可以用素材库里的羞辱称呼骂 TA\n"
+    "- 直白露骨、不做文学化隐喻；可以用脏话\n"
+    "- 第三人称，用两人的真实昵称，不要用「我」；"
+    "人称严格按给出的性别，不确定就用昵称或「那人」\n"
     "- 所有角色都是成年人；不涉及未成年、不攻击真实痛点\n"
     "- 直接输出正文：不要标题、不要引号、不要解释、不要 emoji"
 )
@@ -203,14 +370,44 @@ SYSTEM_MALE = _SYSTEMS["male"]
 SYSTEM_FEMALE = _SYSTEMS["female"]
 SYSTEM_UNKNOWN = _SYSTEMS["unknown"]
 
+# 尺度锚点示例：比规则更管用，直接把「够不够露骨」摆在模型面前（dzmm_nuo 同款做法）。
+_ANCHOR_EXAMPLES = {
+    "female": (
+        "示例（照这个尺度写，不要比它含蓄）："
+        "老王把小红按在工位上，从背后顶进去的那一下，穴口被撑得又胀又满，"
+        "阴唇被磨得发红发烫，淫水顺着大腿根一股股往下淌；他一手掐着她的腰，"
+        "一手按住她的后颈，抽送的水声在安静的办公室里响得清清楚楚。"
+        "「小母狗，夹这么紧。」小红被顶得连话都说不成句，穴肉一阵阵绞紧，"
+        "发情值冲到 100 的那一刻，她整个人绷成一张弓，脚背绷直、指尖抠进桌沿，"
+        "汁水喷了一桌面，只剩下喘和抖。"
+    ),
+    "male": (
+        "示例（照这个尺度写，不要比它含蓄）："
+        "老王把小明按在桌面上，一手掐着他的后颈，一手握住他的阴茎上下撸动，"
+        "龟头被磨得发红发亮、前液一股股往外冒；另一只手蘸着前液顶进后穴，"
+        "顺着肠壁一节一节往里送，抽送的水声响得刺耳。"
+        "「骚狗，叫出来。」小明被顶得闷哼都压不住，发情值冲到 100 的那一刻，"
+        "他腰一挺、脚趾蜷紧，精液一股股射在自己裤子上，"
+        "抖得连一句完整的话都说不出来。"
+    ),
+    "unknown": (
+        "示例（照这个尺度写，不要比它含蓄）："
+        "老王把人按住，从背后顶进去的那一下，穴口被撑得又胀又满，"
+        "穴肉一层层绞上来，汁水顺着腿根淌到桌面；他一手掐着腰不许躲，"
+        "另一只手按着后颈，抽送的水声在安静的办公室里响得清清楚楚。"
+        "「欠凿的小东西，叫出来。」人被顶得话都说不成句，"
+        "发情值冲到 100 的那一刻，整个人绷成一张弓，脚背绷直、指尖抠进桌沿，"
+        "汁水喷了一桌面，只剩下喘和抖。"
+    ),
+}
+
 
 def _system_prompt(gender: str) -> str:
     key = gender if gender in _SYSTEMS else "unknown"
-    body = "、".join(LEXICON[key])
     return (
         f"{_SYSTEMS[key]}\n\n"
-        f"本次身体词汇请从这些里挑：{body}。\n\n"
-        f"{_library_block(key)}"
+        f"{_library_block(key)}\n\n"
+        f"【尺度锚点】{_ANCHOR_EXAMPLES[key]}"
     )
 
 
@@ -219,36 +416,74 @@ def build_climax_messages(
     gender: str,
     chopper_name: str | None = None,
     threshold: int = 100,
+    chopper_gender: str | None = None,
+    rng=None,
+    strict: bool = False,
 ) -> tuple[str, str]:
     """按性别返回 (system_prompt, user_content)，不含群聊上下文。
 
-    `chopper_name` 是「最后一下凿 TA 的人」，可以出场与被凿者互动；
-    `threshold` 是当前高潮阈值（后台可配），只用于把「凿满 N」写对。
+    - `chopper_name`：「最后一下凿 TA 的人」，可以出场与被凿者互动。
+    - `chopper_gender`：凿者性别，用于给 TA 的称呼与人称（未知就只许用昵称/「那人」）。
+    - `threshold`：当前高潮阈值（后台可配），只用于把「凿满 N」写对。
+    - `rng`：骰子随机源（默认 SystemRandom；仓库侧传注入的 estrus_random）。
+    - `strict`：质量门第二次尝试时为 True，追加「上一版太含蓄」的退回说明。
     """
     key = gender if gender in _SYSTEMS else "unknown"
     label = _GENDER_LABELS[key]
     system = _system_prompt(key)
     chopper = (chopper_name or "").strip()
     if chopper:
-        chopper_line = (
-            f"最后一凿的人：{chopper}（可以出场和被凿者互动，"
-            f"但主角仍是被凿者）"
-        )
+        dom_key = chopper_gender if chopper_gender in DOM_NAMES else "unknown"
+        dom_names = DOM_NAMES[dom_key]
+        if dom_names:
+            chopper_line = (
+                f"最后一凿的人：{chopper}"
+                f"（性别：{_GENDER_LABELS[dom_key]}，会出场动手/下命令，"
+                f"称呼 TA 可以用：{'、'.join(dom_names)}）"
+            )
+        else:
+            chopper_line = (
+                f"最后一凿的人：{chopper}"
+                f"（性别未知，只用昵称或「那人」指代，不要用「他/她」；"
+                f"TA 会出场动手/下命令）"
+            )
     else:
         chopper_line = "最后一凿的人：未知（写被凿者独自被凿到高潮的样子）"
-    user = (
-        f"被凿者（主角）：{name}（性别：{label}）\n"
-        f"{chopper_line}\n"
-        f"刚刚这一下把 TA 的发情值凿满了 {int(threshold)}，"
-        f"请输出这段高潮描写。\n\n"
-        f"本次创作要求（务必遵守）：\n"
-        f"· 场景：{random.choice(_CLIMAX_SCENES)}\n"
-        f"· 开头：{random.choice(_CLIMAX_OPENERS)}\n"
-        f"· 节奏：{random.choice(_CLIMAX_RHYTHMS)}\n"
-        f"· 素材库只是意思参考：严禁照抄素材原句，"
-        f"表达必须全部换新写法，和之前的每一次都不一样。"
-    )
-    return system, user
+    chooser = rng or SystemRandom()
+    lines = [
+        f"被凿者（主角）：{name}（性别：{label}）",
+        chopper_line,
+        f"刚刚这一下把 TA 的发情值凿满了 {int(threshold)}，请输出这段高潮描写。",
+        "",
+        "本次创作要求（务必遵守）：",
+        f"· 场景：{random.choice(_CLIMAX_SCENES)}",
+        f"· 开头：{random.choice(_CLIMAX_OPENERS)}",
+        f"· 节奏：{random.choice(_CLIMAX_RHYTHMS)}",
+        f"· 体位：{chooser.choice(_CLIMAX_POSITIONS)}",
+        f"· 道具：{chooser.choice(_CLIMAX_PROPS)}",
+        f"· 玩法：{chooser.choice(_CLIMAX_PLAYS)}",
+        "· 素材库只是意思参考：严禁照抄素材原句，"
+        "表达必须全部换新写法，和之前的每一次都不一样。",
+    ]
+    if strict:
+        lines.append(f"· {STRICT_RETRY_INSTRUCTION}")
+    return system, "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 质量门：器官词够不够、有没有含糊代称
+# ---------------------------------------------------------------------------
+def climax_text_passes(text: str, gender: str) -> bool:
+    """正文是否达到 v3 的露骨度下限（不达标就退回重写/走兜底）。"""
+    if not text or not text.strip():
+        return False
+    key = gender if gender in ORGAN_WORDS else "unknown"
+    organs = tuple(ORGAN_WORDS[key]) + tuple(ORGAN_SLANG[key])
+    if sum(1 for word in organs if word in text) < CLIMAX_MIN_ORGAN_WORDS:
+        return False
+    if sum(1 for word in AUDIO_KEYWORDS if word in text) < CLIMAX_MIN_AUDIO_WORDS:
+        return False
+    return not any(word in text for word in HEDGE_WORDS)
 
 
 # --------------------------------------------------------------------------
@@ -306,7 +541,21 @@ _FALLBACKS: dict[str, dict[str, tuple[str, ...]]] = {
             "腰身敏感得吓人，被衣料蹭一下都发颤，"
             "更别说那一下接一下的余劲，",
         ),
+        "organ": (
+            "穴口被凿得又软又烫，淫水顺着腿根往下淌，湿透的布料黏在皮肤上，",
+            "阴唇被磨得发红发烫，阴蒂一碰就抖，淫水把穴肉浸得一片湿，",
+            "两指抠进穴口搅了两下，指腹碾着阴蒂，抽出来时拉出一条亮晶晶的丝，"
+            "粘腻的水声响得清清楚楚，",
+            "乳尖在衣服底下硬起来，被指腹碾着打转，穴口一张一合地往外淌水，"
+            "裤子湿透了一小块，",
+        ),
         "interaction": (
+            "{chopper}从背后按住{name}的腰，一手掐着她的下巴把脸掰过来，"
+            "贴在耳边骂了句「小母狗」，",
+            "{chopper}把她的双手按在键盘上，另一只手一路往下，"
+            "嘴里念着「骚货，水这么多」，",
+            "{chopper}扣着项圈往上一提，逼她抬着腰，"
+            "另一只手碾着阴蒂不肯松，",
             "{chopper}偏还不放过，贴着后背压下来，一手按住{name}的胯不让躲，"
             "另一只手顺着衣摆往里探，",
             "{chopper}掐着{name}的下巴把脸掰过来，逼着对上视线，"
@@ -348,7 +597,7 @@ _FALLBACKS: dict[str, dict[str, tuple[str, ...]]] = {
         ),
         "peak": (
             "发情值冲到顶的瞬间，{name}眼前一白，腰身绷成一张弓，"
-            "穴口一阵阵收缩着到了顶点，连一句完整的话都说不出来，",
+            "穴口猛地绞紧、汁水喷了一桌面，连一句完整的话都说不出来，",
             "满值的那一刻，{name}整个人断了线，腿根猛地夹紧又松开，"
             "喉咙里溢出一声拖长的呻吟，热潮一股股往下涌，",
             "{name}被凿得当场交代，弓着背一抽一抽地颤，"
@@ -417,7 +666,20 @@ _FALLBACKS: dict[str, dict[str, tuple[str, ...]]] = {
             "腿根又酸又软，膝盖一次次想弯下去，被自己硬生生撑住，",
             "{name}的手在桌下攥紧又松开，指节咯咯作响，",
         ),
+        "organ": (
+            "阴茎被握住上下撸动，龟头被磨得发红发亮，前液一股股往外冒，",
+            "马眼一张一合地吐着前液，囊袋被托在掌心里揉得发紧，",
+            "后穴被指腹一点点碾开，肠壁绞着手指不放，"
+            "抽送时带出粘腻的水声，",
+            "从背后顶进后穴的那一下整根没入，水声响得发闷，会阴被拍得发麻，",
+        ),
         "interaction": (
+            "{chopper}从背后按住{name}的后颈，另一只手绕到身前握住他的阴茎，"
+            "凑到耳边骂了句「骚狗」，",
+            "{chopper}把他的手反扣在椅背上，手指蘸着前液顶进后穴，"
+            "嘴里念着「欠操的，夹这么紧」，",
+            "{chopper}掐着他的下巴逼他低头看着自己，"
+            "手上的套弄一下比一下重，",
             "{chopper}从背后按住{name}的后颈，把人整个压在桌面上，"
             "另一只手绕到身前，",
             "{chopper}掐着{name}的下巴把脸掰过来，逼着对上视线，"
@@ -458,7 +720,8 @@ _FALLBACKS: dict[str, dict[str, tuple[str, ...]]] = {
         ),
         "peak": (
             "发情值冲到顶的瞬间，{name}眼前一白，腰身绷成一张弓，"
-            "后穴一阵阵绞紧着到了顶点，连一句完整的话都说不出来，",
+            "后穴猛地绞紧、精液一股股射在自己裤子上，"
+            "连一句完整的话都说不出来，",
             "满值的那一刻，{name}整个人断了线，膝盖顶着桌沿抖个不停，"
             "喉咙里溢出一声长长的闷哼，全交代在了自己裤子上，",
             "{name}被凿得当场交代，弓着背一抽一抽地颤，"
@@ -527,7 +790,22 @@ _FALLBACKS: dict[str, dict[str, tuple[str, ...]]] = {
             "{name}整个人蜷起来，额头抵在手臂上，肩膀细细地颤，",
             "指尖在桌下攥紧又松开，指节泛白，浑身的力气都留不住，",
         ),
+        "organ": (
+            "穴口被凿得又软又烫，穴肉一层层绞上来，汁水顺着腿根往下淌，"
+            "湿透的布料黏在皮肤上，",
+            "下体被磨得又胀又烫，穴肉一层层绞上来，裤子湿透了一小块，",
+            "两指抠进穴口搅了两下，穴肉绞着手指不放，"
+            "抽出来时拉出一条亮晶晶的丝，粘腻的水声响得清清楚楚，",
+            "下体被磨得又胀又烫，穴口一张一合地往外淌水，"
+            "湿透的布料黏在皮肤上，",
+        ),
         "interaction": (
+            "{chopper}从背后贴上来，一手按住{name}的腰不让躲，"
+            "另一只手顺着衣摆往里探，低声骂了句「欠凿的小东西」，",
+            "{chopper}把{name}的双手按在键盘上，指尖却一下比一下重，"
+            "嘴里念着「骚货，水都流到椅子上了」，",
+            "{chopper}掐住{name}的下巴把脸掰过来，逼着对上视线，"
+            "手下的动作一点没停，",
             "{chopper}还不放过，从背后贴上来，一手按住{name}的腰不让躲，"
             "另一只手顺着衣摆往里探，",
             "{chopper}掐住{name}的下巴把脸掰过来，逼着对上视线，"
@@ -568,7 +846,8 @@ _FALLBACKS: dict[str, dict[str, tuple[str, ...]]] = {
         ),
         "peak": (
             "发情值冲到顶的瞬间，{name}眼前一白，腰身绷成一张弓，"
-            "抖着到了顶点，连一句完整的话都说不出来，",
+            "穴口猛地绞紧、汁水喷了一桌面，"
+            "连一句完整的话都说不出来，",
             "满值的那一刻，{name}整个人断了线，喉咙里溢出一声拖长的呻吟，"
             "半天没缓过来，",
             "{name}被凿得当场交代，弓着背一抽一抽地颤，"
@@ -610,7 +889,8 @@ _FALLBACKS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 _SLOT_ORDER = (
-    "opening", "act", "interaction", "detail", "reaction", "afterglow", "peak",
+    "opening", "act", "organ", "interaction", "detail", "reaction", "afterglow",
+    "peak",
 )
 
 
@@ -654,13 +934,32 @@ def fallback_climax_text(
 
 
 __all__: Sequence[str] = (
+    "ACTION_WORDS",
+    "AUDIO_KEYWORDS",
+    "CALL_NAMES",
+    "CLIMAX_CONTINUE_ROUNDS",
     "CLIMAX_MAX_CHARS",
+    "CLIMAX_MAX_TOKENS",
+    "CLIMAX_MIN_AUDIO_WORDS",
+    "CLIMAX_MIN_ORGAN_WORDS",
+    "CLIMAX_TEMPERATURE",
     "CLIMAX_TIMEOUT_SECONDS",
+    "CLIMAX_TOTAL_BUDGET_SECONDS",
+    "CONTINUE_INSTRUCTION",
     "DIAOJIAO_LIBRARY",
+    "DOM_NAMES",
+    "FLUID_WORDS",
+    "HEDGE_WORDS",
+    "HistoryMessage",
     "LEXICON",
+    "ORGAN_ACTS",
+    "ORGAN_SLANG",
+    "ORGAN_WORDS",
+    "SOUND_WORDS",
     "SYSTEM_FEMALE",
     "SYSTEM_MALE",
     "SYSTEM_UNKNOWN",
     "build_climax_messages",
+    "climax_text_passes",
     "fallback_climax_text",
 )

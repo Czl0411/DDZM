@@ -1927,6 +1927,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
+            "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史",
             "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/投稿", "/我的投稿", "/撤回投稿", "/上一步", "/取消投稿", "/确认取消投稿", "/确认投稿", "/继续添加", "/事件完成", "/修改身份", "/删除身份", "/修改事件", "/删除事件", "/设置生日", "/我的生日", "/本月生日", "/随礼", "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据", "/真心换真心", "/真心换真心数据", "/问题", "/真心", "/罚款", "/我的罚款", "/我的津贴", "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/人气榜", "/设置性别"
             }
     command_records = {record["command"]: record for record in commands.json()}
@@ -2339,23 +2340,92 @@ def test_memory_assessment_settings_are_managed_over_core_api(client, headers):
     }
 
 
+@pytest.mark.parametrize("game_type", ["liar_dice", "truth_trade"])
+def test_dice_truth_admin_summary_is_public_and_force_end_is_scoped(app_context, headers, game_type):
+    from dzmm_bot.core.schema import LiarDiceGameRecord, LiarDicePlayerRecord
+
+    repository = app_context.repository
+    repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", NOW)
+    for index in range(3):
+        repository.create_user(f"player-{index}", f"玩家{index}", NOW, 0)
+    created = getattr(repository, f"start_{game_type}")("player-0", NOW)
+    for index in (1, 2):
+        getattr(repository, f"join_{game_type}")(f"player-{index}", NOW)
+    if game_type == "liar_dice":
+        with app_context.session_factory.begin() as session:
+            game = session.get(LiarDiceGameRecord, created.game_id)
+            game.state = "calling"
+            game.round_number = 1
+            game.current_seat = 2
+            game.current_call = {"count": 3, "face": 5}
+            game.turn_deadline = NOW + timedelta(seconds=120)
+            players = session.scalars(select(LiarDicePlayerRecord).where(LiarDicePlayerRecord.game_id == game.id).order_by(LiarDicePlayerRecord.joined_at, LiarDicePlayerRecord.id)).all()
+            for index, player in enumerate(players, 1):
+                player.state = "active"
+                player.seat_number = index
+                player.dice = [6, 6, 6, 6, 6]
+    else:
+        repository.begin_truth_trade("player-0", NOW)
+        repository.ask_truth_trade("player-0", "不要在后台展示的问题", NOW)
+        repository.answer_truth_trade("player-1", "不要在后台展示的回答", NOW)
+    response = app_context.client.get("/internal/gameplay/current", headers=headers)
+    assert response.status_code == 200
+    summary = response.json()["items"][0]
+    assert summary["game_type"] == game_type
+    assert summary["round_number"] == 1
+    assert len(summary["participants"]) == 3
+    assert all(player["number"] is not None and player["state"] == "active" for player in summary["participants"])
+    assert summary["action_deadline"] is not None
+    assert '"dice":' not in response.text
+    assert '"dice_snapshot":' not in response.text
+    assert "不要在后台展示" not in response.text
+    if game_type == "liar_dice":
+        assert summary["current_seat"] == 2
+        assert summary["current_call"] == {"count": 3, "face": 5}
+    else:
+        assert summary["current_speaker_name"] == "玩家0"
+        assert summary["responded_count"] == 1
+        assert summary["expected_response_count"] == 2
+    wrong_group = "00000000-0000-0000-0000-000000000002"
+    wrong = app_context.client.post(f"/internal/gameplay/{wrong_group}/{game_type}/{created.game_id}/force-end", headers=headers)
+    assert wrong.status_code == 409
+    ended = app_context.client.post(f"/internal/gameplay/{PRIMARY_GROUP_CHAT_ID}/{game_type}/{created.game_id}/force-end", headers=headers)
+    assert ended.json() == {"accepted": True}
+    assert app_context.client.get("/internal/gameplay/current", headers=headers).json()["items"] == []
+    repeated = app_context.client.post(f"/internal/gameplay/{PRIMARY_GROUP_CHAT_ID}/{game_type}/{created.game_id}/force-end", headers=headers)
+    assert repeated.status_code == 409
+
+
+@pytest.mark.parametrize("game", ["liar-dice", "truth-trade"])
+@pytest.mark.parametrize("minimum", [1, 11])
+def test_dice_truth_settings_reject_invalid_minimum(client, headers, game, minimum):
+    settings = {"turn_seconds": 120, "enabled": True, "min_players": minimum} if game == "liar-dice" else {"question_timeout_seconds": 300, "answer_timeout_seconds": 600, "enabled": True, "min_players": minimum}
+    assert client.patch(f"/internal/game/{game}/settings", headers=headers, json=settings).status_code == 422
+
+
 def test_liar_dice_settings_are_managed_over_core_api(client, headers):
     initial = client.get("/internal/game/liar-dice/settings", headers=headers)
     assert initial.status_code == 200
     assert initial.json()["turn_seconds"] == 120
+    assert initial.json()["enabled"] is True
+    assert initial.json()["min_players"] == 2
 
     updated = client.patch(
         "/internal/game/liar-dice/settings",
         headers=headers,
-        json={"turn_seconds": 90},
+        json={"turn_seconds": 90, "enabled": False, "min_players": 3},
     )
     assert updated.status_code == 200
     assert updated.json()["turn_seconds"] == 90
+    assert updated.json()["enabled"] is False
+    assert updated.json()["min_players"] == 3
+    legacy = client.patch("/internal/game/liar-dice/settings", headers=headers, json={"turn_seconds": 100})
+    assert legacy.json() == {"turn_seconds": 100, "enabled": False, "min_players": 3}
     assert (
         client.get("/internal/game/liar-dice/settings", headers=headers).json()[
             "turn_seconds"
         ]
-        == 90
+        == 100
     )
 
     invalid = client.patch(
@@ -2373,6 +2443,7 @@ def test_truth_trade_settings_are_managed_over_core_api(client, headers):
         "question_timeout_seconds": 300,
         "answer_timeout_seconds": 600,
         "min_players": 2,
+        "enabled": True,
     }
 
     updated = client.patch(
@@ -2382,12 +2453,14 @@ def test_truth_trade_settings_are_managed_over_core_api(client, headers):
             "question_timeout_seconds": 120,
             "answer_timeout_seconds": 240,
             "min_players": 3,
+            "enabled": False,
         },
     )
     assert updated.status_code == 200
     assert updated.json()["question_timeout_seconds"] == 120
     assert updated.json()["answer_timeout_seconds"] == 240
     assert updated.json()["min_players"] == 3
+    assert updated.json()["enabled"] is False
 
     invalid = client.patch(
         "/internal/game/truth-trade/settings",

@@ -8,3 +8,4 @@ build/
 config.local.json
 data/
 browser_profile/
+tmp_deploy_staging/

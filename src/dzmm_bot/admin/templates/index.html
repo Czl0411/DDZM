@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DZMM 管理控制台</title>
     <link rel="stylesheet" href="/static/admin.css">
+    <link rel="stylesheet" href="/static/admin-refined.css">
   </head>
   <body>
     <div class="shell">
@@ -93,6 +94,7 @@
                   <button id="nav-group-chats" class="nav-item" data-view="group-chats" type="button">群聊管理</button>
                   <button id="nav-organization" class="nav-item" data-view="organization" type="button">职位与部门</button>
                   <button id="nav-employees" class="nav-item" data-view="employees" type="button">员工</button>
+                  <button id="nav-honors" class="nav-item" data-view="honors" type="button">称号与荣誉</button>
                   <button id="nav-admins" class="nav-item" data-view="admins" type="button" hidden>管理员</button>
                 </div>
               </nav>
@@ -206,7 +208,7 @@
                 <hr>
                 <div class="list-toolbar"><div class="list-toolbar-controls"><span class="muted">全公司共用一期；公告广播到所有已启用监听的群。</span></div><button id="refresh-company-lottery" class="secondary" type="button">刷新报表</button></div>
                 <div class="panel-heading"><div><h2>现场操作</h2><p class="muted">手动开奖只对已经过了停售时刻的期次生效，并会照常发送开奖公告与全员福利。</p></div></div>
-                <div class="list-toolbar"><div class="list-toolbar-controls"><label>注入账户<select id="company-lottery-pool-account"><option value="pool">奖池</option><option value="adjustment">调节金</option></select></label><label>金额<input id="company-lottery-pool-amount" type="number" min="1" max="1000000" step="1" value="100"></label></div><button id="company-lottery-draw" class="secondary" type="button">手动开奖</button><button id="company-lottery-pool-deposit" class="secondary" type="button">手动注资</button></div>
+                <div class="list-toolbar lottery-deposit-controls"><div class="list-toolbar-controls lottery-deposit-fields"><label>注入账户<select id="company-lottery-pool-account"><option value="pool">奖池</option><option value="adjustment">调节金</option></select></label><label>金额<input id="company-lottery-pool-amount" type="number" min="1" max="1000000" step="1" value="100"></label></div><button id="company-lottery-draw" class="secondary" type="button">手动开奖</button><button id="company-lottery-pool-deposit" class="secondary" type="button">手动注资</button></div>
                 <div class="panel-heading"><div><h2>期次记录</h2><p class="muted">开奖前不展示号码；开奖后展示号码、盐与派奖结果。</p></div></div>
                 <div id="company-lottery-rounds" class="data-list" aria-live="polite"></div>
                 <hr>
@@ -256,9 +258,10 @@
 
 <section id="birthday-view" class="dashboard-view panel" hidden><div id="birthday-panel"></div></section>
               <section id="department-allowance-view" class="dashboard-view panel" hidden><div id="department-allowance-panel"></div></section>
-              <section id="liar-dice-view" class="dashboard-view panel" hidden><div id="liar-dice-panel"></div></section>
-              <section id="truth-trade-view" class="dashboard-view panel" hidden><div id="truth-trade-panel"></div></section>
+              <section id="liar-dice-view" class="dashboard-view panel" hidden><div id="liar-dice-panel"></div><div class="panel-heading"><div><h3>当前对局</h3><p class="muted">按群展示公开状态、参与者、回合和叫骰信息。</p></div></div><div id="liar-dice-session-card" class="game-session-list" aria-live="polite"></div></section>
+              <section id="truth-trade-view" class="dashboard-view panel" hidden><div id="truth-trade-panel"></div><div class="panel-heading"><div><h3>当前对局</h3><p class="muted">按群展示公开状态、参与者、轮次和回答进度。</p></div></div><div id="truth-trade-session-card" class="game-session-list" aria-live="polite"></div></section>
               <section id="estrus-view" class="dashboard-view panel" hidden><div id="estrus-panel"></div></section>
+              <section id="honors-view" class="dashboard-view panel" hidden><div id="honors-panel"></div></section>
               <section id="discipline-fine-view" class="dashboard-view panel" hidden><div id="discipline-fine-panel"></div></section>
               <section id="hide-and-seek-view" class="dashboard-view panel" hidden>
                 <p class="eyebrow">单人摸鱼小游戏</p>
@@ -326,7 +329,15 @@
               <section id="shop-view" class="dashboard-view panel" hidden>
                 <p class="eyebrow">总监事小卖部</p>
                 <nav class="management-tabs" data-management-tabs="shop" aria-label="商店分类"><button class="management-tab active" data-management-tab="items" type="button">商品列表</button><button class="management-tab" data-management-tab="activity" type="button">购买与使用</button><button class="management-tab" data-management-tab="adult-jobs" type="button">成人卡任务</button><button class="management-tab" data-management-tab="create" type="button">上架商品</button></nav>
-                <section class="management-pane" data-management-pane="items"><div class="panel-heading"><div><h2>商品列表</h2><p class="muted">支持改名、效果配置、删除恢复和 Excel 批量管理；删除与效果修改需超级管理员确认。</p></div></div><div class="command-actions"><button id="shop-excel-export" class="secondary" type="button">导出 Excel</button><button id="shop-excel-template" class="secondary" type="button">下载模板</button><button id="shop-excel-import" class="primary" type="button">导入 Excel</button><input id="shop-excel-file" type="file" accept=".xlsx" hidden><label><input id="shop-include-deleted" type="checkbox">显示及导出已删除商品</label><label><input id="shop-sync-stock" type="checkbox">导入时覆盖已有库存（默认保留实时库存）</label></div><section id="shop-import-preview" class="panel" hidden aria-live="polite"></section><div class="list-toolbar"><div class="list-toolbar-controls"><input class="list-search" data-list-filter="shop" type="search" placeholder="搜索商品"><select id="shop-category-filter" aria-label="按分类筛选"><option value="">全部分类</option><option value="礼物赠送">礼物赠送</option><option value="刮刮乐">刮刮乐</option><option value="功能道具">功能道具</option><option value="成人内容">成人内容</option><option value="收藏">收藏</option></select></div><label>每页<select class="page-size-select" data-list-page-size="shop"><option value="5">5</option><option value="10">10</option><option value="15">15</option><option value="20" selected>20</option><option value="50">50</option></select></label></div><datalist id="shop-category-options"><option value="礼物赠送"></option><option value="刮刮乐"></option><option value="功能道具"></option><option value="成人内容"></option><option value="收藏"></option></datalist><div class="list-scroll"><div id="shop-list" class="data-list"></div></div><nav id="shop-pagination" class="pagination" aria-label="物品分页"></nav></section>
+                <section class="management-pane" data-management-pane="items">
+                  <div class="panel-heading"><div><h2>商品列表</h2><p class="muted">按分类浏览商品概览，点击详情查看参数，编辑后预览确认；支持 Excel 批量管理。</p></div></div>
+                  <div class="command-actions"><button id="shop-excel-export" class="secondary" type="button">导出 Excel</button><button id="shop-excel-template" class="secondary" type="button">下载模板</button><button id="shop-excel-import" class="primary" type="button">导入 Excel</button><input id="shop-excel-file" type="file" accept=".xlsx" hidden><label><input id="shop-include-deleted" type="checkbox">显示及导出已删除商品</label><label><input id="shop-sync-stock" type="checkbox">导入时覆盖已有库存（默认保留实时库存）</label></div>
+                  <section id="shop-import-preview" class="panel" hidden aria-live="polite"></section>
+                  <div id="shop-category-tabs" class="management-tabs shop-category-tabs" role="tablist" aria-label="商品分类"></div>
+                  <div class="list-toolbar"><div class="list-toolbar-controls"><input class="list-search" data-list-filter="shop" type="search" placeholder="搜索商品"></div><label>每页<select class="page-size-select" data-list-page-size="shop"><option value="5">5</option><option value="10">10</option><option value="15">15</option><option value="20" selected>20</option><option value="50">50</option></select></label></div>
+                  <datalist id="shop-category-options"><option value="礼物赠送"></option><option value="刮刮乐"></option><option value="功能道具"></option><option value="成人内容"></option><option value="收藏"></option></datalist>
+                  <div id="shop-category-panel" role="tabpanel" aria-labelledby="shop-category-tab-0"><div class="list-scroll"><div id="shop-list" class="data-list"></div></div><nav id="shop-pagination" class="pagination" aria-label="物品分页"></nav></div>
+                </section>
                 <section class="management-pane" data-management-pane="activity" hidden><div class="panel-heading"><div><h2>购买与使用记录</h2><p class="muted">显示最近 100 条购买、使用和授权记录。</p></div></div><h3>购买记录</h3><div id="shop-purchase-log" class="data-list"></div><h3>使用记录</h3><div id="shop-use-log" class="data-list"></div><h3>授权记录</h3><div id="shop-consent-log" class="data-list"></div></section>
                 <section class="management-pane" data-management-pane="adult-jobs" hidden><div class="panel-heading"><div><h2>成人卡任务与状态</h2><p class="muted">失败的场景生成可重试；生效中的常识改变可强制结束。</p></div></div><h3>场景生成任务</h3><div id="shop-scene-job-list" class="data-list"></div><h3>常识改变状态</h3><div id="shop-common-state-list" class="data-list"></div></section>
                 <section class="management-pane" data-management-pane="create" hidden><div class="panel-heading"><div><h2>上架商品</h2><p class="muted">填写后先预览，再确认上架；效果配置仅超级管理员可修改。</p></div></div><form id="item-form" class="item-form"><input name="name" maxlength="64" placeholder="物品名称" required><input name="description" maxlength="200" placeholder="物品说明" required><input name="price" type="number" min="0" max="999" placeholder="价格" required><input name="stock" type="number" min="0" max="99999" placeholder="库存" required><input name="category" list="shop-category-options" maxlength="32" placeholder="分类（可留空）"><input name="daily_purchase_limit" type="number" min="0" max="99" placeholder="每日限购（留空=不限）"><label><input name="unlimited_stock" type="checkbox">无限库存</label><label>效果类型<select id="shop-create-effect" name="effect_type"><option value="none">无效果</option></select></label><div id="shop-create-effect-fields" class="shop-item-grid"></div><button class="primary" type="submit">预览上架</button></form></section>
@@ -346,6 +357,14 @@
       </main>
     </div>
     <div id="notification-region" class="notification-region" aria-live="polite" aria-atomic="true"></div>
+    <div id="shop-item-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="shop-item-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-shop-item-modal></div>
+      <section class="template-modal-card shop-item-modal-card">
+        <div class="template-modal-heading"><div><p class="eyebrow">商品管理</p><h2 id="shop-item-modal-title">商品详情</h2><p id="shop-item-modal-subtitle" class="muted"></p></div><button class="text-button" data-close-shop-item-modal type="button">关闭</button></div>
+        <div id="shop-item-modal-content"></div>
+        <p id="shop-item-modal-error" class="form-error" role="alert" hidden></p>
+      </section>
+    </div>
     <div id="group-chat-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="group-chat-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-group-chat-modal></div>
       <section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">多群配置</p><h2 id="group-chat-modal-title">新增群聊</h2><p class="muted">群链接必须与主群同域，格式为 https://站点/chat?c=群ID。</p></div><button class="text-button" data-close-group-chat-modal type="button">关闭</button></div>
@@ -735,6 +754,7 @@
       <div class="template-modal-backdrop" data-close-employee-profile-modal></div>
       <section class="template-modal-card employee-profile-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">员工档案</p><h2 id="employee-profile-modal-title">编辑个人档案</h2><p class="muted">管理员编辑或清空不扣员工余额，也不消耗公共人力。</p></div><button class="text-button" data-close-employee-profile-modal type="button">关闭</button></div>
         <label>个人档案<textarea id="employee-profile-text" rows="10" maxlength="800" placeholder="尚未填写"></textarea></label>
+        <section><button id="employee-honors-button" class="secondary" type="button">刷新荣誉信息</button><p id="employee-honors-summary" aria-live="polite"></p><div id="employee-honors-history"></div></section>
         <section class="employee-profile-image-panel">
           <h3>档案形象</h3>
           <img id="employee-profile-image" alt="当前档案形象" hidden>
@@ -771,5 +791,6 @@
     </div>
     <script src="/static/admin_urls.js"></script>
     <script src="/static/admin.js"></script>
+    <script src="/static/honors.js"></script>
   </body>
 </html>

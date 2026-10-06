@@ -714,6 +714,39 @@ def test_popularity_board_counts_today_only_and_keeps_heat():
     # 甲/乙昨天的高潮计数在今日榜里不再参与（榜单只剩今日被凿）
 
 
+def test_scheduled_popularity_empty_board_is_sent_once_per_slot():
+    service, repository, factory = _service()
+    repository.set_activity_settings(
+        repository.get_activity_settings().rules, ["12:00", "16:00"]
+    )
+    noon = NOW.replace(hour=12)
+    repository.run_daily_jobs(noon - timedelta(seconds=1))
+    assert not any("【人气榜】" in text for text in _replies(factory))
+    repository.run_daily_jobs(noon)
+    repository.run_daily_jobs(noon + timedelta(minutes=1))
+    assert _replies(factory).count("【人气榜】（12:00）\n今日暂无被凿记录") == 1
+    repository.run_daily_jobs(noon.replace(hour=16))
+    assert _replies(factory).count("【人气榜】（16:00）\n今日暂无被凿记录") == 1
+
+
+def test_scheduled_popularity_uses_new_chops_at_next_slot():
+    service, repository, factory = _service()
+    repository.set_activity_settings(
+        repository.get_activity_settings().rules, ["12:00", "16:00"]
+    )
+    noon = NOW.replace(hour=12)
+    repository.run_daily_jobs(noon)
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+    repository.run_daily_jobs(NOW)
+    assert _replies(factory).count("【人气榜】（12:00）\n今日暂无被凿记录") == 1
+    assert not any("【人气榜】（12:00）\n乙" in text for text in _replies(factory))
+    repository.run_daily_jobs(noon.replace(hour=16))
+    repository.run_daily_jobs(noon.replace(hour=16, minute=1))
+    assert _replies(factory).count("【人气榜】（16:00）\n乙：今日被凿1次") == 1
+
+
 def test_heat_persists_across_days_without_chop():
     service, repository, factory = _service(
         estrus_random=_SeqRandom([0.90, 0.60])

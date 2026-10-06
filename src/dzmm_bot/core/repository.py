@@ -54,6 +54,9 @@ from .ai_knowledge import (
 )
 
 from .ai_mentions import normalize_ai_mention
+from .game_statistics import (
+    other_game_users, record_game_participations, resolved_game_users, truth_trade_game_users,
+)
 from .birthday import (
     matches as birthday_matches,
     next_occurrence as birthday_next_occurrence,
@@ -155,6 +158,7 @@ from .shop_cards import (
 )
 from .shop_effects import default_effect_config, effect_definition, effective_config, item_effect_snapshot
 from .shop_management import ShopManagementMixin
+from .honors import HonorsMixin
 from .red_packet import RandomSource, generate_red_packet_allocation
 from .texas_holdem import (
     BettingPlayer,
@@ -1265,6 +1269,8 @@ class KingGameResult:
 @dataclass(frozen=True)
 class LiarDiceSettings:
     turn_seconds: int
+    enabled: bool = True
+    min_players: int = 2
 
 
 @dataclass(frozen=True)
@@ -1356,6 +1362,7 @@ class TruthTradeSettings:
     question_timeout_seconds: int
     answer_timeout_seconds: int
     min_players: int
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -1472,6 +1479,7 @@ class LiarDiceResult:
     public_message: str | None = None
     private_message: str | None = None
     statistics: LiarDiceStatistics | None = None
+    min_players: int = 2
 
 
 @dataclass(frozen=True)
@@ -1842,6 +1850,10 @@ class GameplayAdminSummary:
     mode: str | None = None
     round_number: int = 0
     maximum_rounds: int = 0
+    current_call: dict[str, int] | None = None
+    current_speaker_name: str | None = None
+    responded_count: int = 0
+    expected_response_count: int = 0
 
 
 def blame_settlement_template_values(
@@ -2472,6 +2484,10 @@ class EmployeeNameTakenError(ValueError):
 
 
 _COMMAND_DEFINITIONS = (
+    ("/我的称号", "/我的称号", "查看当前可佩戴称号和历史获得次数"),
+    ("/佩戴称号", "/佩戴称号 序号", "选择佩戴称号（/装备称号、/编辑称号 等效），序号 0 取消佩戴"),
+    ("/荣誉榜", "/荣誉榜", "查看当前周期的荣誉称号获得者"),
+    ("/荣誉历史", "/荣誉历史", "查看个人历史荣誉记录"),
     ("/入职", "/入职 名字", "登记群成员为摸鱼公司员工"),
     ("/我的物品", "/我的物品", "查看自己持有的物品"),
     ("/购买", "/购买 商品序号", "购买一件商店商品"),
@@ -2828,7 +2844,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository(ShopManagementMixin):
+class CoreRepository(ShopManagementMixin, HonorsMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -11005,6 +11021,7 @@ class CoreRepository(ShopManagementMixin):
             [player.user_id for player, _ in rows],
             now,
             group_chat_id=game.group_chat_id,
+            game_type="texas_holdem", game_id=game.id,
         )
         if showdown:
             details = []
@@ -12387,6 +12404,46 @@ class CoreRepository(ShopManagementMixin):
                 to_call=texas.to_call,
                 legal_actions=texas.legal_actions,
             )
+        if summary.game_type in {"liar_dice", "truth_trade"}:
+            with self._session() as session:
+                if summary.game_type == "liar_dice":
+                    game = session.get(LiarDiceGameRecord, summary.game_id)
+                    rows = self._liar_dice_players(session, summary.game_id, ("signup", "active"))
+                    participants = tuple(
+                        GameplayAdminParticipant(player.seat_number, user.display_name, state=player.state)
+                        for player, user in rows
+                    )
+                    current_seat = game.current_seat if game and game.state in {"calling", "dealing"} else None
+                    current_call = None if game is None or not game.current_call else {
+                        "count": game.current_call["count"], "face": game.current_call["face"]
+                    }
+                else:
+                    game = session.get(TruthTradeGameRecord, summary.game_id)
+                    rows = self._truth_trade_active_players(session, summary.game_id)
+                    participants = tuple(
+                        GameplayAdminParticipant(player.position, user.display_name, state=player.state)
+                        for player, user in rows
+                    )
+                    current_seat = game.current_position if game and game.state in {"asking", "answering"} else None
+                    current_call = None
+                if game is None or game.active_key != "global" or game.group_chat_id != group_chat_id:
+                    return GameplayAdminSummary(group_chat_id, group_name)
+                return GameplayAdminSummary(
+                    group_chat_id=group_chat_id,
+                    group_name=group_name,
+                    game_type=summary.game_type,
+                    game_id=game.id,
+                    state=game.state,
+                    participants=participants,
+                    signup_deadline=summary.signup_deadline,
+                    action_deadline=summary.phase_deadline,
+                    round_number=summary.round_number,
+                    current_seat=current_seat,
+                    current_call=current_call,
+                    current_speaker_name=summary.current_speaker_name,
+                    responded_count=summary.responded_count,
+                    expected_response_count=summary.expected_response_count,
+                )
         if summary.game_type == "never_have_i_ever":
             with self._session() as session:
                 rows = list(
@@ -12558,7 +12615,7 @@ class CoreRepository(ShopManagementMixin):
                         and game.group_chat_id == group_chat_id
                     ):
                         self._finish_king_game_locked(
-                            game, "forced_ended", "admin_forced", now
+                            session, game, "forced_ended", "admin_forced", now
                         )
                         ended = True
                 elif game_type == "liar_dice":
@@ -13224,9 +13281,10 @@ class CoreRepository(ShopManagementMixin):
         if state in {"completed", "forced_ended"}:
             self._bump_department_game_plays(
                 session,
-                [player.user_id for player, _ in self._active_king_game_players(session, game.id)],
+                resolved_game_users(session, "king_game", game.id),
                 now,
                 group_chat_id=game.group_chat_id,
+                game_type="king_game", game_id=game.id,
             )
 
     def _king_game_statistics_locked(
@@ -13410,17 +13468,14 @@ class CoreRepository(ShopManagementMixin):
         if state in {"completed", "forced_ended"}:
             self._bump_department_game_plays(
                 session,
-                [
-                    player.user_id
-                    for player, _ in self._liar_dice_players(session, game.id)
-                ],
+                resolved_game_users(session, "liar_dice", game.id),
                 now,
                 group_chat_id=game.group_chat_id,
+                game_type="liar_dice", game_id=game.id,
             )
 
-    @classmethod
     def _liar_dice_result_locked(
-        cls,
+        self,
         session: Session,
         game: LiarDiceGameRecord,
         status: str,
@@ -13429,7 +13484,7 @@ class CoreRepository(ShopManagementMixin):
         public_message: str | None = None,
         private_message: str | None = None,
     ) -> LiarDiceResult:
-        players = cls._liar_dice_players(
+        players = self._liar_dice_players(
             session, game.id, ("signup", "active")
         )
         views = tuple(
@@ -13446,7 +13501,7 @@ class CoreRepository(ShopManagementMixin):
             )
             if turn_player is not None:
                 turn_user = session.get(UserRecord, turn_player.user_id)
-        round_record = cls._liar_dice_current_round(session, game.id)
+        round_record = self._liar_dice_current_round(session, game.id)
         return LiarDiceResult(
             status=status,
             game_id=game.id,
@@ -13462,6 +13517,7 @@ class CoreRepository(ShopManagementMixin):
             statistics=statistics,
             public_message=public_message,
             private_message=private_message,
+            min_players=self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID).min_players,
         )
 
     def _liar_dice_deal_round(
@@ -13542,7 +13598,7 @@ class CoreRepository(ShopManagementMixin):
         game.state = "calling"
         game.turn_deadline = now + timedelta(
             seconds=self._liar_dice_settings_row(
-                session, game.group_chat_id
+                session, PRIMARY_GROUP_CHAT_ID
             ).turn_seconds
         )
         first = next(
@@ -13591,6 +13647,7 @@ class CoreRepository(ShopManagementMixin):
                     or group.deleted_at is not None
                     or not group.games_enabled
                     or "liar_dice" not in group.enabled_game_types
+                    or not self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID).enabled
                 ):
                     return LiarDiceResult("disabled")
                 active = self._active_liar_dice_game(session, group_chat_id)
@@ -13739,7 +13796,7 @@ class CoreRepository(ShopManagementMixin):
                 if actor.id != game.host_user_id:
                     return self._liar_dice_result_locked(session, game, "host_only")
                 rows = self._liar_dice_players(session, game.id, ("signup",))
-                if len(rows) < 2:
+                if len(rows) < self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID).min_players:
                     return self._liar_dice_result_locked(
                         session, game, "not_enough_players"
                     )
@@ -13846,7 +13903,7 @@ class CoreRepository(ShopManagementMixin):
                 game.current_seat = next_seat
                 game.turn_deadline = now + timedelta(
                     seconds=self._liar_dice_settings_row(
-                        session, game.group_chat_id
+                        session, PRIMARY_GROUP_CHAT_ID
                     ).turn_seconds
                 )
                 game.timeout_streak = 0
@@ -13925,7 +13982,9 @@ class CoreRepository(ShopManagementMixin):
                 round_record.actual_count = actual
                 round_record.winner_user_id = winner.id
                 round_record.loser_user_id = loser.id
-                round_record.dice_snapshot = all_dice
+                round_record.dice_snapshot = {
+                    str(player.user_id): (player.dice or []) for player, _ in players
+                }
                 round_record.state = "resolved"
                 round_record.resolved_at = now
                 game.state = "round_end"
@@ -14255,17 +14314,25 @@ class CoreRepository(ShopManagementMixin):
     def get_liar_dice_settings(self) -> LiarDiceSettings:
         with self._session() as session:
             row = self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID)
-            return LiarDiceSettings(turn_seconds=int(row.turn_seconds))
+            return LiarDiceSettings(turn_seconds=int(row.turn_seconds), enabled=row.enabled, min_players=int(row.min_players))
 
-    def set_liar_dice_settings(self, *, turn_seconds: int) -> LiarDiceSettings:
+    def set_liar_dice_settings(self, *, turn_seconds: int, enabled: bool | None = None, min_players: int | None = None) -> LiarDiceSettings:
         if not isinstance(turn_seconds, int) or not 30 <= turn_seconds <= 600:
             raise ValueError("回合超时秒数必须在 30~600 之间")
+        if enabled is not None and type(enabled) is not bool:
+            raise ValueError("开启状态必须为布尔值")
+        if min_players is not None and (type(min_players) is not int or not 2 <= min_players <= 10):
+            raise ValueError("最少开局人数必须在 2~10 之间")
         with self.transaction():
             with self._session() as session:
                 row = self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID)
                 row.turn_seconds = turn_seconds
+                if enabled is not None:
+                    row.enabled = enabled
+                if min_players is not None:
+                    row.min_players = min_players
                 session.flush()
-                return LiarDiceSettings(turn_seconds=int(row.turn_seconds))
+                return LiarDiceSettings(turn_seconds=int(row.turn_seconds), enabled=row.enabled, min_players=int(row.min_players))
 
     def get_truth_trade_settings(self) -> TruthTradeSettings:
         with self._session() as session:
@@ -14278,7 +14345,10 @@ class CoreRepository(ShopManagementMixin):
         question_timeout_seconds: int,
         answer_timeout_seconds: int,
         min_players: int,
+        enabled: bool | None = None,
     ) -> TruthTradeSettings:
+        if enabled is not None and type(enabled) is not bool:
+            raise ValueError("开启状态必须为布尔值")
         ranges = (
             ("提问超时秒数", question_timeout_seconds, 30, 3600),
             ("回答超时秒数", answer_timeout_seconds, 30, 3600),
@@ -14295,6 +14365,8 @@ class CoreRepository(ShopManagementMixin):
                 row.question_timeout_seconds = question_timeout_seconds
                 row.answer_timeout_seconds = answer_timeout_seconds
                 row.min_players = min_players
+                if enabled is not None:
+                    row.enabled = enabled
                 session.flush()
                 return _truth_trade_settings(row)
 
@@ -15176,7 +15248,7 @@ class CoreRepository(ShopManagementMixin):
         answer_leaders: tuple[tuple[str, int], ...] = (),
     ) -> TruthTradeResult:
         players = self._truth_trade_active_players(session, game.id)
-        settings = self._truth_trade_settings_row(session, game.group_chat_id)
+        settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
         asker_name = None
         answered_count = 0
         required_count = 0
@@ -15381,12 +15453,6 @@ class CoreRepository(ShopManagementMixin):
         game.state = "round_complete"
         game.phase_deadline = None
         game.settled_rounds += 1
-        self._bump_department_game_plays(
-            session,
-            [player.user_id for player, _ in players],
-            now,
-            group_chat_id=game.group_chat_id,
-        )
         # 顺序发言下每人每轮固定一问一答，排行无意义，不再展示
         return (
             f"【真心换真心】第 {game.round_number} 轮结束。\n"
@@ -15420,20 +15486,19 @@ class CoreRepository(ShopManagementMixin):
         reason: str,
         now: datetime,
     ) -> None:
-        """收局：unfinished 轮（已开局未结算）补计 1 局参与数。"""
+        """整局结束后计一次参与，至少需要一轮完整结算。"""
         game.state = state
         game.active_key = None
         game.phase_deadline = None
         game.finished_at = now
         game.finish_reason = reason
-        if game.round_number > game.settled_rounds and game.round_number >= 1:
-            game.settled_rounds = game.round_number
-            players = self._truth_trade_active_players(session, game.id)
+        if state == "finished":
             self._bump_department_game_plays(
                 session,
-                [player.user_id for player, _ in players],
+                truth_trade_game_users(session, game),
                 now,
                 group_chat_id=game.group_chat_id,
+                game_type="truth_trade", game_id=game.id,
             )
 
     def start_truth_trade(
@@ -15455,6 +15520,7 @@ class CoreRepository(ShopManagementMixin):
                     or group.deleted_at is not None
                     or not group.games_enabled
                     or "truth_trade" not in group.enabled_game_types
+                    or not self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID).enabled
                 ):
                     return TruthTradeResult("disabled")
                 active = self._active_truth_trade_game(session, group_chat_id)
@@ -15499,7 +15565,7 @@ class CoreRepository(ShopManagementMixin):
                 game = self._active_truth_trade_game(session, group_chat_id)
                 if game is None:
                     return TruthTradeResult("no_game")
-                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
                 announcements = self._truth_trade_expire_phase(
                     session, game, settings, now
                 )
@@ -15571,7 +15637,7 @@ class CoreRepository(ShopManagementMixin):
                 game = self._active_truth_trade_game(session, group_chat_id)
                 if game is None:
                     return TruthTradeResult("no_game")
-                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
                 user = self._truth_trade_user(session, platform_id)
                 if user is None:
                     return TruthTradeResult("not_joined")
@@ -15627,7 +15693,7 @@ class CoreRepository(ShopManagementMixin):
                 game = self._active_truth_trade_game(session, group_chat_id)
                 if game is None:
                     return TruthTradeResult("no_game")
-                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
                 announcements = self._truth_trade_expire_phase(
                     session, game, settings, now
                 )
@@ -15721,7 +15787,7 @@ class CoreRepository(ShopManagementMixin):
                 game = self._active_truth_trade_game(session, group_chat_id)
                 if game is None:
                     return TruthTradeResult("no_game")
-                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
                 announcements = self._truth_trade_expire_phase(
                     session, game, settings, now
                 )
@@ -15828,7 +15894,7 @@ class CoreRepository(ShopManagementMixin):
                 game = self._active_truth_trade_game(session, group_chat_id)
                 if game is None:
                     return TruthTradeResult("no_game")
-                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
                 announcements = self._truth_trade_expire_phase(
                     session, game, settings, now
                 )
@@ -15988,7 +16054,7 @@ class CoreRepository(ShopManagementMixin):
                 game = self._active_truth_trade_game(session, group_chat_id)
                 if game is None:
                     return TruthTradeResult("no_game")
-                settings = self._truth_trade_settings_row(session, game.group_chat_id)
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
                 user = self._truth_trade_user(session, platform_id)
                 if user is None:
                     return TruthTradeResult("not_joined")
@@ -16242,7 +16308,7 @@ class CoreRepository(ShopManagementMixin):
                     return messages
                 game.turn_deadline = now + timedelta(
                     seconds=self._liar_dice_settings_row(
-                        session, game.group_chat_id
+                        session, PRIMARY_GROUP_CHAT_ID
                     ).turn_seconds
                 )
                 next_player = next(
@@ -17325,19 +17391,13 @@ class CoreRepository(ShopManagementMixin):
         game.response_deadline = None
         game.finished_at = now
         game.finish_reason = reason
-        if state in {"ended", "settled"}:
+        if state in {"completed", "forced_ended"}:
             self._bump_department_game_plays(
                 session,
-                [
-                    player.user_id
-                    for player in session.scalars(
-                        select(NeverHaveIEverPlayerRecord).where(
-                            NeverHaveIEverPlayerRecord.game_id == game.id
-                        )
-                    )
-                ],
+                other_game_users(session, "never_have_i_ever", game.id),
                 now,
-                group_chat_id=group_chat_id,
+                group_chat_id=game.group_chat_id,
+                game_type="never_have_i_ever", game_id=game.id,
             )
         for player in session.scalars(
             select(NeverHaveIEverPlayerRecord).where(
@@ -18816,17 +18876,10 @@ class CoreRepository(ShopManagementMixin):
         if reason != "empty_signup":
             self._bump_department_game_plays(
                 session,
-                [
-                    member.user_id
-                    for member in session.scalars(
-                        select(NumberBombMemberRecord).where(
-                            NumberBombMemberRecord.game_id == game.id,
-                            NumberBombMemberRecord.state == "current",
-                        )
-                    )
-                ],
+                other_game_users(session, "number_bomb", game.id),
                 now,
                 group_chat_id=game.group_chat_id,
+                game_type="number_bomb", game_id=game.id,
             )
         collecting_round = session.scalar(
             select(NumberBombRoundRecord).where(
@@ -19658,14 +19711,10 @@ class CoreRepository(ShopManagementMixin):
                 self._record_undercover_facts(session, game, None, "ended", now)
                 self._bump_department_game_plays(
                     session,
-                    [
-                        member.user_id
-                        for member in self._undercover_joined_members(
-                            session, session_record.id
-                        )
-                    ],
+                    other_game_users(session, "undercover", game.id),
                     now,
                     group_chat_id=session_record.group_chat_id,
+                    game_type="undercover", game_id=game.id,
                 )
                 return UndercoverGameResult("ended", session_id=session_record.id, game_id=game.id)
 
@@ -20455,14 +20504,10 @@ class CoreRepository(ShopManagementMixin):
         self._record_undercover_facts(session, game, winner, None, now)
         self._bump_department_game_plays(
             session,
-            [
-                member.user_id
-                for member in self._undercover_joined_members(
-                    session, session_record.id
-                )
-            ],
+            other_game_users(session, "undercover", game.id),
             now,
             group_chat_id=session_record.group_chat_id,
+            game_type="undercover", game_id=game.id,
         )
         next_round_exit_labels = self._apply_undercover_next_round_exits(
             session, session_record.id, now
@@ -23886,6 +23931,7 @@ class CoreRepository(ShopManagementMixin):
             [player.user_id for player, _ in rows],
             now,
             group_chat_id=game.group_chat_id,
+            game_type="blame_bomb", game_id=game.id,
         )
         return BlameGameResult(
             "settled",
@@ -27926,8 +27972,21 @@ class CoreRepository(ShopManagementMixin):
         user_ids: Sequence[UUID],
         now: datetime,
         group_chat_id: UUID | None = None,
+        *,
+        game_type: str | None = None,
+        game_id: UUID | None = None,
     ) -> None:
         """对局完成时给参与者计 1 局；每满步长局发 1 币（步长可配置）。"""
+        if (game_type is None) != (game_id is None):
+            raise ValueError("game_type and game_id must be provided together")
+        if game_type is not None:
+            if group_chat_id is None:
+                raise ValueError("completed games require a group")
+            user_ids = record_game_participations(
+                session, game_type, game_id, group_chat_id, user_ids, now,
+            )
+        if not user_ids:
+            return
         allow_date = now.astimezone(BEIJING).date()
         settings_row = self._department_allowance_settings_row(session)
         step = max(1, int(settings_row.game_play_step))
@@ -28250,6 +28309,7 @@ class CoreRepository(ShopManagementMixin):
                         ),
                     )
             self.run_random_event_jobs(now)
+        self.run_honor_jobs(now)
         if should_backfill:
             self._current_day_history_backfilled = now.date()
 
@@ -28492,12 +28552,11 @@ class CoreRepository(ShopManagementMixin):
                     estrus_text = self._estrus_popularity_text(
                         group_chat_id, report_time, now
                     )
-                    if estrus_text:
-                        self.enqueue_system_outbound(
-                            estrus_text,
-                            group_chat_id=group_chat_id,
-                            destination_chatroom_id=destination,
-                        )
+                    self.enqueue_system_outbound(
+                        estrus_text,
+                        group_chat_id=group_chat_id,
+                        destination_chatroom_id=destination,
+                    )
                     if not rankings:
                         session.add(
                             IncomeReportDeliveryRecord(
@@ -28525,11 +28584,11 @@ class CoreRepository(ShopManagementMixin):
 
     def _estrus_popularity_text(
         self, group_chat_id: UUID, report_time: str, now: datetime
-    ) -> str | None:
+    ) -> str:
         entries = self.estrus_popularity_rankings(group_chat_id, now)
-        if not entries:
-            return None
         lines = [f"【人气榜】（{report_time}）"]
+        if not entries:
+            return "\n".join([*lines, "今日暂无被凿记录"])
         lines.extend(
             f"{entry['display_name']}：今日被凿{entry['today_chopped']}次"
             for entry in entries
@@ -35181,6 +35240,7 @@ def _truth_trade_settings(
         question_timeout_seconds=int(record.question_timeout_seconds),
         answer_timeout_seconds=int(record.answer_timeout_seconds),
         min_players=int(record.min_players),
+        enabled=record.enabled,
     )
 
 

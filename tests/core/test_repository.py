@@ -10667,24 +10667,32 @@ def test_activity_settlement_is_once_and_negative_does_not_reduce_today_income(
     assert repository.find_user("u1").balance == -3
 
 
-def test_due_income_report_is_queued_once_and_empty_slot_is_skipped(repository, now):
+def test_due_income_report_is_queued_once_and_empty_slot_is_skipped(repository, session_factory):
     from dzmm_bot.core.schema import BEIJING
 
     repository.run_daily_jobs(datetime(2026, 8, 5, 12, 0, tzinfo=BEIJING))
-    assert repository.claim_outbound("worker-a", now, 30) is None
+    with session_factory() as session:
+        assert list(session.scalars(select(OutboundRecord.text))) == [
+            "【人气榜】（12:00）\n今日暂无被凿记录"
+        ]
 
     repository.create_user(
         "u1", "小明", datetime(2026, 8, 5, 13, 0, tzinfo=BEIJING), 3
     )
     repository.run_daily_jobs(datetime(2026, 8, 5, 16, 0, tzinfo=BEIJING))
 
-    assert repository.claim_outbound("worker-a", now, 30).text.startswith("今日收益榜")
     repository.run_daily_jobs(datetime(2026, 8, 5, 16, 1, tzinfo=BEIJING))
-    assert repository.claim_outbound("worker-b", now, 30) is None
+    with session_factory() as session:
+        messages = list(session.scalars(select(OutboundRecord.text)))
+    assert len(messages) == 3
+    assert messages.count("【人气榜】（12:00）\n今日暂无被凿记录") == 1
+    assert messages.count("【人气榜】（16:00）\n今日暂无被凿记录") == 1
+    assert sum(message.startswith("今日收益榜（16:00）") for message in messages) == 1
 
 
-def test_due_income_report_fans_out_only_to_announcement_groups(repository):
+def test_due_income_report_fans_out_only_to_announcement_groups(repository, session_factory):
     report_at = datetime(2026, 8, 5, 16, 0, tzinfo=BEIJING)
+    repository.set_activity_settings(repository.get_activity_settings().rules, ["16:00"])
     primary = repository.bootstrap_primary_group(
         "https://www.aikda.com/chat?c=income-main", report_at
     )
@@ -10711,10 +10719,13 @@ def test_due_income_report_fans_out_only_to_announcement_groups(repository):
     repository.run_daily_jobs(report_at)
     repository.run_daily_jobs(report_at + timedelta(minutes=1))
 
-    first = repository.claim_outbound("worker-a", report_at, 30)
-    second = repository.claim_outbound("worker-b", report_at, 30)
-    assert {first.group_chat_id, second.group_chat_id} == {primary.id, enabled.id}
-    assert repository.claim_outbound("worker-c", report_at, 30) is None
+    with session_factory() as session:
+        messages = list(session.scalars(select(OutboundRecord)))
+    assert len(messages) == 4
+    for prefix in ("【人气榜】", "今日收益榜"):
+        reports = [message for message in messages if message.text.startswith(prefix)]
+        assert {message.group_chat_id for message in reports} == {primary.id, enabled.id}
+        assert len(reports) == 2
 
 
 @pytest.mark.parametrize(

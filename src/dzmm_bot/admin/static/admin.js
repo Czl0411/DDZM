@@ -29,7 +29,7 @@ let gameplayVersion = null;
 let randomEventSettings = null;
 let employeePage = 1;
 let shopPage = 1;
-let shopCategoryFilter = "";
+let shopCategoryFilter = null;
 let departmentPage = 1;
 let promotionPage = 1;
 let departmentRequestPage = 1;
@@ -100,10 +100,14 @@ const randomEventCommandOptions = [
   ["/设置生日", "/设置生日"], ["/我的生日", "/我的生日"], ["/本月生日", "/本月生日"],
 ];
 const pageContext = {
+  honors: {crumb: "人员与系统 / 称号与荣誉", title: "称号与荣誉", description: "每周评选、限期佩戴与历史荣誉"},
   overview: {crumb: "运营概览", title: "机器人运行状态", description: "查看服务、浏览器和人工登录状态。"},
   events: {crumb: "游戏运营 / 随机事件", title: "随机事件运营", description: "安排今日场次，管理场景、角色席位与剧情事件。"},
   "hide-and-seek": {crumb: "游戏运营 / 躲猫猫", title: "躲猫猫运营", description: "管理单人躲猫猫的经济规则与可用躲藏地点。"},
   birthday: {crumb: "游戏运营 / 生日祝福", title: "生日祝福运营", description: "配置生日祝福、礼金、随礼与寿星特权，并查看生日名单。"},
+  "liar-dice": {crumb: "游戏运营 / 大话骰子", title: "大话骰子运营", description: "配置玩法开关、开局人数和回合时限，查看并管理当前对局。"},
+  "truth-trade": {crumb: "游戏运营 / 真心换真心", title: "真心换真心运营", description: "配置玩法开关、开局人数和提问回答时限，查看并管理当前对局。"},
+  estrus: {crumb: "游戏运营 / 凿与发情值", title: "凿与发情值运营", description: "查看玩法状态、额度与摸鱼币模式，并维护概率和限制。"},
   "memory-assessment": {crumb: "游戏运营 / 记忆考核", title: "记忆考核运营", description: "配置单人挑战与双人对战的难度、奖池和限制。"},
   undercover: {crumb: "游戏运营 / 谁是卧底", title: "谁是卧底运营", description: "查看公开对局进度，并维护多人推理局的基础规则。"},
   "blame-bomb": {crumb: "游戏运营 / 甩锅游戏", title: "甩锅游戏运营", description: "管理事故卡、逐人数时长规则和当前公开对局。"},
@@ -270,14 +274,23 @@ function initializeListFilters() {
       }
     });
   });
-  const shopCategorySelect = document.querySelector("#shop-category-filter");
-  if (shopCategorySelect) {
-    shopCategorySelect.addEventListener("change", () => {
-      shopCategoryFilter = shopCategorySelect.value;
-      shopPage = 1;
-      void loadShop();
-    });
-  }
+  const shopCategories = document.querySelector("#shop-category-tabs");
+  shopCategories.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-shop-category]");
+    if (!button) return;
+    shopCategoryFilter = JSON.parse(button.dataset.shopCategory);
+    renderShopCatalog(1);
+    shopCategories.querySelector('[aria-selected="true"]').focus();
+  });
+  shopCategories.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const buttons = [...shopCategories.querySelectorAll("[data-shop-category]")];
+    const index = buttons.indexOf(event.target);
+    if (index < 0) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next].click();
+  });
 }
 
 const loginScreen = document.querySelector("#login-screen");
@@ -362,6 +375,7 @@ const departmentModal = document.querySelector("#department-modal");
 
 function setPageContext(view) {
   const context = pageContext[view] || pageContext.overview;
+  dashboard.dataset.design = "refined";
   document.querySelector("#page-breadcrumb").textContent = context.crumb;
   document.querySelector("#dashboard-title").textContent = context.title;
   document.querySelector("#page-context").textContent = context.description;
@@ -696,6 +710,27 @@ function renderTexasHoldemSession(gameplay) {
   }).join("");
 }
 
+function renderDiceTruthSessions(gameplay, gameType, key, title) {
+  const card = document.querySelector(`#${key}-session-card`);
+  const games = (gameplay.items || []).filter((game) => game.game_type === gameType);
+  const states = {signup: "报名中", dealing: "发骰中", calling: "叫骰中", round_end: "本轮结束", asking: "提问中", answering: "回答中", round_complete: "本轮结束"};
+  const playerStates = {signup: "报名", active: "参与中"};
+  card.innerHTML = games.map((game) => {
+    const players = game.participants.map((player) => `${player.number == null ? "" : `${player.number}号 `}${player.display_name}（${playerStates[player.state] || player.state || "等待"}）`).join("、");
+    const current = game.current_seat == null ? "等待开始" : `${game.current_seat}号 ${game.current_speaker_name || game.participants.find((player) => player.number === game.current_seat)?.display_name || ""}`;
+    const progress = gameType === "liar_dice"
+      ? (game.current_call ? `${game.current_call.count} 个 ${game.current_call.face}` : "尚未叫骰")
+      : (game.state === "answering" ? `已回答 ${game.responded_count ?? 0} / ${game.expected_response_count ?? 0} 人` : states[game.state] || "等待");
+    const deadline = game.state === "signup" ? game.signup_deadline : game.action_deadline;
+    return `<section class="game-session-summary"><div class="panel-heading"><div><h3>${escapeHtml(game.group_name || "群聊")}</h3><p class="muted">对局 ${escapeHtml(game.game_id)} · ${escapeHtml(states[game.state] || game.state || "未知状态")}</p></div><button class="danger-button" type="button" data-force-end-game data-group-chat-id="${escapeHtml(game.group_chat_id)}" data-game-type="${gameType}" data-game-id="${escapeHtml(game.game_id)}">强制结束</button></div><div class="settings-card">
+      ${ruleStatusCard("当前轮次", game.round_number ? `第 ${game.round_number} 轮` : "尚未开始", deadline ? `截止 ${formatHeartbeat(deadline)}` : "当前阶段无截止时间")}
+      ${ruleStatusCard(gameType === "liar_dice" ? "行动玩家" : "提问玩家", current, "按当前对局的玩家编号操作")}
+      ${ruleStatusCard(gameType === "liar_dice" ? "当前叫骰" : "当前进度", progress, "公开对局信息")}
+      ${ruleStatusCard("参与者", `${game.participants.length} 人`, players)}
+    </div></section>`;
+  }).join("") || `<p class="muted">当前没有进行中的${escapeHtml(title)}对局。</p>`;
+}
+
 function renderRedPacketSettings(settings) {
   document.querySelector("#red-packet-settings-card").innerHTML = `
     <article><span>红包过期</span><strong>${settings.expiry_minutes} 分钟</strong><small>到期退还尚未领取的金额</small></article>
@@ -706,6 +741,8 @@ function renderCurrentGameplay(gameplay) {
   currentGameplay = gameplay;
   gameplayVersion = gameplay.version;
   renderTexasHoldemSession(gameplay);
+  renderDiceTruthSessions(gameplay, "liar_dice", "liar-dice", "大话骰子");
+  renderDiceTruthSessions(gameplay, "truth_trade", "truth-trade", "真心换真心");
   const card = document.querySelector("#gameplay-current-card");
   const items = gameplay.items || [];
   if (!items.length) {
@@ -715,7 +752,7 @@ function renderCurrentGameplay(gameplay) {
   }
   const names = {
     number_bomb: "蹦蹦数字炸弹", blame_bomb: "甩锅游戏", undercover: "谁是卧底",
-    memory_duel: "记忆考核对战", memory_guild: "记忆考核公会赛", random_event: "随机事件", texas_holdem: "德州扑克", never_have_i_ever: "我有你没有", king_game: "国王游戏", conflict: "玩法状态冲突",
+    memory_duel: "记忆考核对战", memory_guild: "记忆考核公会赛", random_event: "随机事件", texas_holdem: "德州扑克", never_have_i_ever: "我有你没有", king_game: "国王游戏", liar_dice: "大话骰子", truth_trade: "真心换真心", conflict: "玩法状态冲突",
   };
   const states = {
     signup: "报名中", collecting: "报数中", waiting_continue: "等待继续",
@@ -1506,10 +1543,17 @@ async function openProfileSettingsModal() {
 async function openEmployeeProfileModal(platformId, displayName) {
   const profile = await requestGame(`/api/game/users/${platformId}/profile`);
   employeeProfileModal.dataset.platformId = platformId;
+  document.querySelector("#employee-honors-summary").textContent = "读取荣誉信息中…";
+  document.querySelector("#employee-honors-history").replaceChildren();
   document.querySelector("#employee-profile-modal-title").textContent = `编辑档案：${displayName}`;
   document.querySelector("#employee-profile-text").value = profile.profile_text;
   renderEmployeeProfileImage(profile.profile_image_url, profile.latest_upload);
   employeeProfileModal.hidden = false;
+  void loadEmployeeHonors(platformId).catch((error) => {
+    if (employeeProfileModal.dataset.platformId === platformId) {
+      document.querySelector("#employee-honors-summary").textContent = `读取荣誉信息失败：${error.message}`;
+    }
+  });
 }
 
 function formatSignedAmount(amount) {
@@ -2046,7 +2090,11 @@ async function loadEmployees(page = employeePage) {
   employeePage = employees.page;
   const filtered = filterList("employees", employees.items, (employee) => `${employee.display_name} ${employee.platform_nickname || ""} ${formatEmployeeNumber(employee.employee_number)} ${employee.employee_number} ${employee.rank_name || ""} ${employee.department_name || ""}`);
   document.querySelector("#employee-list").innerHTML = filtered.map((employee) => `
-    <article class="data-row"><div><b>${escapeHtml(employee.display_name)}</b><small>平台昵称：${escapeHtml(employee.platform_nickname || "暂未获取")}</small><small>工号：${formatEmployeeNumber(employee.employee_number)} · ${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong><button class="secondary" data-balance-ledger="${escapeHtml(employee.platform_id)}" type="button">摸鱼币流水</button><button class="secondary" data-employee-group-messages="${escapeHtml(employee.platform_id)}" type="button">群聊记录</button><button class="secondary" data-personal-profile="${escapeHtml(employee.platform_id)}" data-personal-profile-name="${escapeHtml(employee.display_name)}" type="button">档案</button><button class="secondary" data-ai-memory="${escapeHtml(employee.platform_id)}" data-ai-memory-name="${escapeHtml(employee.display_name)}" type="button">AI 记忆</button>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
+    <article class="data-row employee-row"><div class="employee-info"><b>${escapeHtml(employee.display_name)}</b><small>平台昵称：${escapeHtml(employee.platform_nickname || "暂未获取")}</small><small>工号：${formatEmployeeNumber(employee.employee_number)} · ${escapeHtml(employee.rank_name || "职位未分配")}（${escapeHtml(employee.rank_level_label || "—")}）· ${escapeHtml(employee.department_name || "未分配部门")}</small><small>入职：${formatHeartbeat(employee.joined_at)}</small></div><div class="command-actions employee-actions"><strong>${employee.balance} ${escapeHtml(settings.currency_name)}</strong><button class="secondary" data-balance-ledger="${escapeHtml(employee.platform_id)}" type="button">摸鱼币流水</button><button class="secondary" data-employee-group-messages="${escapeHtml(employee.platform_id)}" type="button">群聊记录</button><button class="secondary" data-personal-profile="${escapeHtml(employee.platform_id)}" data-personal-profile-name="${escapeHtml(employee.display_name)}" type="button">档案</button><button class="secondary" data-ai-memory="${escapeHtml(employee.platform_id)}" data-ai-memory-name="${escapeHtml(employee.display_name)}" type="button">AI 记忆</button>${identity?.role === "super_admin" ? `<button class="secondary" data-board-member="${escapeHtml(employee.platform_id)}" data-board-active="${employee.rank_name === "核心董事会"}" type="button">${employee.rank_name === "核心董事会" ? "撤销董事会" : "授予董事会"}</button>` : ""}</div></article>`).join("") || "<p class=\"muted\">还没有员工入职。</p>";
+  for (const [index, label] of [...document.querySelectorAll("#employee-list .data-row > div > b")].entries()) {
+    const title = filtered[index]?.honor_title;
+    if (title) label.textContent += `【荣誉称号：${title}】`;
+  }
   renderPagination(document.querySelector("#employee-pagination"), employees, "位员工", loadEmployees);
 }
 
@@ -2246,32 +2294,7 @@ async function loadShop(page = shopPage) {
   createEffect.disabled = identity?.role !== "super_admin";
   const createFields = document.querySelector("#shop-create-effect-fields");
   if (!createFields.children.length) createFields.innerHTML = shopEffectFields(createCode, shopEffectMetadata.types.find((effect) => effect.code === createCode)?.defaults, identity?.role !== "super_admin");
-  const categoryFiltered = shopCategoryFilter
-    ? items.items.filter((item) => (item.category || "") === shopCategoryFilter)
-    : items.items;
-  const filtered = filterList("shop", categoryFiltered, (item) => `${item.name} ${item.description} ${item.category || ""}`);
-  const pageData = renderLocalPagination(document.querySelector("#shop-pagination"), filtered, page, pageSizeFor("shop"), "件商品", loadShop);
-  shopPage = pageData.page;
-  document.querySelector("#shop-list").innerHTML = pageData.items.map((item) => `
-    <article class="data-row shop-item-card" data-shop-item="${item.public_number}">
-      <div class="shop-item-heading">
-        <div class="shop-item-title"><b>#${item.public_number} ${escapeHtml(item.name)}</b><div class="shop-item-badges">${statusBadge(item.deleted_at ? "已删除" : item.enabled ? "已上架" : "已下架", item.enabled && !item.deleted_at ? "success" : "warning")}<span class="status-badge">${escapeHtml(item.category || "未分类")}</span><small>${item.system_key ? `系统标识：${escapeHtml(item.system_key)}` : "普通商品"}</small><small>持有人 ${item.holders} · 持有量 ${item.quantity} · ${item.has_active_use ? "有未完成流程" : "无未完成流程"}</small></div></div>
-        <label class="shop-item-toggle"><input data-item-enabled type="checkbox" ${item.enabled ? "checked" : ""} ${item.deleted_at ? "disabled" : ""}> 上架</label>
-      </div>
-      <label>商品名称<input data-item-name maxlength="64" value="${escapeHtml(item.name)}" ${item.deleted_at ? "disabled" : ""}></label>
-      <label>商品描述<textarea data-item-description maxlength="200" rows="2">${escapeHtml(item.description)}</textarea></label>
-      <div class="shop-item-grid">
-        <label>价格<input data-item-price type="number" min="0" max="999" value="${item.price}"></label>
-        <label>库存<input data-item-stock type="number" min="0" max="99999" value="${item.stock}"></label>
-        <label class="shop-item-check"><input data-item-unlimited type="checkbox" ${item.unlimited_stock ? "checked" : ""}> 无限库存</label>
-        <label>分类<input data-item-category list="shop-category-options" maxlength="32" value="${escapeHtml(item.category || "")}" placeholder="未分类"></label>
-        <label>每日限购<input data-item-daily-limit type="number" min="0" max="99" value="${item.daily_purchase_limit ?? ""}" placeholder="不限"></label>
-        <label>最低职位<select data-item-rank aria-label="最低职位"><option value="">不限职位</option>${rankDefinitions.map((rank) => `<option value="${rank.sort_order}" ${item.minimum_rank_order === rank.sort_order ? "selected" : ""}>${escapeHtml(rank.level_label)} ${escapeHtml(rank.name)}</option>`).join("")}</select></label>
-      </div>
-      <label>效果类型<select data-item-effect ${identity?.role !== "super_admin" || item.deleted_at ? "disabled" : ""}>${shopEffectOptions(item.effect_type)}</select></label>
-      <div class="shop-item-grid" data-item-effect-fields>${shopEffectFields(item.effect_type, item.effect_config, identity?.role !== "super_admin" || !!item.deleted_at)}</div>
-      <div class="command-actions"><small class="muted">同分类共用每日限购；效果变更影响未使用背包，进行中的流程保留旧效果。</small>${item.deleted_at ? (identity?.role === "super_admin" ? '<button class="secondary" data-restore-shop-item type="button">预览恢复</button>' : "") : `<button class="secondary" data-save-shop-item type="button">预览保存</button>${identity?.role === "super_admin" ? '<button class="danger-button" data-delete-shop-item type="button">预览删除</button>' : ""}`}</div>
-    </article>`).join("") || "<p class=\"muted\">尚未上架商品。</p>";
+  renderShopCatalog(page);
   document.querySelector("#shop-purchase-log").innerHTML = activity.purchases.map((entry) => `
     <article class="data-row"><div><b>${escapeHtml(entry.user_name)} 购买 #${entry.item_number} ${escapeHtml(entry.item_name)}</b><small>${escapeHtml(entry.group_name)} · ${entry.price} 摸鱼币 · ${escapeHtml(entry.created_at)}</small></div></article>`).join("") || "<p class=\"muted\">暂无购买记录。</p>";
   document.querySelector("#shop-use-log").innerHTML = activity.uses.map((entry) => `
@@ -2282,6 +2305,92 @@ async function loadShop(page = shopPage) {
     <article class="data-row"><div><b>卡片局 #${job.session_number} · ${escapeHtml(job.item_name)}</b><small>${escapeHtml(job.owner_name)} · ${escapeHtml(job.group_name)} · 状态 ${escapeHtml(job.status)} · 尝试 ${job.attempt_count} 次</small>${job.failure_summary ? `<small>${escapeHtml(job.failure_summary)}</small>` : ""}</div>${job.status === "failed" ? `<button class="secondary" data-retry-shop-scene="${job.id}" type="button">重新生成</button>` : ""}</article>`).join("") || "<p class=\"muted\">暂无场景生成任务。</p>";
   document.querySelector("#shop-common-state-list").innerHTML = activity.common_states.map((state) => `
     <article class="data-row"><div><b>卡片局 #${state.session_number} · ${escapeHtml(state.target_name)}</b><small>${escapeHtml(state.owner_name)} · ${escapeHtml(state.group_name)} · ${escapeHtml(state.state)}</small><small>${escapeHtml(state.content)} · 至 ${escapeHtml(state.ends_at)}</small></div>${state.state === "active" ? `<button class="danger-button" data-end-shop-state="${state.id}" type="button">强制结束</button>` : ""}</article>`).join("") || "<p class=\"muted\">暂无常识改变状态。</p>";
+}
+
+function renderShopCatalog(page = shopPage) {
+  const items = [...shopCatalogItems.values()];
+  const defaults = ["礼物赠送", "刮刮乐", "功能道具", "成人内容", "收藏"];
+  const categories = [...new Set([...defaults, ...items.map((item) => item.category || "")])];
+  if (shopCategoryFilter !== null && !categories.includes(shopCategoryFilter)) shopCategoryFilter = null;
+  const tabs = [null, ...categories];
+  document.querySelector("#shop-category-tabs").innerHTML = tabs.map((category, index) => {
+    const count = category === null ? items.length : items.filter((item) => (item.category || "") === category).length;
+    const active = category === shopCategoryFilter;
+    return `<button id="shop-category-tab-${index}" class="management-tab${active ? " active" : ""}" data-shop-category="${escapeHtml(JSON.stringify(category))}" role="tab" aria-selected="${active}" aria-controls="shop-category-panel" tabindex="${active ? 0 : -1}" type="button">${escapeHtml(category === null ? "全部分类" : category || "未分类")}<span class="shop-category-count">${count}</span></button>`;
+  }).join("");
+  document.querySelector("#shop-category-panel").setAttribute("aria-labelledby", `shop-category-tab-${tabs.indexOf(shopCategoryFilter)}`);
+  document.querySelector("#shop-category-options").innerHTML = categories.filter(Boolean).map((category) => `<option value="${escapeHtml(category)}"></option>`).join("");
+  const categoryFiltered = shopCategoryFilter === null ? items : items.filter((item) => (item.category || "") === shopCategoryFilter);
+  const filtered = filterList("shop", categoryFiltered, (item) => `${item.public_number} ${item.name} ${item.description} ${item.category || ""}`);
+  const pageData = renderLocalPagination(document.querySelector("#shop-pagination"), filtered, page, pageSizeFor("shop"), "件商品", renderShopCatalog);
+  shopPage = pageData.page;
+  document.querySelector("#shop-list").innerHTML = pageData.items.map((item) => `
+    <article class="data-row shop-item-card shop-item-summary" data-shop-item="${item.public_number}">
+      <div class="shop-item-title"><b>#${item.public_number} ${escapeHtml(item.name)}</b><div class="shop-item-badges">${statusBadge(item.deleted_at ? "已删除" : item.enabled ? "已上架" : "已下架", item.enabled && !item.deleted_at ? "success" : "warning")}<span class="status-badge">${escapeHtml(item.category || "未分类")}</span></div></div>
+      <div class="shop-summary-values"><span>价格 <strong>${item.price} 币</strong></span><span>库存 <strong>${item.unlimited_stock ? "无限" : item.stock}</strong></span><span>每日限购 <strong>${item.daily_purchase_limit ?? "不限"}</strong></span></div>
+      <div class="command-actions"><button class="secondary" data-shop-item-details type="button">详情</button>${item.deleted_at ? "" : '<button class="secondary" data-shop-item-edit type="button">编辑</button>'}</div>
+    </article>`).join("") || '<p class="muted shop-empty">当前分类或搜索条件下没有商品。</p>';
+}
+
+function shopItemDetails(item) {
+  const rank = rankDefinitions.find((definition) => definition.sort_order === item.minimum_rank_order);
+  const effect = shopEffectMetadata.types.find((definition) => definition.code === (item.effect_type || "none"));
+  const entries = [
+    ["商品名称", item.name], ["商品描述", item.description],
+    ["上架状态", item.deleted_at ? "已删除" : item.enabled ? "已上架" : "已下架"],
+    ["分类", item.category || "未分类"], ["价格", `${item.price} 摸鱼币`],
+    ["库存", item.unlimited_stock ? `无限（库存记录 ${item.stock}）` : item.stock],
+    ["每日限购", item.daily_purchase_limit ?? "不限"],
+    ["最低职位", item.minimum_rank_order == null ? "不限职位" : rank ? `${rank.level_label} ${rank.name}` : `职位序号 ${item.minimum_rank_order}`],
+    ["效果类型", effect?.label || item.effect_type || "无效果"],
+    ...Object.entries(item.effect_config || {}).map(([key, value]) => [shopEffectMetadata.parameter_labels[key] || key, shopDisplayValue(value)]),
+    ["系统标识", item.system_key || "普通商品"], ["持有人", item.holders], ["持有量", item.quantity],
+    ["未完成流程", item.has_active_use ? "有" : "无"],
+    ...(item.deleted_at ? [["删除时间", item.deleted_at]] : []),
+  ];
+  return `<dl class="shop-item-details">${entries.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value))}</dd></div>`).join("")}</dl><div class="template-modal-actions"><button class="secondary" data-close-shop-item-modal type="button">关闭</button>${item.deleted_at ? (identity?.role === "super_admin" ? '<button class="primary" data-restore-shop-item type="button">预览恢复</button>' : "") : '<button class="primary" data-shop-item-edit type="button">编辑商品</button>'}</div>`;
+}
+
+function shopItemEditorFields(item) {
+  return `<label>商品名称<input data-item-name maxlength="64" value="${escapeHtml(item.name)}" required></label>
+    <label>商品描述<textarea data-item-description maxlength="200" rows="3" required>${escapeHtml(item.description)}</textarea></label>
+    <div class="shop-item-grid">
+      <label>价格<input data-item-price type="number" min="0" max="999" value="${item.price}" required></label>
+      <label>库存<input data-item-stock type="number" min="0" max="99999" value="${item.stock}" required></label>
+      <label class="shop-item-check"><input data-item-unlimited type="checkbox" ${item.unlimited_stock ? "checked" : ""}> 无限库存</label>
+      <label>分类<input data-item-category list="shop-category-options" maxlength="32" value="${escapeHtml(item.category || "")}" placeholder="未分类"></label>
+      <label>每日限购<input data-item-daily-limit type="number" min="0" max="99" value="${item.daily_purchase_limit ?? ""}" placeholder="不限"></label>
+      <label>最低职位<select data-item-rank aria-label="最低职位"><option value="">不限职位</option>${rankDefinitions.map((rank) => `<option value="${rank.sort_order}" ${item.minimum_rank_order === rank.sort_order ? "selected" : ""}>${escapeHtml(rank.level_label)} ${escapeHtml(rank.name)}</option>`).join("")}</select></label>
+    </div>
+    <label class="shop-item-check"><input data-item-enabled type="checkbox" ${item.enabled ? "checked" : ""}> 上架</label>
+    <label>效果类型<select data-item-effect ${identity?.role !== "super_admin" ? "disabled" : ""}>${shopEffectOptions(item.effect_type)}</select></label>
+    <div class="shop-item-grid" data-item-effect-fields>${shopEffectFields(item.effect_type, item.effect_config, identity?.role !== "super_admin")}</div>
+    <p class="muted">同分类共用每日限购；效果变更影响未使用背包，进行中的流程保留旧效果。删除与效果修改需超级管理员确认。</p>
+    <div class="template-modal-actions">${identity?.role === "super_admin" ? '<button class="danger-button" data-delete-shop-item type="button">预览删除</button>' : ""}<button class="secondary" data-close-shop-item-modal type="button">取消</button><button class="primary" data-save-shop-item type="button">预览保存</button></div>`;
+}
+
+let shopItemModalOpener = null;
+
+function openShopItemModal(item, editing = false, opener = null) {
+  if (!item || (editing && item.deleted_at)) return;
+  const modal = document.querySelector("#shop-item-modal");
+  if (modal.querySelector('[data-busy="true"]')) return;
+  if (modal.hidden) shopItemModalOpener = opener;
+  document.querySelector("#shop-item-modal-title").textContent = editing ? "编辑商品" : "商品详情";
+  document.querySelector("#shop-item-modal-subtitle").textContent = `#${item.public_number} ${item.name}${editing ? " · 修改后先预览，再确认执行" : ""}`;
+  document.querySelector("#shop-item-modal-content").innerHTML = editing
+    ? `<form class="shop-item-editor" data-shop-item="${item.public_number}">${shopItemEditorFields(item)}</form>`
+    : `<section data-shop-item="${item.public_number}">${shopItemDetails(item)}</section>`;
+  document.querySelector("#shop-item-modal-error").hidden = true;
+  modal.hidden = false;
+  modal.querySelector(editing ? "[data-item-name]" : ".text-button").focus();
+}
+
+function closeShopItemModal() {
+  const modal = document.querySelector("#shop-item-modal");
+  if (modal.querySelector('[data-busy="true"]')) return;
+  modal.hidden = true;
+  if (shopItemModalOpener?.isConnected) shopItemModalOpener.focus();
 }
 
 function renderCommands(commands) {
@@ -2340,7 +2449,71 @@ function showView(view) {
   }
 }
 
+function ruleStatusCard(label, value, description) {
+  return `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(description)}</small></article>`;
+}
+
+function ruleOverview(key, title, description, cards) {
+  return `<div class="panel-heading"><div><h2>${escapeHtml(title)}</h2><p class="muted">${escapeHtml(description)}</p></div><button id="edit-${key}-settings" class="primary" type="button">编辑${escapeHtml(title)}规则</button></div><div id="${key}-settings-card" class="settings-card" aria-live="polite">${cards}</div>`;
+}
+
+function mountRuleEditor(key, title, description, fields, saveHandler, saveLabel = "保存设置") {
+  const previous = document.querySelector(`#${key}-settings-modal`);
+  const wasOpen = previous && !previous.hidden;
+  previous?.remove();
+  const opener = document.querySelector(`#edit-${key}-settings`);
+  const modal = document.createElement("div");
+  modal.id = `${key}-settings-modal`;
+  modal.className = "template-modal rule-settings-modal";
+  modal.hidden = true;
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-labelledby", `${key}-settings-modal-title`);
+  modal.innerHTML = `<div class="template-modal-backdrop" data-close-rule-editor></div><section class="template-modal-card"><div class="template-modal-heading"><div><p class="eyebrow">参数设置</p><h2 id="${key}-settings-modal-title">编辑${escapeHtml(title)}规则</h2><p class="muted">${escapeHtml(description)}</p></div><button class="text-button" data-close-rule-editor type="button">关闭</button></div><form class="rule-settings-form"><div class="rule-settings-fields">${fields}</div><div class="template-modal-actions"><button class="secondary" data-close-rule-editor type="button">取消</button><button id="${key}-save" class="primary" type="submit">${escapeHtml(saveLabel)}</button></div></form></section>`;
+  const form = modal.querySelector("form");
+  const close = () => {
+    if (form.querySelector('[data-busy="true"]')) return;
+    modal.hidden = true;
+    opener.focus();
+  };
+  modal.addEventListener("click", (event) => {
+    if (event.target.closest("[data-close-rule-editor]")) close();
+  });
+  modal.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      close();
+    }
+    if (event.key !== "Tab") return;
+    const controls = [...modal.querySelectorAll("button, input, select, textarea")].filter((control) => !control.disabled && control.getClientRects().length);
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveHandler();
+  });
+  opener.addEventListener("click", () => {
+    form.reset();
+    modal.dispatchEvent(new Event("rule-editor-open"));
+    modal.hidden = false;
+    modal.querySelector("input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button").focus();
+  });
+  document.body.append(modal);
+  if (wasOpen) opener.focus();
+  return modal;
+}
+
 let birthdaySettings = null;
+let birthdayMembers = [];
+let birthdayGroups = [];
 
 async function loadBirthday() {
   const [settings, members, groups] = await Promise.all([
@@ -2349,6 +2522,8 @@ async function loadBirthday() {
     requestGame("/api/group-chats", {cache: "no-store"}),
   ]);
   birthdaySettings = settings;
+  birthdayMembers = members;
+  birthdayGroups = groups.items;
   configurationVersion = groups.version;
   renderBirthdayPanel(settings, members, groups.items);
 }
@@ -2372,20 +2547,29 @@ function renderBirthdayPanel(settings, members, groups) {
     const visibility = member.visibility === "private" ? "不公开" : member.visibility === "public" ? "公开" : "—";
     return `<tr><td>${escapeHtml(member.display_name)}</td><td>${member.employee_number}</td><td>${date}</td><td>${visibility}</td><td><button class="secondary" data-birthday-dry="${member.platform_id}" type="button">试跑</button> <button class="secondary" data-birthday-greet="${member.platform_id}" type="button">补发</button></td></tr>`;
   }).join("") || '<tr><td colspan="5" class="muted">还没有员工。</td></tr>';
-  panel.innerHTML = `
-    <div class="panel-heading"><div><h2>生日祝福</h2><p class="muted">总开关默认关闭；群开关默认开启。随礼窗口填 0 表示一直有效到当天 24:00。</p></div><div class="command-actions"><button id="birthday-save" class="primary" type="button">保存生日设置</button></div></div>
+  const fields = `
     <div class="event-input-grid">${birthdayFlagField("birthday-enabled", "开启生日祝福", settings.enabled)}${birthdayFlagField("birthday-preview-enabled", "前一天预告", settings.preview_enabled)}${birthdayFlagField("birthday-backfill", "当天补发", settings.same_day_backfill)}</div>
     <div class="event-input-grid">${birthdayFlagField("birthday-tips-enabled", "允许随礼", settings.tips_enabled)}${birthdayFlagField("birthday-anniversary-enabled", "入职周年", settings.anniversary_enabled)}</div>
     <div class="event-input-grid"><label>祝福时刻（逗号分隔，最多 10 个，如 09:00,12:00,17:00）<input id="birthday-greet-times" type="text" value="${escapeHtml((settings.greet_times || []).join(","))}"></label><label>预告时刻<input id="birthday-preview-time" type="time" value="${escapeHtml(settings.preview_time)}"></label></div>
     <div class="event-input-grid">${birthdayNumberField("birthday-gift", "生日礼金", settings.gift_amount, 0, 999)}${birthdayNumberField("birthday-free-tickets", "免单注数", settings.lottery_free_tickets, 0, 20)}${birthdayNumberField("birthday-discount", "商店折扣(%)", settings.shop_discount_percent, 1, 100)}</div>
     <div class="event-input-grid">${birthdayNumberField("birthday-checkin", "打卡倍率", settings.checkin_multiplier, 1, 10)}${birthdayNumberField("birthday-bonus", "事件奖励加成(%)", settings.event_reward_bonus_percent, 0, 500)}${birthdayNumberField("birthday-tip-max", "随礼单次上限", settings.tip_max_amount, 1, 999)}${birthdayNumberField("birthday-tip-window", "随礼窗口(分钟，0=到24:00)", settings.tip_window_minutes, 0, 1440)}</div>
-    <div class="event-input-grid"><label>祝福语（可用 {寿星}）<textarea id="birthday-greet-template" rows="2">${escapeHtml(settings.greet_template)}</textarea></label><label>预告文案<textarea id="birthday-preview-template" rows="2">${escapeHtml(settings.preview_template)}</textarea></label><label>随礼汇总<textarea id="birthday-tips-template" rows="2">${escapeHtml(settings.tips_summary_template)}</textarea></label></div>
+    <div class="event-input-grid"><label>祝福语（可用 {寿星}）<textarea id="birthday-greet-template" rows="2">${escapeHtml(settings.greet_template)}</textarea></label><label>预告文案<textarea id="birthday-preview-template" rows="2">${escapeHtml(settings.preview_template)}</textarea></label><label>随礼汇总<textarea id="birthday-tips-template" rows="2">${escapeHtml(settings.tips_summary_template)}</textarea></label></div>`;
+  const cards = [
+    ruleStatusCard("祝福状态", settings.enabled ? "已启用" : "已停用", "全公司统一生日礼金与特权"),
+    ruleStatusCard("祝福时刻", (settings.greet_times || []).join(" / ") || "未配置", settings.preview_enabled ? `前一天 ${settings.preview_time} 预告` : "前一天预告已停用"),
+    ruleStatusCard("生日礼金", `${settings.gift_amount} 摸鱼币`, `打卡 ${settings.checkin_multiplier} 倍 · 商店 ${settings.shop_discount_percent}%`),
+    ruleStatusCard("今日寿星", `${members.filter((member) => member.is_today).length} 人`, `已登记生日 ${members.filter((member) => member.month !== null).length} 人`),
+    ruleStatusCard("生日特权", `免单 ${settings.lottery_free_tickets} 注`, `事件奖励加成 ${settings.event_reward_bonus_percent}%`),
+    ruleStatusCard("生日随礼", settings.tips_enabled ? "已开启" : "已关闭", `单次上限 ${settings.tip_max_amount} 币 · ${settings.tip_window_minutes === 0 ? "窗口至当天 24:00" : `窗口 ${settings.tip_window_minutes} 分钟`}`),
+  ].join("");
+  panel.innerHTML = `
+    ${ruleOverview("birthday", "生日祝福", "查看祝福状态、生日特权和生日名单；详细参数通过编辑规则设置。", cards)}
     <div class="panel-heading"><div><h2>群开关</h2><p class="muted">只有开着的群才收生日公告与预告；礼金、特权与随礼记录始终全公司一份。</p></div></div>
     <div class="event-input-grid">${groupSwitches}</div>
     <div class="panel-heading"><div><h2>生日名单</h2><p class="muted">试跑只渲染文案，不发钱、不公告；补发会真发礼金并公告。</p></div></div>
-    <table class="data-table"><thead><tr><th>姓名</th><th>工号</th><th>生日</th><th>可见性</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="table-scroll" role="region" aria-label="生日名单" tabindex="0"><table class="data-table"><thead><tr><th>姓名</th><th>工号</th><th>生日</th><th>可见性</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>
     <pre id="birthday-preview-output" class="muted"></pre>`;
-  document.querySelector("#birthday-save").addEventListener("click", saveBirthdaySettings);
+  mountRuleEditor("birthday", "生日祝福", "总开关默认关闭；随礼窗口填 0 表示一直有效到当天 24:00。", fields, saveBirthdaySettings, "保存生日设置");
   for (const button of panel.querySelectorAll("[data-birthday-dry]")) {
     button.addEventListener("click", () => previewBirthdayGreeting(button.dataset.birthdayDry, true));
   }
@@ -2427,6 +2611,7 @@ async function saveBirthdaySettings() {
         body: JSON.stringify(payload),
       });
       configurationVersion = birthdaySettings.version;
+      renderBirthdayPanel(birthdaySettings, birthdayMembers, birthdayGroups);
     });
     setResult("生日设置已保存", "success");
   } catch (error) {
@@ -2457,6 +2642,8 @@ async function toggleGroupBirthday(groupId, enabled) {
       headers: {"Content-Type": "application/json", ...configurationHeaders()},
       body: JSON.stringify({birthdays_enabled: enabled, now: new Date().toISOString()}),
     });
+    const group = birthdayGroups.find((item) => item.id === groupId);
+    if (group) group.birthdays_enabled = enabled;
     setResult(enabled ? "该群已开启生日祝福" : "该群已关闭生日祝福", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
@@ -2533,6 +2720,7 @@ async function loadLiarDiceSettings() {
   const [settings, groups] = await Promise.all([
     requestGame("/api/game/liar-dice/settings"),
     requestGame("/api/group-chats", {cache: "no-store"}),
+    loadCurrentGameplay(),
   ]);
   configurationVersion = groups.version;
   renderLiarDiceSettingsPanel(settings);
@@ -2541,27 +2729,37 @@ async function loadLiarDiceSettings() {
 function renderLiarDiceSettingsPanel(settings) {
   const panel = document.querySelector("#liar-dice-panel");
   if (!panel) return;
-  panel.innerHTML = `
-    <div class="panel-heading"><div><h2>大话骰子参数</h2><p class="muted">对局节奏参数，保存后从下一回合起生效。</p></div><div class="command-actions"><button id="liar-dice-save" class="primary" type="button">保存设置</button></div></div>
-    <div class="panel-heading"><div><h2>节奏参数</h2></div></div>
+  panel.innerHTML = ruleOverview("liar-dice", "大话骰子", "关闭后禁止新建对局，已有对局可继续；详细参数通过编辑规则设置。", [
+    ruleStatusCard("开启状态", settings.enabled === false ? "已关闭" : "已开启", "开局同时受群聊玩法开关控制"),
+    ruleStatusCard("开局人数", `至少 ${settings.min_players ?? 2} 人`, "开始对局时校验报名人数"),
+    ruleStatusCard("回合时限", `${settings.turn_seconds} 秒`, "每回合的操作超时时间"),
+  ].join(""));
+  const fields = `
     <div class="event-input-grid">
+      ${birthdayFlagField("liar-dice-enabled", "开启大话骰子", settings.enabled !== false)}
+      ${birthdayNumberField("liar-dice-min-players", "最少开局人数", settings.min_players ?? 2, 2, 10)}
       ${birthdayNumberField("liar-dice-turn-seconds", "回合超时秒数", settings.turn_seconds, 30, 600)}
     </div>`;
-  document.querySelector("#liar-dice-save").addEventListener("click", saveLiarDiceSettings);
+  mountRuleEditor("liar-dice", "大话骰子", "开关控制新建对局，人数在开始时校验，时限从下一次行动起生效。", fields, saveLiarDiceSettings);
 }
 
 async function saveLiarDiceSettings() {
   const button = document.querySelector("#liar-dice-save");
   const payload = {
     turn_seconds: Number(document.querySelector("#liar-dice-turn-seconds").value),
+    enabled: document.querySelector("#liar-dice-enabled").checked,
+    min_players: Number(document.querySelector("#liar-dice-min-players").value),
   };
   try {
     await runMutation(button, "保存中…", async () => {
-      await requestGame("/api/game/liar-dice/settings", {
+      const settings = await requestGame("/api/game/liar-dice/settings", {
         method: "PATCH",
         headers: {"Content-Type": "application/json", ...configurationHeaders()},
         body: JSON.stringify(payload),
       });
+      configurationVersion = settings.version ?? configurationVersion;
+      renderLiarDiceSettingsPanel(settings);
+      gameplayVersion = settings.version ?? gameplayVersion;
     });
     setResult("大话骰子设置已保存", "success");
   } catch (error) {
@@ -2573,6 +2771,7 @@ async function loadTruthTradeSettings() {
   const [settings, groups] = await Promise.all([
     requestGame("/api/game/truth-trade/settings"),
     requestGame("/api/group-chats", {cache: "no-store"}),
+    loadCurrentGameplay(),
   ]);
   configurationVersion = groups.version;
   renderTruthTradeSettingsPanel(settings);
@@ -2581,15 +2780,20 @@ async function loadTruthTradeSettings() {
 function renderTruthTradeSettingsPanel(settings) {
   const panel = document.querySelector("#truth-trade-panel");
   if (!panel) return;
-  panel.innerHTML = `
-    <div class="panel-heading"><div><h2>真心换真心参数</h2><p class="muted">提问与回答的超时时间，保存后从下一轮起生效。</p></div><div class="command-actions"><button id="truth-trade-save" class="primary" type="button">保存设置</button></div></div>
-    <div class="panel-heading"><div><h2>节奏参数</h2></div></div>
+  panel.innerHTML = ruleOverview("truth-trade", "真心换真心", "关闭后禁止新建对局，已有对局可继续；详细参数通过编辑规则设置。", [
+    ruleStatusCard("开启状态", settings.enabled === false ? "已关闭" : "已开启", "开局同时受群聊玩法开关控制"),
+    ruleStatusCard("提问时限", `${settings.question_timeout_seconds} 秒`, "保存后的时限从下一次提问起生效"),
+    ruleStatusCard("回答时限", `${settings.answer_timeout_seconds} 秒`, "保存后的时限从下一次回答阶段起生效"),
+    ruleStatusCard("开局人数", `至少 ${settings.min_players} 人`, "开始及继续下一轮时校验人数"),
+  ].join(""));
+  const fields = `
     <div class="event-input-grid">
+      ${birthdayFlagField("truth-trade-enabled", "开启真心换真心", settings.enabled !== false)}
       ${birthdayNumberField("truth-trade-question-seconds", "提问超时秒数", settings.question_timeout_seconds, 30, 3600)}
       ${birthdayNumberField("truth-trade-answer-seconds", "回答超时秒数", settings.answer_timeout_seconds, 30, 3600)}
       ${birthdayNumberField("truth-trade-min-players", "最少开局人数", settings.min_players, 2, 10)}
     </div>`;
-  document.querySelector("#truth-trade-save").addEventListener("click", saveTruthTradeSettings);
+  mountRuleEditor("truth-trade", "真心换真心", "开关控制新建对局，人数在开始及继续时校验，时限从下一次提问或回答起生效。", fields, saveTruthTradeSettings);
 }
 
 async function saveTruthTradeSettings() {
@@ -2598,20 +2802,26 @@ async function saveTruthTradeSettings() {
     question_timeout_seconds: Number(document.querySelector("#truth-trade-question-seconds").value),
     answer_timeout_seconds: Number(document.querySelector("#truth-trade-answer-seconds").value),
     min_players: Number(document.querySelector("#truth-trade-min-players").value),
+    enabled: document.querySelector("#truth-trade-enabled").checked,
   };
   try {
     await runMutation(button, "保存中…", async () => {
-      await requestGame("/api/game/truth-trade/settings", {
+      const settings = await requestGame("/api/game/truth-trade/settings", {
         method: "PATCH",
         headers: {"Content-Type": "application/json", ...configurationHeaders()},
         body: JSON.stringify(payload),
       });
+      configurationVersion = settings.version ?? configurationVersion;
+      renderTruthTradeSettingsPanel(settings);
+      gameplayVersion = settings.version ?? gameplayVersion;
     });
     setResult("真心换真心设置已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
   }
 }
+
+let estrusRanks = [];
 
 async function loadEstrusSettings() {
   const [settings, groups, ranks] = await Promise.all([
@@ -2620,6 +2830,7 @@ async function loadEstrusSettings() {
     requestGame("/api/game/ranks"),
   ]);
   configurationVersion = groups.version;
+  estrusRanks = ranks;
   renderEstrusSettingsPanel(settings, ranks);
 }
 
@@ -2632,8 +2843,15 @@ function renderEstrusSettingsPanel(settings, ranks) {
       ?? (rank.sort_order >= 11 ? 20 : defaultQuotas[rank.sort_order] ?? 20);
     return `<label>${escapeHtml(rank.level_label)} ${escapeHtml(rank.name)}<input data-estrus-quota="${rank.id}" type="number" min="0" max="999" value="${quota}"></label>`;
   }).join("");
-  panel.innerHTML = `
-    <div class="panel-heading"><div><h2>凿与发情值参数</h2><p class="muted">/凿 玩法的开关、概率与限制；概率三档之和必须等于 100。</p></div><div class="command-actions"><button id="estrus-save" class="primary" type="button">保存设置</button></div></div>
+  panel.innerHTML = ruleOverview("estrus", "凿与发情值", "查看玩法开关、额度和摸鱼币模式；详细概率通过编辑规则设置。", [
+    ruleStatusCard("玩法状态", settings.enabled ? "已启用" : "已停用", settings.combo_chop_enabled ? "允许连续凿" : "连续凿已关闭"),
+    ruleStatusCard("冷却与被凿上限", `${settings.chop_cooldown_seconds} 秒冷却`, settings.target_daily_limit ? `每人每日被凿最多 ${settings.target_daily_limit} 次（按群）` : "每人每日被凿次数不限"),
+    ruleStatusCard("发情值阈值", settings.climax_threshold, `G 点概率 ${settings.g_spot_percent}% · 发情值加成 ${settings.g_spot_heat_bonus}`),
+    ruleStatusCard("被凿者获得摸鱼币", settings.target_fixed_coins != null ? `固定 ${settings.target_fixed_coins} 币` : "随机 0 / 1 / 2 币", settings.target_fixed_coins != null ? "每次获得固定金额，随机概率不参与计算" : `三档概率 ${settings.coin_p0}% / ${settings.coin_p1}% / ${settings.coin_p2}%`),
+    ruleStatusCard("凿者扣除摸鱼币", settings.chopper_fixed_coins != null ? `固定 ${settings.chopper_fixed_coins} 币` : "随机 0 / 1 / 2 币", settings.chopper_fixed_coins != null ? "每次扣除固定金额，随机概率不参与计算" : settings.coins_linked && settings.target_fixed_coins == null ? `关联使用被凿者概率 ${settings.coin_p0}% / ${settings.coin_p1}% / ${settings.coin_p2}%` : `三档概率 ${settings.chopper_coin_p0}% / ${settings.chopper_coin_p1}% / ${settings.chopper_coin_p2}%`),
+    ruleStatusCard("扣币与发币", settings.chopper_fixed_coins != null || settings.target_fixed_coins != null ? "固定金额优先" : settings.coins_linked ? "关联抽样" : "独立抽样", "任一方启用固定金额时，另一方按自己的配置结算"),
+  ].join(""));
+  const fields = `
     <div class="panel-heading"><div><h2>总开关与限制</h2></div></div>
     <div class="event-input-grid">
       <label style="display:flex;align-items:center;gap:8px;"><input id="estrus-enabled" type="checkbox" ${settings.enabled ? "checked" : ""}> 启用凿与发情值玩法</label>
@@ -2672,7 +2890,7 @@ function renderEstrusSettingsPanel(settings, ranks) {
       ${birthdayNumberField("estrus-chopper-coin-p1", "凿者扣 1 币概率(%)", settings.chopper_coin_p1, 0, 100)}
       ${birthdayNumberField("estrus-chopper-coin-p2", "凿者扣 2 币概率(%)", settings.chopper_coin_p2, 0, 100)}
     </div>`;
-  document.querySelector("#estrus-save").addEventListener("click", saveEstrusSettings);
+  const modal = mountRuleEditor("estrus", "凿与发情值", "/凿 玩法的开关、概率与限制；概率三档之和必须等于 100。", fields, saveEstrusSettings);
   const linkedCheckbox = document.querySelector("#estrus-coins-linked");
   const targetFixedCheckbox = document.querySelector("#estrus-target-fixed");
   const chopperFixedCheckbox = document.querySelector("#estrus-chopper-fixed");
@@ -2691,6 +2909,7 @@ function renderEstrusSettingsPanel(settings, ranks) {
   linkedCheckbox.addEventListener("change", updateCoinInputs);
   targetFixedCheckbox.addEventListener("change", updateCoinInputs);
   chopperFixedCheckbox.addEventListener("change", updateCoinInputs);
+  modal.addEventListener("rule-editor-open", updateCoinInputs);
   updateCoinInputs();
 }
 
@@ -2726,11 +2945,13 @@ async function saveEstrusSettings() {
   };
   try {
     await runMutation(button, "保存中…", async () => {
-      await requestGame("/api/game/estrus/settings", {
+      const settings = await requestGame("/api/game/estrus/settings", {
         method: "PATCH",
         headers: {"Content-Type": "application/json", ...configurationHeaders()},
         body: JSON.stringify(payload),
       });
+      configurationVersion = settings.version ?? configurationVersion;
+      renderEstrusSettingsPanel(settings, estrusRanks);
     });
     setResult("凿与发情值设置已保存", "success");
   } catch (error) {
@@ -2780,7 +3001,7 @@ function renderDisciplineFinePanel(settings, ranks, records) {
     <div class="panel-heading"><div><h2>职级每日罚款次数</h2></div></div>
     <div class="event-input-grid">${quotaInputs}</div>
     <div class="panel-heading"><div><h2>罚款记录</h2><p class="muted">撤销会全额退还实扣摸鱼币，不追回执法者已得抽成。</p></div></div>
-    <table class="data-table"><thead><tr><th>时间</th><th>群聊</th><th>执法者</th><th>被罚人</th><th>实扣</th><th>抽成</th><th>理由</th><th>操作</th></tr></thead><tbody>${recordRows}</tbody></table>
+    <div class="table-scroll" role="region" aria-label="罚款记录" tabindex="0"><table class="data-table"><thead><tr><th>时间</th><th>群聊</th><th>执法者</th><th>被罚人</th><th>实扣</th><th>抽成</th><th>理由</th><th>操作</th></tr></thead><tbody>${recordRows}</tbody></table></div>
     <div id="discipline-fine-pagination"></div>`;
   renderPagination(document.querySelector("#discipline-fine-pagination"), records, "条记录", (page) => loadDisciplineFine(page));
   document.querySelector("#discipline-fine-save").addEventListener("click", saveDisciplineFineSettings);
@@ -2846,6 +3067,7 @@ async function loadGameView(view) {
     if (view === "liar-dice") return loadLiarDiceSettings();
     if (view === "truth-trade") return loadTruthTradeSettings();
     if (view === "estrus") return loadEstrusSettings();
+    if (view === "honors") return loadHonors();
     if (view === "memory-assessment") return loadMemoryAssessment();
     if (view === "undercover") return loadUndercover();
     if (view === "blame-bomb") return loadBlameBomb();
@@ -4042,11 +4264,11 @@ redPacketSettingsModal.addEventListener("click", async (event) => {
     setResult(`保存失败（${error.message}）`, "error");
   }
 });
-for (const gameplayCard of document.querySelectorAll("#gameplay-current-card, #texas-holdem-session-card, #memory-guild-current-card")) gameplayCard.addEventListener("click", async (event) => {
+for (const gameplayCard of document.querySelectorAll("#gameplay-current-card, #texas-holdem-session-card, #memory-guild-current-card, #liar-dice-session-card, #truth-trade-session-card")) gameplayCard.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-force-end-game]");
   if (!button) return;
   const {groupChatId, gameType, gameId} = button.dataset;
-  const gameName = gameType === "number_bomb" ? "蹦蹦数字炸弹" : gameType === "texas_holdem" ? "德州扑克" : "当前游戏";
+  const gameName = {number_bomb: "蹦蹦数字炸弹", texas_holdem: "德州扑克", liar_dice: "大话骰子", truth_trade: "真心换真心"}[gameType] || "当前游戏";
   if (!window.confirm(`确认强制结束${gameName}？`)) return;
   try {
     await runMutation(button, "结束中…", async () => {
@@ -4928,14 +5150,25 @@ document.querySelector("#item-form").addEventListener("submit", async (event) =>
 });
 
 document.querySelector("#shop-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-shop-item-details], [data-shop-item-edit]");
+  if (!button) return;
+  const item = shopCatalogItems.get(Number(button.closest("[data-shop-item]").dataset.shopItem));
+  openShopItemModal(item, button.hasAttribute("data-shop-item-edit"), button);
+});
+
+document.querySelector("#shop-item-modal").addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-shop-item-modal]")) return closeShopItemModal();
+  const edit = event.target.closest("[data-shop-item-edit]");
+  if (edit) return openShopItemModal(shopCatalogItems.get(Number(edit.closest("[data-shop-item]").dataset.shopItem)), true);
   const button = event.target.closest("button[data-save-shop-item], button[data-delete-shop-item], button[data-restore-shop-item]");
   if (!button) return;
   const row = button.closest("[data-shop-item]");
   const item = shopCatalogItems.get(Number(row.dataset.shopItem));
   const operation = button.hasAttribute("data-delete-shop-item") ? "delete" : button.hasAttribute("data-restore-shop-item") ? "restore" : "update";
-  const rankValue = row.querySelector("[data-item-rank]").value;
-  const limitValue = row.querySelector("[data-item-daily-limit]").value.trim();
-  const payload = {
+  if (operation === "update" && !row.reportValidity()) return;
+  const rankValue = row.querySelector("[data-item-rank]")?.value;
+  const limitValue = row.querySelector("[data-item-daily-limit]")?.value.trim();
+  const payload = operation === "update" ? {
     name: row.querySelector("[data-item-name]").value.trim(),
     description: row.querySelector("[data-item-description]").value.trim(),
     enabled: row.querySelector("[data-item-enabled]").checked,
@@ -4947,7 +5180,10 @@ document.querySelector("#shop-list").addEventListener("click", async (event) => 
     daily_purchase_limit: limitValue === "" ? null : Number(limitValue),
     effect_type: row.querySelector("[data-item-effect]").value === "none" ? null : row.querySelector("[data-item-effect]").value,
     effect_config: readShopEffectFields(row.querySelector("[data-item-effect-fields]")),
-  };
+  } : {};
+  if (document.querySelector('#shop-item-modal [data-busy="true"]')) return;
+  const errorMessage = document.querySelector("#shop-item-modal-error");
+  errorMessage.hidden = true;
   try {
     await runMutation(button, "校验中…", async () => {
       await previewShopRows([{row: 2, operation, public_number: item.public_number,
@@ -4955,19 +5191,43 @@ document.querySelector("#shop-list").addEventListener("click", async (event) => 
         base_stock: item.stock, values: operation === "update" ? payload : {},
       }], operation === "update" && payload.stock !== item.stock);
     });
+    closeShopItemModal();
   } catch (error) {
+    errorMessage.textContent = `预览失败（${error.message}）`;
+    errorMessage.hidden = false;
     setResult(`预览失败（${error.message}）`, "error");
   }
 });
 
-document.querySelector("#shop-list").addEventListener("change", (event) => {
+document.querySelector("#shop-item-modal").addEventListener("submit", (event) => {
+  event.preventDefault();
+  event.target.querySelector("[data-save-shop-item]")?.click();
+});
+document.querySelector("#shop-item-modal").addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.stopPropagation();
+    closeShopItemModal();
+  }
+  if (event.key !== "Tab") return;
+  const controls = [...event.currentTarget.querySelectorAll("button, input, select, textarea")].filter((control) => !control.disabled && control.getClientRects().length);
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
+document.querySelector("#shop-item-modal").addEventListener("change", (event) => {
   invalidateShopPreview();
   if (!event.target.matches("[data-item-effect]")) return;
   const row = event.target.closest("[data-shop-item]");
   const effect = shopEffectMetadata.types.find((item) => item.code === event.target.value);
   row.querySelector("[data-item-effect-fields]").innerHTML = shopEffectFields(effect.code, effect.defaults);
 });
-document.querySelector("#shop-list").addEventListener("input", invalidateShopPreview);
+document.querySelector("#shop-item-modal").addEventListener("input", invalidateShopPreview);
 document.querySelector("#item-form").addEventListener("input", invalidateShopPreview);
 document.querySelector("#shop-create-effect").addEventListener("change", (event) => {
   invalidateShopPreview();

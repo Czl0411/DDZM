@@ -393,6 +393,7 @@ class SetCommandTemplateRequest(ApiModel):
 
 
 class UserResponse(ApiModel):
+    honor_title: str | None = None
     platform_id: str
     display_name: str
     platform_nickname: str | None
@@ -1416,6 +1417,10 @@ class GameplaySummaryResponse(ApiModel):
     mode: str | None = None
     round_number: int = 0
     maximum_rounds: int = 0
+    current_call: dict[str, int] | None = None
+    current_speaker_name: str | None = None
+    responded_count: int = 0
+    expected_response_count: int = 0
 
 
 class GameplaySummariesResponse(ApiModel):
@@ -1856,20 +1861,24 @@ class SetDepartmentAllowanceSettingsRequest(DepartmentAllowanceSettingsResponse)
 
 class LiarDiceSettingsResponse(ApiModel):
     turn_seconds: int = Field(ge=30, le=600)
+    enabled: bool = True
+    min_players: int = Field(default=2, ge=2, le=10)
 
 
 class SetLiarDiceSettingsRequest(LiarDiceSettingsResponse):
-    pass
+    enabled: bool | None = None
+    min_players: int | None = Field(default=None, ge=2, le=10)
 
 
 class TruthTradeSettingsResponse(ApiModel):
     question_timeout_seconds: int = Field(ge=30, le=3600)
     answer_timeout_seconds: int = Field(ge=30, le=3600)
     min_players: int = Field(ge=2, le=10)
+    enabled: bool = True
 
 
 class SetTruthTradeSettingsRequest(TruthTradeSettingsResponse):
-    pass
+    enabled: bool | None = None
 
 
 class EstrusSettingsResponse(ApiModel):

@@ -5,6 +5,12 @@ import websockets
 
 
 class AdminCorePort(Protocol):
+    def honor_get(self, resource: str, params: dict | None = None) -> dict: ...
+
+    def honor_mutate(self, resource: str, payload: dict, method: str = "POST") -> dict: ...
+
+    def employee_honors(self, platform_id: str) -> dict: ...
+
     def status(self) -> dict: ...
 
     def list_group_chats(self, include_deleted: bool = False) -> list[dict]: ...
@@ -381,6 +387,21 @@ class AdminCorePort(Protocol):
 
 
 class CoreClient:
+    def honor_get(self, resource: str, params: dict | None = None) -> dict:
+        response = self._client.get(f"/internal/game/honors/{resource}", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def honor_mutate(self, resource: str, payload: dict, method: str = "POST") -> dict:
+        response = self._client.request(method, f"/internal/game/honors/{resource}", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def employee_honors(self, platform_id: str) -> dict:
+        from urllib.parse import quote
+
+        return self._get(f"/internal/game/users/{quote(platform_id, safe='')}/honors")
+
     def __init__(
         self,
         base_url: str,

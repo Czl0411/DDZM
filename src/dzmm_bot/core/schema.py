@@ -1015,6 +1015,8 @@ class LiarDiceSettingsRecord(Base):
         nullable=False,
     )
     turn_seconds: Mapped[int] = mapped_column(Integer, default=120, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    min_players: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
 
 
 class LiarDiceGameRecord(Base):
@@ -1131,6 +1133,7 @@ class TruthTradeSettingsRecord(Base):
         Integer, default=600, nullable=False
     )
     min_players: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class TruthTradeGameRecord(Base):
@@ -2361,6 +2364,61 @@ class PerformanceTipRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class HonorStateRecord(Base):
+    __tablename__ = "honor_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_week: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class HonorConfigRecord(Base):
+    __tablename__ = "honor_configs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    version: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+    effective_week: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class HonorPeriodRecord(Base):
+    __tablename__ = "honor_periods"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    week_start: Mapped[date] = mapped_column(Date, unique=True, nullable=False)
+    config_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    settled_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    announced_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    scheduled_announced_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class HonorAwardRecord(Base):
+    __tablename__ = "honor_awards"
+    __table_args__ = (UniqueConstraint("period_id", "title_key", "user_id", name="uq_honor_awards_period_title_user"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    period_id: Mapped[UUID] = mapped_column(ForeignKey("honor_periods.id"), nullable=False)
+    title_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    title_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), index=True)
+    winner_name: Mapped[str | None] = mapped_column(String(64))
+    score: Mapped[int | None] = mapped_column(Integer)
+    valid_from: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    public_score: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class HonorWearRecord(Base):
+    __tablename__ = "honor_wear"
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    award_id: Mapped[UUID] = mapped_column(ForeignKey("honor_awards.id"), nullable=False)
+
+
 class UserRecord(Base):
     __tablename__ = "users"
 
@@ -2850,6 +2908,22 @@ class DepartmentAllowanceRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
+
+
+class GameParticipationRecord(Base):
+    __tablename__ = "game_participations"
+    __table_args__ = (
+        UniqueConstraint("game_type", "game_id", "user_id"),
+        Index("ix_game_participations_group_completed", "group_chat_id", "completed_at"),
+        Index("ix_game_participations_user_completed", "user_id", "completed_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    game_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
 class DepartmentGamePlayRecord(Base):

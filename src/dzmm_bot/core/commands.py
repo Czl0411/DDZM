@@ -7,6 +7,7 @@ from dzmm_bot.runtime.contracts import InboundMessage
 
 from .group_games import GROUP_GAME_COMMANDS, GROUP_GAME_LABELS
 from .birthday import parse_visibility
+from .honors import honor_award_lines
 from .liar_dice import parse_call
 
 from .company_lottery import (
@@ -49,6 +50,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
+    "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史",
     "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/跳过", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证",
     "/设置生日", "/我的生日", "/本月生日",
     "/随礼",
@@ -100,6 +102,8 @@ class GroupCommandHandler:
             command = "/摸鱼躲猫猫"
         if command == "/me":
             command = "/我"
+        if command in {"/装备称号", "/编辑称号"}:
+            command = "/佩戴称号"
         if command == "/买彩票":
             command = "/购买彩票"
         if command in {"/问", "/问吧"}:
@@ -129,6 +133,8 @@ class GroupCommandHandler:
             else None
         )
         group_chat_id = None if group is None else group.id
+        if command in {"/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史"}:
+            return self._honors(message, command, content, received_at)
         if command in _LOTTERY_COMMANDS:
             return self._company_lottery(
                 message, command, content, received_at, group_chat_id
@@ -1667,7 +1673,7 @@ class GroupCommandHandler:
             return messages[result.status]
         return (
             "【大话骰子】报名已开启！想玩的发 /加入（每人 5 骰、每轮随机万能点；"
-            "需要先和机器人私聊过），人齐后发起者发 /开始 摇骰开局。"
+            f"需要先和机器人私聊过），至少 {result.min_players} 人后发起者发 /开始 摇骰开局。"
         )
 
     def _liar_dice_join(self, message, received_at, group_chat_id):
@@ -1706,7 +1712,7 @@ class GroupCommandHandler:
             "no_game": "当前没有可开始的大话骰子报名局。",
             "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
             "host_only": "只有发起者可以开始大话骰子。",
-            "not_enough_players": "当前人数不足，至少 2 人才能开始。",
+            "not_enough_players": f"当前人数不足，至少 {result.min_players} 人才能开始。",
             "already_started": "本局大话骰子已经开始。",
         }.get(result.status, "当前不能开始大话骰子。")
 
@@ -2486,6 +2492,8 @@ class GroupCommandHandler:
         if profile is None:
             return self._reply("/我", "not_joined", received_at)
         employee = profile.user
+        title = self._repository.get_equipped_honor(platform_id, received_at)
+        display_name = employee.display_name + (f"【荣誉称号：{title}】" if title else "")
         activity = self._repository.personal_activity(platform_id, received_at)
         if activity is None:
             raise RuntimeError("employee disappeared")
@@ -2510,6 +2518,7 @@ class GroupCommandHandler:
         else:
             gender_line = "性别：未设置，用 /设置性别 男 或 女 标记一下"
         lines = [
+            display_name,
             f"工号：{format_employee_number(employee.employee_number)}",
             gender_line,
             birthday_line,
@@ -2528,6 +2537,41 @@ class GroupCommandHandler:
         lines.append(
             f"连续打卡：{self._repository.consecutive_checkin_days(employee.id, received_at)} 天。"
         )
+        return "\n".join(lines)
+
+    def _honors(self, message, command, content, now):
+        platform_id = message.sender_platform_id
+        personal = self._repository.my_honors(platform_id, now)
+        if personal is None:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if command == "/佩戴称号":
+            parts = content.split()
+            if len(parts) != 2 or not re.fullmatch(r"[0-9]+", parts[1]) or len(parts[1]) > 3:
+                return "用法：/佩戴称号 序号（/装备称号、/编辑称号 也可）；发送 /我的称号 查看，序号 0 取消佩戴。"
+            try:
+                name = self._repository.wear_honor(platform_id, int(parts[1]), now)
+            except (LookupError, ValueError) as error:
+                return str(error)
+            return f"已佩戴荣誉称号：{name}。" if name else "已取消佩戴荣誉称号。"
+        if command == "/荣誉榜":
+            board = self._repository.honor_board(now)
+            lines = ["【荣誉榜】"]
+            lines.extend(honor_award_lines(board["items"], public_scores=True, include_empty=True))
+            return "\n".join(lines) if board["items"] else "本期荣誉尚未结算，暂无获奖名单。"
+        if command == "/荣誉历史":
+            user = self._repository.get_user_profile(platform_id).user
+            history = self._repository.honor_history(now, user_id=user.id)
+            lines = ["【荣誉历史】（最近 20 项）"]
+            lines.extend(f"{item['week_start']}｜{item['name']}" for item in history["items"])
+            return "\n".join(lines) if history["items"] else "你还没有获得过荣誉称号。"
+        lines = ["【我的称号】", f"当前佩戴：{personal['equipped'] or '未佩戴'}"]
+        for item in personal["items"]:
+            lines.append(f"{item['number']}. {item['name']}｜历史获得 {item['total_wins']} 次｜有效至 {item['expires_at'][:10]} 00:00")
+        if not personal["items"]:
+            lines.append("当前没有可佩戴称号。")
+        if personal["history_counts"]:
+            lines.append(f"历史累计获得荣誉 {sum(personal['history_counts'].values())} 次。")
+        lines.append("发送 /佩戴称号 序号 切换（/装备称号、/编辑称号 也可），序号 0 取消佩戴。")
         return "\n".join(lines)
 
     def _edit_profile(self, platform_id: str, content: str, received_at) -> str:
@@ -2702,6 +2746,10 @@ class GroupCommandHandler:
         text = self._reply(
             "/我的档案", "shown", received_at, {"{档案内容}": profile_text}
         )
+        title = self._repository.get_equipped_honor(platform_id, received_at)
+        if title:
+            employee = self._repository.find_user(platform_id)
+            text = f"{employee.display_name}【荣誉称号：{title}】\n{text}"
         if image_url is None:
             return text
         return [
@@ -2796,7 +2844,7 @@ class GroupCommandHandler:
                 )
             ),
             "referral": f"每邀请新人通过链接进群 +{settings.referral_amount} 摸鱼币",
-            "discipline": "风纪执法：成员可执行 /罚款 对违规员工处以罚款",
+            "discipline": "可执行风纪罚款操作，获得罚款20%的奖励",
         }
 
     def _departments(self, received_at) -> str:
@@ -4996,6 +5044,10 @@ class GroupCommandHandler:
                     ("/发红包", "/发红包 人数 总金额：发出随机运气红包"),
                     ("/抢红包", "/抢红包：领取当前红包"),
                     ("/我", "/我：查看个人资料、收益与活跃度"),
+                    ("/我的称号", "/我的称号：查看本周可佩戴称号、有效期与累计获得次数"),
+                    ("/佩戴称号", "/佩戴称号 序号：佩戴一个称号；/装备称号、/编辑称号 等效，序号 0 取消佩戴"),
+                    ("/荣誉榜", "/荣誉榜：查看本周荣誉称号获得者"),
+                    ("/荣誉历史", "/荣誉历史：查看自己的历史获奖记录"),
                     ("/我的津贴", "/我的津贴：查看今日各项部门津贴明细与合计"),
                     ("/我的物品", "/我的物品：查看持有物品"),
                     ("/商店", "/商店：查看可购买物品"),

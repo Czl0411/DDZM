@@ -49,6 +49,7 @@ from .shop_excel import (
     error_report as shop_error_report, export_workbook as export_shop_workbook,
     parse_workbook as parse_shop_workbook,
 )
+from dzmm_bot.core.honors import HonorConfigInput, HonorSettleInput, HonorCorrectionInput
 
 
 _ROOT = Path(__file__).parent
@@ -248,6 +249,11 @@ def create_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.get("/static/honors.js")
+    def honors_script() -> FileResponse:
+        return FileResponse(_ROOT / "static" / "honors.js", media_type="text/javascript",
+                            headers={"Cache-Control": "no-cache"})
+
     @app.get("/static/admin.js")
     def javascript() -> FileResponse:
         return FileResponse(
@@ -268,6 +274,14 @@ def create_app(
     def stylesheet() -> FileResponse:
         return FileResponse(
             _ROOT / "static" / "admin.css",
+            media_type="text/css",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/static/admin-refined.css")
+    def refined_stylesheet() -> FileResponse:
+        return FileResponse(
+            _ROOT / "static" / "admin-refined.css",
             media_type="text/css",
             headers={"Cache-Control": "no-store"},
         )
@@ -930,6 +944,54 @@ def create_app(
             except (ValueError, AttributeError):
                 detail = "商品服务暂时不可用，请稍后重试"
             raise HTTPException(error.response.status_code, detail) from error
+
+    @app.get("/api/game/honors/config")
+    def honor_config(_: Annotated[AdminIdentity, Depends(authorize)]) -> dict:
+        return forward_integration(lambda: core.honor_get("config"))
+
+    @app.patch("/api/game/honors/config")
+    def honor_config_save(request: HonorConfigInput,
+                          identity: Annotated[AdminIdentity, Depends(require_super_admin)]) -> dict:
+        return forward_integration(lambda: core.honor_mutate("config", {
+            **request.model_dump(mode="json"), "actor": identity.username,
+        }, "PATCH"))
+
+    @app.get("/api/game/honors/preview")
+    def honor_preview(week_start: str, _: Annotated[AdminIdentity, Depends(authorize)]) -> dict:
+        return forward_integration(lambda: core.honor_get("preview", {"week_start": week_start}))
+
+    @app.post("/api/game/honors/settle")
+    def honor_settle(request: HonorSettleInput,
+                     identity: Annotated[AdminIdentity, Depends(require_super_admin)]) -> dict:
+        return forward_integration(lambda: core.honor_mutate("settle", {
+            **request.model_dump(mode="json"), "actor": identity.username,
+        }))
+
+    @app.get("/api/game/honors/periods")
+    def honor_periods(_: Annotated[AdminIdentity, Depends(authorize)],
+                      page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> dict:
+        return forward_integration(lambda: core.honor_get("periods", {"page": page, "page_size": page_size}))
+
+    @app.get("/api/game/honors/history")
+    def honor_history(_: Annotated[AdminIdentity, Depends(authorize)], user_id: UUID | None = None,
+                      title_key: str | None = None, week_start: str | None = None,
+                      page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> dict:
+        params = {"page": page, "page_size": page_size}
+        params.update({key: str(value) for key, value in {
+            "user_id": user_id, "title_key": title_key, "week_start": week_start,
+        }.items() if value is not None})
+        return forward_integration(lambda: core.honor_get("history", params))
+
+    @app.get("/api/game/users/{platform_id}/honors")
+    def employee_honors(platform_id: str, _: Annotated[AdminIdentity, Depends(authorize)]) -> dict:
+        return forward_integration(lambda: core.employee_honors(platform_id))
+
+    @app.post("/api/game/honors/awards/{award_id}/correct")
+    def honor_correct(award_id: UUID, request: HonorCorrectionInput,
+                      identity: Annotated[AdminIdentity, Depends(require_super_admin)]) -> dict:
+        return forward_integration(lambda: core.honor_mutate(f"awards/{award_id}/correct", {
+            **request.model_dump(mode="json"), "actor": identity.username,
+        }))
 
     @app.get("/api/game/shop/catalog")
     def shop_catalog(
@@ -2301,7 +2363,7 @@ def create_app(
             if_match,
             lambda: _relay_core(
                 lambda: core.set_liar_dice_settings(
-                    {"turn_seconds": request["turn_seconds"]}
+                    {key: request[key] for key in ("turn_seconds", "enabled", "min_players") if key in request}
                 )
             ),
             scope="liar-dice-settings",
@@ -2335,6 +2397,7 @@ def create_app(
             lambda: _relay_core(
                 lambda: core.set_truth_trade_settings(
                     {key: request[key] for key in required}
+                    | ({"enabled": request["enabled"]} if "enabled" in request else {})
                 )
             ),
             scope="truth-trade-settings",

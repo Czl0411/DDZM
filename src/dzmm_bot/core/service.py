@@ -19,6 +19,7 @@ from .random_event_submissions import (
 
 
 _DIRECT_COMMANDS = {
+    "/我的称号", "/佩戴称号", "/装备称号", "/编辑称号", "/荣誉榜", "/荣誉历史",
     "/报数", "/发红包", "/抢红包", "/余额", "/我的物品", "/我",
     "/帮助", "/当前游戏", "/我的档案", "/我的部门人数", "/打卡",
     "/编辑档案", "/编辑档案形象", "/商店", "/购买",
@@ -32,6 +33,7 @@ _DIRECT_COMMANDS = {
     "/设置性别", "/修改性别",
 }
 _RANDOM_EVENT_INDEPENDENT_COMMANDS = {
+    "/我的称号", "/佩戴称号", "/装备称号", "/编辑称号", "/荣誉榜", "/荣誉历史",
     "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏", "/随礼",
 }
 
@@ -211,7 +213,7 @@ class CoreService:
                         performance_state == "performing" and command == "/end"
                     ) or (
                         performance_state == "tipping" and command == "/打赏"
-                    )
+                    ) or command in {"/我的称号", "/佩戴称号", "/装备称号", "/编辑称号", "/荣誉榜", "/荣誉历史"}
                     if allowed_command:
                         performance_reply = self._command_handler.handle(message)
                         self._enqueue_replies(

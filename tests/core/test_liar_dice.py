@@ -3,6 +3,7 @@ from random import Random
 import re
 from zoneinfo import ZoneInfo
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -169,6 +170,41 @@ def test_count_point_with_wild():
     assert not judge_open(dice, (5, 3), 6, False)
 
 
+@pytest.mark.parametrize("secondary_group", [False, True])
+def test_liar_dice_global_switch_and_minimum_apply_to_all_groups(secondary_group):
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 6, 12, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    _join_employees(service, now)
+    _seed_direct_chats(factory, now)
+    group = repository.create_group_chat("第二群", "https://www.aikda.com/chat?c=group-rest", True, True, False, False, now) if secondary_group else repository.list_group_chats()[0]
+    repository.set_liar_dice_settings(turn_seconds=90, enabled=False, min_players=3)
+    _receive(service, "disabled", "user-0", "/大话骰子", now, chatroom_id=group.chatroom_id)
+    assert "当前未开放" in _latest_reply(factory)
+    assert repository.current_gameplay_admin_summary(now, group.id).game_type is None
+    repository.set_liar_dice_settings(turn_seconds=90, enabled=True, min_players=3)
+    _receive(service, "start", "user-0", "/大话骰子", now, chatroom_id=group.chatroom_id)
+    assert "至少 3 人" in _latest_reply(factory)
+    _receive(service, "join-second", "user-1", "/加入", now, chatroom_id=group.chatroom_id)
+    _receive(service, "too-few", "user-0", "/开始", now, chatroom_id=group.chatroom_id)
+    assert "至少 3 人" in _latest_reply(factory)
+    repository.set_liar_dice_settings(turn_seconds=90, enabled=False, min_players=3)
+    _receive(service, "join-third", "user-2", "/加入", now, chatroom_id=group.chatroom_id)
+    _receive(service, "begin", "user-0", "/开始", now, chatroom_id=group.chatroom_id)
+    assert "摇骰中（3 人）" in _latest_reply(factory)
+    _flush_all_outbound(repository, now)
+    summary = repository.current_gameplay_admin_summary(now, group.id)
+    assert summary.game_type == "liar_dice"
+    assert summary.round_number == 1
+    assert summary.action_deadline == now + timedelta(seconds=90)
+    assert [player.number for player in summary.participants] == [1, 2, 3]
+    assert summary.current_seat == 1
+    assert repository.force_end_gameplay("liar_dice", summary.game_id, now, group.id)
+    assert not repository.force_end_gameplay("liar_dice", summary.game_id, now, group.id)
+    assert repository.current_gameplay_admin_summary(now, group.id).game_type is None
+    assert repository.start_liar_dice("user-0", now, group.id).status == "disabled"
+
+
 def test_liar_dice_full_flow():
     service, repository, factory = _service(liar_dice_random=Random(7))
     now = datetime(2026, 10, 2, 16, 0, tzinfo=BEIJING)
@@ -263,6 +299,14 @@ def test_liar_dice_full_flow():
             )
         )
     assert finished.state == "completed"
+    from dzmm_bot.core.schema import DepartmentGamePlayRecord, GameParticipationRecord, LiarDiceRoundRecord
+
+    with factory() as session:
+        assert sorted(session.scalars(select(DepartmentGamePlayRecord.count))) == [1, 1, 1]
+        assert len(session.scalars(select(GameParticipationRecord)).all()) == 3
+        snapshots = session.scalars(select(LiarDiceRoundRecord.dice_snapshot)).all()
+        assert all(set(snapshot) <= {str(repository.find_user(f"user-{index}").id)
+                                    for index in range(3)} for snapshot in snapshots)
 
 
 def test_liar_dice_career_statistics_accumulate_across_games():

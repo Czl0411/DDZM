@@ -2405,8 +2405,7 @@ def test_me_alias_shows_balance_level_and_today_income_without_count():
     _receive(service, "me", "platform-xiaoming", "/me", received_at)
 
     reply = _latest_reply(factory)
-    # /我 新格式不再输出昵称行（工号开头）
-    assert "小明" not in reply
+    assert reply.splitlines()[0] == "小明"
     assert "工号：#0001" in reply
     assert "3 摸鱼币" in reply
     assert "LV1" in reply

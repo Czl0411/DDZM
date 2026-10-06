@@ -5,11 +5,14 @@ from zoneinfo import ZoneInfo
 from uuid import UUID
 
 import httpx
+import logging
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from uvicorn import Config, Server
+
+logger = logging.getLogger(__name__)
 
 from dzmm_bot.runtime.contracts import (
     InboundMessage,
@@ -218,6 +221,7 @@ from .api_models import (
     WorkerCommandResponse,
 )
 from .database import create_session_factory
+from .honors import HonorConfigRequest, HonorSettleRequest, HonorCorrectionRequest, HonorConflict
 from .commands import GroupCommandHandler
 from .company_lottery import PrizeTier
 from .repository import (
@@ -330,6 +334,14 @@ def create_app(
         request: InboundRequest, _: Annotated[None, Depends(authorize)]
     ) -> InboundResponse:
         reference = request.reference
+        if reference is not None:
+            # 引用凿未知账号时可观测：记录被引用消息的发送者平台 ID
+            logger.info(
+                "inbound reference: sender=%s ref_sender=%s ref_message=%s",
+                request.sender_platform_id,
+                reference.sender_platform_id,
+                reference.message_id,
+            )
         result = service.receive_inbound(
             InboundMessage(
                 platform_message_id=request.platform_message_id,
@@ -1362,7 +1374,8 @@ def create_app(
         records, total = repository.list_users_page(page, page_size)
         return PaginatedUsersResponse(
             items=[
-                _user_response(repository.get_user_profile(record.platform_id))
+                _user_response(repository.get_user_profile(record.platform_id),
+                               repository.get_equipped_honor(record.platform_id, clock()))
                 for record in records
             ],
             page=page,
@@ -1416,6 +1429,54 @@ def create_app(
             total=history.total,
             pages=(history.total + page_size - 1) // page_size,
         )
+
+    def honor_call(operation):
+        try:
+            return operation()
+        except HonorConflict as error:
+            raise HTTPException(409, str(error)) from error
+        except LookupError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.get("/internal/game/honors/config")
+    def honor_config(_: Annotated[None, Depends(authorize)]) -> dict:
+        return repository.get_honor_config(clock())
+
+    @app.patch("/internal/game/honors/config")
+    def update_honor_config(request: HonorConfigRequest, _: Annotated[None, Depends(authorize)]) -> dict:
+        return honor_call(lambda: repository.update_honor_config(request.model_dump(exclude={"actor"}), request.actor, clock()))
+
+    @app.get("/internal/game/honors/preview")
+    def honor_preview(week_start: date, _: Annotated[None, Depends(authorize)]) -> dict:
+        return honor_call(lambda: repository.preview_honors(week_start, clock()))
+
+    @app.post("/internal/game/honors/settle")
+    def honor_settle(request: HonorSettleRequest, _: Annotated[None, Depends(authorize)]) -> dict:
+        return honor_call(lambda: repository.settle_honors(request.week_start, request.actor, clock(), request.preview_digest))
+
+    @app.get("/internal/game/honors/periods")
+    def honor_periods(_: Annotated[None, Depends(authorize)], page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> dict:
+        return repository.honor_periods(page, page_size)
+
+    @app.get("/internal/game/honors/history")
+    def honor_history(_: Annotated[None, Depends(authorize)], user_id: UUID | None = None,
+                      title_key: str | None = None, week_start: date | None = None,
+                      page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> dict:
+        return repository.honor_history(clock(), user_id, title_key, week_start, page, page_size)
+
+    @app.get("/internal/game/users/{platform_id}/honors")
+    def employee_honors(platform_id: str, _: Annotated[None, Depends(authorize)]) -> dict:
+        result = repository.my_honors(platform_id, clock())
+        if result is None:
+            raise HTTPException(404, "员工不存在")
+        return result
+
+    @app.post("/internal/game/honors/awards/{award_id}/correct")
+    def honor_correct(award_id: UUID, request: HonorCorrectionRequest, _: Annotated[None, Depends(authorize)]) -> dict:
+        return honor_call(lambda: repository.correct_honor(award_id, request.winner_id, request.reason,
+                                                         request.expected_revision, request.actor, clock()))
 
     @app.get("/internal/game/shop/catalog")
     def shop_catalog(
@@ -2508,6 +2569,8 @@ def create_app(
                         state=participant.state,
                         hearts=participant.hearts,
                     )
+                elif summary.game_type in {"liar_dice", "truth_trade"}:
+                    participant_values.update(state=participant.state)
                 participants.append(GameplayParticipantResponse(**participant_values))
             values = {
                 "group_chat_id": summary.group_chat_id,
@@ -2534,6 +2597,15 @@ def create_app(
                     action_deadline=summary.action_deadline,
                     to_call=summary.to_call,
                     legal_actions=list(summary.legal_actions),
+                )
+            elif summary.game_type in {"liar_dice", "truth_trade"}:
+                values.update(
+                    current_seat=summary.current_seat,
+                    action_deadline=summary.action_deadline,
+                    current_call=summary.current_call,
+                    current_speaker_name=summary.current_speaker_name,
+                    responded_count=summary.responded_count,
+                    expected_response_count=summary.expected_response_count,
                 )
             elif summary.game_type in {
                 "memory_duel", "memory_single", "never_have_i_ever", "king_game"
@@ -2811,7 +2883,7 @@ def create_app(
         _: Annotated[None, Depends(authorize)],
     ) -> LiarDiceSettingsResponse:
         settings = repository.get_liar_dice_settings()
-        return LiarDiceSettingsResponse(turn_seconds=settings.turn_seconds)
+        return LiarDiceSettingsResponse(turn_seconds=settings.turn_seconds, enabled=settings.enabled, min_players=settings.min_players)
 
     @app.patch(
         "/internal/game/liar-dice/settings",
@@ -2824,10 +2896,12 @@ def create_app(
         try:
             settings = repository.set_liar_dice_settings(
                 turn_seconds=request.turn_seconds,
+                enabled=request.enabled,
+                min_players=request.min_players,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
-        return LiarDiceSettingsResponse(turn_seconds=settings.turn_seconds)
+        return LiarDiceSettingsResponse(turn_seconds=settings.turn_seconds, enabled=settings.enabled, min_players=settings.min_players)
 
     @app.get(
         "/internal/game/truth-trade/settings",
@@ -2841,6 +2915,7 @@ def create_app(
             question_timeout_seconds=settings.question_timeout_seconds,
             answer_timeout_seconds=settings.answer_timeout_seconds,
             min_players=settings.min_players,
+            enabled=settings.enabled,
         )
 
     @app.patch(
@@ -2856,6 +2931,7 @@ def create_app(
                 question_timeout_seconds=request.question_timeout_seconds,
                 answer_timeout_seconds=request.answer_timeout_seconds,
                 min_players=request.min_players,
+                enabled=request.enabled,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -2863,6 +2939,7 @@ def create_app(
             question_timeout_seconds=settings.question_timeout_seconds,
             answer_timeout_seconds=settings.answer_timeout_seconds,
             min_players=settings.min_players,
+            enabled=settings.enabled,
         )
 
     @app.get(
@@ -4004,11 +4081,12 @@ def _department_response(record) -> DepartmentResponse:
     )
 
 
-def _user_response(profile) -> UserResponse:
+def _user_response(profile, honor_title=None) -> UserResponse:
     if profile is None:
         raise RuntimeError("employee profile is missing")
     return UserResponse(
         platform_id=profile.user.platform_id,
+        honor_title=honor_title,
         display_name=profile.user.display_name,
         platform_nickname=profile.user.platform_nickname,
         employee_number=profile.user.employee_number,

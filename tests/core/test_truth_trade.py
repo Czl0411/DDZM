@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -105,6 +106,45 @@ def _setup_game(service, repository, factory, now, players=3):
         _receive(service, f"signup-{index}", f"user-{index}", "/加入", now)
     _receive(service, "begin", "user-0", "/开始", now)
     assert "第 1 轮开始" in _latest_reply(factory)
+
+
+@pytest.mark.parametrize("secondary_group", [False, True])
+def test_truth_trade_global_switch_and_minimum_apply_to_all_groups(secondary_group):
+    service, repository, factory = _service()
+    _join_employees(service, NOW, 3)
+    group = repository.create_group_chat("第二群", "https://www.aikda.com/chat?c=group-rest", True, True, False, False, NOW) if secondary_group else repository.list_group_chats()[0]
+    settings = dict(question_timeout_seconds=90, answer_timeout_seconds=180, min_players=3)
+    repository.set_truth_trade_settings(**settings, enabled=False)
+    _receive(service, "disabled", "user-0", "/真心换真心", NOW, chatroom_id=group.chatroom_id)
+    assert "当前未开放" in _latest_reply(factory)
+    assert repository.current_gameplay_admin_summary(NOW, group.id).game_type is None
+    repository.set_truth_trade_settings(**settings, enabled=True)
+    _receive(service, "start", "user-0", "/真心换真心", NOW, chatroom_id=group.chatroom_id)
+    assert "至少 3 人" in _latest_reply(factory)
+    _receive(service, "join-second", "user-1", "/加入", NOW, chatroom_id=group.chatroom_id)
+    _receive(service, "too-few", "user-0", "/开始", NOW, chatroom_id=group.chatroom_id)
+    assert "人数不足 3 人" in _latest_reply(factory)
+    repository.set_truth_trade_settings(**settings, enabled=False)
+    _receive(service, "join-third", "user-2", "/加入", NOW, chatroom_id=group.chatroom_id)
+    _receive(service, "begin", "user-0", "/开始", NOW, chatroom_id=group.chatroom_id)
+    assert "第 1 轮开始" in _latest_reply(factory)
+    summary = repository.current_gameplay_admin_summary(NOW, group.id)
+    assert summary.game_type == "truth_trade"
+    assert summary.current_seat == 1
+    assert summary.current_speaker_name == "甲"
+    assert summary.action_deadline == NOW + timedelta(seconds=90)
+    _receive(service, "question", "user-0", "/问 测试问题", NOW, chatroom_id=group.chatroom_id)
+    _receive(service, "answer", "user-1", "/回答 测试答案", NOW, chatroom_id=group.chatroom_id)
+    summary = repository.current_gameplay_admin_summary(NOW, group.id)
+    assert summary.state == "answering"
+    assert summary.responded_count == 1
+    assert summary.expected_response_count == 2
+    assert summary.action_deadline == NOW + timedelta(seconds=180)
+    assert [player.number for player in summary.participants] == [1, 2, 3]
+    assert repository.force_end_gameplay("truth_trade", summary.game_id, NOW, group.id)
+    assert not repository.force_end_gameplay("truth_trade", summary.game_id, NOW, group.id)
+    assert repository.current_gameplay_admin_summary(NOW, group.id).game_type is None
+    assert repository.start_truth_trade("user-0", NOW, group.id).status == "disabled"
 
 
 def test_truth_trade_wen_alias_for_ask():
@@ -309,7 +349,7 @@ def test_truth_trade_current_game_shows_roster_and_count():
     assert "1号 甲" in reply
 
 
-def test_truth_trade_allowance_host_and_round_bump():
+def test_truth_trade_allowance_host_and_whole_game_bump():
     from dzmm_bot.core.schema import (
         DepartmentGamePlayRecord,
         DepartmentRecord,
@@ -350,7 +390,6 @@ def test_truth_trade_allowance_host_and_round_bump():
         )
         assert host.balance == balance_before + 1
 
-    # 一轮结算 → 每个参与者计 1 局
     _receive(service, "q1", "user-0", "/问题 今天吃了什么", now)
     _receive(service, "a1", "user-1", "/真心 米饭", now)
     _receive(service, "a2", "user-2", "/真心 面条", now)
@@ -359,12 +398,40 @@ def test_truth_trade_allowance_host_and_round_bump():
     assert _game(repository).state == "round_complete"
     with factory() as session:
         counts = session.scalars(select(DepartmentGamePlayRecord.count)).all()
-        assert sorted(counts) == [1, 1, 1]
+        assert counts == []
 
-    # 已结算后再 /结束游戏：不重复计局
+    _receive(service, "continue", "user-0", "/继续", now)
+    _receive(service, "q4", "user-0", "/问题 跳过", now)
+    _receive(service, "q5", "user-1", "/问题 跳过", now)
+    _receive(service, "q6", "user-2", "/问题 跳过", now)
+    assert _game(repository).settled_rounds == 2
+    with factory() as session:
+        assert session.scalars(select(DepartmentGamePlayRecord.count)).all() == []
+
     _receive(service, "end", "user-0", "/结束游戏", now)
     with factory() as session:
         counts = session.scalars(select(DepartmentGamePlayRecord.count)).all()
         assert sorted(counts) == [1, 1, 1]
     finished = _finished_game(repository)
     assert finished.state == "finished"
+
+
+@pytest.mark.parametrize("complete_first_round", [False, True])
+def test_truth_trade_forced_end_counts_only_games_with_completed_round(complete_first_round):
+    from dzmm_bot.core.schema import DepartmentGamePlayRecord, GameParticipationRecord
+
+    service, repository, factory = _service()
+    _setup_game(service, repository, factory, NOW, players=3)
+    if complete_first_round:
+        for index in range(3):
+            _receive(service, f"skip-{index}", f"user-{index}", "/问题 跳过", NOW)
+        _receive(service, "continue", "user-0", "/继续", NOW)
+    _receive(service, "partial", "user-0", "/问题 今天吃了什么", NOW)
+    _receive(service, "end", "user-0", "/结束游戏", NOW)
+    _receive(service, "end-again", "user-0", "/结束游戏", NOW)
+    with factory() as session:
+        counts = session.scalars(select(DepartmentGamePlayRecord.count)).all()
+        participations = session.scalars(select(GameParticipationRecord)).all()
+        assert counts == ([1, 1, 1] if complete_first_round else [])
+        assert len(participations) == (3 if complete_first_round else 0)
+        assert _finished_game(repository).settled_rounds == (1 if complete_first_round else 0)

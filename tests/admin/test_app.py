@@ -1768,6 +1768,7 @@ def test_only_login_operator_can_open_console(client, admin_repository, core):
 def test_admin_dashboard_serves_its_login_and_style_assets(client):
     page = client.get("/")
     stylesheet = client.get("/static/admin.css")
+    refined_stylesheet = client.get("/static/admin-refined.css")
 
     assert page.status_code == 200
     assert 'id="login-screen"' in page.text
@@ -1776,6 +1777,11 @@ def test_admin_dashboard_serves_its_login_and_style_assets(client):
     assert 'id="login-console-frame"' in page.text
     assert stylesheet.status_code == 200
     assert "--surface" in stylesheet.text
+    assert '/static/admin-refined.css' in page.text
+    assert refined_stylesheet.status_code == 200
+    assert refined_stylesheet.headers["content-type"].startswith("text/css")
+    assert refined_stylesheet.headers["cache-control"] == "no-store"
+    assert refined_stylesheet.text == Path("src/dzmm_bot/admin/static/admin-refined.css").read_text(encoding="utf-8")
 
 
 def test_admin_uses_a_grouped_desktop_console_shell(client):
@@ -2065,6 +2071,28 @@ def test_admin_updates_an_existing_item_description(client, headers):
 
     assert response.status_code == 200
     assert response.json()["description"] == "使用后增加一次小游戏发起次数。"
+
+
+@pytest.mark.parametrize("game", ["liar-dice", "truth-trade"])
+def test_admin_proxies_dice_truth_controls_with_versioning(client, headers, core, monkeypatch, game):
+    settings = {"turn_seconds": 120, "enabled": True, "min_players": 2} if game == "liar-dice" else {"question_timeout_seconds": 300, "answer_timeout_seconds": 600, "enabled": True, "min_players": 2}
+    method = game.replace("-", "_")
+
+    def save(updated):
+        settings.update(updated)
+        return settings.copy()
+
+    monkeypatch.setattr(core, f"get_{method}_settings", lambda: settings.copy(), raising=False)
+    monkeypatch.setattr(core, f"set_{method}_settings", save, raising=False)
+    initial = client.get(f"/api/game/{game}/settings", headers=headers)
+    assert initial.json() == {**settings, "version": 0}
+    payload = {**settings, "enabled": False, "min_players": 4}
+    updated = client.patch(f"/api/game/{game}/settings", headers=headers, json=payload)
+    assert updated.status_code == 200
+    assert updated.json() == {**payload, "version": 1}
+    conflict = client.patch(f"/api/game/{game}/settings", headers={**headers, "Idempotency-Key": "stale-config"}, json={**payload, "enabled": True})
+    assert conflict.status_code == 409
+    assert settings["enabled"] is False
 
 
 @pytest.fixture

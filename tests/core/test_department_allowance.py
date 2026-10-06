@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from random import Random
 from zoneinfo import ZoneInfo
+from uuid import uuid4
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -410,6 +411,30 @@ def test_game_play_bump_grants_on_fifth():
         repository._bump_department_game_plays(
             repository._active_session.get(), [user_id], now
         )
+    assert _balance(factory, "user-0") == before + 1
+
+
+def test_completed_game_replay_does_not_repeat_count_or_allowance():
+    from dzmm_bot.core.schema import DepartmentGamePlayRecord, GameParticipationRecord, PRIMARY_GROUP_CHAT_ID
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 2, 9, 0, tzinfo=BEIJING)
+    repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    _receive(service, "join", "user-0", "/入职 甲", now)
+    department_id = _bind_department(factory, "小游戏娱乐部", "game")
+    _assign_department(factory, "user-0", department_id)
+    user_id = repository.find_user("user-0").id
+    before = _balance(factory, "user-0")
+    for game_id in [uuid4() for _ in range(5)]:
+        for attempt in range(2):
+            with repository.transaction():
+                repository._bump_department_game_plays(
+                    repository._active_session.get(), [user_id, user_id], now,
+                    PRIMARY_GROUP_CHAT_ID, game_type="truth_trade", game_id=game_id,
+                )
+    with factory() as session:
+        assert session.scalar(select(DepartmentGamePlayRecord.count)) == 5
+        assert len(session.scalars(select(GameParticipationRecord)).all()) == 5
     assert _balance(factory, "user-0") == before + 1
 
 

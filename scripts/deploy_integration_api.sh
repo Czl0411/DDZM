@@ -7,6 +7,11 @@ set -e
 VENV=/opt/dzmm/venv/lib/python3.12/site-packages/dzmm_bot
 CUR=/opt/dzmm/current
 
+set -a
+source /etc/dzmm/dzmm.env
+set +a
+: "${DZMM_INTEGRATION_API_KEY:?请先在 /etc/dzmm/dzmm.env 中配置集成接口密钥}"
+
 cp /tmp/core_repository.py "$VENV/core/repository.py"
 cp /tmp/core_app.py       "$VENV/core/app.py"
 cp /tmp/core_schema.py    "$VENV/core/schema.py"
@@ -24,10 +29,6 @@ cp /tmp/admin_core_client.py "$CUR/src/dzmm_bot/admin/core_client.py"
 cp /tmp/runtime_settings.py  "$CUR/src/dzmm_bot/runtime/settings.py"
 cp /tmp/mig_92.py "$CUR/migrations/versions/20261004_92_integration_api.py"
 
-
-set -a
-source /etc/dzmm/dzmm.env
-set +a
 cd "$CUR" && /opt/dzmm/venv/bin/alembic -c /opt/dzmm/current/alembic.ini upgrade head
 
 systemctl restart dzmm-core dzmm-admin-web

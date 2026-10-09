@@ -12,6 +12,8 @@ GroupGameType: TypeAlias = Literal[
     "texas_holdem",
     "never_have_i_ever",
     "king_game",
+    "liar_dice",
+    "truth_trade",
 ]
 
 GROUP_GAME_TYPES: tuple[GroupGameType, ...] = (
@@ -24,6 +26,8 @@ GROUP_GAME_TYPES: tuple[GroupGameType, ...] = (
     "texas_holdem",
     "never_have_i_ever",
     "king_game",
+    "liar_dice",
+    "truth_trade",
 )
 
 GROUP_GAME_LABELS: dict[GroupGameType, str] = {
@@ -36,6 +40,8 @@ GROUP_GAME_LABELS: dict[GroupGameType, str] = {
     "texas_holdem": "德州扑克",
     "never_have_i_ever": "我有你没有",
     "king_game": "国王游戏",
+    "liar_dice": "大话骰子",
+    "truth_trade": "真心换真心",
 }
 
 GROUP_GAME_COMMANDS: dict[str, GroupGameType] = {
@@ -68,6 +74,11 @@ GROUP_GAME_COMMANDS: dict[str, GroupGameType] = {
     "/国王游戏": "king_game",
     "/国王游戏数据": "king_game",
     "/公开": "king_game",
+    "/大话骰子": "liar_dice",
+    "/真心换真心": "truth_trade",
+    "/真心换真心数据": "truth_trade",
+    "/问题": "truth_trade",
+    "/真心": "truth_trade",
 }
 
 

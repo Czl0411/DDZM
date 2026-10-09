@@ -2305,7 +2305,7 @@ def test_checkin_awards_five_once_per_beijing_date_and_uses_beijing_dates():
         assert checkins[0].checked_in_at.tzinfo == BEIJING
 
 
-def test_updated_economy_applies_to_future_join_and_checkin_only():
+def test_updated_economy_applies_to_future_join_but_checkin_uses_rank_reward():
     service, repository, factory = _service()
     repository.set_game_settings("工分", 3, 7, 5)
     received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
@@ -2316,10 +2316,10 @@ def test_updated_economy_applies_to_future_join_and_checkin_only():
     )
 
     _receive(service, "checkin", "platform-xiaoming", "/打卡", received_at)
-    assert _latest_reply(factory) == "打卡成功，领取 7 工分。当前余额：10 工分。"
+    assert _latest_reply(factory) == "打卡成功，领取 5 工分。当前余额：8 工分。"
 
     _receive(service, "help", "platform-xiaoming", "/帮助 基础", received_at)
-    assert "/打卡：每日领取 7 工分" in _latest_reply(factory)
+    assert "/打卡：按当前职位领取每日奖励" in _latest_reply(factory)
 
 
 def test_balance_inventory_and_shop_require_employee_and_return_persisted_data():
@@ -2341,6 +2341,30 @@ def test_balance_inventory_and_shop_require_employee_and_return_persisted_data()
         "#24 工位午睡券（5 摸鱼币，库存 3）\n"
         "说明：允许正大光明眯十分钟。"
     ) in reply
+
+
+def test_shop_lists_items_grouped_by_category_with_other_fallback():
+    service, repository, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _receive(service, "group-1", "platform-xiaoming", "/入职 小明", received_at)
+    repository.add_item("纪念章", "自建收藏品", 1, 5, category="收藏")
+    repository.add_item("杂物", "未分类商品", 2, 5)
+
+    _receive(service, "group-2", "platform-xiaoming", "/商店", received_at)
+    reply = _latest_reply(factory)
+
+    assert "◆ 礼物赠送" in reply
+    assert "◆ 刮刮乐" in reply
+    assert "◆ 功能道具" in reply
+    assert "◆ 收藏" in reply
+    assert "◆ 其他" in reply
+    assert (
+        reply.index("◆ 礼物赠送")
+        < reply.index("◆ 刮刮乐")
+        < reply.index("◆ 功能道具")
+        < reply.index("◆ 收藏")
+        < reply.index("◆ 其他")
+    )
 
 
 def test_shop_purchase_inventory_and_scratch_use_group_commands():
@@ -2483,7 +2507,8 @@ def test_me_alias_shows_balance_level_and_today_income_without_count():
     _receive(service, "me", "platform-xiaoming", "/me", received_at)
 
     reply = _latest_reply(factory)
-    assert "小明" in reply
+    assert reply.splitlines()[0] == "小明"
+    assert "工号：#0001" in reply
     assert "3 摸鱼币" in reply
     assert "LV1" in reply
     assert "今日收益：3 摸鱼币" in reply

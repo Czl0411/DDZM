@@ -4,10 +4,12 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
+import hashlib
 import logging
 from random import SystemRandom
 import re
 from secrets import choice, randbelow
+from time import monotonic
 import unicodedata
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
@@ -52,6 +54,30 @@ from .ai_knowledge import (
 )
 
 from .ai_mentions import normalize_ai_mention
+from .game_statistics import (
+    other_game_users, record_game_participations, resolved_game_users, truth_trade_game_users,
+)
+from .birthday import (
+    matches as birthday_matches,
+    next_occurrence as birthday_next_occurrence,
+    parse_birthday,
+    strip_visibility,
+)
+from .birthday import format_tenure as birthday_format_tenure
+from .estrus import (
+    CLIMAX_CONTINUE_ROUNDS,
+    CLIMAX_MAX_CHARS,
+    CLIMAX_MAX_TOKENS,
+    CLIMAX_TEMPERATURE,
+    CLIMAX_TIMEOUT_SECONDS,
+    CLIMAX_TOTAL_BUDGET_SECONDS,
+    CONTINUE_INSTRUCTION,
+    HistoryMessage,
+    build_climax_messages,
+    climax_text_passes,
+    fallback_climax_text,
+)
+
 from .company_lottery import (
     DEFAULT_BLUE_POOL,
     DEFAULT_MAX_TICKETS_PER_DAY,
@@ -125,7 +151,23 @@ from .random_event_vote import (
     tiered_pool,
     top_candidates,
 )
-from .shop_cards import SYSTEM_SHOP_ITEMS, adult_item, item_by_key, purchase_category
+from .liar_dice import (
+    count_point,
+    dice_str,
+    is_legal_raise,
+    judge_open,
+    roll_dice,
+    roll_wild,
+)
+from .shop_cards import item_by_key
+from .shop_cards import (
+    SYSTEM_SHOP_ITEMS,
+    item_category,
+    item_daily_purchase_limit,
+)
+from .shop_effects import default_effect_config, effect_definition, effective_config, item_effect_snapshot
+from .shop_management import ShopManagementMixin
+from .honors import HonorsMixin
 from .red_packet import RandomSource, generate_red_packet_allocation
 from .texas_holdem import (
     BettingPlayer,
@@ -184,6 +226,9 @@ from .schema import (
     DailyActivityRecord,
     DailyAIUsageRecord,
     DailyCheckinRecord,
+    DepartmentAllowanceSettingsRecord,
+    DisciplineFineRecord,
+    DisciplineFineSettingsRecord,
     DarkMarketBidRecord,
     DarkMarketDailyListingRecord,
     DarkMarketDeferredNoticeRecord,
@@ -202,6 +247,13 @@ from .schema import (
     HideAndSeekGameRecord,
     HideAndSeekSceneRecord,
     HideAndSeekSettingsRecord,
+    BirthdayGreetingRecord,
+    BirthdayGreetAnnouncementRecord,
+    BirthdayPreviewRecord,
+    BirthdaySettingsRecord,
+    BirthdayTipRecord,
+    EmployeeBirthdayRecord,
+    IntegrationIdempotencyRecord,
     IncomeReportDeliveryRecord,
     IncomeReportScheduleRecord,
     InboundRecord,
@@ -228,11 +280,25 @@ from .schema import (
     KingGamePlayerRecord,
     KingGameRoundRecord,
     KingGameSettingsRecord,
+    DepartmentAllowanceRecord,
+    DepartmentGamePlayRecord,
+    LiarDiceGameRecord,
+    LiarDicePlayerRecord,
+    LiarDiceRoundRecord,
+    LiarDiceSettingsRecord,
+    EstrusStateRecord,
+    EstrusChopRecord,
+    EstrusSettingsRecord,
     NeverHaveIEverGameRecord,
     NeverHaveIEverPlayerRecord,
     NeverHaveIEverResponseRecord,
     NeverHaveIEverRoundRecord,
     NeverHaveIEverSettingsRecord,
+    TruthTradeAnswerRecord,
+    TruthTradeGameRecord,
+    TruthTradePlayerRecord,
+    TruthTradeQuestionRecord,
+    TruthTradeSettingsRecord,
     TexasHoldemActionRecord,
     TexasHoldemDailyStartRecord,
     TexasHoldemGameRecord,
@@ -286,6 +352,7 @@ from .schema import (
     RedPacketRecord,
     RedPacketSettingsRecord,
     RedPacketShareRecord,
+    ReferralRecord,
     AdultCardParticipantRecord,
     AdultCardSessionRecord,
     BlackHistoryEntryRecord,
@@ -326,6 +393,7 @@ class GroupChatConfig:
     announcements_enabled: bool
     adult_shop_enabled: bool
     performances_enabled: bool
+    birthdays_enabled: bool
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
@@ -359,6 +427,8 @@ class ShopCatalogItem:
     system_key: str | None
     effect_type: str | None
     minimum_rank_order: int | None
+    category: str | None
+    daily_purchase_limit: int | None
 
 
 @dataclass(frozen=True)
@@ -464,6 +534,7 @@ def _group_chat_config(record: GroupChatRecord) -> GroupChatConfig:
         announcements_enabled=record.announcements_enabled,
         adult_shop_enabled=record.adult_shop_enabled,
         performances_enabled=record.performances_enabled,
+        birthdays_enabled=record.birthdays_enabled,
         created_at=record.created_at,
         updated_at=record.updated_at,
         deleted_at=record.deleted_at,
@@ -535,7 +606,41 @@ _BALANCE_SOURCE_LABELS = {
     "shop_gift": "赠送卡到账",
     "shop_scratch": "刮刮卡奖励",
     "shop_compensation": "卡片作废补偿",
+    "discipline_fine": "风纪罚款",
+    "discipline_fine_refund": "风纪罚款退款",
+    "fine_kickback": "风纪执法抽成",
 }
+# 风纪罚款执法者每日次数默认配额：按职级序（sort_order）取值；
+# rank_quotas 中显式配置的 rank_id 优先于该默认
+_DEFAULT_FINE_QUOTAS_BY_SORT_ORDER = {
+    1: 0,
+    2: 1,
+    3: 2,
+    4: 3,
+    5: 3,
+    6: 5,
+    7: 5,
+    8: 8,
+    9: 8,
+    10: 10,
+    11: 20,
+}
+# /凿 凿者每日次数默认配额：LV1 一次、每升一级多一次；
+# 董事会（sort_order 11 及以上）固定 20 次；显式 rank_quotas 优先
+_DEFAULT_CHOPPER_QUOTAS_BY_SORT_ORDER = {
+    1: 1,
+    2: 2,
+    3: 3,
+    4: 4,
+    5: 5,
+    6: 6,
+    7: 7,
+    8: 8,
+    9: 9,
+    10: 10,
+}
+_DEFAULT_CHOPPER_QUOTA_FOR_BOARD = 20
+_FINE_FEEDBACK_HINT = "如对本次罚款有异议，请保存截图并向经理或总监职级以上的员工反馈。"
 _DEFAULT_RED_PACKET_EXPIRY_MINUTES = 10
 _DEFAULT_RED_PACKET_EMPTY_PROBABILITY_PERCENT = 5
 _RED_PACKET_DAILY_LIMIT = 5
@@ -562,6 +667,7 @@ _DEFAULT_ACTIVITY_RULES = (
     (10, 500, 10),
 )
 _DEFAULT_INCOME_REPORT_TIMES = ("12:00", "16:00", "20:00", "23:59")
+_SHOP_FIELD_UNSET = object()
 _DEFAULT_RANDOM_EVENT_START_TIME = "10:00"
 _DEFAULT_RANDOM_EVENT_END_TIME = "24:00"
 _DEFAULT_RANDOM_EVENT_COUNT = 1
@@ -620,6 +726,8 @@ _DEFAULT_RANDOM_EVENT_VOTE_FALLBACK_MINUTES = 30
 _RANDOM_EVENT_CONFIGURABLE_COMMANDS = frozenset(
     {
         "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/我", "/编辑档案", "/编辑档案形象", "/我的档案", "/商店", "/帮助", "/当前游戏",
+        "/设置生日", "/我的生日", "/本月生日",
+        "/随礼",
         "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/继续", "/收手", "/投降",
         "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表",
         "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门",
@@ -634,6 +742,28 @@ _DEFAULT_HIDE_AND_SEEK_ENTRY_FEE = 1
 _DEFAULT_HIDE_AND_SEEK_WIN_REWARD = 3
 _DEFAULT_HIDE_AND_SEEK_DAILY_LIMIT = 2
 _DEFAULT_HIDE_AND_SEEK_SELECTION_TIMEOUT_MINUTES = 2
+_DEFAULT_BIRTHDAY_GREET_TIMES = ("09:00", "12:00", "17:00")
+_DEFAULT_BIRTHDAY_PREVIEW_TIME = "20:00"
+_DEFAULT_BIRTHDAY_GIFT_AMOUNT = 20
+_DEFAULT_BIRTHDAY_EDIT_LIMIT_PER_YEAR = 1
+_DEFAULT_BIRTHDAY_CHECKIN_MULTIPLIER = 2
+_DEFAULT_BIRTHDAY_SHOP_DISCOUNT_PERCENT = 80
+_DEFAULT_BIRTHDAY_LOTTERY_FREE_TICKETS = 5
+_DEFAULT_BIRTHDAY_EVENT_REWARD_BONUS_PERCENT = 50
+_DEFAULT_BIRTHDAY_TIP_MAX_AMOUNT = 20
+#: 0 = 随礼一直有效到当天 24:00（默认）；>0 = 从祝福发出起最多这么多分钟
+_DEFAULT_BIRTHDAY_TIP_WINDOW_MINUTES = 0
+#: `same_day_backfill=False` 时只在这个窗口内补发，超过就当天不再发。
+_BIRTHDAY_BACKFILL_WINDOW_MINUTES = 30
+
+_DEFAULT_BIRTHDAY_GREET_LINE = "生日快乐，愿你今天的每一次摸鱼都格外顺利 🎂"
+_DEFAULT_BIRTHDAY_PREVIEW_TEMPLATE = (
+    "明天是 {寿星} 的生日，想随礼的同事记得提前准备 💐"
+)
+_DEFAULT_BIRTHDAY_TIPS_SUMMARY_TEMPLATE = (
+    "{寿星} 收到 {随礼人数} 位同事的随礼，共 {随礼总额} 摸鱼币 💐"
+)
+
 _DEFAULT_HIDE_AND_SEEK_SCENES = (
     "公司前台",
     "茶水间",
@@ -1019,6 +1149,80 @@ class HideAndSeekSettings:
 
 
 @dataclass(frozen=True)
+class BirthdaySettings:
+    enabled: bool
+    greet_times: list[str]
+    preview_enabled: bool
+    preview_time: str
+    gift_amount: int
+    same_day_backfill: bool
+    edit_limit_per_year: int
+    checkin_multiplier: int
+    shop_discount_percent: int
+    lottery_free_tickets: int
+    event_reward_bonus_percent: int
+    tips_enabled: bool
+    tip_max_amount: int
+    tip_window_minutes: int
+    anniversary_enabled: bool
+    greet_template: str
+    preview_template: str
+    tips_summary_template: str
+
+
+@dataclass(frozen=True)
+class EmployeeBirthdayView:
+    month: int
+    day: int
+    year: int | None
+    visibility: str
+    next_occurrence: date
+    tenure: str
+    changed_this_year: bool
+
+
+@dataclass(frozen=True)
+class BirthdaySaveResult:
+    status: str
+    view: EmployeeBirthdayView | None = None
+
+
+@dataclass(frozen=True)
+class MonthBirthdayEntry:
+    display_name: str
+    month: int
+    day: int
+    is_today: bool
+
+
+@dataclass(frozen=True)
+class MonthBirthdayList:
+    month: int
+    entries: tuple[MonthBirthdayEntry, ...]
+
+
+@dataclass(frozen=True)
+class BirthdayMemberRow:
+    platform_id: str
+    display_name: str
+    employee_number: int
+    month: int | None
+    day: int | None
+    visibility: str | None
+    is_today: bool
+
+
+
+@dataclass(frozen=True)
+class BirthdayTipResult:
+    status: str
+    recipient_name: str | None = None
+    amount: int = 0
+    maximum: int = 0
+
+
+
+@dataclass(frozen=True)
 class HideAndSeekScene:
     id: UUID
     name: str
@@ -1217,6 +1421,222 @@ class KingGameResult:
     deadline: datetime | None = None
     end_after_round: bool = False
     statistics: KingGameStatistics | None = None
+
+
+@dataclass(frozen=True)
+class LiarDiceSettings:
+    turn_seconds: int
+    enabled: bool = True
+    min_players: int = 2
+
+
+@dataclass(frozen=True)
+class EstrusSettings:
+    enabled: bool
+    climax_threshold: int
+    heat_p0: int
+    heat_p1: int
+    heat_p2: int
+    coin_p0: int
+    coin_p1: int
+    coin_p2: int
+    chop_cooldown_seconds: int
+    chopper_rank_quotas: dict[str, int] | None
+    combo_chop_enabled: bool
+    g_spot_percent: int
+    g_spot_heat_bonus: int
+    chopper_coin_p0: int
+    chopper_coin_p1: int
+    chopper_coin_p2: int
+    coins_linked: bool
+    target_daily_limit: int
+    chopper_fixed_coins: int | None
+    target_fixed_coins: int | None
+
+
+@dataclass(frozen=True)
+class EstrusChopResult:
+    status: str
+    chopper_name: str | None = None
+    target_name: str | None = None
+    note: str | None = None
+    times_requested: int = 1
+    times_executed: int = 1
+    heat_gain: int = 0
+    heat_now: int = 0
+    threshold: int = 100
+    coins: int = 0
+    coins_deducted: int = 0
+    climax_triggered: bool = False
+    climax_count: int = 0
+    climax_text: str | None = None
+    g_spot_hits: int = 0
+    today_climaxes: int = 0
+    total_climaxes: int = 0
+    cooldown_remaining_seconds: int = 0
+    today_chops_given: int = 0
+    daily_chops_limit: int = 0
+    today_chops_received: int = 0
+    daily_received_limit: int = 0
+    candidate_labels: tuple[str, ...] = ()
+    stopped_reason: str | None = None
+
+
+# /凿 特殊目标：群体称呼、自称与机器人不是可凿对象，给出专属文案而不是
+# 笼统的「没找到员工」；老板/人事等职称词在未入职时给彩蛋提示。
+# 群体词用宽松正则：拦下「全体的家人们」「所有人！！」这类变体（人名撞词概率极低）。
+_CHOP_GROUP_PATTERN = re.compile(
+    r"所有人|全体|全员|大家|大伙|各位|诸位|家人们|兄弟们|姐妹们|小伙伴们"
+    r"|同事们|同学们|老板们|你们|他们|她们|ta们|每人|每一个|全部|挨个|一个不留"
+)
+_CHOP_SELF_WORDS = frozenset({"我", "我自己", "本人"})
+_CHOP_BOSS_WORDS = ("老板", "董事长", "总裁", "总经理", "人事", "hr")
+# 群里的 Bot 账号名单（用户 2026-10-05 提供，按昵称精确匹配，增删直接改这里）：
+# 名单内的用户被 /凿 时按机器人处理。
+_CHOP_BOT_ACCOUNT_NAMES = frozenset({"不问天", "总监事【测试】"})
+# Bot 的平台 ID（bot 未入职，回复它的消息按 platform_id 查不到用户；
+# 该账号在 inbound_messages 里有统计播报记录）。
+_CHOP_BOT_PLATFORM_IDS = frozenset({"acb22871-3895-4e7d-83e5-14b5ca421561"})
+
+
+def _classify_chop_target(name: str) -> str | None:
+    if _CHOP_GROUP_PATTERN.search(name):
+        return "group"
+    if name in _CHOP_SELF_WORDS:
+        return "self_word"
+    if name in _CHOP_BOT_ACCOUNT_NAMES:
+        return "bot"
+    return None
+
+
+def _is_boss_word(name: str) -> bool:
+    lowered = name.lower()
+    return any(word in lowered for word in _CHOP_BOSS_WORDS)
+
+
+@dataclass(frozen=True)
+class TruthTradeSettings:
+    question_timeout_seconds: int
+    answer_timeout_seconds: int
+    min_players: int
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class LiarDicePlayerView:
+    seat: int
+    display_name: str
+    platform_id: str
+
+
+# 部门津贴每日封顶的默认种子值；实际封顶走 department_allowance_settings.daily_cap
+DEPARTMENT_ALLOWANCE_DAILY_CAP = 5
+# kind → departments.allowance_kind 绑定值（单次面额来自 department_allowance_settings）
+_DEPARTMENT_ALLOWANCE_RULES = {
+    "dept_checkin": "checkin",
+    "dept_event": "event",
+    "dept_game_host": "game",
+    "dept_game_play": "game",
+    "dept_submission": "submission",
+    "dept_chat": "chat",
+    "dept_referral": "referral",
+}
+# kind → 到账通知里的动作词
+_DEPARTMENT_ALLOWANCE_LABELS = {
+    "dept_checkin": "打卡奖励",
+    "dept_event": "演出奖励",
+    "dept_game_host": "开局奖励",
+    "dept_game_play": "参与奖励",
+    "dept_submission": "投稿奖励",
+    "dept_chat": "水群掉落",
+    "dept_referral": "拉新奖励",
+}
+_DEPARTMENT_ALLOWANCE_BINDINGS = frozenset(
+    {"checkin", "event", "game", "submission", "chat", "referral", "discipline"}
+)
+
+
+@dataclass(frozen=True)
+class LiarDiceStatistics:
+    opens_leaders: tuple[tuple[str, int], ...] = ()
+    bluff_caught_leaders: tuple[tuple[str, int], ...] = ()
+    penalty_leaders: tuple[tuple[str, int], ...] = ()
+    catch_leaders: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class LiarDiceStatisticsReport:
+    """大话骰子统计：current 为当前活跃对局，career 为本群全部历史对局累计。"""
+
+    current: LiarDiceStatistics | None
+    career: LiarDiceStatistics
+
+
+@dataclass(frozen=True)
+class TruthTradeRosterEntry:
+    position: int
+    display_name: str
+
+
+@dataclass(frozen=True)
+class TruthTradeRecapEntry:
+    display_name: str
+    state: str  # answered/declined/timed_out/left
+    content: str | None
+
+
+@dataclass(frozen=True)
+class TruthTradeResult:
+    status: str
+    game_id: UUID | None = None
+    group_chat_id: UUID | None = None
+    state: str | None = None
+    round_number: int = 0
+    players: tuple[TruthTradeRosterEntry, ...] = ()
+    asker_position: int | None = None
+    asker_name: str | None = None
+    question_text: str | None = None
+    answered_count: int = 0
+    required_count: int = 0
+    question_timeout_seconds: int = 0
+    answer_timeout_seconds: int = 0
+    min_players: int = 2
+    recap: tuple[TruthTradeRecapEntry, ...] = ()
+    ask_leaders: tuple[tuple[str, int], ...] = ()
+    answer_leaders: tuple[tuple[str, int], ...] = ()
+    announcements: tuple[str, ...] = ()
+    public_message: str | None = None
+
+
+@dataclass(frozen=True)
+class TruthTradeStatistics:
+    games: int = 0
+    questions: int = 0
+    answers: int = 0
+    ask_leaders: tuple[tuple[str, int], ...] = ()
+    answer_leaders: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class LiarDiceResult:
+    status: str
+    game_id: UUID | None = None
+    group_chat_id: UUID | None = None
+    round_number: int = 0
+    players: tuple[LiarDicePlayerView, ...] = ()
+    turn_name: str | None = None
+    next_name: str | None = None
+    caller_name: str | None = None
+    call_count: int | None = None
+    call_face: int | None = None
+    wild_invalidated: bool = False
+    winner_name: str | None = None
+    loser_name: str | None = None
+    actual_count: int | None = None
+    public_message: str | None = None
+    private_message: str | None = None
+    statistics: LiarDiceStatistics | None = None
+    min_players: int = 2
 
 
 @dataclass(frozen=True)
@@ -1587,6 +2007,10 @@ class GameplayAdminSummary:
     mode: str | None = None
     round_number: int = 0
     maximum_rounds: int = 0
+    current_call: dict[str, int] | None = None
+    current_speaker_name: str | None = None
+    responded_count: int = 0
+    expected_response_count: int = 0
 
 
 def blame_settlement_template_values(
@@ -2041,6 +2465,67 @@ class BoardBonusResult:
 
 
 @dataclass(frozen=True)
+class DisciplineFineSettings:
+    enabled: bool
+    amount: int
+    kickback_percent: int
+    rank_quotas: dict[str, int]
+    cooldown_minutes: int
+    target_daily_limit: int
+
+
+@dataclass(frozen=True)
+class DepartmentAllowanceSettings:
+    checkin_amount: int
+    event_amount: int
+    game_host_amount: int
+    game_play_amount: int
+    game_play_step: int
+    submission_amount: int
+    chat_drop_percent: int
+    chat_drop_amount: int
+    chat_drop_cooldown_seconds: int
+    referral_amount: int
+    daily_cap: int
+
+
+@dataclass(frozen=True)
+class DisciplineFineResult:
+    status: str
+    issuer_display_name: str | None = None
+    department_name: str | None = None
+    target_display_name: str | None = None
+    amount: int = 0
+    actual_amount: int = 0
+    kickback: int = 0
+    allowance_total: int = 0
+    allowance_cap: int = 5
+    cooldown_remaining_seconds: int = 0
+    candidate_labels: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DisciplineFineRecordView:
+    id: UUID
+    issuer_display_name: str
+    target_display_name: str
+    group_name: str | None
+    amount: int
+    kickback: int
+    reason: str | None
+    via_reply: bool
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class MyDisciplineFineView:
+    total_amount: int
+    total_count: int
+    records: tuple[DisciplineFineRecordView, ...]
+
+
+@dataclass(frozen=True)
 class PromotionRequestResult:
     status: str
     request: PromotionRequestRecord | None = None
@@ -2156,6 +2641,10 @@ class EmployeeNameTakenError(ValueError):
 
 
 _COMMAND_DEFINITIONS = (
+    ("/我的称号", "/我的称号", "查看当前可佩戴称号和历史获得次数"),
+    ("/佩戴称号", "/佩戴称号 序号", "选择佩戴称号（/装备称号、/编辑称号 等效），序号 0 取消佩戴"),
+    ("/荣誉榜", "/荣誉榜", "查看当前周期的荣誉称号获得者"),
+    ("/荣誉历史", "/荣誉历史", "查看个人历史荣誉记录"),
     ("/入职", "/入职 名字", "登记群成员为摸鱼公司员工"),
     ("/我的物品", "/我的物品", "查看自己持有的物品"),
     ("/购买", "/购买 商品序号", "购买一件商店商品"),
@@ -2167,6 +2656,14 @@ _COMMAND_DEFINITIONS = (
     ("/打卡", "/打卡", "每日领取配置的打卡奖励"),
     ("/余额", "/余额", "查看当前摸鱼币余额"),
     ("/修改名称", "/修改名称 新名称", "修改自己的员工名称"),
+    (
+        "/设置生日",
+        "/设置生日 5-20（也可写 5月20日 / 1995-5-20；末尾可加「不公开」）",
+        "登记或修改自己的生日",
+    ),
+    ("/随礼", "/随礼 金额（同一天两位寿星时写 /随礼 姓名 金额）", "给今天过生日的同事随礼"),
+    ("/我的生日", "/我的生日", "查看自己的生日登记"),
+    ("/本月生日", "/本月生日", "查看本月过生日的同事"),
     ("/编辑档案", "/编辑档案 档案内容", "更新自己的个人档案"),
     ("/编辑档案形象", "/编辑档案形象（回复一张图片）", "更新自己的档案形象"),
     ("/我的档案", "/我的档案", "查看自己的个人档案"),
@@ -2234,6 +2731,24 @@ _COMMAND_DEFINITIONS = (
     ("/国王游戏", "/国王游戏", "创建国王游戏报名局"),
     ("/国王游戏数据", "/国王游戏数据", "查看当前国王游戏实时统计"),
     ("/公开", "/公开 编号 [编号...]", "国王游戏中公开本轮编号；暗网成交后也可私聊用于公开身份"),
+    ("/大话骰子", "/大话骰子", "创建大话骰子报名局"),
+    ("/牌局", "/牌局", "查看大话骰子当前战况"),
+    ("/开骰", "/开骰", "大话骰子中质疑当前叫数并开牌"),
+    ("/看骰", "/看骰（仅私聊）", "私聊查看自己的大话骰子骰子"),
+    ("/大话骰子数据", "/大话骰子数据", "查看当前大话骰子局实时统计"),
+    ("/真心换真心", "/真心换真心", "创建真心换真心报名局"),
+    ("/真心换真心数据", "/真心换真心数据", "查看本群真心换真心总战绩"),
+    ("/问题", "/问 内容；/问 跳过", "真心换真心中轮到自己时提问，或跳过本轮提问（/问题 等效）"),
+    ("/真心", "/回答 内容；/回答 跳过", "真心换真心中回答当前问题，或记为拒答（/真心 等效）"),
+    ("/罚款", "/罚款 [名字/#工号] [理由]", "风纪监察部成员对违规员工处以摸鱼币罚款，可引用回复目标消息"),
+    ("/我的罚款", "/我的罚款（仅私聊）", "查看自己被罚款的记录"),
+    ("/我的津贴", "/我的津贴", "查看自己今日各项部门津贴明细与合计"),
+    ("/凿", "/凿 名字 [附言]", "凿一下别人：目标发情值随机上涨并获得随机摸鱼币，可引用回复目标消息"),
+    ("/允许被凿", "/允许被凿", "允许别人凿自己（默认开启）"),
+    ("/拒绝被凿", "/拒绝被凿", "拒绝被凿：之后被 /凿 时对方会吃一杵子"),
+    ("/我的凿", "/我的凿", "查看自己的发情值、被凿/凿人与高潮次数"),
+    ("/人气榜", "/人气榜", "查看今日被凿人气前 5 名（按今日被凿次数）"),
+    ("/设置性别", "/设置性别 男|女", "设置自己的性别（/修改性别 等效），影响高潮文字文风"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
     ("/跳过", "/跳过 编号 [编号...]", "排除蹦蹦数字炸弹中尚未报数的参与者"),
@@ -2493,7 +3008,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository:
+class CoreRepository(ShopManagementMixin, HonorsMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -2504,6 +3019,10 @@ class CoreRepository:
         texas_holdem_random: RandomSource | None = None,
         shop_random: RandomSource | None = None,
         dark_market_random: RandomSource | None = None,
+        liar_dice_random: RandomSource | None = None,
+        chat_drop_random: RandomSource | None = None,
+        estrus_random: RandomSource | None = None,
+        estrus_text_client=None,
     ) -> None:
         self._session_factory = session_factory
         self._preserve_long_group_messages = preserve_long_group_messages
@@ -2512,6 +3031,10 @@ class CoreRepository:
         self._texas_holdem_random = texas_holdem_random or SystemRandom()
         self._shop_random = shop_random or SystemRandom()
         self._dark_market_random = dark_market_random or SystemRandom()
+        self._liar_dice_random = liar_dice_random or SystemRandom()
+        self._chat_drop_random = chat_drop_random or SystemRandom()
+        self._estrus_random = estrus_random or SystemRandom()
+        self._estrus_text_client = estrus_text_client
         self._active_session: ContextVar[Session | None] = ContextVar(
             f"core_repository_session_{id(self)}", default=None
         )
@@ -2633,6 +3156,7 @@ class CoreRepository:
         enabled_game_types: Sequence[str] | None = None,
         adult_shop_enabled: bool = False,
         performances_enabled: bool = False,
+        birthdays_enabled: bool = True,
     ) -> GroupChatConfig:
         normalized_name = self._validate_group_chat_name(name)
         with self._session() as session:
@@ -2660,6 +3184,7 @@ class CoreRepository:
                 announcements_enabled=announcements_enabled,
                 adult_shop_enabled=adult_shop_enabled,
                 performances_enabled=performances_enabled,
+                birthdays_enabled=birthdays_enabled,
                 created_at=now,
                 updated_at=now,
             )
@@ -2689,6 +3214,7 @@ class CoreRepository:
         announcements_enabled: bool | None = None,
         adult_shop_enabled: bool | None = None,
         performances_enabled: bool | None = None,
+        birthdays_enabled: bool | None = None,
         now: datetime,
     ) -> GroupChatConfig:
         with self._session() as session:
@@ -2758,6 +3284,8 @@ class CoreRepository:
                 record.adult_shop_enabled = adult_shop_enabled
             if performances_enabled is not None:
                 record.performances_enabled = performances_enabled
+            if birthdays_enabled is not None:
+                record.birthdays_enabled = birthdays_enabled
             record.updated_at = now
             runtime = session.get(GroupChatRuntimeStateRecord, group_id)
             if runtime is not None:
@@ -3026,6 +3554,14 @@ class CoreRepository:
                 KingGameRecord.group_chat_id == group_id,
                 KingGameRecord.active_key.is_not(None),
             ),
+            "liar_dice": select(LiarDiceGameRecord.id).where(
+                LiarDiceGameRecord.group_chat_id == group_id,
+                LiarDiceGameRecord.active_key.is_not(None),
+            ),
+            "truth_trade": select(TruthTradeGameRecord.id).where(
+                TruthTradeGameRecord.group_chat_id == group_id,
+                TruthTradeGameRecord.active_key.is_not(None),
+            ),
         }
         check = checks.get(game_type)
         return False if check is None else bool(session.scalar(select(exists(check))))
@@ -3053,6 +3589,7 @@ class CoreRepository:
                 "announcements_enabled": config.announcements_enabled,
                 "adult_shop_enabled": config.adult_shop_enabled,
                 "performances_enabled": config.performances_enabled,
+                "birthdays_enabled": config.birthdays_enabled,
                 "deleted": config.deleted_at is not None,
             }
 
@@ -4046,6 +4583,9 @@ class CoreRepository:
                     record.approval_reward,
                     "random_event_submission_approval",
                     now,
+                )
+                self._grant_department_allowance(
+                    session, user, "dept_submission", now
                 )
                 direct_chatroom_id = session.scalar(
                     select(DirectChatRecord.chatroom_id).where(
@@ -7935,6 +8475,14 @@ class CoreRepository:
                 occurred_at=now,
                 detail=reservation.title,
             )
+        for _participant, performance_user in participant_rows:
+            self._grant_department_allowance(
+                session,
+                performance_user,
+                "dept_event",
+                now,
+                group_chat_id=reservation.group_chat_id,
+            )
 
     @staticmethod
     def _enqueue_performance_group_outbound(
@@ -10457,6 +11005,15 @@ class CoreRepository:
                         )
                     else:
                         creator_start.count += 1
+                texas_creator = session.get(UserRecord, game.creator_user_id)
+                if texas_creator is not None:
+                    self._grant_department_allowance(
+                        session,
+                        texas_creator,
+                        "dept_game_host",
+                        now,
+                        group_chat_id=game.group_chat_id,
+                    )
                 return TexasHoldemResult(
                     "dealing", game.id, len(rows), tuple(outbound_ids)
                 )
@@ -10743,6 +11300,13 @@ class CoreRepository:
         game.settlement_complete = True
         game.finish_reason = reason
         game.finished_at = now
+        self._bump_department_game_plays(
+            session,
+            [player.user_id for player, _ in rows],
+            now,
+            group_chat_id=game.group_chat_id,
+            game_type="texas_holdem", game_id=game.id,
+        )
         if showdown:
             details = []
             for player, user in active_rows:
@@ -11379,6 +11943,173 @@ class CoreRepository:
                     )
                 )
 
+            liar_dice = session.scalar(
+                select(LiarDiceGameRecord).where(
+                    LiarDiceGameRecord.active_key == "global",
+                    LiarDiceGameRecord.group_chat_id == group_chat_id,
+                )
+            )
+            if liar_dice is not None:
+                dice_rows = self._liar_dice_players(
+                    session, liar_dice.id, ("signup", "active")
+                )
+                dice_actor = next(
+                    (
+                        player
+                        for player, user in dice_rows
+                        if user.platform_id == platform_id
+                    ),
+                    None,
+                )
+                if dice_actor is None:
+                    dice_role = "nonparticipant"
+                    dice_commands = ("/加入",) if liar_dice.state == "signup" else ()
+                elif liar_dice.state == "signup":
+                    dice_role = (
+                        "host"
+                        if dice_actor.user_id == liar_dice.host_user_id
+                        else "participant"
+                    )
+                    dice_commands = (
+                        ("/开始", "/退出")
+                        if dice_actor.user_id == liar_dice.host_user_id
+                        else ("/退出",)
+                    )
+                elif liar_dice.state == "round_end":
+                    dice_role = "participant"
+                    dice_commands = ("/继续", "/牌局", "/退出", "/结束游戏")
+                else:
+                    dice_role = "participant"
+                    dice_commands = ("N个X", "/开骰", "/牌局", "/退出", "/结束游戏")
+                active.append(
+                    ActiveGameplaySummary(
+                        "liar_dice",
+                        liar_dice.id,
+                        liar_dice.state,
+                        dice_role,
+                        tuple(user.display_name for _, user in dice_rows),
+                        dice_commands,
+                        liar_dice.signup_deadline,
+                        phase_deadline=liar_dice.turn_deadline,
+                        round_number=liar_dice.round_number,
+                    )
+                )
+
+            truth_game = session.scalar(
+                select(TruthTradeGameRecord).where(
+                    TruthTradeGameRecord.active_key == "global",
+                    TruthTradeGameRecord.group_chat_id == group_chat_id,
+                )
+            )
+            if truth_game is not None:
+                truth_rows = self._truth_trade_active_players(session, truth_game.id)
+                truth_actor = next(
+                    (
+                        player
+                        for player, user in truth_rows
+                        if user.platform_id == platform_id
+                    ),
+                    None,
+                )
+                asker_name = next(
+                    (
+                        user.display_name
+                        for player, user in truth_rows
+                        if player.position == truth_game.current_position
+                    ),
+                    None,
+                )
+                responded = 0
+                expected = 0
+                if truth_game.state == "answering":
+                    question = self._truth_trade_open_question(
+                        session, truth_game.id, truth_game.round_number
+                    )
+                    if question is not None:
+                        required = self._truth_trade_required_players(
+                            session, truth_game, question
+                        )
+                        expected = len(required)
+                        responded = sum(
+                            1
+                            for player, _ in required
+                            if session.scalar(
+                                select(TruthTradeAnswerRecord.id).where(
+                                    TruthTradeAnswerRecord.question_id == question.id,
+                                    TruthTradeAnswerRecord.user_id == player.user_id,
+                                )
+                            )
+                            is not None
+                        )
+                if truth_actor is None:
+                    truth_role = "nonparticipant"
+                    truth_commands = ("/加入",)
+                elif truth_game.state == "signup":
+                    truth_role = (
+                        "host" if truth_actor.user_id == truth_game.host_user_id else "participant"
+                    )
+                    truth_commands = (
+                        ("/开始", "/退出")
+                        if truth_actor.user_id == truth_game.host_user_id
+                        else ("/退出",)
+                    )
+                elif truth_game.state == "asking":
+                    truth_role = "participant"
+                    truth_commands = (
+                        ("/问 内容", "/问 跳过", "/退出", "/结束游戏")
+                        if truth_actor.position == truth_game.current_position
+                        else ("/退出", "/结束游戏")
+                    )
+                elif truth_game.state == "answering":
+                    truth_role = "participant"
+                    question = self._truth_trade_open_question(
+                        session, truth_game.id, truth_game.round_number
+                    )
+                    must_answer = (
+                        question is not None
+                        and truth_actor.position != question.position
+                        and truth_actor.position <= question.required_player_count
+                        and session.scalar(
+                            select(TruthTradeAnswerRecord.id).where(
+                                TruthTradeAnswerRecord.question_id == question.id,
+                                TruthTradeAnswerRecord.user_id == truth_actor.user_id,
+                            )
+                        )
+                        is None
+                    )
+                    truth_commands = (
+                        ("/回答 内容", "/回答 跳过", "/退出", "/结束游戏")
+                        if must_answer
+                        else ("/退出", "/结束游戏")
+                    )
+                else:
+                    truth_role = "participant"
+                    truth_commands = ("/继续", "/退出", "/结束游戏")
+                active.append(
+                    ActiveGameplaySummary(
+                        "truth_trade",
+                        truth_game.id,
+                        truth_game.state,
+                        truth_role,
+                        tuple(
+                            f"{player.position}号 {user.display_name}"
+                            for player, user in truth_rows
+                        ),
+                        truth_commands,
+                        None,
+                        phase_deadline=truth_game.phase_deadline,
+                        round_number=truth_game.round_number,
+                        actor_number=(
+                            truth_actor.position if truth_actor is not None else None
+                        ),
+                        current_speaker_name=(
+                            asker_name if truth_game.state in {"asking", "answering"} else None
+                        ),
+                        responded_count=responded,
+                        expected_response_count=expected,
+                    )
+                )
+
             never_have_i_ever = session.scalar(
                 select(NeverHaveIEverGameRecord).where(
                     NeverHaveIEverGameRecord.active_key == "global",
@@ -11957,6 +12688,46 @@ class CoreRepository:
                 to_call=texas.to_call,
                 legal_actions=texas.legal_actions,
             )
+        if summary.game_type in {"liar_dice", "truth_trade"}:
+            with self._session() as session:
+                if summary.game_type == "liar_dice":
+                    game = session.get(LiarDiceGameRecord, summary.game_id)
+                    rows = self._liar_dice_players(session, summary.game_id, ("signup", "active"))
+                    participants = tuple(
+                        GameplayAdminParticipant(player.seat_number, user.display_name, state=player.state)
+                        for player, user in rows
+                    )
+                    current_seat = game.current_seat if game and game.state in {"calling", "dealing"} else None
+                    current_call = None if game is None or not game.current_call else {
+                        "count": game.current_call["count"], "face": game.current_call["face"]
+                    }
+                else:
+                    game = session.get(TruthTradeGameRecord, summary.game_id)
+                    rows = self._truth_trade_active_players(session, summary.game_id)
+                    participants = tuple(
+                        GameplayAdminParticipant(player.position, user.display_name, state=player.state)
+                        for player, user in rows
+                    )
+                    current_seat = game.current_position if game and game.state in {"asking", "answering"} else None
+                    current_call = None
+                if game is None or game.active_key != "global" or game.group_chat_id != group_chat_id:
+                    return GameplayAdminSummary(group_chat_id, group_name)
+                return GameplayAdminSummary(
+                    group_chat_id=group_chat_id,
+                    group_name=group_name,
+                    game_type=summary.game_type,
+                    game_id=game.id,
+                    state=game.state,
+                    participants=participants,
+                    signup_deadline=summary.signup_deadline,
+                    action_deadline=summary.phase_deadline,
+                    round_number=summary.round_number,
+                    current_seat=current_seat,
+                    current_call=current_call,
+                    current_speaker_name=summary.current_speaker_name,
+                    responded_count=summary.responded_count,
+                    expected_response_count=summary.expected_response_count,
+                )
         if summary.game_type == "never_have_i_ever":
             with self._session() as session:
                 rows = list(
@@ -12101,6 +12872,7 @@ class CoreRepository:
             group_chat_id = PRIMARY_GROUP_CHAT_ID
         game_names = {
             "king_game": "国王游戏",
+            "liar_dice": "大话骰子",
             "never_have_i_ever": "我有你没有",
             "texas_holdem": "德州扑克",
             "number_bomb": "蹦蹦数字炸弹",
@@ -12110,6 +12882,7 @@ class CoreRepository:
             "memory_single": "记忆考核",
             "memory_guild": "记忆考核公会赛",
             "random_event": "随机事件",
+            "truth_trade": "真心换真心",
         }
         if game_type not in game_names:
             return False
@@ -12126,7 +12899,18 @@ class CoreRepository:
                         and game.group_chat_id == group_chat_id
                     ):
                         self._finish_king_game_locked(
-                            game, "forced_ended", "admin_forced", now
+                            session, game, "forced_ended", "admin_forced", now
+                        )
+                        ended = True
+                elif game_type == "liar_dice":
+                    game = session.get(LiarDiceGameRecord, game_id, with_for_update=True)
+                    if (
+                        game is not None
+                        and game.active_key == "global"
+                        and game.group_chat_id == group_chat_id
+                    ):
+                        self._finish_liar_dice_locked(
+                            session, game, "forced_ended", "admin_forced", now
                         )
                         ended = True
                 elif game_type == "never_have_i_ever":
@@ -12140,6 +12924,19 @@ class CoreRepository:
                     ):
                         self._finish_never_have_i_ever_locked(
                             session, game, "forced_ended", "admin_forced", now
+                        )
+                        ended = True
+                elif game_type == "truth_trade":
+                    game = session.get(
+                        TruthTradeGameRecord, game_id, with_for_update=True
+                    )
+                    if (
+                        game is not None
+                        and game.active_key == "global"
+                        and game.group_chat_id == group_chat_id
+                    ):
+                        self._truth_trade_finish_locked(
+                            session, game, "finished", "admin_forced", now
                         )
                         ended = True
                 elif game_type == "texas_holdem":
@@ -12471,6 +13268,10 @@ class CoreRepository:
                 game.signup_deadline = None
                 game.started_at = now
                 self._start_king_game_round_locked(session, game, now, settings)
+                self._grant_department_allowance(
+                    session, actor, "dept_game_host", now,
+                    group_chat_id=game.group_chat_id,
+                )
                 return self._king_game_result_locked(session, game, "started")
 
     def reveal_king_game_numbers(
@@ -12529,7 +13330,7 @@ class CoreRepository:
                     return self._king_game_result_locked(session, game, "wrong_state")
                 self._promote_king_game_candidates_locked(session, game.id)
                 if len(self._active_king_game_players(session, game.id)) < 3:
-                    self._finish_king_game_locked(game, "completed", "not_enough_players", now)
+                    self._finish_king_game_locked(session, game, "completed", "not_enough_players", now)
                     return self._king_game_result_locked(session, game, "completed")
                 game.end_after_round = False
                 game.state = "awaiting_reveal"
@@ -12601,7 +13402,7 @@ class CoreRepository:
                 if actor is None or not self._is_active_king_game_player(session, game.id, actor.id):
                     return self._king_game_result_locked(session, game, "not_participant")
                 statistics = self._king_game_statistics_locked(session, game)
-                self._finish_king_game_locked(game, "completed", "participant_ended", now)
+                self._finish_king_game_locked(session, game, "completed", "participant_ended", now)
                 return self._king_game_result_locked(
                     session, game, "completed", statistics=statistics
                 )
@@ -12625,7 +13426,7 @@ class CoreRepository:
                 results: list[KingGameResult] = []
                 for game in games:
                     if game.state == "signup":
-                        self._finish_king_game_locked(game, "expired", "signup_timeout", now)
+                        self._finish_king_game_locked(session, game, "expired", "signup_timeout", now)
                         results.append(self._king_game_result_locked(session, game, "signup_expired"))
                     elif game.state == "awaiting_reveal":
                         round_record = self._current_king_game_round(session, game)
@@ -12729,7 +13530,7 @@ class CoreRepository:
     ) -> None:
         players = self._active_king_game_players(session, game.id)
         if len(players) < 3:
-            self._finish_king_game_locked(game, "completed", "not_enough_players", now)
+            self._finish_king_game_locked(session, game, "completed", "not_enough_players", now)
             return
         king_player, _ = SystemRandom().choice(players)
         shuffled = SystemRandom().sample(players, len(players))
@@ -12747,14 +13548,28 @@ class CoreRepository:
             )
         )
 
-    @staticmethod
-    def _finish_king_game_locked(game: KingGameRecord, state: str, reason: str, now: datetime) -> None:
+    def _finish_king_game_locked(
+        self,
+        session: Session,
+        game: KingGameRecord,
+        state: str,
+        reason: str,
+        now: datetime,
+    ) -> None:
         game.state = state
         game.active_key = None
         game.signup_deadline = None
         game.king_phase_deadline = None
         game.finished_at = now
         game.finish_reason = reason
+        if state in {"completed", "forced_ended"}:
+            self._bump_department_game_plays(
+                session,
+                resolved_game_users(session, "king_game", game.id),
+                now,
+                group_chat_id=game.group_chat_id,
+                game_type="king_game", game_id=game.id,
+            )
 
     def _king_game_statistics_locked(
         self, session: Session, game: KingGameRecord
@@ -12853,6 +13668,2948 @@ class CoreRepository:
             end_after_round=game.end_after_round,
             statistics=statistics,
         )
+
+    @staticmethod
+    def _active_liar_dice_game(
+        session: Session, group_chat_id: UUID
+    ) -> LiarDiceGameRecord | None:
+        return session.scalar(
+            select(LiarDiceGameRecord)
+            .where(
+                LiarDiceGameRecord.group_chat_id == group_chat_id,
+                LiarDiceGameRecord.active_key == "global",
+            )
+            .with_for_update()
+        )
+
+    @staticmethod
+    def _liar_dice_user(session: Session, platform_id: str) -> UserRecord | None:
+        return session.scalar(
+            select(UserRecord)
+            .where(UserRecord.platform_id == platform_id)
+            .with_for_update()
+        )
+
+    @staticmethod
+    def _liar_dice_players(
+        session: Session, game_id: UUID, states: tuple[str, ...] = ("active",)
+    ) -> list[tuple[LiarDicePlayerRecord, UserRecord]]:
+        return list(
+            session.execute(
+                select(LiarDicePlayerRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == LiarDicePlayerRecord.user_id)
+                .where(
+                    LiarDicePlayerRecord.game_id == game_id,
+                    LiarDicePlayerRecord.state.in_(states),
+                )
+                .order_by(LiarDicePlayerRecord.seat_number)
+                .with_for_update()
+            )
+        )
+
+    @staticmethod
+    def _liar_dice_current_round(
+        session: Session, game_id: UUID
+    ) -> LiarDiceRoundRecord | None:
+        return session.scalar(
+            select(LiarDiceRoundRecord)
+            .where(LiarDiceRoundRecord.game_id == game_id)
+            .order_by(LiarDiceRoundRecord.sequence.desc())
+            .with_for_update()
+        )
+
+    @staticmethod
+    def _liar_dice_next_active_seat(
+        players: list[tuple[LiarDicePlayerRecord, UserRecord]], after_seat: int
+    ) -> int | None:
+        """座位保持稳定（不清位）：从 after_seat 的下一位起找首个在场座位，可回绕。"""
+        seats = sorted(
+            player.seat_number
+            for player, _ in players
+            if player.seat_number is not None
+        )
+        if not seats:
+            return None
+        for seat in seats:
+            if seat > after_seat:
+                return seat
+        return seats[0]
+
+    def _finish_liar_dice_locked(
+        self,
+        session: Session,
+        game: LiarDiceGameRecord,
+        state: str,
+        reason: str,
+        now: datetime,
+    ) -> None:
+        game.state = state
+        game.active_key = None
+        game.signup_deadline = None
+        game.turn_deadline = None
+        game.finished_at = now
+        game.finish_reason = reason
+        if state in {"completed", "forced_ended"}:
+            self._bump_department_game_plays(
+                session,
+                resolved_game_users(session, "liar_dice", game.id),
+                now,
+                group_chat_id=game.group_chat_id,
+                game_type="liar_dice", game_id=game.id,
+            )
+
+    def _liar_dice_result_locked(
+        self,
+        session: Session,
+        game: LiarDiceGameRecord,
+        status: str,
+        *,
+        statistics: LiarDiceStatistics | None = None,
+        public_message: str | None = None,
+        private_message: str | None = None,
+    ) -> LiarDiceResult:
+        players = self._liar_dice_players(
+            session, game.id, ("signup", "active")
+        )
+        views = tuple(
+            LiarDicePlayerView(
+                player.seat_number or 0, user.display_name, user.platform_id
+            )
+            for player, user in players
+        )
+        current_call = game.current_call or {}
+        turn_user = None
+        if game.state in {"calling", "dealing"} and players:
+            turn_player = next(
+                (p for p, _ in players if p.seat_number == game.current_seat), None
+            )
+            if turn_player is not None:
+                turn_user = session.get(UserRecord, turn_player.user_id)
+        round_record = self._liar_dice_current_round(session, game.id)
+        return LiarDiceResult(
+            status=status,
+            game_id=game.id,
+            group_chat_id=game.group_chat_id,
+            round_number=game.round_number,
+            players=views,
+            turn_name=None if turn_user is None else turn_user.display_name,
+            call_count=current_call.get("count"),
+            call_face=current_call.get("face"),
+            wild_invalidated=(
+                round_record is not None and round_record.wild_invalidated
+            ),
+            statistics=statistics,
+            public_message=public_message,
+            private_message=private_message,
+            min_players=self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID).min_players,
+        )
+
+    def _liar_dice_deal_round(
+        self,
+        session: Session,
+        game: LiarDiceGameRecord,
+        now: datetime,
+        start_seat: int = 1,
+    ) -> None:
+        """重摇骰子并私聊发新骰（dealing 状态，发齐后进 calling）。
+
+        座位保持稳定：不清位、不重排，本轮首叫从 start_seat 开始（连续轮转）。
+        """
+        players = self._liar_dice_players(session, game.id, ("active",))
+        wild = roll_wild(self._liar_dice_random)
+        round_number = game.round_number + 1
+        round_record = LiarDiceRoundRecord(
+            game_id=game.id,
+            sequence=round_number,
+            wild_face=wild,
+            wild_invalidated=False,
+            calls=[],
+            state="active",
+            started_at=now,
+        )
+        session.add(round_record)
+        game.round_number = round_number
+        game.current_call = None
+        game.last_caller_user_id = None
+        game.current_seat = start_seat
+        game.state = "dealing"
+        game.turn_deadline = None
+        for player, user in players:
+            player.dice = roll_dice(self._liar_dice_random)
+            player.hand_delivery_state = "pending"
+        session.flush()
+        for player, user in players:
+            room = session.scalar(
+                select(DirectChatRecord.chatroom_id).where(
+                    DirectChatRecord.platform_user_id == user.platform_id
+                )
+            )
+            if room is None:
+                raise RuntimeError("大话骰子私聊会话在发牌阶段消失")
+            outbound = self.enqueue_system_outbound(
+                f"【大话骰子】你的骰子（第 {round_number} 轮）："
+                f"{dice_str(player.dice or [])}。私聊发送 /看骰 可再次查看。",
+                destination_chatroom_id=room,
+                delivery_kind="liar_dice_hand",
+            )
+            player.hand_outbound_id = outbound.id
+        session.flush()
+
+    def _record_liar_dice_hand_delivery(
+        self,
+        session: Session,
+        player: LiarDicePlayerRecord,
+        now: datetime,
+        delivered: bool,
+    ) -> None:
+        game = session.get(LiarDiceGameRecord, player.game_id, with_for_update=True)
+        if game is None or game.state != "dealing":
+            return
+        player.hand_delivery_state = "sent" if delivered else "failed"
+        pending = session.scalar(
+            select(func.count(LiarDicePlayerRecord.id)).where(
+                LiarDicePlayerRecord.game_id == game.id,
+                LiarDicePlayerRecord.state == "active",
+                LiarDicePlayerRecord.hand_delivery_state.in_((None, "pending")),
+            )
+        )
+        if int(pending or 0) != 0:
+            return
+        players = self._liar_dice_players(session, game.id, ("active",))
+        round_record = self._liar_dice_current_round(session, game.id)
+        if round_record is None:
+            raise RuntimeError("大话骰子回合不存在")
+        game.state = "calling"
+        game.turn_deadline = now + timedelta(
+            seconds=self._liar_dice_settings_row(
+                session, PRIMARY_GROUP_CHAT_ID
+            ).turn_seconds
+        )
+        first = next(
+            (
+                user.display_name
+                for player, user in players
+                if player.seat_number == game.current_seat
+            ),
+            None,
+        )
+        if first is None:
+            raise RuntimeError("大话骰子首叫玩家不存在")
+        wild = round_record.wild_face
+        lines = [f"【大话骰子】第 {game.round_number} 轮开始（{len(players)} 人）"]
+        lines.append(f"🃏 本轮万能点：{dice_str([wild])}（可顶任何点数）")
+        lines.extend(
+            f"{player.seat_number}号 {user.display_name}"
+            for player, user in players
+        )
+        lines.append(
+            f"由 {game.current_seat}号 {first} 首叫：最少 {len(players)} 个，直接发送“N个X”；"
+            "质疑则发 /开骰。超时将自动跳过。"
+        )
+        self.enqueue_system_outbound(
+            "\n".join(lines),
+            group_chat_id=game.group_chat_id,
+            destination_chatroom_id=self.group_chat_destination(game.group_chat_id),
+        )
+
+    def start_liar_dice(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                user = self._liar_dice_user(session, platform_id)
+                if user is None:
+                    return LiarDiceResult("not_joined")
+                group = session.get(GroupChatRecord, group_chat_id)
+                if (
+                    group is None
+                    or group.deleted_at is not None
+                    or not group.games_enabled
+                    or "liar_dice" not in group.enabled_game_types
+                    or not self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID).enabled
+                ):
+                    return LiarDiceResult("disabled")
+                active = self._active_liar_dice_game(session, group_chat_id)
+                if active is not None:
+                    return self._liar_dice_result_locked(
+                        session, active, "already_active"
+                    )
+                if self._group_has_active_gameplay(session, group_chat_id):
+                    return LiarDiceResult("multiplayer_active")
+                game = LiarDiceGameRecord(
+                    group_chat_id=group_chat_id,
+                    host_user_id=user.id,
+                    active_key="global",
+                    state="signup",
+                    round_number=0,
+                    current_seat=1,
+                    signup_deadline=now + timedelta(minutes=10),
+                    created_at=now,
+                )
+                session.add(game)
+                session.flush()
+                session.add(
+                    LiarDicePlayerRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        state="signup",
+                        joined_at=now,
+                    )
+                )
+                session.flush()
+                return self._liar_dice_result_locked(session, game, "signup_started")
+
+    def join_liar_dice(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                user = self._liar_dice_user(session, platform_id)
+                if user is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                player = session.scalar(
+                    select(LiarDicePlayerRecord)
+                    .where(
+                        LiarDicePlayerRecord.game_id == game.id,
+                        LiarDicePlayerRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if player is not None and player.state in {"signup", "active"}:
+                    return self._liar_dice_result_locked(
+                        session, game, "already_joined"
+                    )
+                if player is None:
+                    player = LiarDicePlayerRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        state="signup",
+                        joined_at=now,
+                    )
+                    session.add(player)
+                else:
+                    player.state = "signup"
+                    player.joined_at = now
+                    player.left_at = None
+                session.flush()
+                status = (
+                    "signup_joined"
+                    if game.state == "signup"
+                    else "next_round_joined"
+                )
+                return self._liar_dice_result_locked(session, game, status)
+
+    def leave_liar_dice(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                user = self._liar_dice_user(session, platform_id)
+                if user is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                player = session.scalar(
+                    select(LiarDicePlayerRecord)
+                    .where(
+                        LiarDicePlayerRecord.game_id == game.id,
+                        LiarDicePlayerRecord.user_id == user.id,
+                        LiarDicePlayerRecord.state.in_(("signup", "active")),
+                    )
+                    .with_for_update()
+                )
+                if player is None:
+                    return self._liar_dice_result_locked(
+                        session, game, "not_participant"
+                    )
+                if game.state in {"signup", "round_end"} or player.state == "signup":
+                    player.state = "left"
+                    player.left_at = now
+                    player.seat_number = None
+                    remaining = self._liar_dice_players(session, game.id, ("active",))
+                    if game.state != "signup" and len(remaining) < 2:
+                        self._finish_liar_dice_locked(
+                            session, game, "completed", "not_enough_players", now
+                        )
+                        return self._liar_dice_result_locked(
+                            session, game, "completed"
+                        )
+                    return self._liar_dice_result_locked(session, game, "left_game")
+                player.left_at = now
+                return self._liar_dice_result_locked(session, game, "leave_queued")
+
+    def begin_liar_dice(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                actor = self._liar_dice_user(session, platform_id)
+                if actor is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                if game.state != "signup":
+                    return self._liar_dice_result_locked(
+                        session, game, "already_started"
+                    )
+                if actor.id != game.host_user_id:
+                    return self._liar_dice_result_locked(session, game, "host_only")
+                rows = self._liar_dice_players(session, game.id, ("signup",))
+                if len(rows) < self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID).min_players:
+                    return self._liar_dice_result_locked(
+                        session, game, "not_enough_players"
+                    )
+                missing = [
+                    user.display_name
+                    for _, user in rows
+                    if session.scalar(
+                        select(DirectChatRecord.chatroom_id).where(
+                            DirectChatRecord.platform_user_id == user.platform_id
+                        )
+                    )
+                    is None
+                ]
+                if missing:
+                    return self._liar_dice_result_locked(
+                        session,
+                        game,
+                        "missing_direct_chats",
+                        public_message="、".join(missing),
+                    )
+                self._liar_dice_random.shuffle(rows)
+                for seat, (player, _) in enumerate(rows, start=1):
+                    player.state = "active"
+                    player.seat_number = seat
+                game.signup_deadline = None
+                game.started_at = now
+                game.timeout_streak = 0
+                self._liar_dice_deal_round(session, game, now, start_seat=1)
+                self._grant_department_allowance(
+                    session, actor, "dept_game_host", now,
+                    group_chat_id=game.group_chat_id,
+                )
+                return self._liar_dice_result_locked(session, game, "dealing")
+
+    def liar_dice_call(
+        self,
+        platform_id: str,
+        call: tuple[int, int] | None,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        if call is None:
+            return LiarDiceResult("invalid_call")
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                actor = self._liar_dice_user(session, platform_id)
+                if actor is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                if game.state != "calling":
+                    return self._liar_dice_result_locked(session, game, "wrong_state")
+                players = self._liar_dice_players(session, game.id, ("active",))
+                current = next(
+                    (p for p, _ in players if p.seat_number == game.current_seat), None
+                )
+                if current is None or current.user_id != actor.id:
+                    turn_user = next(
+                        (
+                            user
+                            for player, user in players
+                            if player.seat_number == game.current_seat
+                        ),
+                        None,
+                    )
+                    result = self._liar_dice_result_locked(session, game, "not_your_turn")
+                    if turn_user is not None:
+                        result = replace(result, turn_name=turn_user.display_name)
+                    return result
+                round_record = self._liar_dice_current_round(session, game.id)
+                if round_record is None:
+                    raise RuntimeError("大话骰子回合不存在")
+                previous = game.current_call
+                old_call = (
+                    None
+                    if previous is None
+                    else (int(previous["count"]), int(previous["face"]))
+                )
+                if not is_legal_raise(old_call, call, len(players)):
+                    return self._liar_dice_result_locked(session, game, "invalid_raise")
+                invalidated = call[1] == round_record.wild_face
+                if invalidated:
+                    round_record.wild_invalidated = True
+                caller_seat = game.current_seat
+                round_record.calls = list(round_record.calls or []) + [
+                    {
+                        "seat": caller_seat,
+                        "name": actor.display_name,
+                        "count": call[0],
+                        "face": call[1],
+                    }
+                ]
+                game.current_call = {"count": call[0], "face": call[1]}
+                game.last_caller_user_id = actor.id
+                round_record.last_caller_user_id = actor.id
+                round_record.call_count = call[0]
+                round_record.call_face = call[1]
+                next_seat = self._liar_dice_next_active_seat(players, caller_seat)
+                if next_seat is None:
+                    next_seat = caller_seat
+                game.current_seat = next_seat
+                game.turn_deadline = now + timedelta(
+                    seconds=self._liar_dice_settings_row(
+                        session, PRIMARY_GROUP_CHAT_ID
+                    ).turn_seconds
+                )
+                game.timeout_streak = 0
+                next_player = next(
+                    (p for p, _ in players if p.seat_number == next_seat), None
+                )
+                next_user = (
+                    None
+                    if next_player is None
+                    else session.get(UserRecord, next_player.user_id)
+                )
+                return self._liar_dice_result_locked(
+                    session,
+                    game,
+                    "called",
+                    public_message=(
+                        f"🎲 {actor.display_name} 叫 {call[0]}个{call[1]}"
+                        + ("（万能点失效！）" if invalidated else "")
+                        + f"！轮到 {next_user.display_name}（加码“N个X”或 /开骰）"
+                        if next_user is not None
+                        else None
+                    ),
+                )
+
+    def liar_dice_open(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                actor = self._liar_dice_user(session, platform_id)
+                if actor is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                if game.state != "calling":
+                    return self._liar_dice_result_locked(session, game, "wrong_state")
+                players = self._liar_dice_players(session, game.id, ("active",))
+                current = next(
+                    (p for p, _ in players if p.seat_number == game.current_seat), None
+                )
+                if current is None or current.user_id != actor.id:
+                    return self._liar_dice_result_locked(session, game, "not_your_turn")
+                if game.current_call is None or game.last_caller_user_id is None:
+                    return self._liar_dice_result_locked(session, game, "no_call")
+                if game.last_caller_user_id == actor.id:
+                    return self._liar_dice_result_locked(session, game, "own_call")
+                round_record = self._liar_dice_current_round(session, game.id)
+                if round_record is None:
+                    raise RuntimeError("大话骰子回合不存在")
+                call = (int(game.current_call["count"]), int(game.current_call["face"]))
+                all_dice = {
+                    user.display_name: (player.dice or [])
+                    for player, user in players
+                }
+                actual = count_point(
+                    all_dice,
+                    call[1],
+                    round_record.wild_face,
+                    round_record.wild_invalidated,
+                )
+                caller = session.get(UserRecord, game.last_caller_user_id)
+                if caller is None:
+                    raise RuntimeError("大话骰子叫牌者不存在")
+                caller_win = judge_open(
+                    all_dice, call, round_record.wild_face, round_record.wild_invalidated
+                )
+                winner = caller if caller_win else actor
+                loser = actor if caller_win else caller
+                round_record.opener_user_id = actor.id
+                round_record.actual_count = actual
+                round_record.winner_user_id = winner.id
+                round_record.loser_user_id = loser.id
+                round_record.dice_snapshot = {
+                    str(player.user_id): (player.dice or []) for player, _ in players
+                }
+                round_record.state = "resolved"
+                round_record.resolved_at = now
+                game.state = "round_end"
+                game.turn_deadline = None
+                lines = ["🎲 开牌！全场骰子："]
+                lines.extend(
+                    f"{player.seat_number}号 {user.display_name}：{dice_str(player.dice or [])}"
+                    for player, user in players
+                )
+                lines.append(
+                    f"{caller.display_name} 叫 {call[0]}个{call[1]}，实际 {actual} 个"
+                    + (
+                        ""
+                        if not round_record.wild_invalidated
+                        else f"（万能点 🎲{round_record.wild_face} 已失效）"
+                    )
+                )
+                lines.append(
+                    f"🎉 {winner.display_name} 赢！{loser.display_name} 输了，"
+                    f"接受惩罚——{winner.display_name} 获得发令权（可像国王游戏一样"
+                    f"给 {loser.display_name} 布置一个惩罚任务）。"
+                )
+                lines.append(
+                    "发 /继续 开下一轮，发起者或任意参与者可 /结束游戏 查看总战绩。"
+                )
+                return self._liar_dice_result_locked(
+                    session, game, "opened", public_message="\n".join(lines)
+                )
+
+    def liar_dice_continue(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                actor = self._liar_dice_user(session, platform_id)
+                if actor is None:
+                    return self._liar_dice_result_locked(session, game, "not_joined")
+                if game.state != "round_end":
+                    return self._liar_dice_result_locked(session, game, "wrong_state")
+                if not self._is_liar_dice_participant(session, game.id, actor.id):
+                    return self._liar_dice_result_locked(
+                        session, game, "not_participant"
+                    )
+                self._apply_liar_dice_queued_leaves(session, game.id)
+                self._promote_liar_dice_joiners_locked(session, game.id)
+                players = self._liar_dice_players(session, game.id, ("active",))
+                if len(players) < 2:
+                    self._finish_liar_dice_locked(
+                        session, game, "completed", "not_enough_players", now
+                    )
+                    return self._liar_dice_result_locked(session, game, "completed")
+                # 连续轮转：从开牌者（current_seat）的下一位开始新一轮
+                start_seat = self._liar_dice_next_active_seat(
+                    players, game.current_seat
+                )
+                if start_seat is None:
+                    start_seat = 1
+                game.timeout_streak = 0
+                self._liar_dice_deal_round(session, game, now, start_seat)
+                return self._liar_dice_result_locked(session, game, "dealing")
+
+    def liar_dice_end(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return LiarDiceResult("no_game")
+                actor = self._liar_dice_user(session, platform_id)
+                if actor is None or not self._is_liar_dice_participant(
+                    session, game.id, actor.id
+                ):
+                    return self._liar_dice_result_locked(
+                        session, game, "not_participant"
+                    )
+                statistics = self._liar_dice_game_statistics(session, (game.id,))
+                self._finish_liar_dice_locked(
+                    session, game, "completed", "participant_ended", now
+                )
+                return self._liar_dice_result_locked(
+                    session, game, "completed", statistics=statistics
+                )
+
+    def liar_dice_status(
+        self,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> LiarDiceResult:
+        del now
+        with self._session() as session:
+            game = self._active_liar_dice_game(session, group_chat_id)
+            if game is None:
+                return LiarDiceResult("no_game")
+            players = self._liar_dice_players(session, game.id, ("active",))
+            if game.state == "signup":
+                return self._liar_dice_result_locked(
+                    session, game, "status_signup"
+                )
+            if game.state == "round_end":
+                return self._liar_dice_result_locked(
+                    session, game, "status_round_end"
+                )
+            round_record = self._liar_dice_current_round(session, game.id)
+            wild_note = ""
+            if round_record is not None:
+                wild_note = (
+                    f"⚠️ 万能点 🎲{round_record.wild_face} 已被叫过，不再生效"
+                    if round_record.wild_invalidated
+                    else f"🃏 本轮万能点：{dice_str([round_record.wild_face])}（可顶任何点数）"
+                )
+            lines = [f"【大话骰子】第 {game.round_number} 轮（{len(players)} 人）"]
+            lines.append(
+                "顺序：" + " → ".join(f"{p.seat_number}号{u.display_name}" for p, u in players)
+            )
+            if game.current_call is not None:
+                lines.append(
+                    f"当前叫数：{game.current_call['count']}个{game.current_call['face']}"
+                )
+            else:
+                lines.append("当前叫数：无（等 1号 首叫）")
+            turn_user = next(
+                (
+                    user
+                    for player, user in players
+                    if player.seat_number == game.current_seat
+                ),
+                None,
+            )
+            if turn_user is not None:
+                lines.append(f"轮到：{turn_user.display_name}")
+            if wild_note:
+                lines.append(wild_note)
+            return self._liar_dice_result_locked(
+                session, game, "status", public_message="\n".join(lines)
+            )
+
+    def liar_dice_private_hands(
+        self,
+        platform_id: str,
+        now: datetime,
+    ) -> LiarDiceResult:
+        del now
+        with self._session() as session:
+            row = session.execute(
+                select(LiarDicePlayerRecord, LiarDiceGameRecord)
+                .join(
+                    LiarDiceGameRecord,
+                    LiarDiceGameRecord.id == LiarDicePlayerRecord.game_id,
+                )
+                .join(
+                    UserRecord,
+                    UserRecord.id == LiarDicePlayerRecord.user_id,
+                )
+                .where(
+                    UserRecord.platform_id == platform_id,
+                    LiarDiceGameRecord.active_key == "global",
+                    LiarDiceGameRecord.state.in_(("dealing", "calling")),
+                    LiarDicePlayerRecord.state == "active",
+                )
+                .order_by(LiarDiceGameRecord.started_at.desc())
+                .limit(1)
+            ).first()
+            if row is None:
+                return LiarDiceResult("no_hands")
+            player, game = row
+            round_record = self._liar_dice_current_round(session, game.id)
+            wild_note = (
+                ""
+                if round_record is None
+                else (
+                    f"本轮万能点 🎲{round_record.wild_face}"
+                    + ("（已失效，只算自身）" if round_record.wild_invalidated else "（可顶任何点数）")
+                )
+            )
+            message = (
+                f"【大话骰子】第 {game.round_number} 轮你的骰子：{dice_str(player.dice or [])}"
+                + (f"\n{wild_note}" if wild_note else "")
+            )
+            return LiarDiceResult("shown", game_id=game.id, private_message=message)
+
+    def liar_dice_statistics(
+        self, group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID
+    ) -> LiarDiceStatisticsReport:
+        with self._session() as session:
+            game_ids = tuple(
+                session.scalars(
+                    select(LiarDiceGameRecord.id).where(
+                        LiarDiceGameRecord.group_chat_id == group_chat_id
+                    )
+                )
+            )
+            career = self._liar_dice_game_statistics(session, game_ids)
+            active_id = session.scalar(
+                select(LiarDiceGameRecord.id).where(
+                    LiarDiceGameRecord.group_chat_id == group_chat_id,
+                    LiarDiceGameRecord.active_key.is_not(None),
+                )
+            )
+            current = (
+                self._liar_dice_game_statistics(session, (active_id,))
+                if active_id is not None
+                else None
+            )
+            return LiarDiceStatisticsReport(current=current, career=career)
+
+    def _liar_dice_game_statistics(
+        self, session: Session, game_ids: Sequence[UUID]
+    ) -> LiarDiceStatistics:
+        if not game_ids:
+            return LiarDiceStatistics()
+        names = dict(
+            session.execute(
+                select(UserRecord.id, UserRecord.display_name)
+                .join(
+                    LiarDicePlayerRecord,
+                    LiarDicePlayerRecord.user_id == UserRecord.id,
+                )
+                .where(LiarDicePlayerRecord.game_id.in_(game_ids))
+            ).all()
+        )
+        opens: dict[UUID, int] = {}
+        penalties: dict[UUID, int] = {}
+        bluff_caught: dict[UUID, int] = {}
+        catches: dict[UUID, int] = {}
+        rounds = session.scalars(
+            select(LiarDiceRoundRecord)
+            .where(
+                LiarDiceRoundRecord.game_id.in_(game_ids),
+                LiarDiceRoundRecord.state == "resolved",
+            )
+            .order_by(LiarDiceRoundRecord.sequence)
+        )
+        for round_record in rounds:
+            if round_record.opener_user_id is not None:
+                opens[round_record.opener_user_id] = (
+                    opens.get(round_record.opener_user_id, 0) + 1
+                )
+            if round_record.winner_user_id is not None and (
+                round_record.winner_user_id == round_record.opener_user_id
+            ):
+                catches[round_record.winner_user_id] = (
+                    catches.get(round_record.winner_user_id, 0) + 1
+                )
+            if round_record.loser_user_id is None:
+                continue
+            penalties[round_record.loser_user_id] = (
+                penalties.get(round_record.loser_user_id, 0) + 1
+            )
+            if round_record.loser_user_id == round_record.last_caller_user_id:
+                bluff_caught[round_record.loser_user_id] = (
+                    bluff_caught.get(round_record.loser_user_id, 0) + 1
+                )
+
+        def leaders(counts: dict[UUID, int]) -> tuple[tuple[str, int], ...]:
+            if not counts:
+                return ()
+            highest = max(counts.values())
+            return tuple(
+                sorted(
+                    (
+                        (names.get(user_id, "未知员工"), count)
+                        for user_id, count in counts.items()
+                        if count == highest
+                    ),
+                    key=lambda entry: entry[0],
+                )
+            )
+
+        return LiarDiceStatistics(
+            opens_leaders=leaders(opens),
+            bluff_caught_leaders=leaders(bluff_caught),
+            penalty_leaders=leaders(penalties),
+            catch_leaders=leaders(catches),
+        )
+
+    # ------------------------------------------------------------------
+    # 真心换真心：群轮流问答游戏
+    # ------------------------------------------------------------------
+
+    def _truth_trade_user(
+        self, session: Session, platform_id: str
+    ) -> UserRecord | None:
+        return session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == platform_id)
+        )
+
+    def _active_truth_trade_game(
+        self, session: Session, group_chat_id: UUID
+    ) -> TruthTradeGameRecord | None:
+        return session.scalar(
+            select(TruthTradeGameRecord)
+            .where(
+                TruthTradeGameRecord.active_key == "global",
+                TruthTradeGameRecord.group_chat_id == group_chat_id,
+            )
+            .with_for_update()
+        )
+
+    def _liar_dice_settings_row(
+        self, session: Session, group_chat_id: UUID
+    ) -> LiarDiceSettingsRecord:
+        row = session.scalar(
+            select(LiarDiceSettingsRecord).where(
+                LiarDiceSettingsRecord.group_chat_id == group_chat_id
+            )
+        )
+        if row is None:
+            row = LiarDiceSettingsRecord(group_chat_id=group_chat_id)
+            session.add(row)
+            session.flush()
+        return row
+
+    def get_liar_dice_settings(self) -> LiarDiceSettings:
+        with self._session() as session:
+            row = self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+            return LiarDiceSettings(turn_seconds=int(row.turn_seconds), enabled=row.enabled, min_players=int(row.min_players))
+
+    def set_liar_dice_settings(self, *, turn_seconds: int, enabled: bool | None = None, min_players: int | None = None) -> LiarDiceSettings:
+        if not isinstance(turn_seconds, int) or not 30 <= turn_seconds <= 600:
+            raise ValueError("回合超时秒数必须在 30~600 之间")
+        if enabled is not None and type(enabled) is not bool:
+            raise ValueError("开启状态必须为布尔值")
+        if min_players is not None and (type(min_players) is not int or not 2 <= min_players <= 10):
+            raise ValueError("最少开局人数必须在 2~10 之间")
+        with self.transaction():
+            with self._session() as session:
+                row = self._liar_dice_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+                row.turn_seconds = turn_seconds
+                if enabled is not None:
+                    row.enabled = enabled
+                if min_players is not None:
+                    row.min_players = min_players
+                session.flush()
+                return LiarDiceSettings(turn_seconds=int(row.turn_seconds), enabled=row.enabled, min_players=int(row.min_players))
+
+    def get_truth_trade_settings(self) -> TruthTradeSettings:
+        with self._session() as session:
+            row = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+            return _truth_trade_settings(row)
+
+    def set_truth_trade_settings(
+        self,
+        *,
+        question_timeout_seconds: int,
+        answer_timeout_seconds: int,
+        min_players: int,
+        enabled: bool | None = None,
+    ) -> TruthTradeSettings:
+        if enabled is not None and type(enabled) is not bool:
+            raise ValueError("开启状态必须为布尔值")
+        ranges = (
+            ("提问超时秒数", question_timeout_seconds, 30, 3600),
+            ("回答超时秒数", answer_timeout_seconds, 30, 3600),
+            ("最少开局人数", min_players, 2, 10),
+        )
+        for label, value, low, high in ranges:
+            if not isinstance(value, int) or not low <= value <= high:
+                raise ValueError(f"{label}必须在 {low}~{high} 之间")
+        with self.transaction():
+            with self._session() as session:
+                row = self._truth_trade_settings_row(
+                    session, PRIMARY_GROUP_CHAT_ID
+                )
+                row.question_timeout_seconds = question_timeout_seconds
+                row.answer_timeout_seconds = answer_timeout_seconds
+                row.min_players = min_players
+                if enabled is not None:
+                    row.enabled = enabled
+                session.flush()
+                return _truth_trade_settings(row)
+
+    def _estrus_settings_row(self, session: Session) -> EstrusSettingsRecord:
+        row = session.get(EstrusSettingsRecord, 1)
+        if row is None:
+            row = EstrusSettingsRecord(id=1)
+            session.add(row)
+            session.flush()
+        return row
+
+    def _estrus_state_row(
+        self, session: Session, group_chat_id: UUID, user_id: UUID
+    ) -> EstrusStateRecord:
+        row = session.scalar(
+            select(EstrusStateRecord).where(
+                EstrusStateRecord.group_chat_id == group_chat_id,
+                EstrusStateRecord.user_id == user_id,
+            )
+        )
+        if row is None:
+            row = EstrusStateRecord(group_chat_id=group_chat_id, user_id=user_id)
+            session.add(row)
+            session.flush()
+        return row
+
+    @staticmethod
+    def _estrus_daily_reset(state: EstrusStateRecord, today: date) -> None:
+        """跨天只重置"今日高潮"计数；发情值保留累计（每日不清零）。"""
+        if state.last_active_date != today:
+            state.today_climaxes = 0
+            state.last_active_date = today
+
+    def _roll_estrus_coins(self, settings: EstrusSettingsRecord) -> int:
+        coin_roll = self._estrus_random.random() * 100
+        if coin_roll < settings.coin_p0:
+            return 0
+        if coin_roll < settings.coin_p0 + settings.coin_p1:
+            return 1
+        return 2
+
+    def _estrus_chopper_daily_quota(
+        self,
+        session: Session,
+        user: UserRecord,
+        settings: EstrusSettingsRecord,
+    ) -> int | None:
+        """凿者今日可凿次数（None = 不限）。
+
+        显式 chopper_rank_quotas[rank_id] 优先；否则按职级 sort_order 默认表
+        （LV1 一次、每升一级多一次，董事会及以上 20 次）；无职级不限制。
+        """
+        if user.rank_id is None:
+            return None
+        quotas = settings.chopper_rank_quotas or {}
+        explicit = quotas.get(str(user.rank_id))
+        if explicit is not None:
+            return int(explicit)
+        rank = session.get(RankRecord, user.rank_id)
+        if rank is None:
+            return None
+        sort_order = int(rank.sort_order)
+        if sort_order >= 11:
+            return _DEFAULT_CHOPPER_QUOTA_FOR_BOARD
+        return _DEFAULT_CHOPPER_QUOTAS_BY_SORT_ORDER.get(
+            sort_order, _DEFAULT_CHOPPER_QUOTA_FOR_BOARD
+        )
+
+    def _roll_estrus_pair(
+        self, settings: EstrusSettingsRecord
+    ) -> tuple[int, int]:
+        """发情值按概率抽样，币额按后台选择使用随机或固定金额。"""
+        heat_roll = self._estrus_random.random() * 100
+        if heat_roll < settings.heat_p0:
+            heat_gain = 0
+        elif heat_roll < settings.heat_p0 + settings.heat_p1:
+            heat_gain = 1
+        else:
+            heat_gain = 2
+        if settings.target_fixed_coins is not None:
+            coins = settings.target_fixed_coins
+        else:
+            coins = self._roll_estrus_coins(settings)
+        return heat_gain, coins
+
+    def get_estrus_settings(self) -> EstrusSettings:
+        with self._session() as session:
+            row = self._estrus_settings_row(session)
+            return EstrusSettings(
+                enabled=bool(row.enabled),
+                climax_threshold=int(row.climax_threshold),
+                heat_p0=int(row.heat_p0),
+                heat_p1=int(row.heat_p1),
+                heat_p2=int(row.heat_p2),
+                coin_p0=int(row.coin_p0),
+                coin_p1=int(row.coin_p1),
+                coin_p2=int(row.coin_p2),
+                chop_cooldown_seconds=int(row.chop_cooldown_seconds),
+                chopper_rank_quotas=(
+                    dict(row.chopper_rank_quotas)
+                    if row.chopper_rank_quotas is not None
+                    else None
+                ),
+                combo_chop_enabled=bool(row.combo_chop_enabled),
+                g_spot_percent=int(row.g_spot_percent),
+                g_spot_heat_bonus=int(row.g_spot_heat_bonus),
+                chopper_coin_p0=int(row.chopper_coin_p0),
+                chopper_coin_p1=int(row.chopper_coin_p1),
+                chopper_coin_p2=int(row.chopper_coin_p2),
+                coins_linked=bool(row.coins_linked),
+                target_daily_limit=int(row.target_daily_limit),
+                chopper_fixed_coins=row.chopper_fixed_coins,
+                target_fixed_coins=row.target_fixed_coins,
+            )
+
+    def set_estrus_settings(
+        self,
+        *,
+        enabled: bool,
+        climax_threshold: int,
+        heat_p0: int,
+        heat_p1: int,
+        heat_p2: int,
+        coin_p0: int,
+        coin_p1: int,
+        coin_p2: int,
+        chop_cooldown_seconds: int,
+        chopper_rank_quotas: dict[str, int] | None = None,
+        combo_chop_enabled: bool = False,
+        g_spot_percent: int = 10,
+        g_spot_heat_bonus: int = 10,
+        chopper_coin_p0: int = 50,
+        chopper_coin_p1: int = 30,
+        chopper_coin_p2: int = 20,
+        coins_linked: bool = True,
+        target_daily_limit: int = 0,
+        chopper_fixed_coins: int | None = None,
+        target_fixed_coins: int | None = None,
+    ) -> EstrusSettings:
+        if sum((heat_p0, heat_p1, heat_p2)) != 100:
+            raise ValueError("发情值三档概率之和必须等于 100")
+        if sum((coin_p0, coin_p1, coin_p2)) != 100:
+            raise ValueError("摸鱼币三档概率之和必须等于 100")
+        if sum((chopper_coin_p0, chopper_coin_p1, chopper_coin_p2)) != 100:
+            raise ValueError("凿者扣币三档概率之和必须等于 100")
+        if not isinstance(coins_linked, bool):
+            raise ValueError("扣币与发币关联必须为布尔值")
+        if not isinstance(combo_chop_enabled, bool):
+            raise ValueError("允许连续凿必须为布尔值")
+        if chopper_rank_quotas is not None:
+            if not isinstance(chopper_rank_quotas, dict):
+                raise ValueError("职级配额必须为对象")
+            for rank_key, quota in chopper_rank_quotas.items():
+                if (
+                    not isinstance(quota, int)
+                    or isinstance(quota, bool)
+                    or not 0 <= quota <= 999
+                ):
+                    raise ValueError("职级配额需在 0~999 之间")
+        for label, amount in (
+            ("凿者固定扣币金额", chopper_fixed_coins),
+            ("被凿者固定发币金额", target_fixed_coins),
+        ):
+            if amount is not None and (
+                type(amount) is not int or not 0 <= amount <= 99999
+            ):
+                raise ValueError(f"{label}必须在 0~99999 之间，或留空使用随机概率")
+        checks = (
+            ("高潮阈值", climax_threshold, 10, 1000),
+            ("发情值 0 档概率", heat_p0, 0, 100),
+            ("发情值 1 档概率", heat_p1, 0, 100),
+            ("发情值 2 档概率", heat_p2, 0, 100),
+            ("摸鱼币 0 档概率", coin_p0, 0, 100),
+            ("摸鱼币 1 档概率", coin_p1, 0, 100),
+            ("摸鱼币 2 档概率", coin_p2, 0, 100),
+            ("凿者冷却秒数", chop_cooldown_seconds, 0, 86400),
+            ("凿中G点概率", g_spot_percent, 0, 100),
+            ("G点发情值加成", g_spot_heat_bonus, 0, 1000),
+            ("凿者扣币 0 档概率", chopper_coin_p0, 0, 100),
+            ("凿者扣币 1 档概率", chopper_coin_p1, 0, 100),
+            ("凿者扣币 2 档概率", chopper_coin_p2, 0, 100),
+            ("每人每日被凿上限", target_daily_limit, 0, 999),
+        )
+        for label, value, low, high in checks:
+            if not isinstance(value, int) or not low <= value <= high:
+                raise ValueError(f"{label}必须在 {low}~{high} 之间")
+        with self.transaction():
+            with self._session() as session:
+                row = self._estrus_settings_row(session)
+                row.enabled = enabled
+                row.climax_threshold = climax_threshold
+                row.heat_p0 = heat_p0
+                row.heat_p1 = heat_p1
+                row.heat_p2 = heat_p2
+                row.coin_p0 = coin_p0
+                row.coin_p1 = coin_p1
+                row.coin_p2 = coin_p2
+                row.chop_cooldown_seconds = chop_cooldown_seconds
+                row.chopper_rank_quotas = chopper_rank_quotas
+                row.combo_chop_enabled = combo_chop_enabled
+                row.g_spot_percent = g_spot_percent
+                row.g_spot_heat_bonus = g_spot_heat_bonus
+                row.chopper_coin_p0 = chopper_coin_p0
+                row.chopper_coin_p1 = chopper_coin_p1
+                row.chopper_coin_p2 = chopper_coin_p2
+                row.coins_linked = coins_linked
+                row.target_daily_limit = target_daily_limit
+                row.chopper_fixed_coins = chopper_fixed_coins
+                row.target_fixed_coins = target_fixed_coins
+                session.flush()
+                return self.get_estrus_settings()
+
+    def set_user_gender(self, platform_id: str, gender: str) -> bool:
+        """用户自设性别（male/female）；未入职返回 False。"""
+        if gender not in ("male", "female"):
+            raise ValueError("性别只能是 男 或 女")
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                if user is None:
+                    return False
+                user.gender = gender
+                return True
+
+    def sync_platform_genders(self, genders: dict[str, str]) -> int:
+        """平台性别回填（dzmm_nuo `_gender_of` 的档案回写思路）：
+        只填 unknown 用户，显式 /设置性别 的档案值永远优先。"""
+        updated = 0
+        with self.transaction():
+            with self._session() as session:
+                for platform_id, gender in genders.items():
+                    if gender not in ("male", "female"):
+                        continue
+                    result = session.execute(
+                        update(UserRecord)
+                        .where(
+                            UserRecord.platform_id == platform_id,
+                            UserRecord.gender == "unknown",
+                        )
+                        .values(gender=gender)
+                    )
+                    updated += result.rowcount or 0
+        return updated
+
+    def set_estrus_opt_out(
+        self, platform_id: str, group_chat_id: UUID, opted_out: bool
+    ) -> str | None:
+        """切换自己是否允许被凿；未入职返回 None。"""
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                if user is None:
+                    return None
+                state = self._estrus_state_row(
+                    session, group_chat_id, user.id
+                )
+                state.opted_out = opted_out
+                state.updated_at = datetime.now(BEIJING)
+                return user.display_name
+
+    def get_my_estrus(
+        self, platform_id: str, group_chat_id: UUID, now: datetime
+    ) -> dict | None:
+        now = now.astimezone(BEIJING)
+        today = now.date()
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        with self.transaction():
+            with self._session() as session:
+                threshold = int(
+                    self._estrus_settings_row(session).climax_threshold
+                )
+                row = session.execute(
+                    select(UserRecord, EstrusStateRecord)
+                    .outerjoin(
+                        EstrusStateRecord,
+                        (EstrusStateRecord.user_id == UserRecord.id)
+                        & (EstrusStateRecord.group_chat_id == group_chat_id),
+                    )
+                    .where(UserRecord.platform_id == platform_id)
+                ).first()
+                if row is None:
+                    return None
+                user, state = row
+                if state is not None:
+                    self._estrus_daily_reset(state, today)
+                today_chopped = int(
+                    session.scalar(
+                        select(func.count()).select_from(EstrusChopRecord).where(
+                            EstrusChopRecord.target_user_id == user.id,
+                            EstrusChopRecord.group_chat_id == group_chat_id,
+                            EstrusChopRecord.created_at >= day_start,
+                            EstrusChopRecord.created_at < day_start + timedelta(days=1),
+                        )
+                    )
+                    or 0
+                )
+                today_chops_given = int(
+                    session.scalar(
+                        select(func.count()).select_from(EstrusChopRecord).where(
+                            EstrusChopRecord.chopper_user_id == user.id,
+                            EstrusChopRecord.group_chat_id == group_chat_id,
+                            EstrusChopRecord.created_at >= day_start,
+                            EstrusChopRecord.created_at < day_start + timedelta(days=1),
+                        )
+                    )
+                    or 0
+                )
+                total_chops_given = int(
+                    session.scalar(
+                        select(func.count()).select_from(EstrusChopRecord).where(
+                            EstrusChopRecord.chopper_user_id == user.id,
+                            EstrusChopRecord.group_chat_id == group_chat_id,
+                        )
+                    )
+                    or 0
+                )
+                return {
+                    "display_name": user.display_name,
+                    "heat": state.heat if state is not None else 0,
+                    "threshold": threshold,
+                    "chopped_count": state.chopped_count if state is not None else 0,
+                    "today_chopped": today_chopped,
+                    "today_chops_given": today_chops_given,
+                    "total_chops_given": total_chops_given,
+                    "today_climaxes": (
+                        state.today_climaxes if state is not None else 0
+                    ),
+                    "total_climaxes": (
+                        state.total_climaxes if state is not None else 0
+                    ),
+                    "opted_out": state.opted_out if state is not None else False,
+                    "gender": user.gender or "unknown",
+                }
+
+    def estrus_popularity_rankings(
+        self, group_chat_id: UUID, now: datetime
+    ) -> list[dict]:
+        """人气榜（前 5）：按当日被凿次数，从 estrus_chops 按天统计。"""
+        day_start = now.astimezone(BEIJING).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        with self._session() as session:
+            rows = session.execute(
+                select(UserRecord.display_name, func.count())
+                .join(
+                    EstrusChopRecord,
+                    EstrusChopRecord.target_user_id == UserRecord.id,
+                )
+                .where(
+                    EstrusChopRecord.group_chat_id == group_chat_id,
+                    EstrusChopRecord.created_at >= day_start,
+                    EstrusChopRecord.created_at < day_start + timedelta(days=1),
+                )
+                .group_by(UserRecord.id, UserRecord.display_name)
+                .order_by(func.count().desc(), UserRecord.id)
+                .limit(5)
+            ).all()
+        return [
+            {"display_name": name, "today_chopped": int(count)}
+            for name, count in rows
+        ]
+
+    def _estrus_climax_text(
+        self,
+        user: UserRecord,
+        chopper_name: str | None = None,
+        threshold: int = 100,
+        chopper_gender: str | None = None,
+    ) -> str | None:
+        """AI 高潮长文；主角是被凿者，`chopper_name` 是最后一凿的人。
+
+        v3（2026-10-05）：关思考模式提速、`finish_reason=length` 自动续写、
+        过质量门（器官词/体液拟声词下限 + 含糊代称黑名单）；第一次不达标
+        追加「上一版太含蓄」的退回说明再要一次，两次都不行就返回 None，
+        由调用方走直白兜底。整段共用 `CLIMAX_TOTAL_BUDGET_SECONDS` 预算，
+        避免同步路径把群卡太久。
+        """
+        client = self._estrus_text_client
+        if client is None:
+            return None
+        gender = user.gender or "unknown"
+        started = monotonic()
+        for strict in (False, True):
+            remaining = CLIMAX_TOTAL_BUDGET_SECONDS - (monotonic() - started)
+            if remaining <= 2:
+                break
+            text = self._estrus_complete(
+                client,
+                user,
+                gender,
+                chopper_name,
+                chopper_gender,
+                threshold,
+                strict,
+                remaining,
+            )
+            if text and climax_text_passes(text, gender):
+                return text
+            logger.info("estrus climax text below the v3 scale bar (strict=%s)", strict)
+        return None
+
+    def _estrus_call(
+        self,
+        client,
+        system: str,
+        user_content: str,
+        history: tuple[HistoryMessage, ...],
+        max_chars: int,
+        timeout_seconds: int,
+    ) -> tuple[str, str]:
+        """调一次 AI：优先用能拿到 finish_reason 的新接口（支持被截断后续写），
+        没有该方法的客户端（测试替身等）退回老的 complete。"""
+        with_reason = getattr(client, "complete_with_reason", None)
+        if with_reason is None:
+            return (
+                client.complete(
+                    system,
+                    user_content,
+                    history_messages=history,
+                    max_chars=max_chars,
+                    timeout_seconds=timeout_seconds,
+                    temperature=CLIMAX_TEMPERATURE,
+                ),
+                "",
+            )
+        return with_reason(
+            system,
+            user_content,
+            history_messages=history,
+            max_chars=max_chars,
+            timeout_seconds=timeout_seconds,
+            temperature=CLIMAX_TEMPERATURE,
+            # 关掉思考模式：token 预算全留给正文，长文更快出
+            thinking_enabled=False,
+            max_tokens=CLIMAX_MAX_TOKENS,
+        )
+
+    def _estrus_complete(
+        self,
+        client,
+        user: UserRecord,
+        gender: str,
+        chopper_name: str | None,
+        chopper_gender: str | None,
+        threshold: int,
+        strict: bool,
+        remaining: float,
+    ) -> str | None:
+        """单次生成（含被 max_tokens 掐断时的一次续写）。"""
+        system, user_content = build_climax_messages(
+            user.display_name,
+            gender,
+            chopper_name,
+            threshold,
+            chopper_gender,
+            self._estrus_random,
+            strict,
+        )
+        history: tuple[HistoryMessage, ...] = ()
+        text = ""
+        local_started = monotonic()
+        for _ in range(CLIMAX_CONTINUE_ROUNDS + 1):
+            budget = remaining - (monotonic() - local_started)
+            if budget <= 1:
+                break
+            try:
+                chunk, finish_reason = self._estrus_call(
+                    client,
+                    system,
+                    user_content,
+                    history,
+                    max(150, CLIMAX_MAX_CHARS - len(text)),
+                    int(min(CLIMAX_TIMEOUT_SECONDS, budget)),
+                )
+            except Exception as error:
+                logger.warning("estrus climax AI text failed: %s", error)
+                break
+            text += chunk
+            if finish_reason != "length" or len(text) >= CLIMAX_MAX_CHARS:
+                break
+            history = (HistoryMessage("assistant", text),)
+            user_content = CONTINUE_INSTRUCTION
+        # 高潮文字合并成一段发：去掉 AI 输出里的换行/空行
+        collapsed = re.sub(r"\s*\n+\s*", "", text)[:CLIMAX_MAX_CHARS]
+        return collapsed or None
+
+    def execute_estrus_chop(
+        self,
+        chopper_platform_id: str,
+        *,
+        target_platform_id: str | None = None,
+        target_name: str | None = None,
+        note: str | None = None,
+        times: int = 1,
+        now: datetime,
+        group_chat_id: UUID,
+    ) -> EstrusChopResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                settings = self._estrus_settings_row(session)
+                if not settings.enabled:
+                    return EstrusChopResult("disabled")
+                chopper = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.platform_id == chopper_platform_id
+                    )
+                )
+                if chopper is None:
+                    return EstrusChopResult("not_joined")
+                if target_platform_id:
+                    target = session.scalar(
+                        select(UserRecord).where(
+                            UserRecord.platform_id == target_platform_id
+                        )
+                    )
+                    if target is None:
+                        if target_platform_id in _CHOP_BOT_PLATFORM_IDS:
+                            return EstrusChopResult("bot_target")
+                        return EstrusChopResult("target_not_joined")
+                else:
+                    cleaned = (target_name or "").strip().lstrip("@").strip()
+                    if not cleaned:
+                        return EstrusChopResult("missing_target")
+                    special = _classify_chop_target(cleaned)
+                    if special == "group":
+                        return EstrusChopResult("group_target")
+                    if special == "self_word":
+                        return EstrusChopResult(
+                            "self", chopper_name=chopper.display_name
+                        )
+                    if special == "bot":
+                        return EstrusChopResult("bot_target")
+                    target = session.scalar(
+                        select(UserRecord).where(
+                            UserRecord.display_name == cleaned
+                        )
+                    )
+                    if target is None:
+                        nickname_matches = session.scalars(
+                            select(UserRecord).where(
+                                UserRecord.platform_nickname == cleaned
+                            )
+                        ).all()
+                        if len(nickname_matches) == 1:
+                            target = nickname_matches[0]
+                        elif len(nickname_matches) > 1:
+                            return EstrusChopResult(
+                                "ambiguous_target",
+                                candidate_labels=tuple(
+                                    f"{match.display_name} "
+                                    f"{format_employee_number(match.employee_number)}"
+                                    for match in nickname_matches
+                                ),
+                            )
+                        else:
+                            if _is_boss_word(cleaned):
+                                return EstrusChopResult("boss_not_found")
+                            return EstrusChopResult("target_not_found")
+                if target.id == chopper.id:
+                    return EstrusChopResult(
+                        "self", chopper_name=chopper.display_name
+                    )
+                # 引用消息凿 Bot 账号：名单按昵称精确匹配
+                if target.display_name in _CHOP_BOT_ACCOUNT_NAMES:
+                    return EstrusChopResult("bot_target")
+                locked_users = {
+                    user.id: user
+                    for user in session.scalars(
+                        select(UserRecord)
+                        .where(UserRecord.id.in_((chopper.id, target.id)))
+                        .order_by(UserRecord.id)
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    ).all()
+                }
+                chopper = locked_users.get(chopper.id)
+                target = locked_users.get(target.id)
+                if chopper is None:
+                    return EstrusChopResult("not_joined")
+                if target is None:
+                    return EstrusChopResult("target_not_joined")
+                cooldown = int(settings.chop_cooldown_seconds)
+                if cooldown > 0:
+                    last_created = session.scalar(
+                        select(func.max(EstrusChopRecord.created_at)).where(
+                            EstrusChopRecord.chopper_user_id == chopper.id,
+                            EstrusChopRecord.group_chat_id == group_chat_id,
+                        )
+                    )
+                    if last_created is not None:
+                        remaining = cooldown - int(
+                            (now - last_created).total_seconds()
+                        )
+                        if remaining > 0:
+                            return EstrusChopResult(
+                                "cooldown",
+                                cooldown_remaining_seconds=remaining,
+                            )
+                if times > 1 and not settings.combo_chop_enabled:
+                    return EstrusChopResult(
+                        "combo_disabled",
+                        chopper_name=chopper.display_name,
+                        target_name=target.display_name,
+                        times_requested=times,
+                    )
+                quota = self._estrus_chopper_daily_quota(session, chopper, settings)
+                given_today = 0
+                if quota is not None:
+                    day_start = now.replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    )
+                    given_today = int(
+                        session.scalar(
+                            select(func.count())
+                            .select_from(EstrusChopRecord)
+                            .where(
+                                EstrusChopRecord.chopper_user_id == chopper.id,
+                                EstrusChopRecord.group_chat_id == group_chat_id,
+                                EstrusChopRecord.created_at >= day_start,
+                                EstrusChopRecord.created_at
+                                < day_start + timedelta(days=1),
+                            )
+                        )
+                        or 0
+                    )
+                    if given_today >= quota:
+                        return EstrusChopResult(
+                            "chopper_limit",
+                            chopper_name=chopper.display_name,
+                            today_chops_given=given_today,
+                            daily_chops_limit=quota,
+                        )
+                    # 连凿自动截断到今日剩余配额
+                    times = min(times, quota - given_today)
+                state = self._estrus_state_row(
+                    session, group_chat_id, target.id
+                )
+                self._estrus_daily_reset(state, now.date())
+                if state.opted_out:
+                    return EstrusChopResult(
+                        "refused",
+                        chopper_name=chopper.display_name,
+                        target_name=target.display_name,
+                    )
+                target_daily_limit = int(settings.target_daily_limit)
+                received_today = 0
+                if target_daily_limit > 0:
+                    day_start = now.replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    )
+                    received_today = int(
+                        session.scalar(
+                            select(func.count())
+                            .select_from(EstrusChopRecord)
+                            .where(
+                                EstrusChopRecord.target_user_id == target.id,
+                                EstrusChopRecord.group_chat_id == group_chat_id,
+                                EstrusChopRecord.created_at >= day_start,
+                                EstrusChopRecord.created_at
+                                < day_start + timedelta(days=1),
+                            )
+                        )
+                        or 0
+                    )
+                    if received_today >= target_daily_limit:
+                        return EstrusChopResult(
+                            "target_limit",
+                            target_name=target.display_name,
+                            today_chops_received=received_today,
+                            daily_received_limit=target_daily_limit,
+                        )
+                threshold = int(settings.climax_threshold)
+                g_spot_percent = int(settings.g_spot_percent)
+                g_spot_bonus = int(settings.g_spot_heat_bonus)
+                total_heat_gain = 0
+                total_coins = 0
+                total_coins_deducted = 0
+                g_spot_hits = 0
+                climax_count = 0
+                executed = 0
+                stopped_reason = None
+                for _ in range(times):
+                    if (
+                        target_daily_limit > 0
+                        and received_today >= target_daily_limit
+                    ):
+                        stopped_reason = "target_limit"
+                        break
+                    if (
+                        g_spot_percent > 0
+                        and self._estrus_random.random() * 100 < g_spot_percent
+                    ):
+                        g_spot_hits += 1
+                        heat_gain = g_spot_bonus
+                        coins = self._roll_estrus_coins(settings)
+                    else:
+                        heat_gain, coins = self._roll_estrus_pair(settings)
+                    if settings.chopper_fixed_coins is not None:
+                        coins_deducted = settings.chopper_fixed_coins
+                    elif settings.coins_linked and settings.target_fixed_coins is None:
+                        coins_deducted = coins
+                    else:
+                        deduction_roll = self._estrus_random.random() * 100
+                        if deduction_roll < settings.chopper_coin_p0:
+                            coins_deducted = 0
+                        elif deduction_roll < (
+                            settings.chopper_coin_p0 + settings.chopper_coin_p1
+                        ):
+                            coins_deducted = 1
+                        else:
+                            coins_deducted = 2
+                    state.heat = int(state.heat) + heat_gain
+                    state.chopped_count = int(state.chopped_count) + 1
+                    climax_triggered = state.heat >= threshold
+                    if climax_triggered:
+                        climax_count += 1
+                        state.heat = 0
+                        state.total_climaxes = int(state.total_climaxes) + 1
+                        state.today_climaxes = int(state.today_climaxes) + 1
+                    if coins > 0:
+                        self._apply_balance_change(
+                            target, coins, "estrus_gain", now
+                        )
+                    if coins_deducted > 0:
+                        self._apply_balance_change(
+                            chopper, -coins_deducted, "estrus_chop_cost", now
+                        )
+                    state.updated_at = now
+                    session.add(
+                        EstrusChopRecord(
+                            group_chat_id=group_chat_id,
+                            chopper_user_id=chopper.id,
+                            target_user_id=target.id,
+                            heat_gain=heat_gain,
+                            coins=coins,
+                            coins_deducted=coins_deducted,
+                            climax_triggered=climax_triggered,
+                            note=note[:200] if note else None,
+                            created_at=now,
+                        )
+                    )
+                    total_heat_gain += heat_gain
+                    total_coins += coins
+                    total_coins_deducted += coins_deducted
+                    received_today += 1
+                    executed += 1
+                if executed == 0 and stopped_reason == "target_limit":
+                    return EstrusChopResult(
+                        "target_limit",
+                        chopper_name=chopper.display_name,
+                        target_name=target.display_name,
+                        today_chops_received=received_today,
+                        daily_received_limit=target_daily_limit,
+                    )
+                # 连凿中无论爆表几次，高潮长文只生成一段（最后一击视角）
+                climax_text = None
+                if climax_count > 0:
+                    climax_text = self._estrus_climax_text(
+                        target,
+                        chopper.display_name,
+                        threshold,
+                        chopper.gender,
+                    )
+                    if not climax_text:
+                        climax_text = fallback_climax_text(
+                            target.display_name,
+                            target.gender or "unknown",
+                            self._estrus_random,
+                            chopper.display_name,
+                        )
+                return EstrusChopResult(
+                    "ok",
+                    chopper_name=chopper.display_name,
+                    target_name=target.display_name,
+                    note=note,
+                    times_requested=times,
+                    times_executed=executed,
+                    heat_gain=total_heat_gain,
+                    # 单凿爆表显示满值 X/X（heat 已清零）；连凿显示当前累计
+                    heat_now=(
+                        threshold
+                        if executed == 1 and climax_count
+                        else int(state.heat)
+                    ),
+                    threshold=threshold,
+                    coins=total_coins,
+                    coins_deducted=total_coins_deducted,
+                    climax_triggered=climax_count > 0,
+                    climax_count=climax_count,
+                    climax_text=climax_text,
+                    g_spot_hits=g_spot_hits,
+                    today_climaxes=int(state.today_climaxes),
+                    total_climaxes=int(state.total_climaxes),
+                    stopped_reason=stopped_reason,
+                    today_chops_given=given_today + executed,
+                    daily_chops_limit=quota if quota is not None else 0,
+                )
+
+    def _truth_trade_settings_row(
+        self, session: Session, group_chat_id: UUID
+    ) -> TruthTradeSettingsRecord:
+        row = session.scalar(
+            select(TruthTradeSettingsRecord).where(
+                TruthTradeSettingsRecord.group_chat_id == group_chat_id
+            )
+        )
+        if row is None:
+            row = TruthTradeSettingsRecord(group_chat_id=group_chat_id)
+            session.add(row)
+            session.flush()
+        return row
+
+    @staticmethod
+    def _truth_trade_active_players(
+        session: Session, game_id: UUID
+    ) -> list[tuple[TruthTradePlayerRecord, UserRecord]]:
+        return list(
+            session.execute(
+                select(TruthTradePlayerRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == TruthTradePlayerRecord.user_id)
+                .where(
+                    TruthTradePlayerRecord.game_id == game_id,
+                    TruthTradePlayerRecord.state == "active",
+                )
+                .order_by(TruthTradePlayerRecord.position)
+            )
+        )
+
+    @staticmethod
+    def _truth_trade_open_question(
+        session: Session, game_id: UUID, round_number: int
+    ) -> TruthTradeQuestionRecord | None:
+        return session.scalar(
+            select(TruthTradeQuestionRecord)
+            .where(
+                TruthTradeQuestionRecord.game_id == game_id,
+                TruthTradeQuestionRecord.round_number == round_number,
+                TruthTradeQuestionRecord.state == "open",
+            )
+            .with_for_update()
+        )
+
+    @classmethod
+    def _truth_trade_required_players(
+        cls,
+        session: Session,
+        game: TruthTradeGameRecord,
+        question: TruthTradeQuestionRecord,
+    ) -> list[tuple[TruthTradePlayerRecord, UserRecord]]:
+        """本题需要作答的活跃玩家：提问时在册（position <= required_player_count），
+        排除提问者本人；中途退出者已不在 active 名单。"""
+        return [
+            (player, user)
+            for player, user in cls._truth_trade_active_players(session, game.id)
+            if player.position != question.position
+            and player.position <= question.required_player_count
+        ]
+
+    def _truth_trade_result_locked(
+        self,
+        session: Session,
+        game: TruthTradeGameRecord,
+        status: str,
+        *,
+        public_message: str | None = None,
+        announcements: tuple[str, ...] = (),
+        question_text: str | None = None,
+        recap: tuple[TruthTradeRecapEntry, ...] = (),
+        ask_leaders: tuple[tuple[str, int], ...] = (),
+        answer_leaders: tuple[tuple[str, int], ...] = (),
+    ) -> TruthTradeResult:
+        players = self._truth_trade_active_players(session, game.id)
+        settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+        asker_name = None
+        answered_count = 0
+        required_count = 0
+        if game.state == "asking":
+            for player, user in players:
+                if player.position == game.current_position:
+                    asker_name = user.display_name
+                    break
+        if game.state == "answering":
+            question = self._truth_trade_open_question(session, game.id, game.round_number)
+            if question is not None:
+                required = self._truth_trade_required_players(session, game, question)
+                required_count = len(required)
+                answered_count = sum(
+                    1
+                    for player, _ in required
+                    if session.scalar(
+                        select(TruthTradeAnswerRecord.id).where(
+                            TruthTradeAnswerRecord.question_id == question.id,
+                            TruthTradeAnswerRecord.user_id == player.user_id,
+                        )
+                    )
+                    is not None
+                )
+        return TruthTradeResult(
+            status=status,
+            game_id=game.id,
+            group_chat_id=game.group_chat_id,
+            state=game.state,
+            round_number=game.round_number,
+            players=tuple(
+                TruthTradeRosterEntry(player.position, user.display_name)
+                for player, user in players
+            ),
+            asker_position=game.current_position if game.state == "asking" else None,
+            asker_name=asker_name,
+            question_text=question_text,
+            answered_count=answered_count,
+            required_count=required_count,
+            question_timeout_seconds=settings.question_timeout_seconds,
+            answer_timeout_seconds=settings.answer_timeout_seconds,
+            min_players=settings.min_players,
+            recap=recap,
+            ask_leaders=ask_leaders,
+            answer_leaders=answer_leaders,
+            announcements=announcements,
+            public_message=public_message,
+        )
+
+    def _truth_trade_expire_phase(
+        self,
+        session: Session,
+        game: TruthTradeGameRecord,
+        settings: TruthTradeSettingsRecord,
+        now: datetime,
+    ) -> tuple[str, ...]:
+        """懒超时：提问超时跳过提问者，回答超时未答者记超时未答并轮转。"""
+        if game.phase_deadline is None or now <= game.phase_deadline:
+            return ()
+        if game.state == "asking":
+            asker = session.scalar(
+                select(TruthTradePlayerRecord)
+                .where(
+                    TruthTradePlayerRecord.game_id == game.id,
+                    TruthTradePlayerRecord.position == game.current_position,
+                    TruthTradePlayerRecord.state == "active",
+                )
+                .with_for_update()
+            )
+            if asker is None:
+                return ()
+            asker_user = session.get(UserRecord, asker.user_id)
+            session.add(
+                TruthTradeQuestionRecord(
+                    game_id=game.id,
+                    asker_player_id=asker.id,
+                    round_number=game.round_number,
+                    position=game.current_position,
+                    content=None,
+                    required_player_count=0,
+                    state="skipped",
+                    asked_at=now,
+                    collected_at=now,
+                )
+            )
+            session.flush()
+            ahead = (f"【真心换真心】{asker.position}号 {asker_user.display_name} 提问超时，自动跳过。",)
+            return ahead + self._truth_trade_advance(session, game, settings, now)
+        if game.state == "answering":
+            question = self._truth_trade_open_question(session, game.id, game.round_number)
+            if question is None:
+                return ()
+            required = self._truth_trade_required_players(session, game, question)
+            for player, _user in required:
+                existing = session.scalar(
+                    select(TruthTradeAnswerRecord.id).where(
+                        TruthTradeAnswerRecord.question_id == question.id,
+                        TruthTradeAnswerRecord.user_id == player.user_id,
+                    )
+                )
+                if existing is None:
+                    session.add(
+                        TruthTradeAnswerRecord(
+                            question_id=question.id,
+                            user_id=player.user_id,
+                            content=None,
+                            state="timed_out",
+                            answered_at=now,
+                        )
+                    )
+            question.state = "collected"
+            question.collected_at = now
+            session.flush()
+            asker_player = session.get(TruthTradePlayerRecord, question.asker_player_id)
+            asker_user = session.get(UserRecord, asker_player.user_id)
+            lines = self._truth_trade_recap_lines(
+                question.position,
+                asker_user.display_name,
+                question.content,
+                self._truth_trade_recap_entries(session, question),
+            )
+            return tuple(lines) + self._truth_trade_advance(
+                session, game, settings, now
+            )
+        return ()
+
+    @staticmethod
+    def _truth_trade_recap_lines(
+        position: int,
+        asker_name: str,
+        question_text: str | None,
+        recap: list[TruthTradeRecapEntry],
+    ) -> list[str]:
+        labels = {
+            "answered": None,
+            "declined": "拒答",
+            "timed_out": "超时未答",
+            "left": "中途退出",
+        }
+        lines = [
+            f"【真心换真心】{position}号 {asker_name} 的问题收集完毕：",
+            f"问题：{question_text or '（提问被跳过）'}",
+        ]
+        for entry in recap:
+            label = labels.get(entry.state)
+            lines.append(
+                f"{entry.display_name}：{entry.content if entry.state == 'answered' else label}"
+            )
+        return lines
+
+    @staticmethod
+    def _truth_trade_recap_entries(
+        session: Session, question: TruthTradeQuestionRecord
+    ) -> list[TruthTradeRecapEntry]:
+        """按序号顺序返回本题全部作答记录（含拒答/超时/中途退出）。"""
+        rows = session.execute(
+            select(TruthTradeAnswerRecord, UserRecord)
+            .join(UserRecord, UserRecord.id == TruthTradeAnswerRecord.user_id)
+            .where(TruthTradeAnswerRecord.question_id == question.id)
+        ).all()
+        positions = {
+            player.user_id: player.position
+            for player in session.scalars(
+                select(TruthTradePlayerRecord).where(
+                    TruthTradePlayerRecord.game_id == question.game_id
+                )
+            )
+        }
+        ordered = sorted(
+            rows, key=lambda row: positions.get(row[0].user_id, 999)
+        )
+        return [
+            TruthTradeRecapEntry(user.display_name, answer.state, answer.content)
+            for answer, user in ordered
+        ]
+
+    def _truth_trade_advance(
+        self,
+        session: Session,
+        game: TruthTradeGameRecord,
+        settings: TruthTradeSettingsRecord,
+        now: datetime,
+    ) -> tuple[str, ...]:
+        """当前问题已收集/跳过后：轮到下一位提问，或本轮完毕进入结算。"""
+        players = self._truth_trade_active_players(session, game.id)
+        next_player = next(
+            (player for player, _ in players if player.position > game.current_position),
+            None,
+        )
+        if next_player is not None:
+            user = session.get(UserRecord, next_player.user_id)
+            game.state = "asking"
+            game.current_position = next_player.position
+            game.phase_deadline = now + timedelta(
+                seconds=settings.question_timeout_seconds
+            )
+            return (
+                f"【真心换真心】第 {game.round_number} 轮 · 轮到 "
+                f"{next_player.position}号 {user.display_name} 提问，发送 /问 你的问题"
+                f"（超时 {settings.question_timeout_seconds} 秒自动跳过）",
+            )
+        game.state = "round_complete"
+        game.phase_deadline = None
+        game.settled_rounds += 1
+        # 顺序发言下每人每轮固定一问一答，排行无意义，不再展示
+        return (
+            f"【真心换真心】第 {game.round_number} 轮结束。\n"
+            "发送 /继续 开下一轮，/结束游戏 结束。",
+        )
+
+    def _truth_trade_enqueue_announcements(
+        self,
+        session: Session,
+        game: TruthTradeGameRecord,
+        announcements: tuple[str, ...],
+    ) -> None:
+        """懒超时等被动触发的群公告入队（主动指令的回复不走这里）。"""
+        if not announcements:
+            return
+        group = session.get(GroupChatRecord, game.group_chat_id)
+        for text in announcements:
+            self.enqueue_system_outbound(
+                text,
+                group_chat_id=game.group_chat_id,
+                destination_chatroom_id=(
+                    None if group is None else group.chatroom_id
+                ),
+            )
+
+    def _truth_trade_finish_locked(
+        self,
+        session: Session,
+        game: TruthTradeGameRecord,
+        state: str,
+        reason: str,
+        now: datetime,
+    ) -> None:
+        """整局结束后计一次参与，至少需要一轮完整结算。"""
+        game.state = state
+        game.active_key = None
+        game.phase_deadline = None
+        game.finished_at = now
+        game.finish_reason = reason
+        if state == "finished":
+            self._bump_department_game_plays(
+                session,
+                truth_trade_game_users(session, game),
+                now,
+                group_chat_id=game.group_chat_id,
+                game_type="truth_trade", game_id=game.id,
+            )
+
+    def start_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                group = session.get(GroupChatRecord, group_chat_id)
+                if (
+                    group is None
+                    or group.deleted_at is not None
+                    or not group.games_enabled
+                    or "truth_trade" not in group.enabled_game_types
+                    or not self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID).enabled
+                ):
+                    return TruthTradeResult("disabled")
+                active = self._active_truth_trade_game(session, group_chat_id)
+                if active is not None:
+                    return TruthTradeResult("already_active")
+                if self._group_has_active_gameplay(session, group_chat_id):
+                    return TruthTradeResult("multiplayer_active")
+                game = TruthTradeGameRecord(
+                    group_chat_id=group_chat_id,
+                    host_user_id=user.id,
+                    active_key="global",
+                    state="signup",
+                    round_number=0,
+                    current_position=1,
+                    signup_at=now,
+                    created_at=now,
+                )
+                session.add(game)
+                session.flush()
+                session.add(
+                    TruthTradePlayerRecord(
+                        game_id=game.id,
+                        user_id=user.id,
+                        position=1,
+                        state="active",
+                        joined_at=now,
+                    )
+                )
+                session.flush()
+                return self._truth_trade_result_locked(session, game, "signup_started")
+
+    def join_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+                announcements = self._truth_trade_expire_phase(
+                    session, game, settings, now
+                )
+                self._truth_trade_enqueue_announcements(session, game, announcements)
+                if game.state in {"finished", "cancelled"}:
+                    return TruthTradeResult("no_game")
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord)
+                    .where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if player is not None and player.state == "active":
+                    return TruthTradeResult("already_joined")
+                max_position = session.scalar(
+                    select(func.max(TruthTradePlayerRecord.position)).where(
+                        TruthTradePlayerRecord.game_id == game.id
+                    )
+                )
+                next_position = int(max_position or 0) + 1
+                if player is None:
+                    session.add(
+                        TruthTradePlayerRecord(
+                            game_id=game.id,
+                            user_id=user.id,
+                            position=next_position,
+                            state="active",
+                            joined_at=now,
+                        )
+                    )
+                else:
+                    player.position = next_position
+                    player.state = "active"
+                    player.withdrawn_at = None
+                session.flush()
+                status = (
+                    "joined_signup" if game.state == "signup" else "joined_midway"
+                )
+                if game.state == "signup":
+                    public_message = (
+                        f"【真心换真心】{user.display_name} 加入报名，"
+                        f"当前 {len(self._truth_trade_active_players(session, game.id))} 人。"
+                    )
+                else:
+                    public_message = (
+                        f"【真心换真心】{next_position}号 {user.display_name} 加入，"
+                        f"当前共 {len(self._truth_trade_active_players(session, game.id))} 人；"
+                        "从下一个问题开始参与回答。"
+                    )
+                return self._truth_trade_result_locked(
+                    session, game, status, public_message=public_message
+                )
+
+    def begin_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                if game.state != "signup":
+                    return TruthTradeResult("already_started")
+                if user.id != game.host_user_id:
+                    return TruthTradeResult("host_only")
+                players = self._truth_trade_active_players(session, game.id)
+                if len(players) < settings.min_players:
+                    return self._truth_trade_result_locked(
+                        session, game, "not_enough_players"
+                    )
+                game.state = "asking"
+                game.round_number = 1
+                first_player, first_user = players[0]
+                game.current_position = first_player.position
+                game.started_at = now
+                game.phase_deadline = now + timedelta(
+                    seconds=settings.question_timeout_seconds
+                )
+                self._grant_department_allowance(
+                    session,
+                    user,
+                    "dept_game_host",
+                    now,
+                    group_chat_id=game.group_chat_id,
+                )
+                roster = "、".join(
+                    f"{player.position}号 {user.display_name}"
+                    for player, user in players
+                )
+                public_message = (
+                    f"【真心换真心】第 1 轮开始（共 {len(players)} 人）：{roster}\n"
+                    f"轮到 {first_player.position}号 {first_user.display_name} 提问，"
+                    f"发送 /问 你的问题"
+                    f"（超时 {settings.question_timeout_seconds} 秒自动跳过）"
+                )
+                return self._truth_trade_result_locked(
+                    session, game, "started", public_message=public_message
+                )
+
+    def ask_truth_trade(
+        self,
+        platform_id: str,
+        content: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+                announcements = self._truth_trade_expire_phase(
+                    session, game, settings, now
+                )
+                self._truth_trade_enqueue_announcements(session, game, announcements)
+                if game.state in {"finished", "cancelled"}:
+                    return TruthTradeResult("no_game")
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord).where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                )
+                if player is None or player.state != "active":
+                    return TruthTradeResult("not_participant")
+                if game.state != "asking" or game.current_position != player.position:
+                    return self._truth_trade_result_locked(
+                        session, game, "not_your_turn", announcements=announcements
+                    )
+                text = content.strip()
+                if not text:
+                    return TruthTradeResult("empty_question", announcements=announcements)
+                active_players = self._truth_trade_active_players(session, game.id)
+                if text == "跳过":
+                    session.add(
+                        TruthTradeQuestionRecord(
+                            game_id=game.id,
+                            asker_player_id=player.id,
+                            round_number=game.round_number,
+                            position=game.current_position,
+                            content=None,
+                            required_player_count=0,
+                            state="skipped",
+                            asked_at=now,
+                            collected_at=now,
+                        )
+                    )
+                    session.flush()
+                    ahead = self._truth_trade_advance(session, game, settings, now)
+                    self._truth_trade_enqueue_announcements(session, game, ahead)
+                    return self._truth_trade_result_locked(
+                        session,
+                        game,
+                        "skipped",
+                        public_message="【真心换真心】已跳过本轮提问。",
+                    )
+                question = TruthTradeQuestionRecord(
+                    game_id=game.id,
+                    asker_player_id=player.id,
+                    round_number=game.round_number,
+                    position=game.current_position,
+                    content=text,
+                    required_player_count=max(
+                        entry.position for entry, _ in active_players
+                    ),
+                    state="open",
+                    asked_at=now,
+                )
+                session.add(question)
+                game.state = "answering"
+                game.phase_deadline = now + timedelta(
+                    seconds=settings.answer_timeout_seconds
+                )
+                session.flush()
+                public_message = (
+                    f"【真心换真心】{player.position}号 {user.display_name} 的问题：{text}\n"
+                    f"其他人发送 /回答 你的回答（/回答 跳过 可拒答，"
+                    f"超时 {settings.answer_timeout_seconds} 秒记为超时未答）"
+                )
+                return self._truth_trade_result_locked(
+                    session,
+                    game,
+                    "asked",
+                    public_message=public_message,
+                    question_text=text,
+                )
+
+    def answer_truth_trade(
+        self,
+        platform_id: str,
+        content: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+                announcements = self._truth_trade_expire_phase(
+                    session, game, settings, now
+                )
+                self._truth_trade_enqueue_announcements(session, game, announcements)
+                if game.state in {"finished", "cancelled"}:
+                    return TruthTradeResult("no_game")
+                if game.state != "answering":
+                    return TruthTradeResult("wrong_state")
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord).where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                )
+                if player is None or player.state != "active":
+                    return TruthTradeResult("not_participant")
+                question = self._truth_trade_open_question(
+                    session, game.id, game.round_number
+                )
+                if question is None:
+                    return TruthTradeResult("wrong_state")
+                if question.position == player.position:
+                    return TruthTradeResult("asker_cannot_answer")
+                if player.position > question.required_player_count:
+                    return TruthTradeResult("not_required")
+                existing = session.scalar(
+                    select(TruthTradeAnswerRecord).where(
+                        TruthTradeAnswerRecord.question_id == question.id,
+                        TruthTradeAnswerRecord.user_id == user.id,
+                    )
+                )
+                if existing is not None:
+                    return TruthTradeResult("already_answered")
+                text = content.strip()
+                if not text:
+                    return TruthTradeResult("empty_answer")
+                declined = text == "跳过"
+                session.add(
+                    TruthTradeAnswerRecord(
+                        question_id=question.id,
+                        user_id=user.id,
+                        content=None if declined else text,
+                        state="declined" if declined else "answered",
+                        answered_at=now,
+                    )
+                )
+                session.flush()
+                required = self._truth_trade_required_players(session, game, question)
+                answered = sum(
+                    1
+                    for entry, _ in required
+                    if session.scalar(
+                        select(TruthTradeAnswerRecord.id).where(
+                            TruthTradeAnswerRecord.question_id == question.id,
+                            TruthTradeAnswerRecord.user_id == entry.user_id,
+                        )
+                    )
+                    is not None
+                )
+                if answered < len(required):
+                    ack = (
+                        f"【真心换真心】已记录 {player.position}号 {user.display_name} 的"
+                        f"{'拒答' if declined else '回答'}（{answered}/{len(required)}）。"
+                    )
+                    return self._truth_trade_result_locked(
+                        session,
+                        game,
+                        "declined" if declined else "answered",
+                        public_message=ack,
+                        announcements=announcements,
+                    )
+                question.state = "collected"
+                question.collected_at = now
+                session.flush()
+                asker_player = session.get(TruthTradePlayerRecord, question.asker_player_id)
+                asker_user = session.get(UserRecord, asker_player.user_id)
+                recap = self._truth_trade_recap_entries(session, question)
+                recap_lines = self._truth_trade_recap_lines(
+                    question.position, asker_user.display_name, question.content, recap
+                )
+                ahead = self._truth_trade_advance(session, game, settings, now)
+                return self._truth_trade_result_locked(
+                    session,
+                    game,
+                    "collected",
+                    public_message="\n".join(recap_lines + list(ahead)),
+                    announcements=announcements,
+                    recap=tuple(recap),
+                )
+
+    def leave_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+                announcements = self._truth_trade_expire_phase(
+                    session, game, settings, now
+                )
+                self._truth_trade_enqueue_announcements(session, game, announcements)
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord)
+                    .where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                    .with_for_update()
+                )
+                if player is None or player.state != "active":
+                    return TruthTradeResult("not_participant")
+                player.state = "withdrawn"
+                player.withdrawn_at = now
+                extras: tuple[str, ...] = ()
+                if game.state == "asking" and game.current_position == player.position:
+                    session.add(
+                        TruthTradeQuestionRecord(
+                            game_id=game.id,
+                            asker_player_id=player.id,
+                            round_number=game.round_number,
+                            position=game.current_position,
+                            content=None,
+                            required_player_count=0,
+                            state="skipped",
+                            asked_at=now,
+                            collected_at=now,
+                        )
+                    )
+                    session.flush()
+                    extras = extras + self._truth_trade_advance(
+                        session, game, settings, now
+                    )
+                elif game.state == "answering":
+                    question = self._truth_trade_open_question(
+                        session, game.id, game.round_number
+                    )
+                    if (
+                        question is not None
+                        and player.position <= question.required_player_count
+                        and player.position != question.position
+                        and session.scalar(
+                            select(TruthTradeAnswerRecord.id).where(
+                                TruthTradeAnswerRecord.question_id == question.id,
+                                TruthTradeAnswerRecord.user_id == user.id,
+                            )
+                        )
+                        is None
+                    ):
+                        session.add(
+                            TruthTradeAnswerRecord(
+                                question_id=question.id,
+                                user_id=user.id,
+                                content=None,
+                                state="left",
+                                answered_at=now,
+                            )
+                        )
+                        session.flush()
+                        required = self._truth_trade_required_players(
+                            session, game, question
+                        )
+                        answered = sum(
+                            1
+                            for entry, _ in required
+                            if session.scalar(
+                                select(TruthTradeAnswerRecord.id).where(
+                                    TruthTradeAnswerRecord.question_id == question.id,
+                                    TruthTradeAnswerRecord.user_id == entry.user_id,
+                                )
+                            )
+                            is not None
+                        )
+                        if answered >= len(required):
+                            question.state = "collected"
+                            question.collected_at = now
+                            session.flush()
+                            asker_player = session.get(
+                                TruthTradePlayerRecord, question.asker_player_id
+                            )
+                            asker_user = session.get(UserRecord, asker_player.user_id)
+                            extras = extras + tuple(
+                                self._truth_trade_recap_lines(
+                                    question.position,
+                                    asker_user.display_name,
+                                    question.content,
+                                    self._truth_trade_recap_entries(session, question),
+                                )
+                            ) + self._truth_trade_advance(session, game, settings, now)
+                players = self._truth_trade_active_players(session, game.id)
+                if len(players) < 2:
+                    self._truth_trade_finish_locked(
+                        session, game, "finished", "not_enough_players", now
+                    )
+                    extras = extras + (
+                        "【真心换真心】剩余活跃人数不足 2 人，本局已结束。",
+                    )
+                self._truth_trade_enqueue_announcements(session, game, extras)
+                return self._truth_trade_result_locked(
+                    session,
+                    game,
+                    "left",
+                    public_message="你已退出本局真心换真心。",
+                    announcements=announcements + extras,
+                )
+
+    def end_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord).where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                )
+                if player is None or player.state != "active":
+                    return TruthTradeResult("not_participant")
+                self._truth_trade_finish_locked(
+                    session, game, "finished", "participant_ended", now
+                )
+                lines = ["【真心换真心】本局已结束。"]
+                return self._truth_trade_result_locked(
+                    session,
+                    game,
+                    "completed",
+                    public_message="\n".join(lines),
+                )
+
+    def continue_truth_trade(
+        self,
+        platform_id: str,
+        now: datetime,
+        group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+    ) -> TruthTradeResult:
+        now = now.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                self._lock_gameplay_gate(session)
+                game = self._active_truth_trade_game(session, group_chat_id)
+                if game is None:
+                    return TruthTradeResult("no_game")
+                settings = self._truth_trade_settings_row(session, PRIMARY_GROUP_CHAT_ID)
+                user = self._truth_trade_user(session, platform_id)
+                if user is None:
+                    return TruthTradeResult("not_joined")
+                player = session.scalar(
+                    select(TruthTradePlayerRecord).where(
+                        TruthTradePlayerRecord.game_id == game.id,
+                        TruthTradePlayerRecord.user_id == user.id,
+                    )
+                )
+                if player is None or player.state != "active":
+                    return TruthTradeResult("not_participant")
+                if game.state != "round_complete":
+                    return TruthTradeResult("wrong_state")
+                players = self._truth_trade_active_players(session, game.id)
+                if len(players) < settings.min_players:
+                    return self._truth_trade_result_locked(
+                        session, game, "not_enough_players"
+                    )
+                game.round_number += 1
+                first_player, first_user = players[0]
+                game.current_position = first_player.position
+                game.state = "asking"
+                game.phase_deadline = now + timedelta(
+                    seconds=settings.question_timeout_seconds
+                )
+                roster = "、".join(
+                    f"{entry.position}号 {entry.display_name}"
+                    for entry in (
+                        TruthTradeRosterEntry(p.position, u.display_name)
+                        for p, u in players
+                    )
+                )
+                public_message = (
+                    f"【真心换真心】第 {game.round_number} 轮开始（共 {len(players)} 人）："
+                    f"{roster}\n轮到 {first_player.position}号 {first_user.display_name} 提问，"
+                    f"发送 /问 你的问题"
+                    f"（超时 {settings.question_timeout_seconds} 秒自动跳过）"
+                )
+                return self._truth_trade_result_locked(
+                    session, game, "continued", public_message=public_message
+                )
+
+    def truth_trade_statistics(
+        self, group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID
+    ) -> TruthTradeStatistics:
+        with self._session() as session:
+            game_ids = tuple(
+                session.scalars(
+                    select(TruthTradeGameRecord.id).where(
+                        TruthTradeGameRecord.group_chat_id == group_chat_id,
+                        TruthTradeGameRecord.started_at.is_not(None),
+                    )
+                )
+            )
+            if not game_ids:
+                return TruthTradeStatistics()
+            games = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(TruthTradeGameRecord)
+                    .where(
+                        TruthTradeGameRecord.group_chat_id == group_chat_id,
+                        TruthTradeGameRecord.started_at.is_not(None),
+                    )
+                )
+                or 0
+            )
+            questions = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(TruthTradeQuestionRecord)
+                    .where(
+                        TruthTradeQuestionRecord.game_id.in_(game_ids),
+                        TruthTradeQuestionRecord.state == "collected",
+                    )
+                )
+                or 0
+            )
+            answers = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(TruthTradeAnswerRecord)
+                    .join(
+                        TruthTradeQuestionRecord,
+                        TruthTradeQuestionRecord.id == TruthTradeAnswerRecord.question_id,
+                    )
+                    .where(
+                        TruthTradeQuestionRecord.game_id.in_(game_ids),
+                        TruthTradeAnswerRecord.state == "answered",
+                    )
+                )
+                or 0
+            )
+            ask_rows = session.execute(
+                select(UserRecord.display_name, func.count())
+                .select_from(TruthTradeQuestionRecord)
+                .join(
+                    TruthTradePlayerRecord,
+                    TruthTradePlayerRecord.id == TruthTradeQuestionRecord.asker_player_id,
+                )
+                .join(UserRecord, UserRecord.id == TruthTradePlayerRecord.user_id)
+                .where(
+                    TruthTradeQuestionRecord.game_id.in_(game_ids),
+                    TruthTradeQuestionRecord.state == "collected",
+                )
+                .group_by(UserRecord.display_name)
+            ).all()
+            answer_rows = session.execute(
+                select(UserRecord.display_name, func.count())
+                .select_from(TruthTradeAnswerRecord)
+                .join(
+                    TruthTradeQuestionRecord,
+                    TruthTradeQuestionRecord.id == TruthTradeAnswerRecord.question_id,
+                )
+                .join(UserRecord, UserRecord.id == TruthTradeAnswerRecord.user_id)
+                .where(
+                    TruthTradeQuestionRecord.game_id.in_(game_ids),
+                    TruthTradeAnswerRecord.state == "answered",
+                )
+                .group_by(UserRecord.display_name)
+            ).all()
+
+            def top(rows) -> tuple[tuple[str, int], ...]:
+                ordered = sorted(rows, key=lambda row: (-row[1], row[0]))
+                return tuple(ordered[:5])
+
+            return TruthTradeStatistics(
+                games=games,
+                questions=questions,
+                answers=answers,
+                ask_leaders=top(ask_rows),
+                answer_leaders=top(answer_rows),
+            )
+
+    def _is_liar_dice_participant(
+        self, session: Session, game_id: UUID, user_id: UUID
+    ) -> bool:
+        player = session.scalar(
+            select(LiarDicePlayerRecord).where(
+                LiarDicePlayerRecord.game_id == game_id,
+                LiarDicePlayerRecord.user_id == user_id,
+                LiarDicePlayerRecord.state.in_(("signup", "active")),
+            )
+        )
+        return player is not None
+
+    @staticmethod
+    def _apply_liar_dice_queued_leaves(session: Session, game_id: UUID) -> None:
+        leavers = session.scalars(
+            select(LiarDicePlayerRecord).where(
+                LiarDicePlayerRecord.game_id == game_id,
+                LiarDicePlayerRecord.state == "active",
+                LiarDicePlayerRecord.left_at.is_not(None),
+            )
+        )
+        for player in leavers:
+            player.state = "left"
+            player.seat_number = None
+
+    def _promote_liar_dice_joiners_locked(
+        self, session: Session, game_id: UUID
+    ) -> None:
+        """对局中/轮间加入的玩家在下一轮生效：排到现有座位的末尾。"""
+        joiners = session.scalars(
+            select(LiarDicePlayerRecord)
+            .where(
+                LiarDicePlayerRecord.game_id == game_id,
+                LiarDicePlayerRecord.state == "signup",
+            )
+            .order_by(LiarDicePlayerRecord.joined_at)
+        )
+        max_seat = session.scalar(
+            select(func.max(LiarDicePlayerRecord.seat_number)).where(
+                LiarDicePlayerRecord.game_id == game_id,
+                LiarDicePlayerRecord.state == "active",
+            )
+        )
+        next_seat = int(max_seat or 0)
+        for player in joiners:
+            next_seat += 1
+            player.state = "active"
+            player.seat_number = next_seat
+            player.left_at = None
+        session.flush()
+
+    def run_liar_dice_jobs(
+        self, now: datetime, group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID
+    ) -> list[str]:
+        now = now.astimezone(BEIJING)
+        messages: list[str] = []
+        with self.transaction():
+            with self._session() as session:
+                game = self._active_liar_dice_game(session, group_chat_id)
+                if game is None:
+                    return messages
+                if game.state == "signup":
+                    if game.signup_deadline is not None and now >= game.signup_deadline:
+                        self._finish_liar_dice_locked(
+                            session, game, "cancelled", "signup_expired", now
+                        )
+                        messages.append("【大话骰子】报名超时，本局已自动取消。")
+                    return messages
+                if game.state != "calling" or game.turn_deadline is None:
+                    return messages
+                if now < game.turn_deadline:
+                    return messages
+                players = self._liar_dice_players(session, game.id, ("active",))
+                if not players:
+                    return messages
+                current = next(
+                    (p for p, _ in players if p.seat_number == game.current_seat),
+                    None,
+                )
+                if current is None:
+                    game.current_seat = 1
+                    return messages
+                current_user = session.get(UserRecord, current.user_id)
+                old_seat = current.seat_number or 1
+                others = sorted(
+                    player.seat_number
+                    for player, _ in players
+                    if player.user_id != current.user_id
+                    and player.seat_number is not None
+                )
+                tail = max(
+                    (
+                        player.seat_number
+                        for player, _ in players
+                        if player.seat_number is not None
+                    ),
+                    default=old_seat,
+                ) + 1
+                # 超时者移到队尾（分配新的大座位号），其余人保持原位
+                current.seat_number = tail
+                next_seat = next(
+                    (seat for seat in others if seat > old_seat),
+                    others[0] if others else old_seat,
+                )
+                game.current_seat = next_seat
+                game.timeout_streak = (game.timeout_streak or 0) + 1
+                if game.timeout_streak >= len(players):
+                    round_record = self._liar_dice_current_round(session, game.id)
+                    if round_record is not None:
+                        round_record.state = "voided"
+                    game.state = "round_end"
+                    game.turn_deadline = None
+                    game.timeout_streak = 0
+                    messages.append(
+                        "⏱️ 大家都超时了，本轮作废！发 /继续 开下一轮，或 /结束游戏 结束。"
+                    )
+                    return messages
+                game.turn_deadline = now + timedelta(
+                    seconds=self._liar_dice_settings_row(
+                        session, PRIMARY_GROUP_CHAT_ID
+                    ).turn_seconds
+                )
+                next_player = next(
+                    (p for p, _ in players if p.seat_number == game.current_seat),
+                    None,
+                )
+                next_user = (
+                    None
+                    if next_player is None
+                    else session.get(UserRecord, next_player.user_id)
+                )
+                if current_user is not None and next_user is not None:
+                    messages.append(
+                        f"⏱️ {current_user.display_name} 超时，自动跳到最后！"
+                        f"轮到 {next_user.display_name}"
+                    )
+                return messages
 
     def get_never_have_i_ever_settings(self) -> NeverHaveIEverSettings:
         with self._session() as session:
@@ -13918,6 +17675,14 @@ class CoreRepository:
         game.response_deadline = None
         game.finished_at = now
         game.finish_reason = reason
+        if state in {"completed", "forced_ended"}:
+            self._bump_department_game_plays(
+                session,
+                other_game_users(session, "never_have_i_ever", game.id),
+                now,
+                group_chat_id=game.group_chat_id,
+                game_type="never_have_i_ever", game_id=game.id,
+            )
         for player in session.scalars(
             select(NeverHaveIEverPlayerRecord).where(
                 NeverHaveIEverPlayerRecord.game_id == game.id
@@ -13999,6 +17764,10 @@ class CoreRepository:
                 )
                 session.add(round_record)
                 session.flush()
+                self._grant_department_allowance(
+                    session, user, "dept_game_host", now,
+                    group_chat_id=group_chat_id,
+                )
                 return NeverHaveIEverResult(
                     "started",
                     game_id=game.id,
@@ -14272,6 +18041,15 @@ class CoreRepository:
                     seconds=settings.reminder_interval_seconds
                 )
                 game.skip_enabled = False
+                bomb_host = session.get(UserRecord, actor.user_id)
+                if bomb_host is not None:
+                    self._grant_department_allowance(
+                        session,
+                        bomb_host,
+                        "dept_game_host",
+                        now,
+                        group_chat_id=game.group_chat_id,
+                    )
                 return self._start_number_bomb_round(session, game, 1, 1, now)
 
     def leave_number_bomb_game(
@@ -15379,6 +19157,14 @@ class CoreRepository:
         game.active_key = None
         game.finished_at = now
         game.finish_reason = reason
+        if reason != "empty_signup":
+            self._bump_department_game_plays(
+                session,
+                other_game_users(session, "number_bomb", game.id),
+                now,
+                group_chat_id=game.group_chat_id,
+                game_type="number_bomb", game_id=game.id,
+            )
         collecting_round = session.scalar(
             select(NumberBombRoundRecord).where(
                 NumberBombRoundRecord.game_id == game.id,
@@ -16207,6 +19993,13 @@ class CoreRepository:
                 session_record.active_key = None
                 session_record.finished_at = now
                 self._record_undercover_facts(session, game, None, "ended", now)
+                self._bump_department_game_plays(
+                    session,
+                    other_game_users(session, "undercover", game.id),
+                    now,
+                    group_chat_id=session_record.group_chat_id,
+                    game_type="undercover", game_id=game.id,
+                )
                 return UndercoverGameResult("ended", session_id=session_record.id, game_id=game.id)
 
     def leave_undercover(
@@ -16624,6 +20417,16 @@ class CoreRepository:
             assigned_roles.append(role)
         session_record.state = "dealing"
         session_record.signup_deadline = None
+        if members:
+            undercover_initiator = session.get(UserRecord, members[0].user_id)
+            if undercover_initiator is not None:
+                self._grant_department_allowance(
+                    session,
+                    undercover_initiator,
+                    "dept_game_host",
+                    now,
+                    group_chat_id=session_record.group_chat_id,
+                )
         return UndercoverGameResult(
             "dealing",
             session_id=session_record.id,
@@ -16983,6 +20786,13 @@ class CoreRepository:
         session_record.state = "awaiting_continue"
         session_record.await_continue_deadline = now + _UNDERCOVER_CONTINUE_TIMEOUT
         self._record_undercover_facts(session, game, winner, None, now)
+        self._bump_department_game_plays(
+            session,
+            other_game_users(session, "undercover", game.id),
+            now,
+            group_chat_id=session_record.group_chat_id,
+            game_type="undercover", game_id=game.id,
+        )
         next_round_exit_labels = self._apply_undercover_next_round_exits(
             session, session_record.id, now
         )
@@ -20400,6 +24210,13 @@ class CoreRepository:
         game.settlement_reason = reason
         game.settlement_complete = True
         game.finished_at = now
+        self._bump_department_game_plays(
+            session,
+            [player.user_id for player, _ in rows],
+            now,
+            group_chat_id=game.group_chat_id,
+            game_type="blame_bomb", game_id=game.id,
+        )
         return BlameGameResult(
             "settled",
             game_id=game.id,
@@ -20624,6 +24441,15 @@ class CoreRepository:
         game.current_holder_user_id = holder.user_id
         game.last_announced_temperature = "温热"
         game.started_at = now
+        blame_host = session.get(UserRecord, game.creator_user_id)
+        if blame_host is not None:
+            self._grant_department_allowance(
+                session,
+                blame_host,
+                "dept_game_host",
+                now,
+                group_chat_id=game.group_chat_id,
+            )
         return BlameGameResult(
             "started",
             game_id=game.id,
@@ -20664,6 +24490,551 @@ class CoreRepository:
             record.selection_timeout_minutes = selection_timeout_minutes
             session.flush()
             return _hide_and_seek_settings(record)
+
+
+    def get_birthday_settings(self) -> BirthdaySettings:
+        with self._session() as session:
+            record = session.get(BirthdaySettingsRecord, 1)
+            if record is None:
+                record = BirthdaySettingsRecord(
+                    id=1,
+                    enabled=False,
+                    greet_times=list(_DEFAULT_BIRTHDAY_GREET_TIMES),
+                    preview_enabled=True,
+                    preview_time=_DEFAULT_BIRTHDAY_PREVIEW_TIME,
+                    gift_amount=_DEFAULT_BIRTHDAY_GIFT_AMOUNT,
+                    same_day_backfill=True,
+                    edit_limit_per_year=_DEFAULT_BIRTHDAY_EDIT_LIMIT_PER_YEAR,
+                    checkin_multiplier=_DEFAULT_BIRTHDAY_CHECKIN_MULTIPLIER,
+                    shop_discount_percent=_DEFAULT_BIRTHDAY_SHOP_DISCOUNT_PERCENT,
+                    lottery_free_tickets=_DEFAULT_BIRTHDAY_LOTTERY_FREE_TICKETS,
+                    event_reward_bonus_percent=(
+                        _DEFAULT_BIRTHDAY_EVENT_REWARD_BONUS_PERCENT
+                    ),
+                    tips_enabled=True,
+                    tip_max_amount=_DEFAULT_BIRTHDAY_TIP_MAX_AMOUNT,
+                    tip_window_minutes=_DEFAULT_BIRTHDAY_TIP_WINDOW_MINUTES,
+                    anniversary_enabled=True,
+                    greet_template=_DEFAULT_BIRTHDAY_GREET_LINE,
+                    preview_template=_DEFAULT_BIRTHDAY_PREVIEW_TEMPLATE,
+                    tips_summary_template=_DEFAULT_BIRTHDAY_TIPS_SUMMARY_TEMPLATE,
+                )
+                session.add(record)
+                session.flush()
+            return _birthday_settings(record)
+
+    def set_birthday_settings(
+        self,
+        enabled: bool,
+        greet_times: list[str],
+        preview_enabled: bool,
+        preview_time: str,
+        gift_amount: int,
+        same_day_backfill: bool,
+        edit_limit_per_year: int,
+        checkin_multiplier: int,
+        shop_discount_percent: int,
+        lottery_free_tickets: int,
+        event_reward_bonus_percent: int,
+        tips_enabled: bool,
+        tip_max_amount: int,
+        tip_window_minutes: int,
+        anniversary_enabled: bool,
+        greet_template: str,
+        preview_template: str,
+        tips_summary_template: str,
+    ) -> BirthdaySettings:
+        """整份覆盖：与躲猫猫那套设置接口保持一致，校验先跑完再落库。"""
+        for label, flag in (
+            ("生日祝福开关", enabled),
+            ("预告开关", preview_enabled),
+            ("当天补发开关", same_day_backfill),
+            ("随礼开关", tips_enabled),
+            ("入职周年开关", anniversary_enabled),
+        ):
+            if not isinstance(flag, bool):
+                raise ValueError(f"{label}无效")
+        if not isinstance(greet_times, list) or not greet_times or len(greet_times) > 10:
+            raise ValueError("祝福时刻需为 1 至 10 个 HH:mm 时刻")
+        normalized_greet_times: list[str] = []
+        for value in greet_times:
+            if not isinstance(value, str) or _event_time_minutes(value) is None:
+                raise ValueError("祝福时刻必须使用 HH:mm 格式")
+            if value not in normalized_greet_times:
+                normalized_greet_times.append(value)
+        normalized_greet_times.sort(key=_event_time_minutes)
+        for label, value in (("预告时刻", preview_time),):
+            if not isinstance(value, str) or _event_time_minutes(value) is None:
+                raise ValueError(f"{label}必须使用 HH:mm 格式")
+        ranges = (
+            ("生日礼金", gift_amount, 0, 999),
+            ("改生日次数", edit_limit_per_year, 0, 12),
+            ("打卡倍率", checkin_multiplier, 1, 10),
+            ("商店折扣", shop_discount_percent, 1, 100),
+            ("免单注数", lottery_free_tickets, 0, 20),
+            ("随机事件加成", event_reward_bonus_percent, 0, 500),
+            ("随礼上限", tip_max_amount, 1, 999),
+            ("随礼窗口", tip_window_minutes, 0, 1440),
+        )
+        for label, value, minimum, maximum in ranges:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not minimum <= value <= maximum
+            ):
+                raise ValueError(f"{label}需在 {minimum} 至 {maximum} 之间")
+        for label, text in (
+            ("祝福语", greet_template),
+            ("预告文案", preview_template),
+            ("随礼汇总文案", tips_summary_template),
+        ):
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError(f"{label}不能为空")
+            if len(text) > 300:
+                raise ValueError(f"{label}不能超过 300 个字符")
+        self.get_birthday_settings()
+        with self._session() as session:
+            record = session.get(BirthdaySettingsRecord, 1)
+            if record is None:
+                raise RuntimeError("生日设置消失")
+            record.enabled = enabled
+            record.greet_times = normalized_greet_times
+            record.preview_enabled = preview_enabled
+            record.preview_time = preview_time
+            record.gift_amount = gift_amount
+            record.same_day_backfill = same_day_backfill
+            record.edit_limit_per_year = edit_limit_per_year
+            record.checkin_multiplier = checkin_multiplier
+            record.shop_discount_percent = shop_discount_percent
+            record.lottery_free_tickets = lottery_free_tickets
+            record.event_reward_bonus_percent = event_reward_bonus_percent
+            record.tips_enabled = tips_enabled
+            record.tip_max_amount = tip_max_amount
+            record.tip_window_minutes = tip_window_minutes
+            record.anniversary_enabled = anniversary_enabled
+            record.greet_template = greet_template
+            record.preview_template = preview_template
+            record.tips_summary_template = tips_summary_template
+            session.flush()
+            return _birthday_settings(record)
+
+
+    def _employee_birthday_view(
+        self,
+        user: UserRecord,
+        record: EmployeeBirthdayRecord,
+        now: datetime,
+    ) -> EmployeeBirthdayView:
+        today = now.astimezone(BEIJING).date()
+        return EmployeeBirthdayView(
+            month=record.month,
+            day=record.day,
+            year=record.year,
+            visibility=record.visibility,
+            next_occurrence=birthday_next_occurrence(record.month, record.day, today),
+            tenure=birthday_format_tenure(user.joined_at, today),
+            changed_this_year=(
+                record.edit_count_year == today.year and record.edit_count > 0
+            ),
+        )
+
+    def get_employee_birthday(
+        self, platform_id: str, now: datetime
+    ) -> EmployeeBirthdayView | None:
+        """没登记返回 `None`；调用方据此给「还没登记」的提示。"""
+        now = now.astimezone(BEIJING)
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return None
+            record = session.scalar(
+                select(EmployeeBirthdayRecord).where(
+                    EmployeeBirthdayRecord.user_id == user.id
+                )
+            )
+            if record is None:
+                return None
+            return self._employee_birthday_view(user, record, now)
+
+    def set_employee_birthday(
+        self,
+        platform_id: str,
+        text: str,
+        now: datetime,
+        *,
+        visibility: str | None = None,
+    ) -> BirthdaySaveResult:
+        """登记或修改生日；「一年只能改几次」由设置里的额度控制，首次登记不算改。"""
+        now = now.astimezone(BEIJING)
+        settings = self.get_birthday_settings()
+        raw = text.strip()
+        parsed = parse_birthday(strip_visibility(raw))
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if user is None:
+                    return BirthdaySaveResult("not_joined")
+                if parsed is None:
+                    return BirthdaySaveResult("usage" if not raw else "invalid_date")
+                record = session.scalar(
+                    select(EmployeeBirthdayRecord)
+                    .where(EmployeeBirthdayRecord.user_id == user.id)
+                    .with_for_update()
+                )
+                if record is None:
+                    record = EmployeeBirthdayRecord(
+                        user_id=user.id,
+                        month=parsed.month,
+                        day=parsed.day,
+                        year=parsed.year,
+                        visibility=visibility if visibility is not None else "public",
+                        edit_count=0,
+                        edit_count_year=None,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(record)
+                else:
+                    used = (
+                        record.edit_count
+                        if record.edit_count_year == now.year
+                        else 0
+                    )
+                    if used >= settings.edit_limit_per_year:
+                        return BirthdaySaveResult(
+                            "limit", self._employee_birthday_view(user, record, now)
+                        )
+                    record.month = parsed.month
+                    record.day = parsed.day
+                    record.year = parsed.year
+                    record.edit_count = used + 1
+                    record.edit_count_year = now.year
+                    record.last_edited_at = now
+                    record.updated_at = now
+                    if visibility is not None:
+                        record.visibility = visibility
+                if record.visibility not in ("public", "private"):
+                    record.visibility = "public"
+                session.flush()
+                return BirthdaySaveResult(
+                    "saved", self._employee_birthday_view(user, record, now)
+                )
+
+    def list_month_birthdays(
+        self, now: datetime, month: int | None = None
+    ) -> MonthBirthdayList:
+        """本月寿星名单；`private` 的人不出现（他就是不想被提）。"""
+        today = now.astimezone(BEIJING).date()
+        target = today.month if month is None else month
+        with self._session() as session:
+            rows = session.execute(
+                select(
+                    UserRecord.display_name,
+                    EmployeeBirthdayRecord.month,
+                    EmployeeBirthdayRecord.day,
+                )
+                .join(
+                    EmployeeBirthdayRecord,
+                    EmployeeBirthdayRecord.user_id == UserRecord.id,
+                )
+                .where(
+                    EmployeeBirthdayRecord.month == target,
+                    EmployeeBirthdayRecord.visibility == "public",
+                )
+                .order_by(EmployeeBirthdayRecord.day, UserRecord.employee_number)
+            ).all()
+        return MonthBirthdayList(
+            month=target,
+            entries=tuple(
+                MonthBirthdayEntry(
+                    display_name=name,
+                    month=row_month,
+                    day=day,
+                    is_today=birthday_matches(row_month, day, today),
+                )
+                for name, row_month, day in rows
+            ),
+        )
+
+
+
+    def birthday_settings_for(self, user_id: UUID, now: datetime) -> BirthdaySettings | None:
+        """今天过生日（且愿意公开、总开关开着）就返回设置，否则 `None`。
+
+        四项特权（打卡双倍、购彩免单、商店折扣、随机事件加成）都读这一个判断，
+        免得四处的口径漂掉；`private` 的人不公告、也不享受特权。
+        """
+        settings = self.get_birthday_settings()
+        if not settings.enabled:
+            return None
+        with self._session() as session:
+            record = session.scalar(
+                select(EmployeeBirthdayRecord).where(
+                    EmployeeBirthdayRecord.user_id == user_id
+                )
+            )
+        if record is None or record.visibility != "public":
+            return None
+        today = now.astimezone(BEIJING).date()
+        if not birthday_matches(record.month, record.day, today):
+            return None
+        return settings
+
+    def birthday_free_tickets_used(self, user_id: UUID, now: datetime) -> int | None:
+        """今年生日已经免单了几注；`None` = 当天还没祝福，免单资格还没生效。"""
+        year = now.astimezone(BEIJING).year
+        with self._session() as session:
+            used = session.scalar(
+                select(BirthdayGreetingRecord.lottery_tickets).where(
+                    BirthdayGreetingRecord.user_id == user_id,
+                    BirthdayGreetingRecord.greet_year == year,
+                )
+            )
+        return None if used is None else int(used)
+
+    def _record_birthday_free_tickets(
+        self, session: Session, user_id: UUID, now: datetime, count: int
+    ) -> None:
+        record = session.scalar(
+            select(BirthdayGreetingRecord).where(
+                BirthdayGreetingRecord.user_id == user_id,
+                BirthdayGreetingRecord.greet_year == now.astimezone(BEIJING).year,
+            )
+        )
+        if record is not None:
+            record.lottery_tickets += count
+
+    def shop_price_for(
+        self, price: int, user_id: UUID | None, now: datetime
+    ) -> int:
+        """商店实付价：生日当天按折扣算（展示价与结算价都走这里）。"""
+        if user_id is None:
+            return price
+        settings = self.birthday_settings_for(user_id, now)
+        if settings is None or settings.shop_discount_percent >= 100:
+            return price
+        return max(0, price * settings.shop_discount_percent // 100)
+
+
+
+    def _open_birthday_greetings(
+        self, session: Session, settings: BirthdaySettings, now: datetime
+    ) -> list[tuple[BirthdayGreetingRecord, UserRecord]]:
+        """还在随礼窗口里的祝福记录（窗口 = 祝福时刻 + 配置分钟数）。"""
+        rows = session.execute(
+            select(BirthdayGreetingRecord, UserRecord)
+            .join(UserRecord, UserRecord.id == BirthdayGreetingRecord.user_id)
+            .where(BirthdayGreetingRecord.tips_closed_at.is_(None))
+            .order_by(BirthdayGreetingRecord.greeted_at)
+            .with_for_update()
+        ).all()
+        return [
+            (greeting, user)
+            for greeting, user in rows
+            if _birthday_tips_close_at(greeting, settings) > now
+        ]
+
+    def tip_birthday(
+        self,
+        platform_id: str,
+        amount: int,
+        now: datetime,
+        *,
+        platform_message_id: str,
+        recipient_name: str | None = None,
+    ) -> BirthdayTipResult:
+        """同事随礼：纯玩家间转移，不新增货币；每人每场一次、单次不超上限。"""
+        now = now.astimezone(BEIJING)
+        settings = self.get_birthday_settings()
+        with self.transaction():
+            with self._session() as session:
+                sender = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if sender is None:
+                    return BirthdayTipResult("not_joined")
+                if not settings.enabled or not settings.tips_enabled:
+                    return BirthdayTipResult("disabled")
+                if (
+                    isinstance(amount, bool)
+                    or not isinstance(amount, int)
+                    or not 1 <= amount <= settings.tip_max_amount
+                ):
+                    return BirthdayTipResult(
+                        "invalid_amount", maximum=settings.tip_max_amount
+                    )
+                inbound_id = session.scalar(
+                    select(InboundRecord.id).where(
+                        InboundRecord.platform_message_id == platform_message_id,
+                        InboundRecord.sender_platform_id == platform_id,
+                    )
+                )
+                if inbound_id is None:
+                    return BirthdayTipResult("inbound_not_found")
+                replay = session.scalar(
+                    select(BirthdayTipRecord).where(
+                        BirthdayTipRecord.inbound_message_id == inbound_id
+                    )
+                )
+                if replay is not None:
+                    # 同一条消息重复投递：不再转账，按已登记的金额回执
+                    recipient = session.scalar(
+                        select(UserRecord.display_name).where(
+                            UserRecord.id
+                            == session.scalar(
+                                select(BirthdayGreetingRecord.user_id).where(
+                                    BirthdayGreetingRecord.id == replay.greeting_id
+                                )
+                            )
+                        )
+                    )
+                    return BirthdayTipResult(
+                        "already_tipped",
+                        recipient_name=recipient,
+                        amount=replay.amount,
+                    )
+                candidates = self._open_birthday_greetings(session, settings, now)
+                if not candidates:
+                    return BirthdayTipResult("no_birthday")
+                if recipient_name:
+                    wanted = recipient_name.strip()
+                    matched = [
+                        pair for pair in candidates if pair[1].display_name == wanted
+                    ]
+                    if not matched:
+                        return BirthdayTipResult("recipient_not_found")
+                    greeting, recipient = matched[0]
+                elif len(candidates) == 1:
+                    greeting, recipient = candidates[0]
+                else:
+                    # 同一天两位寿星：必须点名，别让人随错
+                    return BirthdayTipResult("recipient_required")
+                if recipient.id == sender.id:
+                    return BirthdayTipResult("self_tip")
+                existing = session.scalar(
+                    select(BirthdayTipRecord.id).where(
+                        BirthdayTipRecord.greeting_id == greeting.id,
+                        BirthdayTipRecord.from_user_id == sender.id,
+                    )
+                )
+                if existing is not None:
+                    # 回执要带上上次随了多少，否则模板里的 {金额} 会渲染成 0
+                    previous = session.scalar(
+                        select(BirthdayTipRecord.amount).where(
+                            BirthdayTipRecord.id == existing
+                        )
+                    )
+                    return BirthdayTipResult(
+                        "already_tipped",
+                        recipient_name=recipient.display_name,
+                        amount=int(previous or 0),
+                    )
+                if sender.balance < amount:
+                    return BirthdayTipResult("insufficient_balance")
+                self._apply_balance_change(sender, -amount, "birthday_tip_out", now)
+                self._apply_balance_change(recipient, amount, "birthday_tip_in", now)
+                session.add(
+                    BirthdayTipRecord(
+                        greeting_id=greeting.id,
+                        from_user_id=sender.id,
+                        amount=amount,
+                        inbound_message_id=inbound_id,
+                        created_at=now,
+                    )
+                )
+                session.flush()
+                return BirthdayTipResult(
+                    "tipped", recipient_name=recipient.display_name, amount=amount
+                )
+
+
+
+    def list_birthday_members(self, now: datetime) -> list[BirthdayMemberRow]:
+        """后台名单：全员都列出来，没登记生日的 `month/day` 为 `None`。"""
+        today = now.astimezone(BEIJING).date()
+        with self._session() as session:
+            users = list(
+                session.scalars(
+                    select(UserRecord).order_by(UserRecord.employee_number)
+                )
+            )
+            records = {
+                record.user_id: record
+                for record in session.scalars(select(EmployeeBirthdayRecord))
+            }
+        rows = []
+        for user in users:
+            record = records.get(user.id)
+            rows.append(
+                BirthdayMemberRow(
+                    platform_id=user.platform_id,
+                    display_name=user.display_name,
+                    employee_number=user.employee_number,
+                    month=None if record is None else record.month,
+                    day=None if record is None else record.day,
+                    visibility=None if record is None else record.visibility,
+                    is_today=(
+                        record is not None
+                        and record.visibility == "public"
+                        and birthday_matches(record.month, record.day, today)
+                    ),
+                )
+            )
+        return rows
+
+    def greet_birthday_manually(
+        self, platform_id: str, now: datetime, *, dry_run: bool = True
+    ) -> str | None:
+        """后台补发/试跑：`dry_run=True` 只渲染文案，不发钱、不公告、不落记录。"""
+        now = now.astimezone(BEIJING)
+        settings = self.get_birthday_settings()
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return None
+            already = session.scalar(
+                select(BirthdayGreetingRecord.id).where(
+                    BirthdayGreetingRecord.user_id == user.id,
+                    BirthdayGreetingRecord.greet_year == now.year,
+                )
+            )
+            tenure = birthday_format_tenure(user.joined_at, now.date())
+            text = _render_birthday_greeting(
+                settings, [(user.display_name, tenure)], now
+            )
+            if dry_run or already is not None:
+                return text
+        with self.transaction():
+            with self._session() as session:
+                employee = session.get(UserRecord, user.id)
+                if employee is None:
+                    return None
+                self._apply_balance_change(
+                    employee, settings.gift_amount, "birthday_gift", now
+                )
+                session.add(
+                    BirthdayGreetingRecord(
+                        user_id=employee.id,
+                        greet_year=now.year,
+                        greeted_at=now,
+                        gift_amount=settings.gift_amount,
+                        lottery_tickets=0,
+                        tips_count=0,
+                        tips_total=0,
+                        tips_closed_at=None,
+                        status="greeted",
+                    )
+                )
+                session.flush()
+        self._birthday_announce(text)
+        return text
+
 
     def list_hide_and_seek_scenes_page(
         self, page: int, page_size: int
@@ -21911,7 +26282,10 @@ class CoreRepository:
                     if participant.rounds >= event.target_rounds:
                         self._apply_balance_change(
                             user,
-                            self.get_random_event_settings().global_completion_reward,
+                            birthday_completion_reward(
+                                self.get_random_event_settings().global_completion_reward,
+                                self.birthday_settings_for(user.id, now),
+                            ),
                             "random_event",
                             now,
                         )
@@ -22222,6 +26596,14 @@ class CoreRepository:
                 for tip, tip_sender in tips_by_recipient.get(user.id, ())
             )
         self._finish_random_event(session, event, "ended", now)
+        for _participant, event_user in participant_rows:
+            self._grant_department_allowance(
+                session,
+                event_user,
+                "dept_event",
+                now,
+                group_chat_id=event.group_chat_id,
+            )
         self.enqueue_system_outbound(
             self._render_reply_template(
                 "/随机事件打赏",
@@ -22839,6 +27221,20 @@ class CoreRepository:
             return RandomEventAdSlotDraftResult("already_reserved", works=works)
         if any(row.scene_id == draft.scene_id for row in reservations):
             return RandomEventAdSlotDraftResult("scene_taken", works=works)
+        vacancy = None
+        if poll is not None:
+            vacancy = session.scalar(
+                select(RandomEventPollCandidateRecord)
+                .where(
+                    RandomEventPollCandidateRecord.poll_id == poll.id,
+                    RandomEventPollCandidateRecord.source == "ad_slot",
+                    RandomEventPollCandidateRecord.vacant.is_(True),
+                )
+                .order_by(RandomEventPollCandidateRecord.position)
+                .with_for_update()
+            )
+            if vacancy is None:
+                return RandomEventAdSlotDraftResult("slot_taken", works=works)
 
         scene = session.get(RandomEventSceneRecord, draft.scene_id)
         templates = list(
@@ -22875,15 +27271,6 @@ class CoreRepository:
         )
         session.flush()
         if poll is not None:
-            vacancy = session.scalar(
-                select(RandomEventPollCandidateRecord)
-                .where(
-                    RandomEventPollCandidateRecord.poll_id == poll.id,
-                    RandomEventPollCandidateRecord.source == "ad_slot",
-                    RandomEventPollCandidateRecord.vacant.is_(True),
-                )
-                .order_by(RandomEventPollCandidateRecord.position)
-            )
             if vacancy is not None:
                 template = templates[randbelow(len(templates))]
                 seats = list(session.scalars(
@@ -23401,6 +27788,72 @@ class CoreRepository:
             .values(schedule_id=schedule.id)
         )
         session.flush()
+        destination_reservations = list(session.scalars(
+            select(RandomEventAdSlotRecord)
+            .where(
+                RandomEventAdSlotRecord.schedule_id == schedule.id,
+                RandomEventAdSlotRecord.status == "consumed",
+                RandomEventAdSlotRecord.poll_id.is_(None),
+            )
+            .order_by(RandomEventAdSlotRecord.created_at, RandomEventAdSlotRecord.id)
+        ))
+        candidates = list(session.scalars(
+            select(RandomEventPollCandidateRecord)
+            .where(RandomEventPollCandidateRecord.poll_id == poll.id)
+            .order_by(RandomEventPollCandidateRecord.position)
+        ))
+        for reservation in destination_reservations:
+            candidate = next(
+                (row for row in candidates if row.scene_id == reservation.scene_id),
+                None,
+            )
+            if candidate is None:
+                scene = session.get(RandomEventSceneRecord, reservation.scene_id)
+                template = session.scalar(
+                    select(RandomEventSceneOpeningRecord)
+                    .where(RandomEventSceneOpeningRecord.scene_id == reservation.scene_id)
+                    .order_by(RandomEventSceneOpeningRecord.position)
+                )
+                if scene is None or template is None:
+                    continue
+                candidate = next(
+                    (row for row in candidates if row.source == "ad_slot" and row.vacant),
+                    None,
+                )
+                if candidate is None:
+                    candidate = RandomEventPollCandidateRecord(
+                        poll_id=poll.id,
+                        position=max(row.position for row in candidates) + 1,
+                        source="ad_slot",
+                        vacant=True,
+                        created_at=now,
+                    )
+                    session.add(candidate)
+                    candidates.append(candidate)
+                seats = list(session.scalars(
+                    select(RandomEventSceneSeatRecord)
+                    .where(RandomEventSceneSeatRecord.scene_id == scene.id)
+                    .order_by(RandomEventSceneSeatRecord.role)
+                ))
+                seat_summary = _random_event_seat_summary(
+                    [(seat.role, seat.capacity) for seat in seats]
+                )
+                if len(seats) > 2 or len(seat_summary) > 24:
+                    seat_summary = f"{sum(seat.capacity for seat in seats)} 人"
+                author = session.get(UserRecord, reservation.user_id)
+                candidate.scene_id = scene.id
+                candidate.template_id = template.id
+                candidate.scene_name = scene.name
+                candidate.event_name = template.name
+                candidate.seat_summary = seat_summary
+                candidate.reward = scene.reward
+                candidate.target_rounds = scene.target_rounds
+                candidate.author_name = "官方" if author is None else author.display_name
+            candidate.source = "ad_slot"
+            candidate.vacant = False
+            session.flush()
+            reservation.poll_id = poll.id
+            reservation.candidate_id = candidate.id
         self._random_event_announce(
             _render_random_event_vote_carryover(
                 self._random_event_poll_view(session, poll)
@@ -23592,7 +28045,7 @@ class CoreRepository:
             for tier in names
         ]
         chosen = pick_tiered(names, settings.vote_random_candidates, randbelow)
-        if not chosen:
+        if not chosen and not reservations:
             return None
         authors = self._random_event_scene_authors(
             session, [scene.id for scene in scenes]
@@ -24275,6 +28728,7 @@ class CoreRepository:
         occurred_at: datetime,
         *,
         dark_market_listing_id: UUID | None = None,
+        memo: str | None = None,
     ) -> None:
         if amount == 0:
             return
@@ -24295,6 +28749,7 @@ class CoreRepository:
                 user_id=user.id,
                 amount=amount,
                 source=source,
+                memo=memo,
                 occurred_at=occurred_at,
                 dark_market_listing_id=dark_market_listing_id,
             )
@@ -24309,6 +28764,319 @@ class CoreRepository:
                 if user is None:
                     raise ValueError("员工不存在")
                 self._apply_balance_change(user, amount, source, occurred_at)
+
+    # ------------------------------------------------------------------
+    # 集成接口（/internal/integration/*）：名字匹配 + 摸鱼币查/发/扣
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _integration_user_view(user: UserRecord) -> dict:
+        return {
+            "platform_id": user.platform_id,
+            "display_name": user.display_name,
+            "employee_number": format_employee_number(user.employee_number),
+            "platform_nickname": user.platform_nickname,
+            "balance": int(user.balance),
+        }
+
+    def integration_match_users(
+        self,
+        *,
+        name: str | None = None,
+        platform_id: str | None = None,
+        employee_number: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """按 用户名 / platform_id / 工号 匹配注册员工。
+
+        名字匹配规则与 /凿 一致：display_name 精确 → platform_nickname 精确
+        （命中多个即 ambiguous）。工号接受 #0001 / 0001 / 1 三种写法。
+        返回 (status, matches)，status ∈ matched / ambiguous / not_found。
+        """
+        with self._session() as session:
+            if platform_id:
+                user = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                matches = [user] if user is not None else []
+            elif employee_number is not None:
+                cleaned = employee_number.strip().lstrip("#")
+                try:
+                    number = int(cleaned)
+                except ValueError:
+                    return "not_found", []
+                user = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.employee_number == number
+                    )
+                )
+                matches = [user] if user is not None else []
+            else:
+                cleaned = (name or "").strip()
+                if not cleaned:
+                    return "not_found", []
+                matches = list(
+                    session.scalars(
+                        select(UserRecord).where(
+                            UserRecord.display_name == cleaned
+                        )
+                    )
+                )
+                if not matches:
+                    matches = list(
+                        session.scalars(
+                            select(UserRecord).where(
+                                UserRecord.platform_nickname == cleaned
+                            )
+                        )
+                    )
+        if not matches:
+            return "not_found", []
+        status = "matched" if len(matches) == 1 else "ambiguous"
+        return status, [self._integration_user_view(user) for user in matches]
+
+    def integration_get_balance(self, platform_id: str) -> dict | None:
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return None
+            return self._integration_user_view(user)
+
+    def integration_game_quota(self, platform_id: str, now: datetime) -> dict | None:
+        """小游戏每日发起额度：职级上限 + 各游戏分桶计数 + 商店加成余量。
+
+        - 职级上限 rank.multiplayer_game_limit 覆盖：never_have_i_ever /
+          number_bomb / undercover / memory_duel / blame_game（各游戏独立计数桶）
+        - texas_holdem 用自己的每日上限（texas 设置），此处只报已用次数
+        - 商店加成（ShopDailyBonus）是所有游戏共享的额外池
+        - rank_limit = -1 表示不限制；remaining 为 null
+        """
+        now = now.astimezone(BEIJING)
+        play_date = now.date()
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return None
+            rank = (
+                session.get(RankRecord, user.rank_id)
+                if user.rank_id is not None
+                else None
+            )
+            rank_limit = (
+                int(rank.multiplayer_game_limit) if rank is not None else None
+            )
+            unlimited = rank_limit is None or rank_limit < 0
+            multiplayer_rows = session.execute(
+                select(
+                    ShopMultiplayerDailyStartRecord.game_type,
+                    ShopMultiplayerDailyStartRecord.count,
+                ).where(
+                    ShopMultiplayerDailyStartRecord.user_id == user.id,
+                    ShopMultiplayerDailyStartRecord.play_date == play_date,
+                )
+            ).all()
+            used_today = {
+                game_type: int(count) for game_type, count in multiplayer_rows
+            }
+            blame_used = session.scalar(
+                select(BlameGameDailyStartRecord.count).where(
+                    BlameGameDailyStartRecord.user_id == user.id,
+                    BlameGameDailyStartRecord.play_date == play_date,
+                )
+            )
+            used_today["blame_game"] = int(blame_used or 0)
+            texas_used = session.scalar(
+                select(TexasHoldemDailyStartRecord.count).where(
+                    TexasHoldemDailyStartRecord.user_id == user.id,
+                    TexasHoldemDailyStartRecord.play_date == play_date,
+                )
+            )
+            used_today["texas_holdem"] = int(texas_used or 0)
+            bonus_row = session.scalar(
+                select(ShopDailyBonusRecord).where(
+                    ShopDailyBonusRecord.user_id == user.id,
+                    ShopDailyBonusRecord.usage_date == play_date,
+                )
+            )
+            bonus_remaining = (
+                0
+                if bonus_row is None
+                else max(
+                    int(bonus_row.multiplayer_total)
+                    - int(bonus_row.multiplayer_used),
+                    0,
+                )
+            )
+            remaining = (
+                None
+                if unlimited
+                else {
+                    game_type: max(rank_limit - count, 0)
+                    for game_type, count in used_today.items()
+                }
+            )
+            return {
+                "platform_id": user.platform_id,
+                "display_name": user.display_name,
+                "employee_number": format_employee_number(user.employee_number),
+                "rank_name": rank.name if rank is not None else None,
+                "rank_limit": rank_limit,
+                "unlimited": unlimited,
+                "used_today": used_today,
+                "used_today_total": sum(used_today.values()),
+                "bonus_remaining": bonus_remaining,
+                "remaining": remaining,
+            }
+
+    def integration_coin_adjust(
+        self,
+        *,
+        platform_id: str,
+        amount: int,
+        action: str,
+        reason: str,
+        idempotency_key: str,
+        now: datetime,
+        allow_partial: bool = False,
+    ) -> tuple[bool, int, dict]:
+        """发/扣币（带幂等）。action ∈ grant / deduct。
+
+        返回 (replayed, status_code, body)：
+        - 同 key 重放 → (True, 首次 status_code, 首次 body)
+        - 同 key 但请求指纹不同 → (True, 409, conflict body)
+        首次执行：not_found(404) / insufficient(409) / ok(200)。
+        """
+        now = now.astimezone(BEIJING)
+        request_hash = hashlib.sha256(
+            f"{action}:{platform_id}:{amount}:{int(allow_partial)}".encode()
+        ).hexdigest()
+        key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()
+        with self.transaction():
+            with self._session() as session:
+                session.execute(
+                    delete(IntegrationIdempotencyRecord).where(
+                        IntegrationIdempotencyRecord.created_at
+                        < now - timedelta(hours=24)
+                    )
+                )
+                existing = session.scalar(
+                    select(IntegrationIdempotencyRecord).where(
+                        IntegrationIdempotencyRecord.key_hash == key_hash
+                    )
+                )
+                if existing is not None:
+                    if existing.request_hash != request_hash:
+                        return (
+                            True,
+                            409,
+                            {
+                                "ok": False,
+                                "error": {
+                                    "code": "idempotency_conflict",
+                                    "message": "同一 Idempotency-Key 已用于不同请求",
+                                },
+                            },
+                        )
+                    return True, int(existing.status_code), dict(
+                        existing.response_body
+                    )
+                session.add(
+                    IntegrationIdempotencyRecord(
+                        key_hash=key_hash,
+                        action=action,
+                        request_hash=request_hash,
+                        status_code=0,
+                        response_body={},
+                        created_at=now,
+                    )
+                )
+                session.flush()
+
+                user = session.scalar(
+                    select(UserRecord).where(
+                        UserRecord.platform_id == platform_id
+                    )
+                )
+                if user is None:
+                    body = {
+                        "ok": False,
+                        "error": {
+                            "code": "user_not_found",
+                            "message": f"没找到员工（platform_id={platform_id}）",
+                        },
+                    }
+                    result = (False, 404, body)
+                elif action == "grant":
+                    self._apply_balance_change(
+                        user, amount, "api_grant", now, memo=reason
+                    )
+                    body = {
+                        "ok": True,
+                        "platform_id": user.platform_id,
+                        "display_name": user.display_name,
+                        "amount": amount,
+                        "balance_after": int(user.balance),
+                    }
+                    result = (False, 200, body)
+                else:
+                    current = int(user.balance)
+                    if allow_partial:
+                        actual = min(current, amount)
+                        if actual > 0:
+                            self._apply_balance_change(
+                                user,
+                                -actual,
+                                "api_deduct",
+                                now,
+                                memo=reason,
+                            )
+                        body = {
+                            "ok": True,
+                            "platform_id": user.platform_id,
+                            "display_name": user.display_name,
+                            "requested": amount,
+                            "actual_amount": actual,
+                            "balance_after": int(user.balance),
+                        }
+                        result = (False, 200, body)
+                    elif current < amount:
+                        body = {
+                            "ok": False,
+                            "error": {
+                                "code": "insufficient_balance",
+                                "message": "余额不足",
+                            },
+                            "balance": current,
+                            "requested": amount,
+                        }
+                        result = (False, 409, body)
+                    else:
+                        self._apply_balance_change(
+                            user, -amount, "api_deduct", now, memo=reason
+                        )
+                        body = {
+                            "ok": True,
+                            "platform_id": user.platform_id,
+                            "display_name": user.display_name,
+                            "amount": amount,
+                            "balance_after": int(user.balance),
+                        }
+                        result = (False, 200, body)
+
+                _, status_code, body = result
+                record = session.scalar(
+                    select(IntegrationIdempotencyRecord).where(
+                        IntegrationIdempotencyRecord.key_hash == key_hash
+                    )
+                )
+                record.status_code = status_code
+                record.response_body = body
+                return result
 
     def grant_board_bonus(
         self,
@@ -24439,6 +29207,899 @@ class CoreRepository:
             )
             return int(income)
 
+    def _grant_department_allowance(
+        self,
+        session: Session,
+        user: UserRecord,
+        kind: str,
+        now: datetime,
+        *,
+        group_chat_id: UUID | None = None,
+        detail: str | None = None,
+    ) -> int:
+        """部门津贴统一发放入口：按后台绑定匹配 + 每人每日封顶，任何不满足都静默返回 0。
+
+        发放成功（granted>0）时发到账通知：哪个群获得发哪个群（group_chat_id），
+        私聊指令场景（打卡/投稿）没有群则发当事人私聊。本次发放后达到每日
+        封顶时文案附加封顶提示；封顶后触发实发为 0，完全静默。
+        """
+        rule = _DEPARTMENT_ALLOWANCE_RULES.get(kind)
+        if rule is None:
+            return 0
+        expected_binding = rule
+        allowance_settings = self._department_allowance_settings_row(session)
+        amounts = {
+            "dept_checkin": allowance_settings.checkin_amount,
+            "dept_event": allowance_settings.event_amount,
+            "dept_game_host": allowance_settings.game_host_amount,
+            "dept_game_play": allowance_settings.game_play_amount,
+            "dept_submission": allowance_settings.submission_amount,
+            "dept_chat": allowance_settings.chat_drop_amount,
+            "dept_referral": allowance_settings.referral_amount,
+        }
+        amount = amounts[kind]
+        daily_cap = int(allowance_settings.daily_cap)
+        department = (
+            session.get(DepartmentRecord, user.department_id)
+            if user.department_id is not None
+            else None
+        )
+        if department is None or not department.enabled:
+            return 0
+        if department.allowance_kind != expected_binding:
+            return 0
+        allow_date = now.astimezone(BEIJING).date()
+        total = int(
+            session.scalar(
+                select(
+                    func.coalesce(func.sum(DepartmentAllowanceRecord.amount), 0)
+                ).where(
+                    DepartmentAllowanceRecord.user_id == user.id,
+                    DepartmentAllowanceRecord.allow_date == allow_date,
+                )
+            )
+            or 0
+        )
+        if total >= daily_cap:
+            return 0
+        granted = min(amount, daily_cap - total)
+        session.add(
+            DepartmentAllowanceRecord(
+                user_id=user.id,
+                allow_date=allow_date,
+                kind=kind,
+                amount=granted,
+                created_at=now,
+            )
+        )
+        self._apply_balance_change(user, granted, kind, now)
+        self._notify_department_allowance(
+            session,
+            user,
+            department,
+            kind,
+            granted,
+            total + granted,
+            daily_cap,
+            group_chat_id,
+            detail,
+        )
+        return granted
+
+    def _notify_department_allowance(
+        self,
+        session: Session,
+        user: UserRecord,
+        department: DepartmentRecord,
+        kind: str,
+        granted: int,
+        total_after: int,
+        daily_cap: int,
+        group_chat_id: UUID | None,
+        detail: str | None,
+    ) -> None:
+        """津贴到账通知：员工名用系统注册名，金额为实发数，附今日累计。"""
+        label = _DEPARTMENT_ALLOWANCE_LABELS.get(kind)
+        if label is None:
+            return
+        text = (
+            f"【部门津贴】{user.display_name}（{department.name}）"
+            f"{label} +{granted} 摸鱼币"
+        )
+        if detail:
+            text += f"（{detail}）"
+        text += f"（今日已获得津贴：{total_after}/{daily_cap}）"
+        if group_chat_id is not None:
+            destination = self.group_chat_destination(group_chat_id)
+            if destination is not None:
+                self.enqueue_system_outbound(
+                    text,
+                    group_chat_id=group_chat_id,
+                    destination_chatroom_id=destination,
+                )
+                return
+        direct_chatroom_id = session.scalar(
+            select(DirectChatRecord.chatroom_id).where(
+                DirectChatRecord.platform_user_id == user.platform_id
+            )
+        )
+        if direct_chatroom_id is not None:
+            self.enqueue_system_outbound(
+                text,
+                destination_chatroom_id=direct_chatroom_id,
+                delivery_kind="direct",
+            )
+
+    def department_allowance_summary(self, platform_id: str, now: datetime) -> int | None:
+        """今日部门津贴合计；未绑定津贴部门的员工返回 None（/我 不显示该行）。"""
+        now = now.astimezone(BEIJING)
+        with self._session() as session:
+            row = session.execute(
+                select(UserRecord, DepartmentRecord)
+                .join(
+                    DepartmentRecord,
+                    DepartmentRecord.id == UserRecord.department_id,
+                )
+                .where(UserRecord.platform_id == platform_id)
+            ).first()
+            if row is None:
+                return None
+            user, department = row
+            if (
+                department is None
+                or not department.enabled
+                or department.allowance_kind is None
+            ):
+                return None
+            total = session.scalar(
+                select(
+                    func.coalesce(func.sum(DepartmentAllowanceRecord.amount), 0)
+                ).where(
+                    DepartmentAllowanceRecord.user_id == user.id,
+                    DepartmentAllowanceRecord.allow_date == now.date(),
+                )
+            )
+            return int(total or 0)
+
+    def my_allowance_breakdown(
+        self, platform_id: str, now: datetime
+    ) -> tuple[list[tuple[str, int]], int, int] | None:
+        """今日部门津贴明细：(标签, 金额) 列表 + 合计 + 封顶；未入职返回 None。"""
+        now = now.astimezone(BEIJING)
+        labels = {**_DEPARTMENT_ALLOWANCE_LABELS, "dept_fine": "罚款抽成"}
+        order = {
+            kind: index
+            for index, kind in enumerate(
+                (
+                    "dept_checkin",
+                    "dept_event",
+                    "dept_game_host",
+                    "dept_game_play",
+                    "dept_submission",
+                    "dept_chat",
+                    "dept_referral",
+                    "dept_fine",
+                )
+            )
+        }
+        with self._session() as session:
+            user_id = session.scalar(
+                select(UserRecord.id).where(UserRecord.platform_id == platform_id)
+            )
+            if user_id is None:
+                return None
+            rows = session.execute(
+                select(
+                    DepartmentAllowanceRecord.kind,
+                    func.sum(DepartmentAllowanceRecord.amount),
+                ).where(
+                    DepartmentAllowanceRecord.user_id == user_id,
+                    DepartmentAllowanceRecord.allow_date == now.date(),
+                )
+                .group_by(DepartmentAllowanceRecord.kind)
+            ).all()
+            detail = [
+                (labels.get(kind, kind), int(amount))
+                for kind, amount in sorted(
+                    rows, key=lambda pair: order.get(pair[0], len(order))
+                )
+            ]
+            cap = int(self._department_allowance_settings_row(session).daily_cap)
+            return detail, sum(amount for _, amount in detail), cap
+
+    def get_discipline_fine_settings(self) -> DisciplineFineSettings:
+        with self._session() as session:
+            record = self._discipline_fine_settings_row(session)
+            return _discipline_fine_settings(record)
+
+    def get_department_allowance_settings(self) -> DepartmentAllowanceSettings:
+        with self._session() as session:
+            record = self._department_allowance_settings_row(session)
+            return _department_allowance_settings(record)
+
+    def set_department_allowance_settings(
+        self,
+        *,
+        checkin_amount: int,
+        event_amount: int,
+        game_host_amount: int,
+        game_play_amount: int,
+        game_play_step: int,
+        submission_amount: int,
+        chat_drop_percent: int,
+        chat_drop_amount: int,
+        chat_drop_cooldown_seconds: int,
+        referral_amount: int,
+        daily_cap: int,
+    ) -> DepartmentAllowanceSettings:
+        """整份覆盖：与风纪罚款那套设置接口保持一致，校验先跑完再落库。"""
+        ranges = (
+            ("打卡奖励", checkin_amount, 0, 999),
+            ("演出奖励", event_amount, 0, 999),
+            ("开局奖励", game_host_amount, 0, 999),
+            ("游戏参与奖励", game_play_amount, 0, 999),
+            ("游戏参与计局步长", game_play_step, 1, 999),
+            ("投稿奖励", submission_amount, 0, 999),
+            ("水群掉落概率", chat_drop_percent, 0, 100),
+            ("水群掉落金额", chat_drop_amount, 0, 999),
+            ("水群掉落冷却秒数", chat_drop_cooldown_seconds, 0, 86400),
+            ("拉新奖励", referral_amount, 0, 999),
+            ("每日津贴封顶", daily_cap, 1, 9999),
+        )
+        for label, value, low, high in ranges:
+            if not isinstance(value, int) or not low <= value <= high:
+                raise ValueError(f"{label}必须在 {low}~{high} 之间")
+        with self.transaction():
+            with self._session() as session:
+                record = self._department_allowance_settings_row(session)
+                record.checkin_amount = checkin_amount
+                record.event_amount = event_amount
+                record.game_host_amount = game_host_amount
+                record.game_play_amount = game_play_amount
+                record.game_play_step = game_play_step
+                record.submission_amount = submission_amount
+                record.chat_drop_percent = chat_drop_percent
+                record.chat_drop_amount = chat_drop_amount
+                record.chat_drop_cooldown_seconds = chat_drop_cooldown_seconds
+                record.referral_amount = referral_amount
+                record.daily_cap = daily_cap
+                session.flush()
+                return _department_allowance_settings(record)
+
+    def _department_allowance_settings_row(
+        self, session: Session
+    ) -> DepartmentAllowanceSettingsRecord:
+        record = session.get(DepartmentAllowanceSettingsRecord, 1)
+        if record is None:
+            record = DepartmentAllowanceSettingsRecord(
+                id=1,
+                checkin_amount=5,
+                event_amount=5,
+                game_host_amount=1,
+                game_play_amount=1,
+                game_play_step=5,
+                submission_amount=5,
+                chat_drop_percent=10,
+                chat_drop_amount=1,
+                chat_drop_cooldown_seconds=0,
+                referral_amount=1,
+                daily_cap=DEPARTMENT_ALLOWANCE_DAILY_CAP,
+            )
+            session.add(record)
+            session.flush()
+        return record
+
+    def _discipline_fine_settings_row(
+        self, session: Session
+    ) -> DisciplineFineSettingsRecord:
+        record = session.get(DisciplineFineSettingsRecord, 1)
+        if record is None:
+            record = DisciplineFineSettingsRecord(
+                id=1,
+                enabled=False,
+                amount=5,
+                kickback_percent=20,
+                rank_quotas={},
+                cooldown_minutes=10,
+                target_daily_limit=0,
+            )
+            session.add(record)
+            session.flush()
+        return record
+
+    def set_discipline_fine_settings(
+        self,
+        *,
+        enabled: bool,
+        amount: int,
+        kickback_percent: int,
+        rank_quotas: dict[str, int],
+        cooldown_minutes: int,
+        target_daily_limit: int,
+    ) -> DisciplineFineSettings:
+        """整份覆盖：与生日祝福那套设置接口保持一致，校验先跑完再落库。"""
+        if not isinstance(enabled, bool):
+            raise ValueError("风纪罚款开关无效")
+        if not isinstance(amount, int) or not 1 <= amount <= 999:
+            raise ValueError("单次罚款金额必须在 1~999 之间")
+        if not isinstance(kickback_percent, int) or not 0 <= kickback_percent <= 100:
+            raise ValueError("执法抽成比例必须在 0~100 之间")
+        if not isinstance(cooldown_minutes, int) or not 0 <= cooldown_minutes <= 1440:
+            raise ValueError("罚款冷却分钟数必须在 0~1440 之间")
+        if (
+            not isinstance(target_daily_limit, int)
+            or not 0 <= target_daily_limit <= 999
+        ):
+            raise ValueError("被罚人每日上限必须在 0~999 之间")
+        if not isinstance(rank_quotas, dict):
+            raise ValueError("职级配额无效")
+        quotas: dict[str, int] = {}
+        for key, value in rank_quotas.items():
+            normalized_key = str(key).strip()
+            if not normalized_key or len(normalized_key) > 64:
+                raise ValueError("职级配额的职级编号无效")
+            if not isinstance(value, int) or not 0 <= value <= 999:
+                raise ValueError("职级配额次数必须在 0~999 之间")
+            quotas[normalized_key] = value
+        with self.transaction():
+            with self._session() as session:
+                record = self._discipline_fine_settings_row(session)
+                record.enabled = enabled
+                record.amount = amount
+                record.kickback_percent = kickback_percent
+                record.rank_quotas = quotas
+                record.cooldown_minutes = cooldown_minutes
+                record.target_daily_limit = target_daily_limit
+                session.flush()
+                return _discipline_fine_settings(record)
+
+    def execute_discipline_fine(
+        self,
+        issuer_platform_id: str,
+        *,
+        target_name: str | None,
+        target_platform_id: str | None,
+        reason: str | None,
+        via_reply: bool,
+        received_at: datetime,
+        group_chat_id: UUID,
+    ) -> DisciplineFineResult:
+        now = received_at.astimezone(BEIJING)
+        with self.transaction():
+            with self._session() as session:
+                settings_record = self._discipline_fine_settings_row(session)
+                if not settings_record.enabled:
+                    return DisciplineFineResult("disabled")
+                # 执法权走部门津贴绑定：allowance_kind = "discipline"
+                enforcement_ids = set(
+                    session.scalars(
+                        select(DepartmentRecord.id).where(
+                            DepartmentRecord.allowance_kind == "discipline",
+                            DepartmentRecord.enabled.is_(True),
+                        )
+                    )
+                )
+                if not enforcement_ids:
+                    return DisciplineFineResult("not_configured")
+                issuer_row = session.execute(
+                    select(UserRecord, RankRecord, DepartmentRecord)
+                    .join(RankRecord, UserRecord.rank_id == RankRecord.id)
+                    .outerjoin(
+                        DepartmentRecord,
+                        DepartmentRecord.id == UserRecord.department_id,
+                    )
+                    .where(UserRecord.platform_id == issuer_platform_id)
+                ).first()
+                if issuer_row is None:
+                    return DisciplineFineResult("not_joined")
+                issuer, issuer_rank, issuer_department = issuer_row
+                if issuer_department is None or (
+                    issuer_department.id not in enforcement_ids
+                ):
+                    return DisciplineFineResult("not_authorized")
+                quota = int(
+                    (settings_record.rank_quotas or {}).get(
+                        str(issuer_rank.id),
+                        _DEFAULT_FINE_QUOTAS_BY_SORT_ORDER.get(
+                            issuer_rank.sort_order, 0
+                        ),
+                    )
+                )
+                if quota <= 0:
+                    return DisciplineFineResult(
+                        "quota_zero",
+                        department_name=issuer_department.name,
+                    )
+                day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                day_end = day_start + timedelta(days=1)
+                fines_today = int(
+                    session.scalar(
+                        select(func.count()).select_from(DisciplineFineRecord).where(
+                            DisciplineFineRecord.issuer_id == issuer.id,
+                            DisciplineFineRecord.created_at >= day_start,
+                            DisciplineFineRecord.created_at < day_end,
+                        )
+                    )
+                    or 0
+                )
+                if fines_today >= quota:
+                    return DisciplineFineResult(
+                        "quota_exhausted",
+                        issuer_display_name=issuer.display_name,
+                        department_name=issuer_department.name,
+                    )
+                if settings_record.cooldown_minutes > 0:
+                    last_created_at = session.scalar(
+                        select(func.max(DisciplineFineRecord.created_at)).where(
+                            DisciplineFineRecord.issuer_id == issuer.id
+                        )
+                    )
+                    if last_created_at is not None:
+                        elapsed = (now - last_created_at).total_seconds()
+                        cooldown_seconds = settings_record.cooldown_minutes * 60
+                        if elapsed < cooldown_seconds:
+                            return DisciplineFineResult(
+                                "cooldown",
+                                cooldown_remaining_seconds=int(
+                                    cooldown_seconds - elapsed
+                                ),
+                            )
+                status, target, candidates = self._resolve_fine_target(
+                    session, target_name, target_platform_id
+                )
+                if status == "ambiguous":
+                    return DisciplineFineResult(
+                        "ambiguous_target", candidate_labels=candidates
+                    )
+                if target is None:
+                    return DisciplineFineResult("target_not_joined")
+                if target.id == issuer.id:
+                    return DisciplineFineResult("self")
+                if target.department_id in enforcement_ids:
+                    return DisciplineFineResult("same_department")
+                if settings_record.target_daily_limit > 0:
+                    fined_today = int(
+                        session.scalar(
+                            select(func.count())
+                            .select_from(DisciplineFineRecord)
+                            .where(
+                                DisciplineFineRecord.target_id == target.id,
+                                DisciplineFineRecord.created_at >= day_start,
+                                DisciplineFineRecord.created_at < day_end,
+                            )
+                        )
+                        or 0
+                    )
+                    if fined_today >= settings_record.target_daily_limit:
+                        return DisciplineFineResult("target_limit")
+                amount = int(settings_record.amount)
+                actual = int(min(max(int(target.balance), 0), amount))
+                kickback_nominal = (
+                    actual * int(settings_record.kickback_percent) // 100
+                )
+                kickback, allowance_total, allowance_cap = self._grant_fine_kickback(
+                    session, issuer, kickback_nominal, now
+                )
+                self._apply_balance_change(
+                    target, -actual, "discipline_fine", now
+                )
+                session.add(
+                    DisciplineFineRecord(
+                        group_chat_id=group_chat_id,
+                        issuer_id=issuer.id,
+                        target_id=target.id,
+                        amount=actual,
+                        kickback=kickback,
+                        reason=reason,
+                        via_reply=via_reply,
+                        created_at=now,
+                    )
+                )
+                session.flush()
+                self._send_fine_private(
+                    session,
+                    target.platform_id,
+                    f"【风纪罚款】你被处以 {amount} 摸鱼币罚款（实扣 {actual}），"
+                    f"理由：{reason or '未填写理由'}。当前余额：{int(target.balance)}。"
+                    f"{_FINE_FEEDBACK_HINT}",
+                )
+                return DisciplineFineResult(
+                    "granted",
+                    issuer_display_name=issuer.display_name,
+                    department_name=issuer_department.name,
+                    target_display_name=target.display_name,
+                    amount=amount,
+                    actual_amount=actual,
+                    kickback=kickback,
+                    allowance_total=allowance_total,
+                    allowance_cap=allowance_cap,
+                )
+
+    def _resolve_fine_target(
+        self,
+        session: Session,
+        target_name: str | None,
+        target_platform_id: str | None,
+    ) -> tuple[str, UserRecord | None, tuple[str, ...]]:
+        """返回 (status, target, candidates)；status ∈ ok/ambiguous/missing。"""
+        if target_platform_id:
+            target = session.scalar(
+                select(UserRecord)
+                .where(UserRecord.platform_id == target_platform_id)
+                .with_for_update()
+            )
+            return ("ok", target, ())
+        normalized = (target_name or "").strip()
+        if not normalized:
+            return ("missing", None, ())
+        employee_number_match = re.fullmatch(r"#([0-9]+)", normalized)
+        if employee_number_match is not None:
+            rows = list(
+                session.scalars(
+                    select(UserRecord)
+                    .where(
+                        UserRecord.employee_number
+                        == int(employee_number_match.group(1))
+                    )
+                    .with_for_update()
+                )
+            )
+        else:
+            rows = list(
+                session.scalars(
+                    select(UserRecord)
+                    .where(UserRecord.display_name == normalized)
+                    .order_by(UserRecord.employee_number)
+                    .with_for_update()
+                )
+            )
+        if not rows:
+            return ("missing", None, ())
+        if len(rows) > 1:
+            return (
+                "ambiguous",
+                None,
+                tuple(
+                    f"{row.display_name} {format_employee_number(row.employee_number)}"
+                    for row in rows
+                ),
+            )
+        return ("ok", rows[0], ())
+
+    def _grant_fine_kickback(
+        self, session: Session, user: UserRecord, nominal: int, now: datetime
+    ) -> tuple[int, int, int]:
+        """风纪执法抽成：与部门津贴共享每日封顶台账（封顶可配置）；不发标准到账通知（罚款回执已含）。"""
+        settings_row = self._department_allowance_settings_row(session)
+        daily_cap = int(settings_row.daily_cap)
+        allow_date = now.astimezone(BEIJING).date()
+        total = int(
+            session.scalar(
+                select(func.coalesce(func.sum(DepartmentAllowanceRecord.amount), 0)).where(
+                    DepartmentAllowanceRecord.user_id == user.id,
+                    DepartmentAllowanceRecord.allow_date == allow_date,
+                )
+            )
+            or 0
+        )
+        if nominal <= 0 or total >= daily_cap:
+            return 0, total, daily_cap
+        granted = min(nominal, daily_cap - total)
+        session.add(
+            DepartmentAllowanceRecord(
+                user_id=user.id,
+                allow_date=allow_date,
+                kind="dept_fine",
+                amount=granted,
+                created_at=now,
+            )
+        )
+        self._apply_balance_change(user, granted, "fine_kickback", now)
+        return granted, total + granted, daily_cap
+
+    def _send_fine_private(
+        self, session: Session, platform_id: str, text: str
+    ) -> None:
+        direct_chatroom_id = session.scalar(
+            select(DirectChatRecord.chatroom_id).where(
+                DirectChatRecord.platform_user_id == platform_id
+            )
+        )
+        if direct_chatroom_id is not None:
+            self.enqueue_system_outbound(
+                text,
+                destination_chatroom_id=direct_chatroom_id,
+                delivery_kind="direct",
+            )
+
+    def revoke_discipline_fine(self, record_id: UUID, now: datetime) -> str:
+        with self.transaction():
+            with self._session() as session:
+                record = session.get(DisciplineFineRecord, record_id)
+                if record is None:
+                    return "not_found"
+                if record.revoked_at is not None:
+                    return "already_revoked"
+                target = session.get(UserRecord, record.target_id)
+                if target is not None:
+                    self._apply_balance_change(
+                        target, record.amount, "discipline_fine_refund", now
+                    )
+                record.revoked_at = now.astimezone(BEIJING)
+                session.flush()
+                return "revoked"
+
+    def list_discipline_fine_records(
+        self, *, page: int, page_size: int
+    ) -> tuple[list[DisciplineFineRecordView], int]:
+        with self._session() as session:
+            total = int(
+                session.scalar(
+                    select(func.count()).select_from(DisciplineFineRecord)
+                )
+                or 0
+            )
+            issuer_user = aliased(UserRecord)
+            target_user = aliased(UserRecord)
+            rows = session.execute(
+                select(
+                    DisciplineFineRecord,
+                    issuer_user.display_name,
+                    target_user.display_name,
+                    GroupChatRecord.name,
+                )
+                .join(issuer_user, issuer_user.id == DisciplineFineRecord.issuer_id)
+                .join(target_user, target_user.id == DisciplineFineRecord.target_id)
+                .join(
+                    GroupChatRecord,
+                    GroupChatRecord.id == DisciplineFineRecord.group_chat_id,
+                )
+                .order_by(DisciplineFineRecord.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).all()
+            views = [
+                DisciplineFineRecordView(
+                    id=record.id,
+                    issuer_display_name=issuer_name,
+                    target_display_name=target_name,
+                    group_name=group_name,
+                    amount=record.amount,
+                    kickback=record.kickback,
+                    reason=record.reason,
+                    via_reply=record.via_reply,
+                    created_at=record.created_at,
+                    revoked_at=record.revoked_at,
+                )
+                for record, issuer_name, target_name, group_name in rows
+            ]
+            return views, total
+
+    def my_discipline_fines(self, platform_id: str) -> MyDisciplineFineView | None:
+        with self._session() as session:
+            user = session.scalar(
+                select(UserRecord).where(UserRecord.platform_id == platform_id)
+            )
+            if user is None:
+                return None
+            issuer_user = aliased(UserRecord)
+            total_row = session.execute(
+                select(
+                    func.coalesce(func.sum(DisciplineFineRecord.amount), 0),
+                    func.count(),
+                )
+                .select_from(DisciplineFineRecord)
+                .where(
+                    DisciplineFineRecord.target_id == user.id,
+                    DisciplineFineRecord.revoked_at.is_(None),
+                )
+            ).one()
+            rows = session.execute(
+                select(DisciplineFineRecord, issuer_user.display_name)
+                .join(issuer_user, issuer_user.id == DisciplineFineRecord.issuer_id)
+                .where(DisciplineFineRecord.target_id == user.id)
+                .order_by(DisciplineFineRecord.created_at.desc())
+                .limit(10)
+            ).all()
+            records = tuple(
+                DisciplineFineRecordView(
+                    id=record.id,
+                    issuer_display_name=issuer_name,
+                    target_display_name=user.display_name,
+                    group_name=None,
+                    amount=record.amount,
+                    kickback=record.kickback,
+                    reason=record.reason,
+                    via_reply=record.via_reply,
+                    created_at=record.created_at,
+                    revoked_at=record.revoked_at,
+                )
+                for record, issuer_name in rows
+            )
+            return MyDisciplineFineView(
+                total_amount=int(total_row[0] or 0),
+                total_count=int(total_row[1] or 0),
+                records=records,
+            )
+
+    def _bump_department_game_plays(
+        self,
+        session: Session,
+        user_ids: Sequence[UUID],
+        now: datetime,
+        group_chat_id: UUID | None = None,
+        *,
+        game_type: str | None = None,
+        game_id: UUID | None = None,
+    ) -> None:
+        """对局完成时给参与者计 1 局；每满步长局发 1 币（步长可配置）。"""
+        if (game_type is None) != (game_id is None):
+            raise ValueError("game_type and game_id must be provided together")
+        if game_type is not None:
+            if group_chat_id is None:
+                raise ValueError("completed games require a group")
+            user_ids = record_game_participations(
+                session, game_type, game_id, group_chat_id, user_ids, now,
+            )
+        if not user_ids:
+            return
+        allow_date = now.astimezone(BEIJING).date()
+        settings_row = self._department_allowance_settings_row(session)
+        step = max(1, int(settings_row.game_play_step))
+        dialect_name = session.get_bind().dialect.name
+        for user_id in user_ids:
+            values = {
+                "id": uuid4(),
+                "user_id": user_id,
+                "play_date": allow_date,
+                "count": 1,
+            }
+            if dialect_name == "postgresql":
+                statement = postgresql_insert(DepartmentGamePlayRecord).values(**values)
+            elif dialect_name == "sqlite":
+                statement = sqlite_insert(DepartmentGamePlayRecord).values(**values)
+            else:
+                raise ValueError(f"unsupported database dialect: {dialect_name}")
+            new_count = session.scalar(
+                statement.on_conflict_do_update(
+                    index_elements=[
+                        DepartmentGamePlayRecord.user_id,
+                        DepartmentGamePlayRecord.play_date,
+                    ],
+                    set_={"count": DepartmentGamePlayRecord.count + 1},
+                ).returning(DepartmentGamePlayRecord.count)
+            )
+            if new_count is not None and int(new_count) % step == 0:
+                user = session.get(UserRecord, user_id)
+                if user is not None:
+                    self._grant_department_allowance(
+                        session,
+                        user,
+                        "dept_game_play",
+                        now,
+                        group_chat_id=group_chat_id,
+                    )
+
+    def grant_chat_drop_allowance(
+        self, platform_id: str, now: datetime, *, chatroom_id: str | None = None
+    ) -> None:
+        """水群掉落（service 层已完成概率与冷却判定）：入账并发到账通知。"""
+        now = now.astimezone(BEIJING)
+        group = (
+            self.resolve_enabled_group_chat(chatroom_id)
+            if chatroom_id is not None
+            else None
+        )
+        group_chat_id = None if group is None else group.id
+        with self.transaction():
+            with self._session() as session:
+                user = session.scalar(
+                    select(UserRecord)
+                    .where(UserRecord.platform_id == platform_id)
+                    .with_for_update()
+                )
+                if user is None:
+                    return
+                self._grant_department_allowance(
+                    session, user, "dept_chat", now, group_chat_id=group_chat_id
+                )
+
+    def roll_chat_drop(self) -> bool:
+        with self._session() as session:
+            percent = int(self._department_allowance_settings_row(session).chat_drop_percent)
+        return self._chat_drop_random.random() < percent / 100
+
+    def chat_drop_cooldown_seconds(self) -> int:
+        """水群掉落同人冷却秒数；0 表示不冷却。"""
+        with self._session() as session:
+            return int(
+                self._department_allowance_settings_row(
+                    session
+                ).chat_drop_cooldown_seconds
+            )
+
+    def record_referral_from_system(self, message: InboundMessage, now: datetime) -> None:
+        """入群系统消息 → 拉新归因 + 部门津贴（dept_referral）。
+
+        worker 已完成名字→平台 uid 解析；这里负责防重（同消息/同新人）、
+        建档，并给邀请人按后台绑定（allowance_kind=referral）发币。
+        解析失败或邀请人非绑定部门员工：照常留痕（amount=0），不发币。
+        """
+        metadata = message.metadata if isinstance(message.metadata, dict) else {}
+        referral = metadata.get("referral")
+        if not isinstance(referral, dict):
+            return
+        newcomer_name = str(referral.get("newcomer") or "").strip()
+        if not newcomer_name:
+            return
+        newcomer_id = referral.get("newcomer_id")
+        newcomer_id = newcomer_id.strip() if isinstance(newcomer_id, str) else None
+        inviter_name = referral.get("inviter")
+        inviter_name = inviter_name.strip() if isinstance(inviter_name, str) else None
+        inviter_id = referral.get("inviter_id")
+        inviter_id = inviter_id.strip() if isinstance(inviter_id, str) else None
+
+        with self.transaction():
+            with self._session() as session:
+                # 同一条系统消息只处理一次（worker 重连补推/回放防御）
+                seen = session.scalar(
+                    select(func.count())
+                    .select_from(ReferralRecord)
+                    .where(
+                        ReferralRecord.platform_message_id
+                        == message.platform_message_id
+                    )
+                )
+                if seen:
+                    return
+                # 同一新人只归因一次（防反复进出群刷奖）
+                if newcomer_id:
+                    attributed = session.scalar(
+                        select(func.count())
+                        .select_from(ReferralRecord)
+                        .where(ReferralRecord.newcomer_platform_id == newcomer_id)
+                    )
+                    if attributed:
+                        return
+                inviter_user = None
+                if inviter_id:
+                    inviter_user = session.scalar(
+                        select(UserRecord).where(
+                            UserRecord.platform_id == inviter_id
+                        )
+                    )
+                granted = 0
+                if inviter_user is not None:
+                    group = (
+                        self.resolve_enabled_group_chat(message.chatroom_id)
+                        if message.chatroom_id
+                        else None
+                    )
+                    granted = self._grant_department_allowance(
+                        session,
+                        inviter_user,
+                        "dept_referral",
+                        now,
+                        group_chat_id=None if group is None else group.id,
+                        detail=f"新人：{newcomer_name}",
+                    )
+                session.add(
+                    ReferralRecord(
+                        chatroom_id=message.chatroom_id or "",
+                        platform_message_id=message.platform_message_id,
+                        newcomer_platform_id=newcomer_id,
+                        newcomer_name=newcomer_name[:128],
+                        inviter_platform_id=inviter_id,
+                        inviter_name=inviter_name[:128] if inviter_name else None,
+                        inviter_user_id=(
+                            inviter_user.id if inviter_user is not None else None
+                        ),
+                        amount=granted,
+                        joined_at=message.received_at,
+                        created_at=now,
+                    )
+                )
+
     def run_daily_jobs(self, now: datetime) -> None:
         now = now.astimezone(BEIJING)
         should_backfill = self._current_day_history_backfilled != now.date()
@@ -24449,6 +30110,7 @@ class CoreRepository:
         self.run_dark_market_jobs(now)
         self.run_shop_card_jobs(now)
         self.run_company_lottery_jobs(now)
+        self.run_birthday_jobs(now)
         with self.transaction():
             with self._session() as session:
                 self._lock_gameplay_gate(session)
@@ -24582,6 +30244,14 @@ class CoreRepository:
             self.run_undercover_jobs(now)
             for group_chat_id in group_ids:
                 self.run_blame_game_jobs(now, group_chat_id)
+                for message in self.run_liar_dice_jobs(now, group_chat_id):
+                    self.enqueue_system_outbound(
+                        message,
+                        group_chat_id=group_chat_id,
+                        destination_chatroom_id=self.group_chat_destination(
+                            group_chat_id
+                        ),
+                    )
                 for message in self.run_number_bomb_jobs(now, group_chat_id):
                     self.enqueue_system_outbound(
                         message,
@@ -24599,6 +30269,7 @@ class CoreRepository:
                         ),
                     )
             self.run_random_event_jobs(now)
+        self.run_honor_jobs(now)
         if should_backfill:
             self._current_day_history_backfilled = now.date()
         if should_settle_activity_rewards:
@@ -24845,6 +30516,15 @@ class CoreRepository:
                     )
                     if existing is not None:
                         continue
+                    destination = self.group_chat_destination(group_chat_id)
+                    estrus_text = self._estrus_popularity_text(
+                        group_chat_id, report_time, now
+                    )
+                    self.enqueue_system_outbound(
+                        estrus_text,
+                        group_chat_id=group_chat_id,
+                        destination_chatroom_id=destination,
+                    )
                     if not rankings:
                         session.add(
                             IncomeReportDeliveryRecord(
@@ -24855,7 +30535,6 @@ class CoreRepository:
                             )
                         )
                         continue
-                    destination = self.group_chat_destination(group_chat_id)
                     outbound = self.enqueue_system_outbound(
                         self._income_report_text(rankings, report_time),
                         group_chat_id=group_chat_id,
@@ -24870,6 +30549,19 @@ class CoreRepository:
                             outbound_message_id=outbound.id,
                         )
                     )
+
+    def _estrus_popularity_text(
+        self, group_chat_id: UUID, report_time: str, now: datetime
+    ) -> str:
+        entries = self.estrus_popularity_rankings(group_chat_id, now)
+        lines = [f"【人气榜】（{report_time}）"]
+        if not entries:
+            return "\n".join([*lines, "今日暂无被凿记录"])
+        lines.extend(
+            f"{entry['display_name']}：今日被凿{entry['today_chopped']}次"
+            for entry in entries
+        )
+        return "\n".join(lines)
 
     def _income_rankings(self, session: Session, now: datetime) -> list[tuple[str, int]]:
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -25869,10 +31561,18 @@ class CoreRepository:
             )
             return departments, total
 
-    def create_department(self, name: str, description: str) -> DepartmentRecord:
+    def create_department(
+        self,
+        name: str,
+        description: str,
+        *,
+        allowance_kind: str | None = None,
+    ) -> DepartmentRecord:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("部门名称不能为空")
+        if allowance_kind is not None and allowance_kind not in _DEPARTMENT_ALLOWANCE_BINDINGS:
+            raise ValueError("无效的部门津贴类型")
         with self._session() as session:
             self._ensure_organization_defaults(session)
             if session.scalar(
@@ -25884,17 +31584,26 @@ class CoreRepository:
                 description=description.strip(),
                 is_default=False,
                 enabled=True,
+                allowance_kind=allowance_kind,
             )
             session.add(department)
             session.flush()
             return department
 
     def update_department(
-        self, department_id: UUID, *, name: str, description: str, enabled: bool
+        self,
+        department_id: UUID,
+        *,
+        name: str,
+        description: str,
+        enabled: bool,
+        allowance_kind: str | None = None,
     ) -> DepartmentRecord | None:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("部门名称不能为空")
+        if allowance_kind is not None and allowance_kind not in _DEPARTMENT_ALLOWANCE_BINDINGS:
+            raise ValueError("无效的部门津贴类型")
         with self._session() as session:
             self._ensure_organization_defaults(session)
             department = session.get(DepartmentRecord, department_id)
@@ -25915,6 +31624,7 @@ class CoreRepository:
             department.name = normalized_name
             department.description = description.strip()
             department.enabled = enabled
+            department.allowance_kind = allowance_kind
             session.flush()
             return department
 
@@ -26543,7 +32253,14 @@ class CoreRepository:
             .values(state="expired", decided_at=now)
         )
 
-    def check_in(self, user: UserRecord, checked_in_at: datetime, reward: int) -> bool:
+    def check_in(
+        self,
+        user: UserRecord,
+        checked_in_at: datetime,
+        reward: int,
+        *,
+        group_chat_id: UUID | None = None,
+    ) -> bool:
         with self.transaction():
             with self._session() as session:
                 employee = session.get(UserRecord, user.id)
@@ -26573,6 +32290,13 @@ class CoreRepository:
                 if inserted_id is None:
                     return False
                 self._apply_balance_change(employee, reward, "checkin", checked_in_at)
+                self._grant_department_allowance(
+                    session,
+                    employee,
+                    "dept_checkin",
+                    checked_in_at,
+                    group_chat_id=group_chat_id,
+                )
                 session.flush()
                 return True
 
@@ -26945,10 +32669,21 @@ class CoreRepository:
             )
 
     def add_item(
-        self, name: str, description: str, price: int, stock: int
+        self,
+        name: str,
+        description: str,
+        price: int,
+        stock: int,
+        *,
+        category: str | None = None,
+        daily_purchase_limit: int | None = None,
     ) -> ItemRecord:
+        category, daily_purchase_limit = self._normalize_shop_item_fields(
+            category, daily_purchase_limit
+        )
         with self.transaction():
             with self._session() as session:
+                self._lock_shop_catalog(session)
                 self._ensure_shop_catalog(session)
                 record = ItemRecord(
                     public_number=self._next_item_public_number(session),
@@ -26958,10 +32693,26 @@ class CoreRepository:
                     stock=stock,
                     unlimited_stock=False,
                     enabled=True,
+                    category=category,
+                    daily_purchase_limit=daily_purchase_limit,
                 )
                 session.add(record)
                 session.flush()
                 return record
+
+    @staticmethod
+    def _normalize_shop_item_fields(
+        category: str | None, daily_purchase_limit: int | None
+    ) -> tuple[str | None, int | None]:
+        normalized_category = (category or "").strip() or None
+        if normalized_category is not None and len(normalized_category) > 32:
+            raise ValueError("商品分类长度无效")
+        if daily_purchase_limit is not None:
+            if daily_purchase_limit < 0:
+                raise ValueError("每日限购无效")
+            if daily_purchase_limit == 0:
+                daily_purchase_limit = None
+        return normalized_category, daily_purchase_limit
 
     def _next_item_public_number(self, session: Session) -> int:
         return int(session.scalar(select(func.max(ItemRecord.public_number))) or 0) + 1
@@ -26982,6 +32733,13 @@ class CoreRepository:
         missing = [item for item in SYSTEM_SHOP_ITEMS if item.key not in existing_keys]
         if not missing:
             session.flush()
+            return
+        self._lock_shop_catalog(session)
+        existing_keys = set(session.scalars(
+            select(ItemRecord.system_key).where(ItemRecord.system_key.is_not(None))
+        ))
+        missing = [item for item in SYSTEM_SHOP_ITEMS if item.key not in existing_keys]
+        if not missing:
             return
         existing_names = {
             record.name: record
@@ -27011,27 +32769,32 @@ class CoreRepository:
             next_number += 1
             record.system_key = definition.key
             record.effect_type = definition.effect_type
+            record.effect_config = default_effect_config(definition.effect_type, definition.key)
             record.price = definition.price
             record.description = definition.description
             if definition.reward_range is not None:
                 record.scratch_reward_min, record.scratch_reward_max = definition.reward_range
             record.minimum_rank_order = definition.minimum_rank_order
             record.unlimited_stock = True
+            record.category = item_category(definition)
+            record.daily_purchase_limit = item_daily_purchase_limit(definition)
         session.flush()
 
     @staticmethod
-    def _shop_catalog_item(record: ItemRecord) -> ShopCatalogItem:
+    def _shop_catalog_item(record: ItemRecord, snapshot=None) -> ShopCatalogItem:
         return ShopCatalogItem(
             public_number=record.public_number,
-            name=record.name,
+            name=(snapshot or {}).get("name", record.name),
             description=record.description,
-            price=record.price,
+            price=(snapshot or {}).get("price", record.price),
             stock=record.stock,
             unlimited_stock=record.unlimited_stock,
             enabled=record.enabled,
             system_key=record.system_key,
-            effect_type=record.effect_type,
+            effect_type=snapshot["effect_type"] if snapshot else record.effect_type,
             minimum_rank_order=record.minimum_rank_order,
+            category=record.category,
+            daily_purchase_limit=record.daily_purchase_limit,
         )
 
     def list_shop_items(
@@ -27046,7 +32809,7 @@ class CoreRepository:
                 group = session.get(GroupChatRecord, group_chat_id)
                 if group is not None and group.deleted_at is not None:
                     return []
-                query = select(ItemRecord)
+                query = select(ItemRecord).where(ItemRecord.deleted_at.is_(None))
                 if not include_disabled:
                     query = query.where(ItemRecord.enabled.is_(True))
                 records = session.scalars(query.order_by(ItemRecord.public_number))
@@ -27096,7 +32859,7 @@ class CoreRepository:
                     user = session.get(UserRecord, existing.user_id)
                     return ShopPurchaseResult(
                         "purchased",
-                        None if item is None else self._shop_catalog_item(item),
+                        None if item is None else self._shop_catalog_item(item, existing.item_snapshot),
                         None if user is None else user.balance,
                         None if inventory is None else inventory.quantity,
                     )
@@ -27117,14 +32880,12 @@ class CoreRepository:
                     .where(ItemRecord.public_number == public_number)
                     .with_for_update()
                 )
-                if item is None:
+                if item is None or item.deleted_at is not None:
                     return ShopPurchaseResult("not_found")
                 view = self._shop_catalog_item(item)
                 if not item.enabled:
                     return ShopPurchaseResult("disabled", view)
-                if item.system_key is not None and adult_item(
-                    item_by_key(item.system_key)
-                ):
+                if (item.effect_type or "").startswith("adult_"):
                     if not group.adult_shop_enabled:
                         return ShopPurchaseResult("adult_disabled", view)
                 if (
@@ -27134,37 +32895,30 @@ class CoreRepository:
                     return ShopPurchaseResult("rank_required", view)
                 if not item.unlimited_stock and item.stock < 1:
                     return ShopPurchaseResult("out_of_stock", view)
-                if user.balance < item.price:
+                charged = self.shop_price_for(item.price, user.id, now)
+                if user.balance < charged:
                     return ShopPurchaseResult("insufficient_balance", view, user.balance)
-                category = (
-                    purchase_category(item_by_key(item.system_key))
-                    if item.system_key is not None
-                    else None
-                )
+                limit = item.daily_purchase_limit
                 usage = None
-                if category is not None:
+                if limit is not None and limit > 0:
+                    bucket = item.category or f"#{item.public_number}"
                     usage_date = now.astimezone(BEIJING).date()
                     usage = session.scalar(
                         select(ShopPurchaseDailyUsageRecord)
                         .where(
                             ShopPurchaseDailyUsageRecord.user_id == user.id,
                             ShopPurchaseDailyUsageRecord.usage_date == usage_date,
-                            ShopPurchaseDailyUsageRecord.category == category,
+                            ShopPurchaseDailyUsageRecord.category == bucket,
                         )
                         .with_for_update()
                     )
-                    limit = {
-                        "gift": 2,
-                        "scratch": 3,
-                        "event_ad_slot": 1,
-                    }[category]
                     if usage is not None and usage.count >= limit:
                         return ShopPurchaseResult("daily_limit", view, user.balance)
                     if usage is None:
                         usage = ShopPurchaseDailyUsageRecord(
                             user_id=user.id,
                             usage_date=usage_date,
-                            category=category,
+                            category=bucket,
                             count=0,
                         )
                         session.add(usage)
@@ -27184,7 +32938,9 @@ class CoreRepository:
                         created_at=now,
                     )
                     session.add(inventory)
-                self._apply_balance_change(user, -item.price, "shop_purchase", now)
+                self._apply_balance_change(
+                    user, -charged, "shop_purchase", now
+                )
                 if not item.unlimited_stock:
                     item.stock -= 1
                 inventory.quantity += 1
@@ -27196,7 +32952,8 @@ class CoreRepository:
                         user_id=user.id,
                         item_id=item.id,
                         group_chat_id=group_chat_id,
-                        price=item.price,
+                        price=charged,
+                        item_snapshot=item_effect_snapshot(item),
                         created_at=now,
                     )
                 )
@@ -27243,7 +33000,7 @@ class CoreRepository:
                     result = existing.result or {}
                     return ShopUseResult(
                         existing.state,
-                        None if item is None else self._shop_catalog_item(item),
+                        None if item is None else self._shop_catalog_item(item, existing.item_snapshot),
                         result.get("reward"),
                         result.get("target_display_name"),
                         result.get("session_number"),
@@ -27259,9 +33016,9 @@ class CoreRepository:
                 if group is None or group.deleted_at is not None:
                     return ShopUseResult("wrong_group")
                 item = session.scalar(
-                    select(ItemRecord).where(ItemRecord.public_number == public_number)
+                    select(ItemRecord).where(ItemRecord.public_number == public_number).with_for_update()
                 )
-                if item is None:
+                if item is None or item.deleted_at is not None:
                     return ShopUseResult("not_found")
                 view = self._shop_catalog_item(item)
                 inventory = session.scalar(
@@ -27292,7 +33049,7 @@ class CoreRepository:
                         return ShopUseResult("target_not_joined", view)
                     if target.id == user.id:
                         return ShopUseResult("self_target", view)
-                    definition = item_by_key(item.system_key or "")
+                    definition = effect_definition(item)
                     reward = int(definition.reward or 0)
                     self._apply_balance_change(target, reward, "shop_gift", now)
                     result = {
@@ -27300,10 +33057,8 @@ class CoreRepository:
                         "target_display_name": target.display_name,
                     }
                 elif item.effect_type == "scratch":
-                    low = item.scratch_reward_min
-                    high = item.scratch_reward_max
-                    if low is None or high is None:
-                        raise RuntimeError("刮刮卡奖励区间未配置")
+                    definition = effect_definition(item)
+                    low, high = definition.reward_range or (0, 0)
                     reward = low + self._shop_random.randrange(high - low + 1)
                     self._apply_balance_change(user, reward, "shop_scratch", now)
                     result = {"reward": reward}
@@ -27327,11 +33082,12 @@ class CoreRepository:
                             multiplayer_used=0,
                         )
                         session.add(bonus)
+                    quota = effective_config(item)["quota"]
                     if item.effect_type == "ai_quota":
-                        bonus.ai_total += 1
+                        bonus.ai_total += quota
                     else:
-                        bonus.multiplayer_total += 1
-                    result = {"reward": 1}
+                        bonus.multiplayer_total += quota
+                    result = {"reward": quota}
                 elif item.effect_type == "event_ad_slot":
                     # 真正的消耗发生在 `/确认广告位`；这里只告诉命令层去开向导
                     return ShopUseResult("event_ad_slot_required", view)
@@ -27346,6 +33102,7 @@ class CoreRepository:
                         target_user_id=None if target is None else target.id,
                         group_chat_id=group_chat_id,
                         state="completed",
+                        item_snapshot=item_effect_snapshot(item),
                         result=result,
                         created_at=now,
                         completed_at=now,
@@ -27399,7 +33156,7 @@ class CoreRepository:
                     )
                     return ShopUseResult(
                         existing.state,
-                        None if item is None else self._shop_catalog_item(item),
+                        None if item is None else self._shop_catalog_item(item, existing.item_snapshot),
                         session_number=(
                             None if adult_session is None else adult_session.public_number
                         ),
@@ -27415,9 +33172,9 @@ class CoreRepository:
                 if group is None or group.deleted_at is not None:
                     return ShopUseResult("wrong_group")
                 item = session.scalar(
-                    select(ItemRecord).where(ItemRecord.public_number == public_number)
+                    select(ItemRecord).where(ItemRecord.public_number == public_number).with_for_update()
                 )
-                if item is None:
+                if item is None or item.deleted_at is not None:
                     return ShopUseResult("not_found")
                 view = self._shop_catalog_item(item)
                 if not (item.effect_type or "").startswith("adult_"):
@@ -27431,7 +33188,7 @@ class CoreRepository:
                 )
                 if direct_room is None:
                     return ShopUseResult("direct_chat_required", view)
-                definition = item_by_key(item.system_key or "")
+                definition = effect_definition(item)
                 active_setup = session.scalar(
                     select(AdultCardSessionRecord.public_number).where(
                         AdultCardSessionRecord.owner_user_id == user.id,
@@ -27480,7 +33237,10 @@ class CoreRepository:
                             .join(ItemRecord, ItemRecord.id == ShopItemUseRecord.item_id)
                             .where(
                                 ShopItemUseRecord.target_user_id == target.id,
-                                ItemRecord.effect_type == "adult_common",
+                                or_(
+                                    ShopItemUseRecord.item_snapshot["effect_type"].as_string() == "adult_common",
+                                    and_(ShopItemUseRecord.item_snapshot.is_(None), ItemRecord.effect_type == "adult_common"),
+                                ),
                                 AdultCardSessionRecord.state.in_(
                                     (
                                         "collecting_scene",
@@ -27519,6 +33279,7 @@ class CoreRepository:
                     target_user_id=None if target is None else target.id,
                     group_chat_id=group_chat_id,
                     state="reserved",
+                    item_snapshot=item_effect_snapshot(item),
                     result={"session_number": session_number},
                     created_at=now,
                 )
@@ -27584,11 +33345,11 @@ class CoreRepository:
                 item = None if item_use is None else session.get(ItemRecord, item_use.item_id)
                 if item is None or item_use is None:
                     raise RuntimeError("成人卡片商品消失")
-                view = self._shop_catalog_item(item)
+                view = self._shop_catalog_item(item, item_use.item_snapshot)
                 if now >= card_session.stage_deadline:
                     self._cancel_adult_card_session(session, card_session, item_use, now)
                     return ShopUseResult("expired", view, session_number=card_session.public_number)
-                definition = item_by_key(item.system_key or "")
+                definition = effect_definition(item, item_use.item_snapshot)
                 if card_session.state == "collecting_m_count":
                     if (
                         not scene.isascii()
@@ -27669,6 +33430,8 @@ class CoreRepository:
         item: ItemRecord,
         now: datetime,
     ) -> None:
+        item_use = session.get(ShopItemUseRecord, card_session.item_use_id)
+        item_name = (item_use.item_snapshot or {}).get("name", item.name)
         owner = session.get(UserRecord, card_session.owner_user_id)
         group = session.get(GroupChatRecord, card_session.group_chat_id)
         participants = list(
@@ -27687,7 +33450,7 @@ class CoreRepository:
         for participant, participant_user in participants:
             notice = self.enqueue_system_outbound(
                 f"【卡片授权 #{card_session.public_number}】{participant_user.display_name}\n"
-                f"{owner.display_name} 使用 {item.name}；参与者：{owner.display_name}、{names}\n"
+                f"{owner.display_name} 使用 {item_name}；参与者：{owner.display_name}、{names}\n"
                 f"场景：{card_session.scene}\n"
                 "请在 10 分钟内回复本通知发送 /同意使用 或 /拒绝使用。"
                 "发送 /同意使用 表示确认本人已成年并同意本次具体场景。",
@@ -27723,7 +33486,7 @@ class CoreRepository:
                     return ShopUseResult("session_not_found")
                 item_use = session.get(ShopItemUseRecord, card_session.item_use_id)
                 item = None if item_use is None else session.get(ItemRecord, item_use.item_id)
-                view = None if item is None else self._shop_catalog_item(item)
+                view = None if item is None else self._shop_catalog_item(item, item_use.item_snapshot)
                 if (
                     group_chat_id is not None
                     and card_session.group_chat_id != group_chat_id
@@ -27806,7 +33569,7 @@ class CoreRepository:
                     return ShopUseResult("session_not_found")
                 item_use = session.get(ShopItemUseRecord, card_session.item_use_id)
                 item = None if item_use is None else session.get(ItemRecord, item_use.item_id)
-                view = None if item is None else self._shop_catalog_item(item)
+                view = None if item is None else self._shop_catalog_item(item, item_use.item_snapshot)
                 if (
                     group_chat_id is not None
                     and card_session.group_chat_id != group_chat_id
@@ -27832,6 +33595,7 @@ class CoreRepository:
         item_use: ShopItemUseRecord,
         now: datetime,
     ) -> None:
+        session.get(ItemRecord, item_use.item_id, with_for_update=True)
         inventory = session.scalar(
             select(UserItemRecord)
             .where(
@@ -27900,7 +33664,7 @@ class CoreRepository:
                     return ShopUseResult("authorization_not_found")
                 item_use = session.get(ShopItemUseRecord, card_session.item_use_id)
                 item = None if item_use is None else session.get(ItemRecord, item_use.item_id)
-                view = None if item is None else self._shop_catalog_item(item)
+                view = None if item is None else self._shop_catalog_item(item, item_use.item_snapshot)
                 if (
                     group_chat_id is not None
                     and card_session.group_chat_id != group_chat_id
@@ -27967,7 +33731,7 @@ class CoreRepository:
         owner = session.get(UserRecord, card_session.owner_user_id, with_for_update=True)
         if owner is None:
             raise RuntimeError("成人卡片发起人消失")
-        compensation = item.price // 2
+        compensation = (item_use.item_snapshot or {}).get("price", item.price) // 2
         self._apply_balance_change(owner, compensation, "shop_compensation", now)
         item_use.state = "voided"
         item_use.result = {
@@ -27996,7 +33760,7 @@ class CoreRepository:
         item: ItemRecord,
         now: datetime,
     ) -> None:
-        definition = item_by_key(item.system_key or "")
+        definition = effect_definition(item, item_use.item_snapshot)
         card_session.state = "active" if definition.effect_type == "adult_common" else "generating"
         card_session.consent_deadline = None
         card_session.updated_at = now
@@ -28212,7 +33976,8 @@ class CoreRepository:
                         "使用自然中文，正文最多800字，只输出正文。"
                     ),
                     user_content=(
-                        f"卡片：{item.name}\n来源群：{group.name}\n"
+                        f"卡片：{(item_use.item_snapshot or {}).get('name', item.name)}\n"
+                        f"模板：{effect_definition(item, item_use.item_snapshot).name}\n来源群：{group.name}\n"
                         f"参与者档案：\n{profiles}\n已同意场景：{card_session.scene}"
                     ),
                     max_response_chars=800,
@@ -28316,7 +34081,7 @@ class CoreRepository:
                     "created_at": record.created_at,
                     "user_name": user.display_name,
                     "item_number": item.public_number,
-                    "item_name": item.name,
+                    "item_name": (record.item_snapshot or {}).get("name", item.name),
                     "group_name": group.name,
                     "price": record.price,
                 }
@@ -28345,7 +34110,7 @@ class CoreRepository:
                     "user_name": user.display_name,
                     "target_name": None if target is None else target.display_name,
                     "item_number": item.public_number,
-                    "item_name": item.name,
+                    "item_name": (record.item_snapshot or {}).get("name", item.name),
                     "group_name": group.name,
                     "state": record.state,
                     "result": record.result,
@@ -28521,7 +34286,7 @@ class CoreRepository:
                 return list(
                     session.scalars(
                         select(ItemRecord)
-                        .where(ItemRecord.enabled.is_(True))
+                        .where(ItemRecord.enabled.is_(True), ItemRecord.deleted_at.is_(None))
                         .order_by(ItemRecord.public_number)
                     )
                 )
@@ -28532,7 +34297,7 @@ class CoreRepository:
         with self.transaction():
             with self._session() as session:
                 self._ensure_shop_catalog(session)
-                query = select(ItemRecord)
+                query = select(ItemRecord).where(ItemRecord.deleted_at.is_(None))
                 total = int(
                     session.scalar(select(func.count()).select_from(query.subquery())) or 0
                 )
@@ -28554,6 +34319,9 @@ class CoreRepository:
         minimum_rank_order: int | None,
         unlimited_stock: bool,
         stock: int,
+        price: int | None = None,
+        category: str | None | object = _SHOP_FIELD_UNSET,
+        daily_purchase_limit: int | None | object = _SHOP_FIELD_UNSET,
         scratch_reward_min: int | None = None,
         scratch_reward_max: int | None = None,
     ) -> ItemRecord:
@@ -28564,6 +34332,8 @@ class CoreRepository:
             raise ValueError("最低职位无效")
         if stock < 0:
             raise ValueError("库存无效")
+        if price is not None and price < 0:
+            raise ValueError("价格无效")
         with self.transaction():
             with self._session() as session:
                 self._ensure_shop_catalog(session)
@@ -28574,6 +34344,8 @@ class CoreRepository:
                 )
                 if item is None:
                     raise LookupError("item_not_found")
+                if item.deleted_at is not None:
+                    raise ValueError("已删除商品必须先恢复")
                 item.description = description
                 item.enabled = enabled
                 item.minimum_rank_order = minimum_rank_order
@@ -28592,6 +34364,18 @@ class CoreRepository:
                     else:
                         item.scratch_reward_min = scratch_reward_min
                         item.scratch_reward_max = scratch_reward_max
+                        config = dict(effective_config(item))
+                        config["reward_min"] = scratch_reward_min
+                        config["reward_max"] = scratch_reward_max
+                        item.effect_config = config
+                if price is not None:
+                    item.price = price
+                if category is not _SHOP_FIELD_UNSET or daily_purchase_limit is not _SHOP_FIELD_UNSET:
+                    item.category, item.daily_purchase_limit = self._normalize_shop_item_fields(
+                        item.category if category is _SHOP_FIELD_UNSET else category,
+                        item.daily_purchase_limit if daily_purchase_limit is _SHOP_FIELD_UNSET else daily_purchase_limit,
+                    )
+                item.configuration_version += 1
                 session.flush()
                 return item
 
@@ -29102,6 +34886,20 @@ class CoreRepository:
                         self._record_texas_card_delivery(session, player, now)
                     finally:
                         self._active_session.reset(active_token)
+            elif record.delivery_kind == "liar_dice_hand":
+                dice_player = session.scalar(
+                    select(LiarDicePlayerRecord)
+                    .where(LiarDicePlayerRecord.hand_outbound_id == record.id)
+                    .with_for_update()
+                )
+                if dice_player is not None:
+                    active_token = self._active_session.set(session)
+                    try:
+                        self._record_liar_dice_hand_delivery(
+                            session, dice_player, now, True
+                        )
+                    finally:
+                        self._active_session.reset(active_token)
             return True
 
     def mark_outbound_failed(
@@ -29161,6 +34959,20 @@ class CoreRepository:
                     )
                     if game is not None and game.state == "dealing":
                         player.private_delivery_state = "failed"
+            elif record.delivery_kind == "liar_dice_hand":
+                dice_player = session.scalar(
+                    select(LiarDicePlayerRecord)
+                    .where(LiarDicePlayerRecord.hand_outbound_id == record.id)
+                    .with_for_update()
+                )
+                if dice_player is not None:
+                    active_token = self._active_session.set(session)
+                    try:
+                        self._record_liar_dice_hand_delivery(
+                            session, dice_player, now, False
+                        )
+                    finally:
+                        self._active_session.reset(active_token)
             return True
 
     def release_outbound(
@@ -29778,6 +35590,211 @@ class CoreRepository:
                     for display_name, tickets, cost, prize in total_rows
                 ),
             )
+
+
+    def _run_birthday_tips_settlement(
+        self, session: Session, settings: BirthdaySettings, now: datetime
+    ) -> None:
+        """随礼窗口到点：回填人数与总额并播报汇总（每人每场只结算一次）。"""
+        if not settings.tips_enabled:
+            return
+        rows = session.execute(
+            select(BirthdayGreetingRecord, UserRecord)
+            .join(UserRecord, UserRecord.id == BirthdayGreetingRecord.user_id)
+            .where(BirthdayGreetingRecord.tips_closed_at.is_(None))
+        ).all()
+        for greeting, user in rows:
+            if _birthday_tips_close_at(greeting, settings) > now:
+                continue
+            count, total = session.execute(
+                select(
+                    func.count(BirthdayTipRecord.id),
+                    func.coalesce(func.sum(BirthdayTipRecord.amount), 0),
+                ).where(BirthdayTipRecord.greeting_id == greeting.id)
+            ).one()
+            greeting.tips_count = int(count)
+            greeting.tips_total = int(total)
+            greeting.tips_closed_at = now
+            greeting.status = "settled"
+            session.flush()
+            if count:
+                self._birthday_announce(
+                    _render_birthday_tips_summary(
+                        settings, user.display_name, int(count), int(total)
+                    )
+                )
+
+
+    def _birthday_announce(self, text: str) -> int:
+        """生日公告：只发给开着生日开关、且允许公告的已监听群。"""
+        delivered = 0
+        for group in self.list_group_chats():
+            if (
+                not group.listening_enabled
+                or not group.announcements_enabled
+                or not group.birthdays_enabled
+            ):
+                continue
+            destination = self.group_chat_destination(group.id)
+            if destination is None:
+                continue
+            self.enqueue_system_outbound(
+                text,
+                group_chat_id=group.id,
+                destination_chatroom_id=destination,
+            )
+            delivered += 1
+        return delivered
+
+    def _birthday_candidates(
+        self, session: Session, target: date
+    ) -> list[tuple[UserRecord, EmployeeBirthdayRecord]]:
+        """在某一天过生日、且愿意公开的员工。"""
+        rows = session.execute(
+            select(UserRecord, EmployeeBirthdayRecord)
+            .join(
+                EmployeeBirthdayRecord,
+                EmployeeBirthdayRecord.user_id == UserRecord.id,
+            )
+            .where(EmployeeBirthdayRecord.visibility == "public")
+            .order_by(UserRecord.employee_number)
+        ).all()
+        return [
+            (user, record)
+            for user, record in rows
+            if birthday_matches(record.month, record.day, target)
+        ]
+
+    def run_birthday_jobs(self, now: datetime) -> None:
+        """生日祝福的两段：昨天的预告、今天的祝福（随礼结算见随礼任务）。
+
+        每段都靠落库记录幂等（`birthday_previews` / `birthday_greetings` 的唯一
+        约束），所以 Worker 每秒跑一次也不会重复发；`enabled=false` 时全静默。
+        """
+        now = now.astimezone(BEIJING)
+        settings = self.get_birthday_settings()
+        if not settings.enabled:
+            return
+        with self.transaction():
+            with self._session() as session:
+                if settings.preview_enabled:
+                    self._run_birthday_previews(session, settings, now)
+                self._run_birthday_greetings(session, settings, now)
+                self._run_birthday_tips_settlement(session, settings, now)
+
+    def _run_birthday_previews(
+        self, session: Session, settings: BirthdaySettings, now: datetime
+    ) -> None:
+        """前一天预告：到点之后、且明天确实有人过生日，才播报（每人每年一次）。"""
+        today = now.date()
+        if now < _birthday_moment(today, settings.preview_time):
+            return
+        tomorrow = today + timedelta(days=1)
+        pairs = self._birthday_candidates(session, tomorrow)
+        if not pairs:
+            return
+        already = set(
+            session.scalars(
+                select(BirthdayPreviewRecord.user_id).where(
+                    BirthdayPreviewRecord.preview_year == tomorrow.year
+                )
+            )
+        )
+        fresh = [user for user, _ in pairs if user.id not in already]
+        if not fresh:
+            return
+        for user in fresh:
+            session.add(
+                BirthdayPreviewRecord(
+                    user_id=user.id,
+                    preview_year=tomorrow.year,
+                    previewed_at=now,
+                )
+            )
+        session.flush()
+        self._birthday_announce(
+            _render_birthday_preview(settings, [user.display_name for user in fresh])
+        )
+
+    def _run_birthday_greetings(
+        self, session: Session, settings: BirthdaySettings, now: datetime
+    ) -> None:
+        """当天祝福：每个公告时刻广播一次（按天+时刻幂等），礼金一年只发一次。
+
+        公告时刻列表来自设置（默认 09:00 / 12:00 / 17:00）；礼金与祝福记录
+        仍由 birthday_greetings 的唯一约束保证只发一次，在第一个时刻发放。
+        """
+        today = now.date()
+        if not settings.greet_times:
+            return
+        pairs = self._birthday_candidates(session, today)
+        if not pairs:
+            return
+        greet_at = _birthday_moment(today, settings.greet_times[0])
+        backfill_expired = not settings.same_day_backfill and now >= greet_at + timedelta(
+            minutes=_BIRTHDAY_BACKFILL_WINDOW_MINUTES
+        )
+        if now >= greet_at and not backfill_expired:
+            already = set(
+                session.scalars(
+                    select(BirthdayGreetingRecord.user_id).where(
+                        BirthdayGreetingRecord.greet_year == today.year
+                    )
+                )
+            )
+            fresh = [(user, record) for user, record in pairs if user.id not in already]
+            for user, _ in fresh:
+                self._apply_balance_change(user, settings.gift_amount, "birthday_gift", now)
+                session.add(
+                    BirthdayGreetingRecord(
+                        user_id=user.id,
+                        greet_year=today.year,
+                        greeted_at=now,
+                        gift_amount=settings.gift_amount,
+                        lottery_tickets=0,
+                        tips_count=0,
+                        tips_total=0,
+                        tips_closed_at=None,
+                        status="greeted",
+                    )
+                )
+            session.flush()
+        greeted_ids = set(
+            session.scalars(
+                select(BirthdayGreetingRecord.user_id).where(
+                    BirthdayGreetingRecord.greet_year == today.year
+                )
+            )
+        )
+        entries = [
+            (user.display_name, birthday_format_tenure(user.joined_at, today))
+            for user, _ in pairs
+            if user.id in greeted_ids
+        ]
+        if not entries:
+            return
+        fired = False
+        for slot in settings.greet_times:
+            if now < _birthday_moment(today, slot):
+                continue
+            already_announced = session.scalar(
+                select(BirthdayGreetAnnouncementRecord.id).where(
+                    BirthdayGreetAnnouncementRecord.announce_date == today,
+                    BirthdayGreetAnnouncementRecord.slot == slot,
+                )
+            )
+            if already_announced is not None:
+                continue
+            session.add(
+                BirthdayGreetAnnouncementRecord(
+                    announce_date=today, slot=slot, announced_at=now
+                )
+            )
+            fired = True
+        if fired:
+            session.flush()
+            self._birthday_announce(_render_birthday_greeting(settings, entries, now))
+
 
     def _company_lottery_announce(self, text: str) -> int:
         """把公告广播到允许公告的已监听群；返回实际投递的群数。"""
@@ -30774,6 +36791,16 @@ class CoreRepository:
                         return CompanyLotteryPurchaseResult(status="duplicate")
 
                 cost = rules.ticket_price * len(fresh)
+                birthday = self.birthday_settings_for(user.id, now)
+                used = None if birthday is None else self.birthday_free_tickets_used(
+                    user.id, now
+                )
+                if birthday is not None and used is not None and birthday.lottery_free_tickets > 0:
+                    remaining = birthday.lottery_free_tickets - used
+                    free = min(max(remaining, 0), len(fresh))
+                    if free:
+                        self._record_birthday_free_tickets(session, user.id, now, free)
+                        cost = rules.ticket_price * (len(fresh) - free)
                 if user.balance < cost:
                     return CompanyLotteryPurchaseResult(
                         status="insufficient_balance", needed=cost - user.balance
@@ -31274,6 +37301,99 @@ def _validate_random_event_blocked_message(message: str) -> str:
     return message.strip()
 
 
+
+
+
+def birthday_completion_reward(base: int, settings: BirthdaySettings | None) -> int:
+    """随机事件完成奖励：寿星当天按加成放大（四舍五入到整数）。"""
+    if settings is None or settings.event_reward_bonus_percent <= 0:
+        return base
+    bonus = base * settings.event_reward_bonus_percent
+    return base + (bonus + 50) // 100
+
+
+
+
+def _birthday_tips_close_at(greeting, settings) -> datetime:
+    """随礼截止：默认到当天 24:00；配了分钟数就取"祝福时刻 + N 分钟"里更早的那个。"""
+    end_of_day = greeting.greeted_at.astimezone(BEIJING).replace(
+        hour=23, minute=59, second=59, microsecond=0
+    )
+    if settings.tip_window_minutes <= 0:
+        return end_of_day
+    limited = greeting.greeted_at + timedelta(minutes=settings.tip_window_minutes)
+    return min(limited, end_of_day)
+
+
+def _render_birthday_tips_summary(
+    settings, name: str, count: int, total: int
+) -> str:
+    template = settings.tips_summary_template or _DEFAULT_BIRTHDAY_TIPS_SUMMARY_TEMPLATE
+    text = (
+        template.replace("{寿星}", name)
+        .replace("{随礼人数}", str(count))
+        .replace("{随礼总额}", str(total))
+    )
+    return "【生日祝福·随礼】" + text
+
+
+def _birthday_moment(day: date, value: str) -> datetime:
+    """把 `HH:mm` 配置落到某一天的具体时刻上。"""
+    minute = _event_time_minutes(value)
+    if minute is None:
+        raise RuntimeError("生日时刻消失")
+    return datetime(
+        day.year, day.month, day.day, minute // 60, minute % 60, tzinfo=BEIJING
+    )
+
+
+def _format_discount(percent: int) -> str:
+    """80 → `8 折`；85 → `8.5 折`。"""
+    value = percent / 10
+    text = f"{value:g}"
+    return f"{text} 折"
+
+
+def _render_birthday_preview(settings, names: list[str]) -> str:
+    template = settings.preview_template or _DEFAULT_BIRTHDAY_PREVIEW_TEMPLATE
+    return "【生日预告】" + template.replace("{寿星}", "、".join(names))
+
+
+def _render_birthday_greeting(
+    settings, entries: list[tuple[str, str]], now: datetime
+) -> str:
+    """一条公告列完当天所有寿星：人头多的时候也不会刷屏（预算 10 行）。"""
+    names = "、".join(name for name, _ in entries)
+    lines = [f"【生日祝福】今天是 {names} 的生日 🎂"]
+    for name, tenure in entries:
+        lines.append(
+            f"{name} · 入职 {tenure} · 🎁 生日礼金 {settings.gift_amount} 摸鱼币已到账"
+        )
+    if settings.lottery_free_tickets > 0:
+        lines.append(
+            f"🎫 今天购彩前 {settings.lottery_free_tickets} 注公司买单"
+            "（发 /购买彩票 机选）"
+        )
+    perks = [f"🏪 商店 {_format_discount(settings.shop_discount_percent)}"]
+    if settings.checkin_multiplier > 1:
+        perks.append(f"✅ 打卡 {settings.checkin_multiplier} 倍")
+    lines.append(" · ".join(perks))
+    if settings.tips_enabled:
+        if settings.tip_window_minutes <= 0:
+            closes_text = "今晚 24:00"
+        else:
+            closes_at = now + timedelta(minutes=settings.tip_window_minutes)
+            closes_text = closes_at.strftime("%H:%M")
+        lines.append(
+            f"💐 想随礼的同事：回复这条消息或 /随礼 金额"
+            f"（最多 {settings.tip_max_amount}，截止 {closes_text}）"
+        )
+    template = settings.greet_template or _DEFAULT_BIRTHDAY_GREET_LINE
+    lines.append(template.replace("{寿星}", names))
+    return "\n".join(lines)
+
+
+
 def _hide_and_seek_settings(record: HideAndSeekSettingsRecord) -> HideAndSeekSettings:
     return HideAndSeekSettings(
         enabled=record.enabled,
@@ -31282,6 +37402,76 @@ def _hide_and_seek_settings(record: HideAndSeekSettingsRecord) -> HideAndSeekSet
         daily_limit=record.daily_limit,
         selection_timeout_minutes=record.selection_timeout_minutes,
     )
+
+
+def _department_allowance_settings(
+    record: DepartmentAllowanceSettingsRecord,
+) -> DepartmentAllowanceSettings:
+    return DepartmentAllowanceSettings(
+        checkin_amount=record.checkin_amount,
+        event_amount=record.event_amount,
+        game_host_amount=record.game_host_amount,
+        game_play_amount=record.game_play_amount,
+        game_play_step=record.game_play_step,
+        submission_amount=record.submission_amount,
+        chat_drop_percent=record.chat_drop_percent,
+        chat_drop_amount=record.chat_drop_amount,
+        chat_drop_cooldown_seconds=record.chat_drop_cooldown_seconds,
+        referral_amount=record.referral_amount,
+        daily_cap=record.daily_cap,
+    )
+
+
+def _truth_trade_settings(
+    record: TruthTradeSettingsRecord,
+) -> TruthTradeSettings:
+    return TruthTradeSettings(
+        question_timeout_seconds=int(record.question_timeout_seconds),
+        answer_timeout_seconds=int(record.answer_timeout_seconds),
+        min_players=int(record.min_players),
+        enabled=record.enabled,
+    )
+
+
+def _discipline_fine_settings(
+    record: DisciplineFineSettingsRecord,
+) -> DisciplineFineSettings:
+    return DisciplineFineSettings(
+        enabled=record.enabled,
+        amount=record.amount,
+        kickback_percent=record.kickback_percent,
+        rank_quotas=dict(record.rank_quotas or {}),
+        cooldown_minutes=record.cooldown_minutes,
+        target_daily_limit=record.target_daily_limit,
+    )
+
+
+def _birthday_settings(record: BirthdaySettingsRecord) -> BirthdaySettings:
+    return BirthdaySettings(
+        enabled=record.enabled,
+        greet_times=list(record.greet_times or []),
+        preview_enabled=record.preview_enabled,
+        preview_time=record.preview_time,
+        gift_amount=record.gift_amount,
+        same_day_backfill=record.same_day_backfill,
+        edit_limit_per_year=record.edit_limit_per_year,
+        checkin_multiplier=record.checkin_multiplier,
+        shop_discount_percent=record.shop_discount_percent,
+        lottery_free_tickets=record.lottery_free_tickets,
+        event_reward_bonus_percent=record.event_reward_bonus_percent,
+        tips_enabled=record.tips_enabled,
+        tip_max_amount=record.tip_max_amount,
+        tip_window_minutes=record.tip_window_minutes,
+        anniversary_enabled=record.anniversary_enabled,
+        greet_template=record.greet_template or _DEFAULT_BIRTHDAY_GREET_LINE,
+        preview_template=(
+            record.preview_template or _DEFAULT_BIRTHDAY_PREVIEW_TEMPLATE
+        ),
+        tips_summary_template=(
+            record.tips_summary_template or _DEFAULT_BIRTHDAY_TIPS_SUMMARY_TEMPLATE
+        ),
+    )
+
 
 
 def _memory_assessment_settings(

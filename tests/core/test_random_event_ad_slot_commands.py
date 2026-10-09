@@ -634,6 +634,54 @@ def test_carry_over_keeps_the_filled_slot(harness):
     assert filled.scene_name == "作者作品"
 
 
+def test_carry_over_includes_destination_reserved_work(harness):
+    from dzmm_bot.core.schema import (
+        ItemRecord, RandomEventAdSlotRecord, RandomEventSceneRecord,
+        RandomEventScheduleRecord, UserRecord,
+    )
+
+    service, repository, factory, group = harness
+    _open_poll(repository, factory, others=("甲", "乙", "丙", "丁"))
+    number = _buy_cards(repository, 1)
+    _send(service, group, "author", f"/使用 {number}")
+    repository.consume_random_event_ad_slot_draft("author", "/选择 1", NOW)
+    repository.consume_random_event_ad_slot_draft("author", "/确认广告位", NOW)
+    later = TARGET_AT + timedelta(hours=2)
+    with factory.begin() as session:
+        _schedule(session, repository, when=later)
+        target = session.scalar(select(RandomEventScheduleRecord).where(
+            RandomEventScheduleRecord.scheduled_at == TARGET_AT
+        ))
+        target.status = "skipped"
+        destination = session.scalar(select(RandomEventScheduleRecord).where(
+            RandomEventScheduleRecord.scheduled_at == later
+        ))
+        session.add(RandomEventAdSlotRecord(
+            user_id=session.scalar(select(UserRecord.id).where(UserRecord.platform_id == "other")),
+            scene_id=session.scalar(select(RandomEventSceneRecord.id).where(RandomEventSceneRecord.name == "甲")),
+            item_id=session.scalar(select(ItemRecord.id).where(ItemRecord.system_key == "event_ad_slot")),
+            schedule_id=destination.id,
+            status="consumed",
+            created_at=NOW,
+        ))
+
+    repository.run_random_event_jobs(NOW + timedelta(minutes=5))
+
+    report = repository.random_event_poll_report()
+    assert report.status == "open"
+    assert {candidate.scene_name for candidate in report.candidates if candidate.source == "ad_slot" and not candidate.vacant} == {
+        "作者作品", "甲"
+    }
+    with repository._session() as session:
+        destination_reservation = session.scalar(select(RandomEventAdSlotRecord).where(
+            RandomEventAdSlotRecord.scene_id == session.scalar(select(RandomEventSceneRecord.id).where(
+                RandomEventSceneRecord.name == "甲"
+            ))
+        ))
+        assert destination_reservation.poll_id is not None
+        assert destination_reservation.candidate_id is not None
+
+
 def test_cancelled_unopened_schedule_carries_its_ad_reservation_forward(harness):
     """场次取消时，尚未开投的广告预留必须自动顺延而不是直接丢失。"""
     from dzmm_bot.core.schema import RandomEventAdSlotRecord, RandomEventScheduleRecord
@@ -757,6 +805,58 @@ def test_confirm_is_refused_when_voting_is_turned_off(harness):
     assert result.status == "disabled"
     assert _card_count(repository) == 1
     assert _slot_candidate(repository).vacant is True
+
+
+def test_confirm_after_slot_limit_increase_without_vacancy_keeps_card(harness):
+    service, repository, factory, group = harness
+    repository.set_random_event_settings(
+        ["20:00"], "{可选身份}", 15, 5, vote_ad_slot_limit=1
+    )
+    _open_poll(repository, factory, approve_other=True)
+    number = _buy_cards(repository, 1)
+    _send(service, group, "author", f"/使用 {number}")
+    repository.consume_random_event_ad_slot_draft("author", "/选择 1", NOW)
+    other_number = _buy_cards(repository, 1, "other")
+    _send(service, group, "other", f"/使用 {other_number}")
+    repository.consume_random_event_ad_slot_draft("other", "/选择 1", NOW)
+    assert repository.consume_random_event_ad_slot_draft(
+        "other", "/确认广告位", NOW
+    ).status == "consumed"
+    repository.set_random_event_settings(
+        ["20:00"], "{可选身份}", 15, 5, vote_ad_slot_limit=2
+    )
+
+    result = repository.consume_random_event_ad_slot_draft(
+        "author", "/确认广告位", NOW
+    )
+
+    assert result.status == "slot_taken"
+    assert _card_count(repository) == 1
+    assert _slot_candidate(repository).scene_name == "甲"
+
+
+def test_reserved_work_opens_poll_when_no_random_work_remains(harness):
+    from dzmm_bot.core.schema import RandomEventAdSlotRecord
+
+    service, repository, factory, group = harness
+    with factory.begin() as session:
+        scene = _add_scenes(session, ("作者作品",))[0]
+        _approve(session, scene)
+        _schedule(session, repository, when=TARGET_AT)
+    number = _buy_cards(repository, 1)
+    _send(service, group, "author", f"/使用 {number}")
+    _send(service, group, "author", "/选择 1")
+    _send(service, group, "author", "/选择 1")
+    _send(service, group, "author", "/确认广告位")
+
+    poll = repository.create_random_event_poll(NOW)
+
+    assert poll is not None
+    assert [(candidate.scene_name, candidate.source) for candidate in poll.candidates if not candidate.vacant] == [
+        ("作者作品", "ad_slot")
+    ]
+    with repository._session() as session:
+        assert session.scalar(select(RandomEventAdSlotRecord)).candidate_id is not None
 
 
 def test_a_refusal_is_answered_in_the_group(harness):

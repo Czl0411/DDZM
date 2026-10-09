@@ -62,6 +62,7 @@ class FakeCore:
     random_event_vote_cancels: int = 0
     balance_ledgers: dict[str, dict] = field(default_factory=dict)
     balance_ledger_requests: list[tuple[str, int, int]] = field(default_factory=list)
+    integration_calls: list[tuple[str, object]] = field(default_factory=list)
     employee_group_messages: dict[str, dict] = field(default_factory=dict)
     employee_group_message_requests: list[tuple[str, int, int, str | None]] = field(
         default_factory=list
@@ -974,6 +975,26 @@ class FakeCore:
         self.red_packet_settings = settings
         return self.red_packet_settings
 
+    def integration_match(self, payload):
+        self.integration_calls.append(("match", payload))
+        return {"status": "matched", "matches": [{"platform_id": "plat-1"}]}
+
+    def integration_balance(self, platform_id):
+        self.integration_calls.append(("balance", platform_id))
+        return {"platform_id": platform_id, "balance": 7}
+
+    def integration_game_quota(self, platform_id):
+        self.integration_calls.append(("quota", platform_id))
+        return {"unlimited": True, "used_today_total": 0}
+
+    def integration_grant(self, payload):
+        self.integration_calls.append(("grant", payload))
+        return {"ok": True, "balance_after": 12}
+
+    def integration_deduct(self, payload):
+        self.integration_calls.append(("deduct", payload))
+        return {"ok": True, "balance_after": 2}
+
     def get_current_gameplay(self):
         return self.gameplay_current
 
@@ -1769,6 +1790,7 @@ def test_only_login_operator_can_open_console(client, admin_repository, core):
 def test_admin_dashboard_serves_its_login_and_style_assets(client):
     page = client.get("/")
     stylesheet = client.get("/static/admin.css")
+    refined_stylesheet = client.get("/static/admin-refined.css")
 
     assert page.status_code == 200
     assert 'id="login-screen"' in page.text
@@ -1777,6 +1799,11 @@ def test_admin_dashboard_serves_its_login_and_style_assets(client):
     assert 'id="login-console-frame"' in page.text
     assert stylesheet.status_code == 200
     assert "--surface" in stylesheet.text
+    assert '/static/admin-refined.css' in page.text
+    assert refined_stylesheet.status_code == 200
+    assert refined_stylesheet.headers["content-type"].startswith("text/css")
+    assert refined_stylesheet.headers["cache-control"] == "no-store"
+    assert refined_stylesheet.text == Path("src/dzmm_bot/admin/static/admin-refined.css").read_text(encoding="utf-8")
 
 
 def test_admin_uses_a_grouped_desktop_console_shell(client):
@@ -2019,11 +2046,13 @@ def test_admin_dashboard_exposes_pagination_and_mutation_controls(client):
     assert "formatEmployeeNumber" in script
     assert "employee.employee_number" in script
     assert "/api/game/users?page=${page}&page_size=${pageSizeFor(\"employees\")}" in script
-    assert "/api/game/items?page=${page}&page_size=${pageSizeFor(\"shop\")}" in script
+    assert "/api/game/shop/catalog?include_deleted=" in script
+    assert 'renderLocalPagination(document.querySelector("#shop-pagination")' in script
     assert "data-item-description" in script
     assert 'description: row.querySelector("[data-item-description]").value.trim()' in script
     assert '"保存中…"' in script
-    assert '"上架中…"' in script
+    assert '"校验中…"' in script
+    assert "previewShopRows" in script
     assert "请填写场景名称、报名公告和每个事件的名称、开场白" in script
     assert "weekly_attendance_reward" in script
     assert "/api/game/ranks" in script
@@ -2056,11 +2085,172 @@ def test_admin_updates_an_existing_item_description(client, headers):
             "minimum_rank_order": None,
             "unlimited_stock": True,
             "stock": 0,
+            "price": 5,
+            "category": None,
+            "daily_purchase_limit": None,
         },
     )
 
     assert response.status_code == 200
     assert response.json()["description"] == "使用后增加一次小游戏发起次数。"
+
+
+@pytest.mark.parametrize("game", ["liar-dice", "truth-trade"])
+def test_admin_proxies_dice_truth_controls_with_versioning(client, headers, core, monkeypatch, game):
+    settings = {"turn_seconds": 120, "enabled": True, "min_players": 2} if game == "liar-dice" else {"question_timeout_seconds": 300, "answer_timeout_seconds": 600, "enabled": True, "min_players": 2}
+    method = game.replace("-", "_")
+
+    def save(updated):
+        settings.update(updated)
+        return settings.copy()
+
+    monkeypatch.setattr(core, f"get_{method}_settings", lambda: settings.copy(), raising=False)
+    monkeypatch.setattr(core, f"set_{method}_settings", save, raising=False)
+    initial = client.get(f"/api/game/{game}/settings", headers=headers)
+    assert initial.json() == {**settings, "version": 0}
+    payload = {**settings, "enabled": False, "min_players": 4}
+    updated = client.patch(f"/api/game/{game}/settings", headers=headers, json=payload)
+    assert updated.status_code == 200
+    assert updated.json() == {**payload, "version": 1}
+    conflict = client.patch(f"/api/game/{game}/settings", headers={**headers, "Idempotency-Key": "stale-config"}, json={**payload, "enabled": True})
+    assert conflict.status_code == 409
+    assert settings["enabled"] is False
+
+
+@pytest.fixture
+def estrus_core_settings(core, monkeypatch):
+    settings = {
+        "enabled": True,
+        "climax_threshold": 100,
+        "heat_p0": 50,
+        "heat_p1": 30,
+        "heat_p2": 20,
+        "coin_p0": 50,
+        "coin_p1": 30,
+        "coin_p2": 20,
+        "chop_cooldown_seconds": 0,
+        "chopper_rank_quotas": {},
+        "combo_chop_enabled": False,
+        "g_spot_percent": 10,
+        "g_spot_heat_bonus": 10,
+        "chopper_coin_p0": 50,
+        "chopper_coin_p1": 30,
+        "chopper_coin_p2": 20,
+        "coins_linked": True,
+        "target_daily_limit": 0,
+        "chopper_fixed_coins": None,
+        "target_fixed_coins": None,
+    }
+
+    def set_settings(updated):
+        settings.update(updated)
+        return settings.copy()
+
+    monkeypatch.setattr(core, "get_estrus_settings", lambda: settings.copy(), raising=False)
+    monkeypatch.setattr(core, "set_estrus_settings", set_settings, raising=False)
+    return settings
+
+
+def test_admin_proxies_estrus_deductions_and_limits_with_versioning(client, headers, estrus_core_settings):
+    initial = client.get("/api/game/estrus/settings", headers=headers)
+    payload = {
+        **estrus_core_settings,
+        "chopper_coin_p0": 10,
+        "chopper_coin_p1": 20,
+        "chopper_coin_p2": 70,
+        "coins_linked": False,
+        "target_daily_limit": 8,
+    }
+
+    response = client.patch("/api/game/estrus/settings", headers=headers, json=payload)
+
+    assert initial.status_code == 200
+    assert initial.json()["coins_linked"] is True
+    assert initial.json()["target_daily_limit"] == 0
+    assert response.status_code == 200
+    assert response.json() == {**payload, "version": 1}
+    assert estrus_core_settings == payload
+    assert client.get("/api/game/estrus/settings", headers=headers).json() == response.json()
+
+    stale = client.patch(
+        "/api/game/estrus/settings",
+        headers={**headers, "Idempotency-Key": "stale-estrus-settings"},
+        json={**payload, "target_daily_limit": 9},
+    )
+    assert stale.status_code == 409
+    assert estrus_core_settings == payload
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["chopper_coin_p0", "chopper_coin_p1", "chopper_coin_p2", "coins_linked", "target_daily_limit",
+     "chopper_rank_quotas", "combo_chop_enabled", "g_spot_percent", "g_spot_heat_bonus"],
+)
+def test_admin_rejects_incomplete_estrus_settings(client, headers, estrus_core_settings, missing_field):
+    payload = estrus_core_settings.copy()
+    del payload[missing_field]
+
+    response = client.patch("/api/game/estrus/settings", headers=headers, json=payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(("deduction", "gain"), [(5, 7), (0, 0), (None, None)])
+def test_admin_proxies_estrus_fixed_amounts(client, headers, estrus_core_settings, deduction, gain):
+    payload = {
+        **estrus_core_settings,
+        "chopper_fixed_coins": deduction,
+        "target_fixed_coins": gain,
+    }
+
+    response = client.patch("/api/game/estrus/settings", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    assert response.json() == {**payload, "version": 1}
+    assert response.json()["coins_linked"] is True
+    assert client.get("/api/game/estrus/settings", headers=headers).json() == response.json()
+
+
+def test_admin_estrus_fixed_fields_are_optional(client, headers, estrus_core_settings):
+    payload = {
+        key: value for key, value in estrus_core_settings.items()
+        if key not in {"chopper_fixed_coins", "target_fixed_coins"}
+    }
+
+    response = client.patch("/api/game/estrus/settings", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["chopper_fixed_coins"] is None
+    assert response.json()["target_fixed_coins"] is None
+    assert response.json()["coins_linked"] is True
+
+
+def test_admin_estrus_panel_exposes_deductions_linking_and_target_limit(client):
+    script = client.get("/static/admin.js").text
+
+    assert '"estrus-target-daily-limit"' in script
+    assert 'id="estrus-coins-linked"' in script
+    for probability in (0, 1, 2):
+        assert f'"estrus-chopper-coin-p{probability}"' in script
+        assert f"chopper_coin_p{probability}: Number" in script
+    assert "coins_linked: document.querySelector" in script
+    assert "target_daily_limit: Number" in script
+    assert ".disabled = chopperFixed || linkedRandom" in script
+    assert 'id="estrus-chopper-fixed"' in script
+    assert 'id="estrus-target-fixed"' in script
+    assert '"estrus-chopper-fixed-coins"' in script
+    assert '"estrus-target-fixed-coins"' in script
+    assert "chopper_fixed_coins: document.querySelector" in script
+    assert "target_fixed_coins: document.querySelector" in script
+    assert 'id="estrus-combo"' in script
+    assert "combo_chop_enabled: document.querySelector" in script
+    assert '"estrus-g-spot-percent"' in script
+    assert '"estrus-g-spot-bonus"' in script
+    assert "g_spot_percent: Number" in script
+    assert "g_spot_heat_bonus: Number" in script
+    assert "data-estrus-quota" in script
+    assert "chopper_rank_quotas: rankQuotas" in script
+    assert ".disabled = targetFixed || chopperFixed" in script
 
 
 def test_admin_proxies_game_settings(client, headers, core):
@@ -4040,3 +4230,115 @@ def test_admin_can_read_and_steer_the_random_event_vote(core, client, headers):
 
     assert cancelled.json()["poll"]["status"] == "cancelled"
     assert core.random_event_vote_cancels == 1
+def test_integration_endpoints_require_key_and_forward(core, console, websocket_connection, admin_repository):
+    from dzmm_bot.admin.app import create_app
+
+    client = TestClient(
+        create_app(
+            "admin-secret",
+            core,
+            repository=admin_repository,
+            console_client=console,
+            websocket_connector=websocket_connection.connect,
+            integration_api_key="integration-secret",
+        )
+    )
+    key_headers = {"X-Api-Key": "integration-secret"}
+
+    no_key = client.post("/api/integration/users/match", json={"name": "小明"})
+    wrong_key = client.post(
+        "/api/integration/users/match",
+        headers={"X-Api-Key": "wrong"},
+        json={"name": "小明"},
+    )
+    assert no_key.status_code == 401
+    assert wrong_key.status_code == 401
+
+    matched = client.post(
+        "/api/integration/users/match", headers=key_headers, json={"name": "小明"}
+    )
+    assert matched.status_code == 200
+    assert matched.json()["status"] == "matched"
+
+    balance = client.get(
+        "/api/integration/users/plat-1/balance", headers=key_headers
+    )
+    assert balance.status_code == 200
+    assert balance.json()["balance"] == 7
+
+    granted = client.post(
+        "/api/integration/coins/grant",
+        headers=key_headers,
+        json={
+            "platform_id": "plat-1",
+            "amount": 5,
+            "reason": "x",
+            "idempotency_key": "admin-grant-001",
+        },
+    )
+    assert granted.status_code == 200
+    assert granted.json()["ok"] is True
+
+    deducted = client.post(
+        "/api/integration/coins/deduct",
+        headers=key_headers,
+        json={
+            "platform_id": "plat-1",
+            "amount": 5,
+            "reason": "x",
+            "idempotency_key": "admin-deduct-01",
+            "allow_partial": True,
+        },
+    )
+    assert deducted.status_code == 200
+    assert deducted.json()["balance_after"] == 2
+
+    assert [name for name, _ in core.integration_calls] == [
+        "match",
+        "balance",
+        "grant",
+        "deduct",
+    ]
+
+
+def test_integration_endpoints_disabled_without_key(core, console, websocket_connection, admin_repository):
+    from dzmm_bot.admin.app import create_app
+
+    client = TestClient(
+        create_app(
+            "admin-secret",
+            core,
+            repository=admin_repository,
+            console_client=console,
+            websocket_connector=websocket_connection.connect,
+        )
+    )
+
+    response = client.get("/api/integration/users/plat-1/balance")
+
+    assert response.status_code == 503
+
+def test_integration_game_quota_route(core, console, websocket_connection, admin_repository):
+    from dzmm_bot.admin.app import create_app
+
+    client = TestClient(
+        create_app(
+            "admin-secret",
+            core,
+            repository=admin_repository,
+            console_client=console,
+            websocket_connector=websocket_connection.connect,
+            integration_api_key="integration-secret",
+        )
+    )
+
+    no_key = client.get("/api/integration/users/plat-1/game-quota")
+    found = client.get(
+        "/api/integration/users/plat-1/game-quota",
+        headers={"X-Api-Key": "integration-secret"},
+    )
+
+    assert no_key.status_code == 401
+    assert found.status_code == 200
+    assert found.json()["unlimited"] is True
+    assert core.integration_calls == [("quota", "plat-1")]

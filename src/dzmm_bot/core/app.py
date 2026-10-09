@@ -1,13 +1,18 @@
 from datetime import date, datetime
 from secrets import compare_digest
 from typing import Annotated, Callable, Literal
+from zoneinfo import ZoneInfo
 from uuid import UUID
 
 import httpx
+import logging
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from uvicorn import Config, Server
+
+logger = logging.getLogger(__name__)
 
 from dzmm_bot.runtime.contracts import (
     InboundMessage,
@@ -15,6 +20,7 @@ from dzmm_bot.runtime.contracts import (
     WorkerHeartbeat,
 )
 from dzmm_bot.runtime.settings import Settings
+from dzmm_bot.ai.client import DeepSeekChatClient
 from dzmm_bot.ai.impressions import AIImpressionOperation
 
 from .api_models import (
@@ -58,7 +64,10 @@ from .api_models import (
     GroupChatResponse,
     GroupChatRuntimeResponse,
     GroupChatTargetResponse,
+    IntegrationMatchRequest,
+    IntegrationCoinRequest,
     PersonalProfileResponse,
+    PlatformGenderSyncRequest,
     ProfileImageCleanupClaimResponse,
     ProfileImageUploadClaimResponse,
     ProfileImageUploadStatusResponse,
@@ -152,6 +161,24 @@ from .api_models import (
     RescheduleRandomEventRequest,
     HideAndSeekSettingsResponse,
     SetHideAndSeekSettingsRequest,
+    BirthdaySettingsResponse,
+    BirthdayGreetRequest,
+    BirthdayGreetResponse,
+    BirthdayMemberResponse,
+    SetBirthdaySettingsRequest,
+    DisciplineFineSettingsResponse,
+    DisciplineFineRecordResponse,
+    DisciplineFineRevokeResponse,
+    PaginatedDisciplineFineRecordsResponse,
+    SetDisciplineFineSettingsRequest,
+    DepartmentAllowanceSettingsResponse,
+    SetDepartmentAllowanceSettingsRequest,
+    LiarDiceSettingsResponse,
+    SetLiarDiceSettingsRequest,
+    TruthTradeSettingsResponse,
+    SetTruthTradeSettingsRequest,
+    EstrusSettingsResponse,
+    SetEstrusSettingsRequest,
     MemoryAssessmentSettingsResponse,
     SetMemoryAssessmentSettingsRequest,
     MemoryAssessmentLevelRuleModel,
@@ -198,6 +225,7 @@ from .api_models import (
     WorkerCommandResponse,
 )
 from .database import create_session_factory
+from .honors import HonorConfigRequest, HonorSettleRequest, HonorCorrectionRequest, HonorConflict
 from .commands import GroupCommandHandler
 from .company_lottery import PrizeTier
 from .repository import (
@@ -214,6 +242,7 @@ from .repository import (
 )
 from .reply_templates import definitions_for_command, template_definition
 from .performance import HttpCoverImageValidator
+from .shop_management import ShopChangesConfirmRequest, ShopChangesPreviewRequest
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
 
@@ -234,15 +263,52 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
 
 def create_app_from_environment() -> FastAPI:
     settings = Settings.from_environment()
+    estrus_text_client = None
+    if settings.deepseek_api_key:
+        estrus_text_client = DeepSeekChatClient(
+            settings.deepseek_api_key,
+            settings.deepseek_model,
+            base_url=settings.deepseek_base_url,
+        )
     repository = CoreRepository(
         create_session_factory(settings.database_url),
         preserve_long_group_messages=settings.bot_api_token is not None,
+        estrus_text_client=estrus_text_client,
     )
     _ensure_primary_group(repository, settings.chat_url)
     return create_app(
         repository,
         settings.core_token,
         require_group_chat_bootstrap=True,
+    )
+
+
+def _estrus_settings_response(settings) -> EstrusSettingsResponse:
+    return EstrusSettingsResponse(
+        enabled=settings.enabled,
+        climax_threshold=settings.climax_threshold,
+        heat_p0=settings.heat_p0,
+        heat_p1=settings.heat_p1,
+        heat_p2=settings.heat_p2,
+        coin_p0=settings.coin_p0,
+        coin_p1=settings.coin_p1,
+        coin_p2=settings.coin_p2,
+        chop_cooldown_seconds=settings.chop_cooldown_seconds,
+        chopper_rank_quotas=(
+            dict(settings.chopper_rank_quotas)
+            if settings.chopper_rank_quotas is not None
+            else {}
+        ),
+        combo_chop_enabled=settings.combo_chop_enabled,
+        g_spot_percent=settings.g_spot_percent,
+        g_spot_heat_bonus=settings.g_spot_heat_bonus,
+        chopper_coin_p0=settings.chopper_coin_p0,
+        chopper_coin_p1=settings.chopper_coin_p1,
+        chopper_coin_p2=settings.chopper_coin_p2,
+        coins_linked=settings.coins_linked,
+        target_daily_limit=settings.target_daily_limit,
+        chopper_fixed_coins=settings.chopper_fixed_coins,
+        target_fixed_coins=settings.target_fixed_coins,
     )
 
 
@@ -272,6 +338,14 @@ def create_app(
         request: InboundRequest, _: Annotated[None, Depends(authorize)]
     ) -> InboundResponse:
         reference = request.reference
+        if reference is not None:
+            # 引用凿未知账号时可观测：记录被引用消息的发送者平台 ID
+            logger.info(
+                "inbound reference: sender=%s ref_sender=%s ref_message=%s",
+                request.sender_platform_id,
+                reference.sender_platform_id,
+                reference.message_id,
+            )
         result = service.receive_inbound(
             InboundMessage(
                 platform_message_id=request.platform_message_id,
@@ -294,6 +368,7 @@ def create_app(
                     text=reference.text,
                 ),
                 content_type=request.content_type,
+                metadata=request.metadata,
                 image_url=request.image_url,
                 image_alt=request.image_alt,
                 image_width=request.image_width,
@@ -339,6 +414,7 @@ def create_app(
                 enabled_game_types=request.enabled_game_types,
                 adult_shop_enabled=request.adult_shop_enabled,
                 performances_enabled=request.performances_enabled,
+                birthdays_enabled=request.birthdays_enabled,
             )
         except (ValueError, GroupChatConflict) as error:
             raise HTTPException(status.HTTP_409_CONFLICT, str(error))
@@ -425,6 +501,7 @@ def create_app(
                 announcements_enabled=request.announcements_enabled,
                 adult_shop_enabled=request.adult_shop_enabled,
                 performances_enabled=request.performances_enabled,
+                birthdays_enabled=request.birthdays_enabled,
                 now=request.now,
             )
         except LookupError as error:
@@ -677,6 +754,17 @@ def create_app(
             [(room.platform_user_id, room.chatroom_id) for room in request.rooms],
             request.now,
         )
+        return AcceptedResponse(accepted=True)
+
+    @app.post(
+        "/internal/users/platform-gender-sync",
+        response_model=AcceptedResponse,
+    )
+    def sync_platform_genders(
+        request: PlatformGenderSyncRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        repository.sync_platform_genders(request.genders)
         return AcceptedResponse(accepted=True)
 
     @app.get(
@@ -1150,7 +1238,9 @@ def create_app(
     ) -> DepartmentResponse:
         try:
             department = repository.create_department(
-                request.name, request.description
+                request.name,
+                request.description,
+                allowance_kind=request.allowance_kind,
             )
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
@@ -1288,7 +1378,8 @@ def create_app(
         records, total = repository.list_users_page(page, page_size)
         return PaginatedUsersResponse(
             items=[
-                _user_response(repository.get_user_profile(record.platform_id))
+                _user_response(repository.get_user_profile(record.platform_id),
+                               repository.get_equipped_honor(record.platform_id, clock()))
                 for record in records
             ],
             page=page,
@@ -1343,6 +1434,81 @@ def create_app(
             pages=(history.total + page_size - 1) // page_size,
         )
 
+    def honor_call(operation):
+        try:
+            return operation()
+        except HonorConflict as error:
+            raise HTTPException(409, str(error)) from error
+        except LookupError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.get("/internal/game/honors/config")
+    def honor_config(_: Annotated[None, Depends(authorize)]) -> dict:
+        return repository.get_honor_config(clock())
+
+    @app.patch("/internal/game/honors/config")
+    def update_honor_config(request: HonorConfigRequest, _: Annotated[None, Depends(authorize)]) -> dict:
+        return honor_call(lambda: repository.update_honor_config(request.model_dump(exclude={"actor"}), request.actor, clock()))
+
+    @app.get("/internal/game/honors/preview")
+    def honor_preview(week_start: date, _: Annotated[None, Depends(authorize)]) -> dict:
+        return honor_call(lambda: repository.preview_honors(week_start, clock()))
+
+    @app.post("/internal/game/honors/settle")
+    def honor_settle(request: HonorSettleRequest, _: Annotated[None, Depends(authorize)]) -> dict:
+        return honor_call(lambda: repository.settle_honors(request.week_start, request.actor, clock(), request.preview_digest))
+
+    @app.get("/internal/game/honors/periods")
+    def honor_periods(_: Annotated[None, Depends(authorize)], page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> dict:
+        return repository.honor_periods(page, page_size)
+
+    @app.get("/internal/game/honors/history")
+    def honor_history(_: Annotated[None, Depends(authorize)], user_id: UUID | None = None,
+                      title_key: str | None = None, week_start: date | None = None,
+                      page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> dict:
+        return repository.honor_history(clock(), user_id, title_key, week_start, page, page_size)
+
+    @app.get("/internal/game/users/{platform_id}/honors")
+    def employee_honors(platform_id: str, _: Annotated[None, Depends(authorize)]) -> dict:
+        result = repository.my_honors(platform_id, clock())
+        if result is None:
+            raise HTTPException(404, "员工不存在")
+        return result
+
+    @app.post("/internal/game/honors/awards/{award_id}/correct")
+    def honor_correct(award_id: UUID, request: HonorCorrectionRequest, _: Annotated[None, Depends(authorize)]) -> dict:
+        return honor_call(lambda: repository.correct_honor(award_id, request.winner_id, request.reason,
+                                                         request.expected_revision, request.actor, clock()))
+
+    @app.get("/internal/game/shop/catalog")
+    def shop_catalog(
+        _: Annotated[None, Depends(authorize)], include_deleted: bool = False,
+    ) -> dict:
+        return repository.get_shop_catalog(include_deleted)
+
+    @app.post("/internal/game/shop/changes/preview")
+    def preview_shop_changes(
+        request: ShopChangesPreviewRequest, _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return repository.preview_shop_changes(**request.model_dump(), now=clock())
+
+    @app.post("/internal/game/shop/changes/{batch_id}/confirm")
+    def confirm_shop_changes(
+        batch_id: UUID, request: ShopChangesConfirmRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        try:
+            return repository.confirm_shop_changes(batch_id, **request.model_dump(), now=clock())
+        except LookupError as error:
+            raise HTTPException(404, str(error)) from error
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except (ValueError, SQLAlchemyError) as error:
+            message = str(error) if isinstance(error, ValueError) else "商品发生并发冲突，请重新预览；本批次已回滚"
+            raise HTTPException(409, message) from error
+
     @app.get("/internal/game/items", response_model=PaginatedItemsResponse)
     def game_items(
         _: Annotated[None, Depends(authorize)],
@@ -1367,7 +1533,12 @@ def create_app(
     ) -> ItemResponse:
         return _item_response(
             repository.add_item(
-                request.name, request.description, request.price, request.stock
+                request.name,
+                request.description,
+                request.price,
+                request.stock,
+                category=request.category,
+                daily_purchase_limit=request.daily_purchase_limit,
             )
         )
 
@@ -1387,11 +1558,15 @@ def create_app(
                 minimum_rank_order=request.minimum_rank_order,
                 unlimited_stock=request.unlimited_stock,
                 stock=request.stock,
-                scratch_reward_min=request.scratch_reward_min,
-                scratch_reward_max=request.scratch_reward_max,
+                **request.model_dump(
+                    exclude_unset=True,
+                    include={"scratch_reward_min", "scratch_reward_max", "price", "category", "daily_purchase_limit"},
+                ),
             )
         except LookupError as error:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(error))
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
         return _item_response(record)
 
     @app.get(
@@ -2399,6 +2574,8 @@ def create_app(
                         state=participant.state,
                         hearts=participant.hearts,
                     )
+                elif summary.game_type in {"liar_dice", "truth_trade"}:
+                    participant_values.update(state=participant.state)
                 participants.append(GameplayParticipantResponse(**participant_values))
             values = {
                 "group_chat_id": summary.group_chat_id,
@@ -2425,6 +2602,15 @@ def create_app(
                     action_deadline=summary.action_deadline,
                     to_call=summary.to_call,
                     legal_actions=list(summary.legal_actions),
+                )
+            elif summary.game_type in {"liar_dice", "truth_trade"}:
+                values.update(
+                    current_seat=summary.current_seat,
+                    action_deadline=summary.action_deadline,
+                    current_call=summary.current_call,
+                    current_speaker_name=summary.current_speaker_name,
+                    responded_count=summary.responded_count,
+                    expected_response_count=summary.expected_response_count,
                 )
             elif summary.game_type in {
                 "memory_duel", "memory_single", "never_have_i_ever", "king_game"
@@ -2581,6 +2767,433 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
         return _hide_and_seek_settings_response(settings)
+
+    @app.get(
+        "/internal/game/birthday/settings",
+        response_model=BirthdaySettingsResponse,
+    )
+    def birthday_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> BirthdaySettingsResponse:
+        return _birthday_settings_response(repository.get_birthday_settings())
+
+    @app.patch(
+        "/internal/game/birthday/settings",
+        response_model=BirthdaySettingsResponse,
+    )
+    def set_birthday_settings(
+        request: SetBirthdaySettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> BirthdaySettingsResponse:
+        try:
+            settings = repository.set_birthday_settings(
+                request.enabled,
+                request.greet_times,
+                request.preview_enabled,
+                request.preview_time,
+                request.gift_amount,
+                request.same_day_backfill,
+                request.edit_limit_per_year,
+                request.checkin_multiplier,
+                request.shop_discount_percent,
+                request.lottery_free_tickets,
+                request.event_reward_bonus_percent,
+                request.tips_enabled,
+                request.tip_max_amount,
+                request.tip_window_minutes,
+                request.anniversary_enabled,
+                request.greet_template,
+                request.preview_template,
+                request.tips_summary_template,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _birthday_settings_response(settings)
+
+    @app.get(
+        "/internal/game/discipline-fine/settings",
+        response_model=DisciplineFineSettingsResponse,
+    )
+    def discipline_fine_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> DisciplineFineSettingsResponse:
+        settings = repository.get_discipline_fine_settings()
+        return DisciplineFineSettingsResponse(
+            enabled=settings.enabled,
+            amount=settings.amount,
+            kickback_percent=settings.kickback_percent,
+            rank_quotas=settings.rank_quotas,
+            cooldown_minutes=settings.cooldown_minutes,
+            target_daily_limit=settings.target_daily_limit,
+        )
+
+    @app.get(
+        "/internal/game/department-allowances/settings",
+        response_model=DepartmentAllowanceSettingsResponse,
+    )
+    def department_allowance_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> DepartmentAllowanceSettingsResponse:
+        settings = repository.get_department_allowance_settings()
+        return DepartmentAllowanceSettingsResponse(
+            checkin_amount=settings.checkin_amount,
+            event_amount=settings.event_amount,
+            game_host_amount=settings.game_host_amount,
+            game_play_amount=settings.game_play_amount,
+            game_play_step=settings.game_play_step,
+            submission_amount=settings.submission_amount,
+            chat_drop_percent=settings.chat_drop_percent,
+            chat_drop_amount=settings.chat_drop_amount,
+            chat_drop_cooldown_seconds=settings.chat_drop_cooldown_seconds,
+            referral_amount=settings.referral_amount,
+            daily_cap=settings.daily_cap,
+        )
+
+    @app.patch(
+        "/internal/game/department-allowances/settings",
+        response_model=DepartmentAllowanceSettingsResponse,
+    )
+    def set_department_allowance_settings(
+        request: SetDepartmentAllowanceSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> DepartmentAllowanceSettingsResponse:
+        try:
+            settings = repository.set_department_allowance_settings(
+                checkin_amount=request.checkin_amount,
+                event_amount=request.event_amount,
+                game_host_amount=request.game_host_amount,
+                game_play_amount=request.game_play_amount,
+                game_play_step=request.game_play_step,
+                submission_amount=request.submission_amount,
+                chat_drop_percent=request.chat_drop_percent,
+                chat_drop_amount=request.chat_drop_amount,
+                chat_drop_cooldown_seconds=request.chat_drop_cooldown_seconds,
+                referral_amount=request.referral_amount,
+                daily_cap=request.daily_cap,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return DepartmentAllowanceSettingsResponse(
+            checkin_amount=settings.checkin_amount,
+            event_amount=settings.event_amount,
+            game_host_amount=settings.game_host_amount,
+            game_play_amount=settings.game_play_amount,
+            game_play_step=settings.game_play_step,
+            submission_amount=settings.submission_amount,
+            chat_drop_percent=settings.chat_drop_percent,
+            chat_drop_amount=settings.chat_drop_amount,
+            chat_drop_cooldown_seconds=settings.chat_drop_cooldown_seconds,
+            referral_amount=settings.referral_amount,
+            daily_cap=settings.daily_cap,
+        )
+
+    @app.get(
+        "/internal/game/liar-dice/settings",
+        response_model=LiarDiceSettingsResponse,
+    )
+    def liar_dice_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> LiarDiceSettingsResponse:
+        settings = repository.get_liar_dice_settings()
+        return LiarDiceSettingsResponse(turn_seconds=settings.turn_seconds, enabled=settings.enabled, min_players=settings.min_players)
+
+    @app.patch(
+        "/internal/game/liar-dice/settings",
+        response_model=LiarDiceSettingsResponse,
+    )
+    def set_liar_dice_settings(
+        request: SetLiarDiceSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> LiarDiceSettingsResponse:
+        try:
+            settings = repository.set_liar_dice_settings(
+                turn_seconds=request.turn_seconds,
+                enabled=request.enabled,
+                min_players=request.min_players,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return LiarDiceSettingsResponse(turn_seconds=settings.turn_seconds, enabled=settings.enabled, min_players=settings.min_players)
+
+    @app.get(
+        "/internal/game/truth-trade/settings",
+        response_model=TruthTradeSettingsResponse,
+    )
+    def truth_trade_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> TruthTradeSettingsResponse:
+        settings = repository.get_truth_trade_settings()
+        return TruthTradeSettingsResponse(
+            question_timeout_seconds=settings.question_timeout_seconds,
+            answer_timeout_seconds=settings.answer_timeout_seconds,
+            min_players=settings.min_players,
+            enabled=settings.enabled,
+        )
+
+    @app.patch(
+        "/internal/game/truth-trade/settings",
+        response_model=TruthTradeSettingsResponse,
+    )
+    def set_truth_trade_settings(
+        request: SetTruthTradeSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> TruthTradeSettingsResponse:
+        try:
+            settings = repository.set_truth_trade_settings(
+                question_timeout_seconds=request.question_timeout_seconds,
+                answer_timeout_seconds=request.answer_timeout_seconds,
+                min_players=request.min_players,
+                enabled=request.enabled,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return TruthTradeSettingsResponse(
+            question_timeout_seconds=settings.question_timeout_seconds,
+            answer_timeout_seconds=settings.answer_timeout_seconds,
+            min_players=settings.min_players,
+            enabled=settings.enabled,
+        )
+
+    @app.get(
+        "/internal/game/estrus/settings",
+        response_model=EstrusSettingsResponse,
+    )
+    def estrus_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> EstrusSettingsResponse:
+        settings = repository.get_estrus_settings()
+        return _estrus_settings_response(settings)
+
+    @app.patch(
+        "/internal/game/estrus/settings",
+        response_model=EstrusSettingsResponse,
+    )
+    def set_estrus_settings(
+        request: SetEstrusSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> EstrusSettingsResponse:
+        try:
+            settings = repository.set_estrus_settings(
+                enabled=request.enabled,
+                climax_threshold=request.climax_threshold,
+                heat_p0=request.heat_p0,
+                heat_p1=request.heat_p1,
+                heat_p2=request.heat_p2,
+                coin_p0=request.coin_p0,
+                coin_p1=request.coin_p1,
+                coin_p2=request.coin_p2,
+                chop_cooldown_seconds=request.chop_cooldown_seconds,
+                chopper_rank_quotas=(
+                    dict(request.chopper_rank_quotas)
+                    if request.chopper_rank_quotas
+                    else None
+                ),
+                combo_chop_enabled=request.combo_chop_enabled,
+                g_spot_percent=request.g_spot_percent,
+                g_spot_heat_bonus=request.g_spot_heat_bonus,
+                chopper_coin_p0=request.chopper_coin_p0,
+                chopper_coin_p1=request.chopper_coin_p1,
+                chopper_coin_p2=request.chopper_coin_p2,
+                coins_linked=request.coins_linked,
+                target_daily_limit=request.target_daily_limit,
+                chopper_fixed_coins=request.chopper_fixed_coins,
+                target_fixed_coins=request.target_fixed_coins,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return _estrus_settings_response(settings)
+
+    @app.post("/internal/integration/users/match")
+    def integration_match_users(
+        request: IntegrationMatchRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        provided = [
+            value
+            for value in (
+                request.name,
+                request.platform_id,
+                request.employee_number,
+            )
+            if value
+        ]
+        if len(provided) != 1:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "name / platform_id / employee_number 三选一",
+            )
+        match_status, matches = repository.integration_match_users(
+            name=request.name,
+            platform_id=request.platform_id,
+            employee_number=request.employee_number,
+        )
+        return {"status": match_status, "matches": matches}
+
+    @app.get("/internal/integration/users/{platform_id}/balance")
+    def integration_get_balance(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        view = repository.integration_get_balance(platform_id)
+        if view is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"没找到员工（platform_id={platform_id}）",
+            )
+        return view
+
+    @app.get("/internal/integration/users/{platform_id}/game-quota")
+    def integration_game_quota(
+        platform_id: str, _: Annotated[None, Depends(authorize)]
+    ) -> dict:
+        quota = repository.integration_game_quota(platform_id, clock())
+        if quota is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"没找到员工（platform_id={platform_id}）",
+            )
+        return quota
+
+    def _integration_coin(
+        request: IntegrationCoinRequest, action: str
+    ) -> JSONResponse:
+        _, status_code, body = repository.integration_coin_adjust(
+            platform_id=request.platform_id,
+            amount=request.amount,
+            action=action,
+            reason=request.reason,
+            idempotency_key=request.idempotency_key,
+            allow_partial=request.allow_partial,
+            now=clock(),
+        )
+        return JSONResponse(body, status_code=status_code)
+
+    @app.post("/internal/integration/coins/grant")
+    def integration_grant_coins(
+        request: IntegrationCoinRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> JSONResponse:
+        return _integration_coin(request, "grant")
+
+    @app.post("/internal/integration/coins/deduct")
+    def integration_deduct_coins(
+        request: IntegrationCoinRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> JSONResponse:
+        return _integration_coin(request, "deduct")
+
+    @app.patch(
+        "/internal/game/discipline-fine/settings",
+        response_model=DisciplineFineSettingsResponse,
+    )
+    def set_discipline_fine_settings(
+        request: SetDisciplineFineSettingsRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> DisciplineFineSettingsResponse:
+        try:
+            settings = repository.set_discipline_fine_settings(
+                enabled=request.enabled,
+                amount=request.amount,
+                kickback_percent=request.kickback_percent,
+                rank_quotas=request.rank_quotas,
+                cooldown_minutes=request.cooldown_minutes,
+                target_daily_limit=request.target_daily_limit,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error))
+        return DisciplineFineSettingsResponse(
+            enabled=settings.enabled,
+            amount=settings.amount,
+            kickback_percent=settings.kickback_percent,
+            rank_quotas=settings.rank_quotas,
+            cooldown_minutes=settings.cooldown_minutes,
+            target_daily_limit=settings.target_daily_limit,
+        )
+
+    @app.get(
+        "/internal/game/discipline-fine/records",
+        response_model=PaginatedDisciplineFineRecordsResponse,
+    )
+    def discipline_fine_records(
+        _: Annotated[None, Depends(authorize)],
+        page: Annotated[int, Query(ge=1)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> PaginatedDisciplineFineRecordsResponse:
+        items, total = repository.list_discipline_fine_records(
+            page=page, page_size=page_size
+        )
+        return PaginatedDisciplineFineRecordsResponse(
+            items=[
+                DisciplineFineRecordResponse(
+                    id=item.id,
+                    issuer_display_name=item.issuer_display_name,
+                    target_display_name=item.target_display_name,
+                    group_name=item.group_name,
+                    amount=item.amount,
+                    kickback=item.kickback,
+                    reason=item.reason,
+                    via_reply=item.via_reply,
+                    created_at=item.created_at,
+                    revoked_at=item.revoked_at,
+                )
+                for item in items
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
+    @app.post(
+        "/internal/game/discipline-fine/records/{record_id}/revoke",
+        response_model=DisciplineFineRevokeResponse,
+    )
+    def revoke_discipline_fine_record(
+        record_id: UUID,
+        _: Annotated[None, Depends(authorize)],
+    ) -> DisciplineFineRevokeResponse:
+        result = repository.revoke_discipline_fine(record_id, clock())
+        if result == "not_found":
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "罚款记录不存在")
+        return DisciplineFineRevokeResponse(status=result)
+
+    @app.get(
+        "/internal/game/birthday/members",
+        response_model=list[BirthdayMemberResponse],
+    )
+    def birthday_members(
+        _: Annotated[None, Depends(authorize)],
+        now: datetime | None = Query(default=None),
+    ) -> list[BirthdayMemberResponse]:
+        now = datetime.now(ZoneInfo("Asia/Shanghai")) if now is None else now
+        return [
+            BirthdayMemberResponse(
+                platform_id=row.platform_id,
+                display_name=row.display_name,
+                employee_number=row.employee_number,
+                month=row.month,
+                day=row.day,
+                visibility=row.visibility,
+                is_today=row.is_today,
+            )
+            for row in repository.list_birthday_members(now)
+        ]
+
+    @app.post(
+        "/internal/game/birthday/greet",
+        response_model=BirthdayGreetResponse,
+    )
+    def greet_birthday(
+        request: BirthdayGreetRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> BirthdayGreetResponse:
+        text = repository.greet_birthday_manually(
+            request.platform_id, request.now, dry_run=request.dry_run
+        )
+        if text is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "员工不存在")
+        return BirthdayGreetResponse(
+            text=text, dry_run=request.dry_run, delivered=not request.dry_run
+        )
+
 
     @app.get(
         "/internal/game/hide-and-seek/scenes",
@@ -3366,6 +3979,7 @@ def _group_chat_response(group, runtime) -> GroupChatResponse:
         announcements_enabled=group.announcements_enabled,
         adult_shop_enabled=group.adult_shop_enabled,
         performances_enabled=group.performances_enabled,
+        birthdays_enabled=group.birthdays_enabled,
         created_at=group.created_at,
         updated_at=group.updated_at,
         deleted_at=group.deleted_at,
@@ -3493,6 +4107,8 @@ def _item_response(record) -> ItemResponse:
         scratch_reward_max=record.scratch_reward_max,
         minimum_rank_order=record.minimum_rank_order,
         enabled=record.enabled,
+        category=record.category,
+        daily_purchase_limit=record.daily_purchase_limit,
     )
 
 
@@ -3519,14 +4135,16 @@ def _department_response(record) -> DepartmentResponse:
         description=record.description,
         is_default=record.is_default,
         enabled=record.enabled,
+        allowance_kind=record.allowance_kind,
     )
 
 
-def _user_response(profile) -> UserResponse:
+def _user_response(profile, honor_title=None) -> UserResponse:
     if profile is None:
         raise RuntimeError("employee profile is missing")
     return UserResponse(
         platform_id=profile.user.platform_id,
+        honor_title=honor_title,
         display_name=profile.user.display_name,
         platform_nickname=profile.user.platform_nickname,
         employee_number=profile.user.employee_number,
@@ -3729,6 +4347,30 @@ def _hide_and_seek_settings_response(settings) -> HideAndSeekSettingsResponse:
         daily_limit=settings.daily_limit,
         selection_timeout_minutes=settings.selection_timeout_minutes,
     )
+
+
+def _birthday_settings_response(settings) -> BirthdaySettingsResponse:
+    return BirthdaySettingsResponse(
+        enabled=settings.enabled,
+        greet_times=settings.greet_times,
+        preview_enabled=settings.preview_enabled,
+        preview_time=settings.preview_time,
+        gift_amount=settings.gift_amount,
+        same_day_backfill=settings.same_day_backfill,
+        edit_limit_per_year=settings.edit_limit_per_year,
+        checkin_multiplier=settings.checkin_multiplier,
+        shop_discount_percent=settings.shop_discount_percent,
+        lottery_free_tickets=settings.lottery_free_tickets,
+        event_reward_bonus_percent=settings.event_reward_bonus_percent,
+        tips_enabled=settings.tips_enabled,
+        tip_max_amount=settings.tip_max_amount,
+        tip_window_minutes=settings.tip_window_minutes,
+        anniversary_enabled=settings.anniversary_enabled,
+        greet_template=settings.greet_template,
+        preview_template=settings.preview_template,
+        tips_summary_template=settings.tips_summary_template,
+    )
+
 
 
 def _hide_and_seek_scene_response(scene) -> HideAndSeekSceneResponse:

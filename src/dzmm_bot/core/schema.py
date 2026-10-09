@@ -82,6 +82,9 @@ class GroupChatRecord(Base):
     performances_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false(), nullable=False
     )
+    birthdays_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
@@ -1020,6 +1023,245 @@ class KingGameRoundRecord(Base):
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     started_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     revealed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class LiarDiceSettingsRecord(Base):
+    __tablename__ = "liar_dice_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"),
+        default=PRIMARY_GROUP_CHAT_ID,
+        unique=True,
+        nullable=False,
+    )
+    turn_seconds: Mapped[int] = mapped_column(Integer, default=120, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    min_players: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+
+
+class LiarDiceGameRecord(Base):
+    __tablename__ = "liar_dice_games"
+    __table_args__ = (
+        Index(
+            "ux_liar_dice_one_active",
+            "group_chat_id",
+            unique=True,
+            sqlite_where=text("active_key IS NOT NULL"),
+            postgresql_where=text("active_key IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "state IN ('signup', 'dealing', 'calling', 'round_end', "
+            "'completed', 'cancelled', 'forced_ended')",
+            name="ck_liar_dice_game_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"), default=PRIMARY_GROUP_CHAT_ID, nullable=False
+    )
+    host_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    active_key: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    current_call: Mapped[dict[str, int] | None] = mapped_column(JSON)
+    last_caller_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    current_seat: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    turn_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    timeout_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    signup_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finish_reason: Mapped[str | None] = mapped_column(String(64))
+
+
+class LiarDicePlayerRecord(Base):
+    __tablename__ = "liar_dice_players"
+    __table_args__ = (
+        UniqueConstraint("game_id", "user_id"),
+        UniqueConstraint("game_id", "seat_number"),
+        CheckConstraint(
+            "state IN ('signup', 'active', 'left')",
+            name="ck_liar_dice_player_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("liar_dice_games.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    seat_number: Mapped[int | None] = mapped_column(Integer)
+    dice: Mapped[list[int] | None] = mapped_column(JSON)
+    hand_delivery_state: Mapped[str | None] = mapped_column(String(16))
+    hand_outbound_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("outbound_messages.id")
+    )
+    joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    left_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class LiarDiceRoundRecord(Base):
+    __tablename__ = "liar_dice_rounds"
+    __table_args__ = (
+        UniqueConstraint("game_id", "sequence"),
+        CheckConstraint(
+            "state IN ('active', 'resolved', 'voided')",
+            name="ck_liar_dice_round_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("liar_dice_games.id"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    wild_face: Mapped[int] = mapped_column(Integer, nullable=False)
+    wild_invalidated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    calls: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    opener_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    last_caller_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    call_count: Mapped[int | None] = mapped_column(Integer)
+    call_face: Mapped[int | None] = mapped_column(Integer)
+    actual_count: Mapped[int | None] = mapped_column(Integer)
+    winner_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    loser_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    dice_snapshot: Mapped[dict[str, list[int]] | None] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class TruthTradeSettingsRecord(Base):
+    __tablename__ = "truth_trade_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"),
+        default=PRIMARY_GROUP_CHAT_ID,
+        unique=True,
+        nullable=False,
+    )
+    question_timeout_seconds: Mapped[int] = mapped_column(
+        Integer, default=300, nullable=False
+    )
+    answer_timeout_seconds: Mapped[int] = mapped_column(
+        Integer, default=600, nullable=False
+    )
+    min_players: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class TruthTradeGameRecord(Base):
+    __tablename__ = "truth_trade_games"
+    __table_args__ = (
+        Index(
+            "ux_truth_trade_one_active",
+            "group_chat_id",
+            unique=True,
+            sqlite_where=text("active_key IS NOT NULL"),
+            postgresql_where=text("active_key IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "state IN ('signup', 'asking', 'answering', 'round_complete', "
+            "'finished', 'cancelled')",
+            name="ck_truth_trade_game_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"), default=PRIMARY_GROUP_CHAT_ID, nullable=False
+    )
+    host_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    active_key: Mapped[str | None] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    settled_rounds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    current_position: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    phase_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    signup_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    finish_reason: Mapped[str | None] = mapped_column(String(64))
+
+
+class TruthTradePlayerRecord(Base):
+    __tablename__ = "truth_trade_players"
+    __table_args__ = (
+        UniqueConstraint("game_id", "user_id"),
+        UniqueConstraint("game_id", "position"),
+        CheckConstraint(
+            "state IN ('active', 'withdrawn')",
+            name="ck_truth_trade_player_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("truth_trade_games.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class TruthTradeQuestionRecord(Base):
+    __tablename__ = "truth_trade_questions"
+    __table_args__ = (
+        UniqueConstraint("game_id", "round_number", "position"),
+        CheckConstraint(
+            "state IN ('open', 'collected', 'skipped')",
+            name="ck_truth_trade_question_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(
+        ForeignKey("truth_trade_games.id"), nullable=False
+    )
+    asker_player_id: Mapped[UUID] = mapped_column(
+        ForeignKey("truth_trade_players.id"), nullable=False
+    )
+    round_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str | None] = mapped_column(Text)
+    required_player_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    asked_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    collected_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class TruthTradeAnswerRecord(Base):
+    __tablename__ = "truth_trade_answers"
+    __table_args__ = (
+        UniqueConstraint("question_id", "user_id"),
+        CheckConstraint(
+            "state IN ('answered', 'declined', 'timed_out', 'left')",
+            name="ck_truth_trade_answer_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    question_id: Mapped[UUID] = mapped_column(
+        ForeignKey("truth_trade_questions.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    content: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    answered_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
 
 
 class TexasHoldemSettingsRecord(Base):
@@ -2286,6 +2528,61 @@ class PerformanceTipRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class HonorStateRecord(Base):
+    __tablename__ = "honor_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_week: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class HonorConfigRecord(Base):
+    __tablename__ = "honor_configs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    version: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+    effective_week: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class HonorPeriodRecord(Base):
+    __tablename__ = "honor_periods"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    week_start: Mapped[date] = mapped_column(Date, unique=True, nullable=False)
+    config_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    settled_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    announced_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    scheduled_announced_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class HonorAwardRecord(Base):
+    __tablename__ = "honor_awards"
+    __table_args__ = (UniqueConstraint("period_id", "title_key", "user_id", name="uq_honor_awards_period_title_user"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    period_id: Mapped[UUID] = mapped_column(ForeignKey("honor_periods.id"), nullable=False)
+    title_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    title_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), index=True)
+    winner_name: Mapped[str | None] = mapped_column(String(64))
+    score: Mapped[int | None] = mapped_column(Integer)
+    valid_from: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    public_score: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class HonorWearRecord(Base):
+    __tablename__ = "honor_wear"
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    award_id: Mapped[UUID] = mapped_column(ForeignKey("honor_awards.id"), nullable=False)
+
+
 class UserRecord(Base):
     __tablename__ = "users"
 
@@ -2293,6 +2590,9 @@ class UserRecord(Base):
     platform_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     platform_nickname: Mapped[str | None] = mapped_column(String(64))
+    gender: Mapped[str] = mapped_column(
+        String(16), default="unknown", server_default="unknown", nullable=False
+    )
     platform_nickname_synced_at: Mapped[datetime | None] = mapped_column(
         BeijingDateTime
     )
@@ -2618,6 +2918,241 @@ class DepartmentRecord(Base):
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allowance_kind: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class DepartmentAllowanceSettingsRecord(Base):
+    __tablename__ = "department_allowance_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    checkin_amount: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+    event_amount: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+    game_host_amount: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    game_play_amount: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    game_play_step: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+    submission_amount: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+    chat_drop_percent: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10", nullable=False
+    )
+    chat_drop_amount: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    chat_drop_cooldown_seconds: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    referral_amount: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    daily_cap: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+
+
+class EstrusStateRecord(Base):
+    __tablename__ = "estrus_states"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    heat: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    chopped_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_climaxes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    today_climaxes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_active_date: Mapped[date | None] = mapped_column(Date)
+    opted_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+    __table_args__ = (
+        UniqueConstraint("group_chat_id", "user_id", name="ux_estrus_state"),
+    )
+
+
+class EstrusChopRecord(Base):
+    __tablename__ = "estrus_chops"
+    __table_args__ = (
+        Index(
+            "ix_estrus_chops_group_target_created",
+            "group_chat_id",
+            "target_user_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"), nullable=False
+    )
+    chopper_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    target_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    heat_gain: Mapped[int] = mapped_column(Integer, nullable=False)
+    coins: Mapped[int] = mapped_column(Integer, nullable=False)
+    coins_deducted: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    climax_triggered: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class EstrusSettingsRecord(Base):
+    __tablename__ = "estrus_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    climax_threshold: Mapped[int] = mapped_column(
+        Integer, default=100, server_default="100", nullable=False
+    )
+    heat_p0: Mapped[int] = mapped_column(
+        Integer, default=50, server_default="50", nullable=False
+    )
+    heat_p1: Mapped[int] = mapped_column(
+        Integer, default=30, server_default="30", nullable=False
+    )
+    heat_p2: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    coin_p0: Mapped[int] = mapped_column(
+        Integer, default=50, server_default="50", nullable=False
+    )
+    coin_p1: Mapped[int] = mapped_column(
+        Integer, default=30, server_default="30", nullable=False
+    )
+    coin_p2: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    chopper_coin_p0: Mapped[int] = mapped_column(
+        Integer, default=50, server_default="50", nullable=False
+    )
+    chopper_coin_p1: Mapped[int] = mapped_column(
+        Integer, default=30, server_default="30", nullable=False
+    )
+    chopper_coin_p2: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    coins_linked: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    chop_cooldown_seconds: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    combo_chop_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    g_spot_percent: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10", nullable=False
+    )
+    g_spot_heat_bonus: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10", nullable=False
+    )
+    chopper_rank_quotas: Mapped[dict | None] = mapped_column(JSON)
+    target_daily_limit: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    chopper_fixed_coins: Mapped[int | None] = mapped_column(Integer)
+    target_fixed_coins: Mapped[int | None] = mapped_column(Integer)
+
+
+class DepartmentAllowanceRecord(Base):
+    __tablename__ = "department_allowances"
+    __table_args__ = (
+        Index("ix_department_allowances_user_date", "user_id", "allow_date"),
+        CheckConstraint(
+            "kind IN ('dept_checkin', 'dept_event', 'dept_game_host', "
+            "'dept_game_play', 'dept_submission', 'dept_chat', 'dept_referral', "
+            "'dept_fine')",
+            name="ck_department_allowance_kind",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    allow_date: Mapped[date] = mapped_column(Date, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class GameParticipationRecord(Base):
+    __tablename__ = "game_participations"
+    __table_args__ = (
+        UniqueConstraint("game_type", "game_id", "user_id"),
+        Index("ix_game_participations_group_completed", "group_chat_id", "completed_at"),
+        Index("ix_game_participations_user_completed", "user_id", "completed_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    game_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class DepartmentGamePlayRecord(Base):
+    __tablename__ = "department_game_plays"
+    __table_args__ = (UniqueConstraint("user_id", "play_date"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    play_date: Mapped[date] = mapped_column(Date, nullable=False)
+    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class ReferralRecord(Base):
+    """拉新归因：平台入群系统消息解析出的「新人 ← 邀请人」绑定。
+
+    同一平台消息只处理一次（platform_message_id 唯一）；同一新人只归因一次
+    （newcomer_platform_id 唯一，NULL 不占约束——解析失败的行允许后续补）。
+    """
+
+    __tablename__ = "referral_records"
+    __table_args__ = (
+        UniqueConstraint("platform_message_id", name="uq_referral_message"),
+        UniqueConstraint("newcomer_platform_id", name="uq_referral_newcomer"),
+        Index("ix_referral_records_inviter", "inviter_user_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    chatroom_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    platform_message_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    newcomer_platform_id: Mapped[str | None] = mapped_column(String(64))
+    newcomer_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    inviter_platform_id: Mapped[str | None] = mapped_column(String(64))
+    inviter_name: Mapped[str | None] = mapped_column(String(128))
+    inviter_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
@@ -2756,9 +3291,26 @@ class BalanceTransactionRecord(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
+    memo: Mapped[str | None] = mapped_column(String(200))
     occurred_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     dark_market_listing_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("dark_market_listings.id")
+    )
+
+
+class IntegrationIdempotencyRecord(Base):
+    """集成接口幂等记录：同一 key 重放返回首次响应（TTL 由写入方清理）。"""
+
+    __tablename__ = "integration_idempotencies"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_body: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
     )
 
 
@@ -2776,11 +3328,33 @@ class ItemRecord(Base):
     effect_type: Mapped[str | None] = mapped_column(String(32))
     scratch_reward_min: Mapped[int | None] = mapped_column(Integer)
     scratch_reward_max: Mapped[int | None] = mapped_column(Integer)
+    effect_config: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    configuration_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     minimum_rank_order: Mapped[int | None] = mapped_column(Integer)
+    category: Mapped[str | None] = mapped_column(String(32))
+    daily_purchase_limit: Mapped[int | None] = mapped_column(Integer)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
+
+
+class ShopCatalogStateRecord(Base):
+    __tablename__ = "shop_catalog_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class ShopChangeBatchRecord(Base):
+    __tablename__ = "shop_change_batches"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    plan: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
 class UserItemRecord(Base):
@@ -2798,6 +3372,8 @@ class UserItemRecord(Base):
 
 class ShopPurchaseRecord(Base):
     __tablename__ = "shop_purchases"
+
+    item_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     inbound_message_id: Mapped[UUID] = mapped_column(
@@ -2819,7 +3395,7 @@ class ShopPurchaseDailyUsageRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     usage_date: Mapped[date] = mapped_column(Date, nullable=False)
-    category: Mapped[str] = mapped_column(String(16), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
     count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
@@ -2849,6 +3425,8 @@ class ShopMultiplayerDailyStartRecord(Base):
 
 class ShopItemUseRecord(Base):
     __tablename__ = "shop_item_uses"
+
+    item_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     inbound_message_id: Mapped[UUID] = mapped_column(
@@ -3443,3 +4021,199 @@ class CompanyLotteryWelfarePayoutRecord(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class EmployeeBirthdayRecord(Base):
+    __tablename__ = "employee_birthdays"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), unique=True, nullable=False
+    )
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+    day: Mapped[int] = mapped_column(Integer, nullable=False)
+    year: Mapped[int | None] = mapped_column(Integer)
+    visibility: Mapped[str] = mapped_column(
+        String(16), default="public", nullable=False
+    )
+    last_edited_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    edit_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    edit_count_year: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class BirthdayGreetingRecord(Base):
+    __tablename__ = "birthday_greetings"
+    __table_args__ = (
+        UniqueConstraint("user_id", "greet_year"),
+        Index("ix_birthday_greetings_pending_tips", "tips_closed_at", "greeted_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    greet_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    greeted_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    gift_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    lottery_tickets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tips_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tips_total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tips_closed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    status: Mapped[str] = mapped_column(
+        String(16), default="greeted", nullable=False
+    )
+
+
+class BirthdayPreviewRecord(Base):
+    __tablename__ = "birthday_previews"
+    __table_args__ = (UniqueConstraint("user_id", "preview_year"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    preview_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    previewed_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class BirthdayGreetAnnouncementRecord(Base):
+    """当天祝福公告的幂等记录：每个日期 × 每个公告时刻只广播一次。"""
+
+    __tablename__ = "birthday_greet_announcements"
+    __table_args__ = (UniqueConstraint("announce_date", "slot"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    announce_date: Mapped[date] = mapped_column(Date, nullable=False)
+    slot: Mapped[str] = mapped_column(String(5), nullable=False)
+    announced_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class BirthdayTipRecord(Base):
+    __tablename__ = "birthday_tips"
+    __table_args__ = (
+        UniqueConstraint("greeting_id", "from_user_id"),
+        Index("ix_birthday_tips_inbound", "inbound_message_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    greeting_id: Mapped[UUID] = mapped_column(
+        ForeignKey("birthday_greetings.id"), nullable=False
+    )
+    from_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    inbound_message_id: Mapped[UUID] = mapped_column(
+        ForeignKey("inbound_messages.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class BirthdaySettingsRecord(Base):
+    __tablename__ = "birthday_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    greet_times: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=lambda: ["09:00", "12:00", "17:00"],
+        server_default='["09:00", "12:00", "17:00"]',
+        nullable=False,
+    )
+    preview_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    preview_time: Mapped[str] = mapped_column(
+        String(5), default="20:00", server_default="20:00", nullable=False
+    )
+    gift_amount: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    same_day_backfill: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    edit_limit_per_year: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    checkin_multiplier: Mapped[int] = mapped_column(
+        Integer, default=2, server_default="2", nullable=False
+    )
+    shop_discount_percent: Mapped[int] = mapped_column(
+        Integer, default=80, server_default="80", nullable=False
+    )
+    lottery_free_tickets: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+    event_reward_bonus_percent: Mapped[int] = mapped_column(
+        Integer, default=50, server_default="50", nullable=False
+    )
+    tips_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    tip_max_amount: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    tip_window_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    anniversary_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    greet_template: Mapped[str] = mapped_column(
+        Text, default="", server_default="", nullable=False
+    )
+    preview_template: Mapped[str] = mapped_column(
+        Text, default="", server_default="", nullable=False
+    )
+    tips_summary_template: Mapped[str] = mapped_column(
+        Text, default="", server_default="", nullable=False
+    )
+
+
+class DisciplineFineSettingsRecord(Base):
+    __tablename__ = "discipline_fine_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    department_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("departments.id")
+    )
+    amount: Mapped[int] = mapped_column(Integer, default=5, server_default="5", nullable=False)
+    kickback_percent: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    rank_quotas: Mapped[dict[str, int]] = mapped_column(
+        JSON, default=dict, server_default="{}", nullable=False
+    )
+    cooldown_minutes: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10", nullable=False
+    )
+    target_daily_limit: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+
+
+class DisciplineFineRecord(Base):
+    __tablename__ = "discipline_fine_records"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("group_chats.id"), nullable=False
+    )
+    issuer_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=False
+    )
+    target_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=False
+    )
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    kickback: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    via_reply: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    revoked_by: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))

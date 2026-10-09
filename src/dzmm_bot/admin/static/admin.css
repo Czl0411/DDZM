@@ -178,7 +178,17 @@ select:hover { border-color: #bdb5ff; }
 .activity-rule-row label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 .income-report-time-row { display: flex; gap: 10px; align-items: center; }
 .income-report-time-row input { width: 150px; }
-.item-form { grid-template-columns: 1fr 1.4fr 100px 100px auto; align-items: end; margin-top: 22px; }
+.item-form { grid-template-columns: 1fr 1.4fr 100px 100px 160px 150px auto; align-items: end; margin-top: 22px; }
+.shop-item-card { display: grid; gap: 12px; align-items: stretch; }
+.shop-item-card > label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
+.shop-item-heading { display: flex; gap: 12px; align-items: start; justify-content: space-between; }
+.shop-item-title { display: grid; gap: 6px; min-width: 0; }
+.shop-item-badges { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.shop-item-badges small { margin-top: 0; }
+.shop-item-toggle { display: flex; gap: 6px; align-items: center; font-weight: 700; white-space: nowrap; }
+.shop-item-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.shop-item-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
+.shop-item-grid .shop-item-check { display: flex; gap: 7px; align-items: center; }
 .status-card, .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 5px 20px rgba(25,36,61,.025); }
 .status-card { min-height: 132px; padding: 21px; }
 .status-card > span, .status-card small { display: block; color: var(--muted); font-size: 13px; }

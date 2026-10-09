@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from datetime import datetime
+import logging
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -17,6 +19,7 @@ from .random_event_submissions import (
 
 
 _DIRECT_COMMANDS = {
+    "/我的称号", "/佩戴称号", "/装备称号", "/编辑称号", "/荣誉榜", "/荣誉历史",
     "/报数", "/发红包", "/抢红包", "/余额", "/我的物品", "/我",
     "/帮助", "/当前游戏", "/我的档案", "/我的部门人数", "/打卡",
     "/编辑档案", "/编辑档案形象", "/商店", "/购买",
@@ -30,13 +33,17 @@ _DIRECT_COMMANDS = {
     "/事件投票", "/事件投票情况",
     "/删除黑历史",
     "/下一页",
+    "/看骰", "/我的罚款",
+    "/设置性别", "/修改性别",
 }
 _RANDOM_EVENT_INDEPENDENT_COMMANDS = {
-    "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏",
+    "/我的称号", "/佩戴称号", "/装备称号", "/编辑称号", "/荣誉榜", "/荣誉历史",
+    "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏", "/随礼",
     "/随机事件时间表", "/使用", "/选择", "/下一页", "/确认优选投稿",
-    "/确认广告位",
-    "/取消使用",
+    "/确认广告位", "/取消使用",
 }
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class CommandHandler(Protocol):
@@ -87,6 +94,7 @@ class CoreService:
         self._command_handler = command_handler or NoopCommandHandler()
         self._submission_handler = RandomEventSubmissionHandler(repository)
         self._cover_image_validator = cover_image_validator
+        self._chat_drop_last_judged: dict[str, datetime] = {}
 
     def receive_inbound(self, message: InboundMessage) -> ReceiveResult:
         with self._repository.transaction():
@@ -112,6 +120,15 @@ class CoreService:
             )
             if not inserted:
                 return ReceiveResult(stored.id, False)
+            if message.content_type == "system":
+                # 平台入群系统消息：只做拉新归因，不进指令/游戏/水群逻辑，也不回复
+                try:
+                    self._repository.record_referral_from_system(
+                        message, message.received_at
+                    )
+                except Exception:
+                    _LOGGER.exception("referral attribution failed")
+                return ReceiveResult(stored.id, True)
             command = command_parts[0] if command_parts else ""
             if command in SUBMISSION_COMMANDS:
                 self._repository.ensure_command_definitions()
@@ -220,7 +237,7 @@ class CoreService:
                         performance_state == "performing" and command == "/end"
                     ) or (
                         performance_state == "tipping" and command == "/打赏"
-                    )
+                    ) or command in {"/我的称号", "/佩戴称号", "/装备称号", "/编辑称号", "/荣誉榜", "/荣誉历史"}
                     if allowed_command:
                         performance_reply = self._command_handler.handle(message)
                         self._enqueue_replies(
@@ -372,6 +389,18 @@ class CoreService:
                 message.sender_platform_id,
                 None if group_context is None else group_context.group_chat_id,
             )
+            if (
+                group_context is not None
+                and event_message_status == "none"
+                and not had_active_game_context
+                and not message.content.lstrip().startswith("/")
+                and self._chat_drop_due(message)
+            ):
+                self._repository.grant_chat_drop_allowance(
+                    message.sender_platform_id,
+                    message.received_at,
+                    chatroom_id=group_context.chatroom_id,
+                )
             if reply is None:
                 reply = self._command_handler.handle(message)
             if isinstance(reply, list):
@@ -481,6 +510,21 @@ class CoreService:
                     content_type=reply.content_type,
                 )
             return ReceiveResult(stored.id, True)
+
+    def _chat_drop_due(self, message: InboundMessage) -> bool:
+        """摸鱼吃瓜部水群掉落判定：同人冷却秒数后台可设，0 为不冷却。"""
+        sender = message.sender_platform_id
+        received_at = message.received_at
+        cooldown = self._repository.chat_drop_cooldown_seconds()
+        if cooldown > 0:
+            last = self._chat_drop_last_judged.get(sender)
+            if (
+                last is not None
+                and (received_at - last).total_seconds() < cooldown
+            ):
+                return False
+            self._chat_drop_last_judged[sender] = received_at
+        return self._repository.roll_chat_drop()
 
     @staticmethod
     def _adult_card_scene_reply(result):

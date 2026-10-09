@@ -37,6 +37,8 @@ class InboundMessage:
     image_alt: str | None = None
     image_width: int | None = None
     image_height: int | None = None
+    # 平台系统消息附带的解析结果（worker 填充，core 消费），如入群归因
+    metadata: dict | None = None
 
 
 @dataclass(frozen=True)

@@ -5,6 +5,12 @@ import websockets
 
 
 class AdminCorePort(Protocol):
+    def honor_get(self, resource: str, params: dict | None = None) -> dict: ...
+
+    def honor_mutate(self, resource: str, payload: dict, method: str = "POST") -> dict: ...
+
+    def employee_honors(self, platform_id: str) -> dict: ...
+
     def status(self) -> dict: ...
 
     def list_group_chats(self, include_deleted: bool = False) -> list[dict]: ...
@@ -58,6 +64,12 @@ class AdminCorePort(Protocol):
     def create_game_item(self, item: dict) -> dict: ...
 
     def update_game_item(self, public_number: int, item: dict) -> dict: ...
+
+    def get_shop_catalog(self, include_deleted: bool = False) -> dict: ...
+
+    def preview_shop_changes(self, payload: dict) -> dict: ...
+
+    def confirm_shop_changes(self, batch_id: str, payload: dict) -> dict: ...
 
     def get_shop_activity(self, limit: int = 100) -> dict: ...
 
@@ -255,6 +267,45 @@ class AdminCorePort(Protocol):
     def get_hide_and_seek_settings(self) -> dict: ...
 
     def set_hide_and_seek_settings(self, settings: dict) -> dict: ...
+    def get_birthday_settings(self) -> dict: ...
+    def set_birthday_settings(self, settings: dict) -> dict: ...
+    def list_birthday_members(self) -> list[dict]: ...
+    def greet_birthday(self, payload: dict) -> dict: ...
+    def set_group_birthdays(self, group_id: str, payload: dict) -> dict: ...
+
+    def integration_match(self, payload: dict) -> dict: ...
+
+    def integration_balance(self, platform_id: str) -> dict: ...
+
+    def integration_game_quota(self, platform_id: str) -> dict: ...
+
+    def integration_grant(self, payload: dict) -> dict: ...
+
+    def integration_deduct(self, payload: dict) -> dict: ...
+
+    def get_discipline_fine_settings(self) -> dict: ...
+
+    def set_discipline_fine_settings(self, settings: dict) -> dict: ...
+
+    def get_department_allowance_settings(self) -> dict: ...
+
+    def set_department_allowance_settings(self, settings: dict) -> dict: ...
+
+    def get_liar_dice_settings(self) -> dict: ...
+
+    def set_liar_dice_settings(self, settings: dict) -> dict: ...
+
+    def get_truth_trade_settings(self) -> dict: ...
+
+    def set_truth_trade_settings(self, settings: dict) -> dict: ...
+
+    def get_estrus_settings(self) -> dict: ...
+
+    def set_estrus_settings(self, settings: dict) -> dict: ...
+
+    def list_discipline_fine_records(self, page: int, page_size: int) -> dict: ...
+
+    def revoke_discipline_fine(self, record_id: str) -> dict: ...
 
     def get_memory_assessment_settings(self) -> dict: ...
 
@@ -336,6 +387,21 @@ class AdminCorePort(Protocol):
 
 
 class CoreClient:
+    def honor_get(self, resource: str, params: dict | None = None) -> dict:
+        response = self._client.get(f"/internal/game/honors/{resource}", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def honor_mutate(self, resource: str, payload: dict, method: str = "POST") -> dict:
+        response = self._client.request(method, f"/internal/game/honors/{resource}", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def employee_honors(self, platform_id: str) -> dict:
+        from urllib.parse import quote
+
+        return self._get(f"/internal/game/users/{quote(platform_id, safe='')}/honors")
+
     def __init__(
         self,
         base_url: str,
@@ -474,6 +540,19 @@ class CoreClient:
         response = self._client.patch(
             f"/internal/game/items/{public_number}", json=item
         )
+        response.raise_for_status()
+        return response.json()
+
+    def get_shop_catalog(self, include_deleted: bool = False) -> dict:
+        return self._get("/internal/game/shop/catalog", params={"include_deleted": include_deleted})
+
+    def preview_shop_changes(self, payload: dict) -> dict:
+        response = self._client.post("/internal/game/shop/changes/preview", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def confirm_shop_changes(self, batch_id: str, payload: dict) -> dict:
+        response = self._client.post(f"/internal/game/shop/changes/{batch_id}/confirm", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -909,6 +988,115 @@ class CoreClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def get_birthday_settings(self) -> dict:
+        return self._get("/internal/game/birthday/settings")
+
+    def set_birthday_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/birthday/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def list_birthday_members(self) -> list[dict]:
+        return self._get("/internal/game/birthday/members")
+
+    def greet_birthday(self, payload: dict) -> dict:
+        response = self._client.post("/internal/game/birthday/greet", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def set_group_birthdays(self, group_id: str, payload: dict) -> dict:
+        response = self._client.patch(
+            f"/internal/group-chats/{group_id}", json=payload
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def integration_match(self, payload: dict) -> dict:
+        return self._post("/internal/integration/users/match", payload)
+
+    def integration_balance(self, platform_id: str) -> dict:
+        return self._get(
+            f"/internal/integration/users/{platform_id}/balance"
+        )
+
+    def integration_game_quota(self, platform_id: str) -> dict:
+        return self._get(
+            f"/internal/integration/users/{platform_id}/game-quota"
+        )
+
+    def integration_grant(self, payload: dict) -> dict:
+        return self._post("/internal/integration/coins/grant", payload)
+
+    def integration_deduct(self, payload: dict) -> dict:
+        return self._post("/internal/integration/coins/deduct", payload)
+
+    def get_discipline_fine_settings(self) -> dict:
+        return self._get("/internal/game/discipline-fine/settings")
+
+    def set_discipline_fine_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/discipline-fine/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def list_discipline_fine_records(
+        self, page: int, page_size: int
+    ) -> dict:
+        return self._get(
+            f"/internal/game/discipline-fine/records?page={page}&page_size={page_size}"
+        )
+
+    def revoke_discipline_fine(self, record_id: str) -> dict:
+        response = self._client.post(
+            f"/internal/game/discipline-fine/records/{record_id}/revoke"
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_department_allowance_settings(self) -> dict:
+        return self._get("/internal/game/department-allowances/settings")
+
+    def set_department_allowance_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/department-allowances/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_liar_dice_settings(self) -> dict:
+        return self._get("/internal/game/liar-dice/settings")
+
+    def set_liar_dice_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/liar-dice/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_truth_trade_settings(self) -> dict:
+        return self._get("/internal/game/truth-trade/settings")
+
+    def set_truth_trade_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/truth-trade/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_estrus_settings(self) -> dict:
+        return self._get("/internal/game/estrus/settings")
+
+    def set_estrus_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/estrus/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
 
     def get_hide_and_seek_settings(self) -> dict:
         return self._get("/internal/game/hide-and-seek/settings")

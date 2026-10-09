@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta
 from math import ceil
 from pathlib import Path
@@ -130,8 +131,11 @@ class BrowserWorker:
         self._main_account_cooldown_until = 0.0
         self._paused_messages: list[InboundMessage] = []
         self._paused_messages_lock = Lock()
+        self._pending_referrals: list[InboundMessage] = []
+        self._pending_referrals_lock = Lock()
         self._group_targets: tuple[GroupChatTarget, ...] = ()
         self._next_group_target_sync_at: datetime | None = None
+        self._next_gender_sync_at: datetime | None = None
         self._disabled_group_updates: list[GroupChatRuntimeUpdate] = []
         self._group_connected_at: dict[str, datetime] = {}
         self._group_last_inbound_at: dict[str, datetime] = {}
@@ -220,9 +224,13 @@ class BrowserWorker:
                 self._queue_inbound(message)
                 self._seen_message_ids.add(message.platform_message_id)
 
+        self._process_pending_referrals()
+
         self._run_daily_jobs(now)
 
         self._process_platform_nickname_refresh(gateway)
+
+        self._sync_platform_genders(gateway)
 
         recall = self._core.claim_outbound_recall(
             self._worker_id, self._clock(), self._lease_seconds
@@ -271,6 +279,31 @@ class BrowserWorker:
         except Exception:
             _LOGGER.warning("platform nickname refresh failed", exc_info=True)
 
+    def _sync_platform_genders(self, gateway: ChatGateway) -> None:
+        """平台性别回填（每 6 小时一次）：getMembers gender → core，
+        core 只回填 users.gender='unknown'，显式 /设置性别 优先。"""
+        now = self._clock()
+        if self._next_gender_sync_at is not None and now < self._next_gender_sync_at:
+            return
+        # 先拨快节流再尝试：平台故障时不逐轮重试
+        self._next_gender_sync_at = now + timedelta(hours=6)
+        genders: dict[str, str] = {}
+        for target in self._group_targets:
+            try:
+                found = gateway.member_genders(target.chatroom_id)
+            except Exception:
+                _LOGGER.exception(
+                    "member gender lookup failed chatroom=%s", target.chatroom_id
+                )
+                continue
+            genders.update(found)
+        if not genders:
+            return
+        try:
+            self._core.sync_platform_genders(genders)
+        except Exception:
+            _LOGGER.exception("platform gender sync failed")
+
     def _process_profile_image_upload(self, gateway: ChatGateway) -> None:
         claim = self._core.claim_profile_image_upload(
             self._worker_id, self._clock(), self._lease_seconds
@@ -317,11 +350,78 @@ class BrowserWorker:
         )
 
     def _queue_inbound(self, message: InboundMessage) -> None:
+        if self._needs_referral_resolution(message):
+            # 名字→uid 解析要碰 Playwright（member_directory 走 page.evaluate），
+            # 而消息回调运行在 socket.io 线程——sync API 跨线程会报
+            # "Cannot switch to a different thread"，先挂起等主循环线程解析。
+            with self._pending_referrals_lock:
+                self._pending_referrals.append(message)
+            return
+        self._enqueue_resolved(message)
+
+    @staticmethod
+    def _needs_referral_resolution(message: InboundMessage) -> bool:
+        metadata = message.metadata if isinstance(message.metadata, dict) else None
+        if message.content_type != "system" or not isinstance(metadata, dict):
+            return False
+        referral = metadata.get("referral")
+        return isinstance(referral, dict) and not metadata.get("referral_resolved")
+
+    def _enqueue_resolved(self, message: InboundMessage) -> None:
         if not self._listening:
             with self._paused_messages_lock:
                 self._paused_messages.append(message)
             return
         self._inbound_executor.submit(self._dispatch_inbound, message)
+
+    def _process_pending_referrals(self) -> None:
+        """主循环线程（Playwright 线程）把入群系统消息的名字解析成平台 uid。"""
+        with self._pending_referrals_lock:
+            pending, self._pending_referrals = self._pending_referrals, []
+        if not pending:
+            return
+        gateway = self._gateway
+        for message in pending:
+            resolved_message = message
+            if gateway is not None and message.chatroom_id is not None:
+                referral = dict(message.metadata["referral"])
+                directory = self._member_directory_for(
+                    gateway, message.chatroom_id, referral
+                )
+                if directory is not None:
+                    newcomer_name = str(referral.get("newcomer") or "").strip()
+                    inviter_name = str(referral.get("inviter") or "").strip()
+                    if newcomer_name:
+                        referral["newcomer_id"] = directory.get(newcomer_name)
+                    if inviter_name:
+                        referral["inviter_id"] = directory.get(inviter_name)
+                    resolved_message = replace(
+                        message,
+                        metadata={"referral": referral, "referral_resolved": True},
+                    )
+            self._enqueue_resolved(resolved_message)
+
+    @staticmethod
+    def _member_directory_for(gateway, chatroom_id: str, referral: dict):
+        names = [
+            name
+            for key in ("newcomer", "inviter")
+            for name in [str(referral.get(key) or "").strip()]
+            if name
+        ]
+        try:
+            directory = gateway.member_directory(chatroom_id)
+        except Exception:
+            _LOGGER.exception("referral member directory lookup failed")
+            return None
+        if all(name in directory for name in names):
+            return directory
+        # 新人刚进群可能不在 60s TTL 缓存的成员表里，强制刷新一次再试
+        try:
+            return gateway.member_directory(chatroom_id, force_refresh=True)
+        except Exception:
+            _LOGGER.exception("referral member directory refresh failed")
+            return directory
 
     def _flush_paused_messages(self) -> None:
         if not self._listening:
@@ -329,7 +429,7 @@ class BrowserWorker:
         with self._paused_messages_lock:
             messages, self._paused_messages = self._paused_messages, []
         for message in messages:
-            self._inbound_executor.submit(self._dispatch_inbound, message)
+            self._queue_inbound(message)
 
     def _dispatch_inbound(self, message: InboundMessage) -> None:
         if message.source_type == "group" and message.chatroom_id is not None:

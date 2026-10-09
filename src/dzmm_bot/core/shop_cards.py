@@ -185,11 +185,46 @@ def adult_item(item: SystemShopItem) -> bool:
     return item.effect_type.startswith("adult_")
 
 
-def purchase_category(item: SystemShopItem) -> str | None:
+CATEGORY_GIFT = "礼物赠送"
+CATEGORY_SCRATCH = "刮刮乐"
+CATEGORY_FUNCTION = "功能道具"
+CATEGORY_ADULT = "成人内容"
+CATEGORY_COLLECTION = "收藏"
+CATEGORY_OTHER = "其他"
+
+# /商店 分区展示的固定组序，未分类商品归入 CATEGORY_OTHER
+CATEGORY_DISPLAY_ORDER = (
+    CATEGORY_GIFT,
+    CATEGORY_SCRATCH,
+    CATEGORY_FUNCTION,
+    CATEGORY_ADULT,
+)
+
+_GIFT_DAILY_LIMIT = 2
+_SCRATCH_DAILY_LIMIT = 3
+
+
+def item_category(item: SystemShopItem) -> str | None:
+    """系统商品的默认分类，与迁移 80 的回填值保持一致。"""
     if item.effect_type == "gift":
-        return "gift"
+        return CATEGORY_GIFT
     if item.effect_type == "scratch":
-        return "scratch"
+        return CATEGORY_SCRATCH
     if item.effect_type == "event_ad_slot":
         return "event_ad_slot"
+    if item.effect_type in ("ai_quota", "multiplayer_quota"):
+        return CATEGORY_FUNCTION
+    if item.effect_type.startswith("adult_"):
+        return CATEGORY_ADULT
+    return None
+
+
+def item_daily_purchase_limit(item: SystemShopItem) -> int | None:
+    """系统商品的默认每日限购次数，None 表示不限。"""
+    if item.effect_type == "gift":
+        return _GIFT_DAILY_LIMIT
+    if item.effect_type == "scratch":
+        return _SCRATCH_DAILY_LIMIT
+    if item.effect_type == "event_ad_slot":
+        return 1
     return None

@@ -93,6 +93,8 @@ class CorePort(Protocol):
         self, platform_id: str, nickname: str | None, now: datetime
     ) -> bool: ...
 
+    def sync_platform_genders(self, genders: dict[str, str]) -> None: ...
+
     def group_chat_targets(self) -> tuple[GroupChatTarget, ...]: ...
 
     def sync_group_chat_runtime(
@@ -243,6 +245,10 @@ class CoreClient:
                     "image_height": message.image_height,
                 }
             )
+        if message.content_type not in ("text", "image"):
+            payload["content_type"] = message.content_type
+        if message.metadata is not None:
+            payload["metadata"] = message.metadata
         if reference is not None:
             reference_payload = {
                 "message_id": reference.message_id,
@@ -305,6 +311,9 @@ class CoreClient:
             {"nickname": nickname, "now": now.isoformat()},
         )
         return bool(data["accepted"])
+
+    def sync_platform_genders(self, genders: dict[str, str]) -> None:
+        self._post("/internal/users/platform-gender-sync", {"genders": genders})
 
     def group_chat_targets(self) -> tuple[GroupChatTarget, ...]:
         return tuple(

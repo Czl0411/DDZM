@@ -34,7 +34,8 @@ class InboundRequest(ApiModel):
     source_type: Literal["group", "direct"] = "group"
     chatroom_id: str | None = Field(default=None, max_length=255)
     reference: MessageReferenceRequest | None = None
-    content_type: Literal["text", "image"] = "text"
+    content_type: Literal["text", "image", "system"] = "text"
+    metadata: dict | None = None
     image_url: str | None = Field(default=None, max_length=4096)
     image_alt: str | None = Field(default=None, max_length=512)
     image_width: int | None = Field(default=None, ge=1)
@@ -64,6 +65,10 @@ class DirectChatSyncRequest(ApiModel):
     now: AwareDatetime
 
 
+class PlatformGenderSyncRequest(ApiModel):
+    genders: dict[str, str] = Field(default_factory=dict)
+
+
 class DirectInboundRoomsResponse(ApiModel):
     chatroom_ids: list[str]
 
@@ -90,6 +95,7 @@ class GroupChatResponse(ApiModel):
     announcements_enabled: bool
     adult_shop_enabled: bool
     performances_enabled: bool
+    birthdays_enabled: bool
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
@@ -108,6 +114,7 @@ class CreateGroupChatRequest(ApiModel):
     announcements_enabled: bool = True
     adult_shop_enabled: bool = False
     performances_enabled: bool = False
+    birthdays_enabled: bool = True
     now: AwareDatetime
 
 
@@ -121,6 +128,7 @@ class UpdateGroupChatRequest(ApiModel):
     announcements_enabled: bool | None = None
     adult_shop_enabled: bool | None = None
     performances_enabled: bool | None = None
+    birthdays_enabled: bool | None = None
     now: AwareDatetime
 
 
@@ -385,6 +393,7 @@ class SetCommandTemplateRequest(ApiModel):
 
 
 class UserResponse(ApiModel):
+    honor_title: str | None = None
     platform_id: str
     display_name: str
     platform_nickname: str | None
@@ -464,11 +473,13 @@ class DepartmentResponse(ApiModel):
     description: str
     is_default: bool
     enabled: bool
+    allowance_kind: str | None = None
 
 
 class CreateDepartmentRequest(ApiModel):
     name: str = Field(min_length=1, max_length=64)
     description: str = Field(default="", max_length=2000)
+    allowance_kind: str | None = None
 
 
 class UpdateDepartmentRequest(CreateDepartmentRequest):
@@ -551,6 +562,8 @@ class ItemResponse(ApiModel):
     scratch_reward_max: int | None
     minimum_rank_order: int | None
     enabled: bool
+    category: str | None = None
+    daily_purchase_limit: int | None = None
 
 
 class PaginatedUsersResponse(ApiModel):
@@ -573,7 +586,9 @@ class CreateItemRequest(ApiModel):
     name: str = Field(min_length=1, max_length=64)
     description: str = Field(min_length=1, max_length=200)
     price: int = Field(ge=0, le=999)
-    stock: int = Field(ge=0, le=999)
+    stock: int = Field(ge=0, le=99999)
+    category: str | None = Field(default=None, max_length=32)
+    daily_purchase_limit: int | None = Field(default=None, ge=0, le=99)
 
 
 class UpdateItemRequest(ApiModel):
@@ -584,6 +599,9 @@ class UpdateItemRequest(ApiModel):
     stock: int = Field(ge=0, le=99999)
     scratch_reward_min: int | None = Field(default=None, ge=0, le=99999)
     scratch_reward_max: int | None = Field(default=None, ge=0, le=99999)
+    price: int | None = Field(default=None, ge=0, le=999)
+    category: str | None = Field(default=None, max_length=32)
+    daily_purchase_limit: int | None = Field(default=None, ge=0, le=99)
 
 
 class ShopPurchaseLogResponse(ApiModel):
@@ -1403,6 +1421,10 @@ class GameplaySummaryResponse(ApiModel):
     mode: str | None = None
     round_number: int = 0
     maximum_rounds: int = 0
+    current_call: dict[str, int] | None = None
+    current_speaker_name: str | None = None
+    responded_count: int = 0
+    expected_response_count: int = 0
 
 
 class GameplaySummariesResponse(ApiModel):
@@ -1489,6 +1511,56 @@ class MemoryAssessmentSettingsResponse(ApiModel):
 
 class SetMemoryAssessmentSettingsRequest(MemoryAssessmentSettingsResponse):
     pass
+
+
+
+
+class BirthdaySettingsResponse(ApiModel):
+    enabled: bool
+    greet_times: list[str] = Field(min_length=1)
+    preview_enabled: bool
+    preview_time: str = Field(min_length=4, max_length=5)
+    gift_amount: int = Field(ge=0, le=999)
+    same_day_backfill: bool
+    edit_limit_per_year: int = Field(ge=0, le=12)
+    checkin_multiplier: int = Field(ge=1, le=10)
+    shop_discount_percent: int = Field(ge=1, le=100)
+    lottery_free_tickets: int = Field(ge=0, le=20)
+    event_reward_bonus_percent: int = Field(ge=0, le=500)
+    tips_enabled: bool
+    tip_max_amount: int = Field(ge=1, le=999)
+    tip_window_minutes: int = Field(ge=0, le=1440)
+    anniversary_enabled: bool
+    greet_template: str = Field(min_length=1, max_length=300)
+    preview_template: str = Field(min_length=1, max_length=300)
+    tips_summary_template: str = Field(min_length=1, max_length=300)
+
+
+class SetBirthdaySettingsRequest(BirthdaySettingsResponse):
+    pass
+
+
+class BirthdayMemberResponse(ApiModel):
+    platform_id: str
+    display_name: str
+    employee_number: int
+    month: int | None
+    day: int | None
+    visibility: str | None
+    is_today: bool
+
+
+class BirthdayGreetRequest(ApiModel):
+    platform_id: str = Field(min_length=1, max_length=255)
+    dry_run: bool = True
+    now: AwareDatetime
+
+
+class BirthdayGreetResponse(ApiModel):
+    text: str
+    dry_run: bool
+    delivered: bool
+
 
 
 class UndercoverRoleRuleModel(ApiModel):
@@ -1786,3 +1858,123 @@ class CompleteWorkerCommandRequest(ApiModel):
     lease_token: UUID
     status: Literal["completed", "failed"]
     now: AwareDatetime
+
+
+class DisciplineFineSettingsResponse(ApiModel):
+    enabled: bool
+    amount: int = Field(ge=1, le=999)
+    kickback_percent: int = Field(ge=0, le=100)
+    rank_quotas: dict[str, int] = Field(default_factory=dict)
+    cooldown_minutes: int = Field(ge=0, le=1440)
+    target_daily_limit: int = Field(ge=0, le=999)
+
+
+class SetDisciplineFineSettingsRequest(DisciplineFineSettingsResponse):
+    pass
+
+
+class DisciplineFineRecordResponse(ApiModel):
+    id: UUID
+    issuer_display_name: str
+    target_display_name: str
+    group_name: str | None = None
+    amount: int
+    kickback: int
+    reason: str | None = None
+    via_reply: bool
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+
+class PaginatedDisciplineFineRecordsResponse(ApiModel):
+    items: list[DisciplineFineRecordResponse]
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1)
+
+
+class DisciplineFineRevokeResponse(ApiModel):
+    status: Literal["revoked", "not_found", "already_revoked"]
+
+
+class DepartmentAllowanceSettingsResponse(ApiModel):
+    checkin_amount: int = Field(ge=0, le=999)
+    event_amount: int = Field(ge=0, le=999)
+    game_host_amount: int = Field(ge=0, le=999)
+    game_play_amount: int = Field(ge=0, le=999)
+    game_play_step: int = Field(ge=1, le=999)
+    submission_amount: int = Field(ge=0, le=999)
+    chat_drop_percent: int = Field(ge=0, le=100)
+    chat_drop_amount: int = Field(ge=0, le=999)
+    chat_drop_cooldown_seconds: int = Field(ge=0, le=86400)
+    referral_amount: int = Field(ge=0, le=999)
+    daily_cap: int = Field(ge=1, le=9999)
+
+
+class SetDepartmentAllowanceSettingsRequest(DepartmentAllowanceSettingsResponse):
+    pass
+
+
+class LiarDiceSettingsResponse(ApiModel):
+    turn_seconds: int = Field(ge=30, le=600)
+    enabled: bool = True
+    min_players: int = Field(default=2, ge=2, le=10)
+
+
+class SetLiarDiceSettingsRequest(LiarDiceSettingsResponse):
+    enabled: bool | None = None
+    min_players: int | None = Field(default=None, ge=2, le=10)
+
+
+class TruthTradeSettingsResponse(ApiModel):
+    question_timeout_seconds: int = Field(ge=30, le=3600)
+    answer_timeout_seconds: int = Field(ge=30, le=3600)
+    min_players: int = Field(ge=2, le=10)
+    enabled: bool = True
+
+
+class SetTruthTradeSettingsRequest(TruthTradeSettingsResponse):
+    enabled: bool | None = None
+
+
+class EstrusSettingsResponse(ApiModel):
+    enabled: bool
+    climax_threshold: int = Field(ge=10, le=1000)
+    heat_p0: int = Field(ge=0, le=100)
+    heat_p1: int = Field(ge=0, le=100)
+    heat_p2: int = Field(ge=0, le=100)
+    coin_p0: int = Field(ge=0, le=100)
+    coin_p1: int = Field(ge=0, le=100)
+    coin_p2: int = Field(ge=0, le=100)
+    chop_cooldown_seconds: int = Field(ge=0, le=86400)
+    chopper_rank_quotas: dict[str, int] = Field(default_factory=dict)
+    combo_chop_enabled: bool = False
+    g_spot_percent: int = Field(default=10, ge=0, le=100)
+    g_spot_heat_bonus: int = Field(default=10, ge=0, le=1000)
+    chopper_coin_p0: int = Field(default=50, ge=0, le=100)
+    chopper_coin_p1: int = Field(default=30, ge=0, le=100)
+    chopper_coin_p2: int = Field(default=20, ge=0, le=100)
+    coins_linked: bool = True
+    target_daily_limit: int = Field(default=0, ge=0, le=999)
+    chopper_fixed_coins: int | None = Field(default=None, ge=0, le=99999)
+    target_fixed_coins: int | None = Field(default=None, ge=0, le=99999)
+
+
+class SetEstrusSettingsRequest(EstrusSettingsResponse):
+    pass
+
+
+class IntegrationMatchRequest(ApiModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    platform_id: str | None = Field(default=None, min_length=1, max_length=255)
+    employee_number: str | None = Field(
+        default=None, min_length=1, max_length=16
+    )
+
+
+class IntegrationCoinRequest(ApiModel):
+    platform_id: str = Field(min_length=1, max_length=255)
+    amount: int = Field(ge=1, le=10000)
+    reason: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    allow_partial: bool = False

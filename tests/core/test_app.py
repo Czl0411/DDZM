@@ -105,6 +105,50 @@ def test_internal_inbound_is_idempotent(client, headers, payload):
     assert second.json()["message_id"] == first.json()["message_id"]
 
 
+def test_internal_inbound_preserves_system_referral_metadata(
+    app_context, client, headers
+):
+    """Fails if the /internal/inbound endpoint drops system referral metadata."""
+    response = client.post(
+        "/internal/inbound",
+        headers=headers,
+        json={
+            "platform_message_id": "system-join-1",
+            "sender_platform_id": "platform-system",
+            "content": "小小糯 通过 甲 的链接加入了群聊",
+            "received_at": NOW.isoformat(),
+            "source_type": "group",
+            "chatroom_id": "chatroom-main",
+            "content_type": "system",
+            "metadata": {
+                "referral": {
+                    "newcomer": "小小糯",
+                    "inviter": "甲",
+                    "newcomer_id": "platform-newcomer",
+                    "inviter_id": "platform-inviter",
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+
+    from dzmm_bot.core.schema import ReferralRecord
+
+    with app_context.session_factory() as session:
+        row = session.scalar(
+            select(ReferralRecord).where(
+                ReferralRecord.platform_message_id == "system-join-1"
+            )
+        )
+    assert row is not None
+    assert row.newcomer_name == "小小糯"
+    assert row.newcomer_platform_id == "platform-newcomer"
+    assert row.inviter_platform_id == "platform-inviter"
+    assert row.amount == 0  # 邀请人平台 uid 未注册员工：留痕不发币
+
+
 def test_game_users_expose_platform_nickname(app_context, headers):
     app_context.repository.create_user("nickname-api", "公司名称", NOW, 0)
     app_context.repository.complete_platform_nickname_refresh(
@@ -986,7 +1030,7 @@ def test_company_lottery_end_to_end_from_sale_to_next_round(app_context, headers
     )
     assert any("公司福利发放" in text for text in outbound_texts())
     assert repository.company_lottery_balances()[1] == 5 - 3
-    assert repository.find_user("e2e-3").balance == winner_balance + 1
+    assert repository.find_user("e2e-3").balance == 198 + head_prize.prize_amount + 1
     assert repository.find_user("e2e-2").balance == 196 + 1
 
     # 下一期已生成、尚未泄露号码；它会在次日零点开卖。
@@ -1907,13 +1951,18 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
             "minimum_rank_order": None,
             "unlimited_stock": False,
             "stock": 3,
+            "price": 5,
+            "category": "收藏",
+            "daily_purchase_limit": 2,
         },
     )
     items = client.get("/internal/game/items", headers=headers)
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-            "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证", "/事件投票", "/事件投票情况", "/随机事件时间表", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/投稿", "/我的投稿", "/撤回投稿", "/上一步", "/取消投稿", "/确认取消投稿", "/确认投稿", "/继续添加", "/事件完成", "/修改身份", "/删除身份", "/修改事件", "/删除事件"
+            "/事件投票", "/事件投票情况", "/随机事件时间表", "/q", "/黑历史", "/删除黑历史", "/下一页",
+            "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史",
+            "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/投稿", "/我的投稿", "/撤回投稿", "/上一步", "/取消投稿", "/确认取消投稿", "/确认投稿", "/继续添加", "/事件完成", "/修改身份", "/删除身份", "/修改事件", "/删除事件", "/设置生日", "/我的生日", "/本月生日", "/随礼", "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据", "/真心换真心", "/真心换真心数据", "/问题", "/真心", "/罚款", "/我的罚款", "/我的津贴", "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/人气榜", "/设置性别"
             }
     command_records = {record["command"]: record for record in commands.json()}
     for command in ("/部门人数", "/我的部门人数"):
@@ -1939,6 +1988,8 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
     assert created_item.status_code == 201
     assert updated_item.status_code == 200
     assert updated_item.json()["description"] == "使用后可以安心休息十分钟。"
+    assert updated_item.json()["category"] == "收藏"
+    assert updated_item.json()["daily_purchase_limit"] == 2
     item_page = items.json()
     assert item_page["total"] == 24
     assert item_page["pages"] == 2
@@ -1951,8 +2002,12 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
         "unlimited_stock": False,
         "system_key": None,
         "effect_type": None,
+        "scratch_reward_min": None,
+        "scratch_reward_max": None,
         "minimum_rank_order": None,
         "enabled": True,
+        "category": "收藏",
+        "daily_purchase_limit": 2,
     }
 
 
@@ -2319,6 +2374,274 @@ def test_memory_assessment_settings_are_managed_over_core_api(client, headers):
         "answer_length": 13,
         "reward": 5,
     }
+
+
+@pytest.mark.parametrize("game_type", ["liar_dice", "truth_trade"])
+def test_dice_truth_admin_summary_is_public_and_force_end_is_scoped(app_context, headers, game_type):
+    from dzmm_bot.core.schema import LiarDiceGameRecord, LiarDicePlayerRecord
+
+    repository = app_context.repository
+    repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", NOW)
+    for index in range(3):
+        repository.create_user(f"player-{index}", f"玩家{index}", NOW, 0)
+    created = getattr(repository, f"start_{game_type}")("player-0", NOW)
+    for index in (1, 2):
+        getattr(repository, f"join_{game_type}")(f"player-{index}", NOW)
+    if game_type == "liar_dice":
+        with app_context.session_factory.begin() as session:
+            game = session.get(LiarDiceGameRecord, created.game_id)
+            game.state = "calling"
+            game.round_number = 1
+            game.current_seat = 2
+            game.current_call = {"count": 3, "face": 5}
+            game.turn_deadline = NOW + timedelta(seconds=120)
+            players = session.scalars(select(LiarDicePlayerRecord).where(LiarDicePlayerRecord.game_id == game.id).order_by(LiarDicePlayerRecord.joined_at, LiarDicePlayerRecord.id)).all()
+            for index, player in enumerate(players, 1):
+                player.state = "active"
+                player.seat_number = index
+                player.dice = [6, 6, 6, 6, 6]
+    else:
+        repository.begin_truth_trade("player-0", NOW)
+        repository.ask_truth_trade("player-0", "不要在后台展示的问题", NOW)
+        repository.answer_truth_trade("player-1", "不要在后台展示的回答", NOW)
+    response = app_context.client.get("/internal/gameplay/current", headers=headers)
+    assert response.status_code == 200
+    summary = response.json()["items"][0]
+    assert summary["game_type"] == game_type
+    assert summary["round_number"] == 1
+    assert len(summary["participants"]) == 3
+    assert all(player["number"] is not None and player["state"] == "active" for player in summary["participants"])
+    assert summary["action_deadline"] is not None
+    assert '"dice":' not in response.text
+    assert '"dice_snapshot":' not in response.text
+    assert "不要在后台展示" not in response.text
+    if game_type == "liar_dice":
+        assert summary["current_seat"] == 2
+        assert summary["current_call"] == {"count": 3, "face": 5}
+    else:
+        assert summary["current_speaker_name"] == "玩家0"
+        assert summary["responded_count"] == 1
+        assert summary["expected_response_count"] == 2
+    wrong_group = "00000000-0000-0000-0000-000000000002"
+    wrong = app_context.client.post(f"/internal/gameplay/{wrong_group}/{game_type}/{created.game_id}/force-end", headers=headers)
+    assert wrong.status_code == 409
+    ended = app_context.client.post(f"/internal/gameplay/{PRIMARY_GROUP_CHAT_ID}/{game_type}/{created.game_id}/force-end", headers=headers)
+    assert ended.json() == {"accepted": True}
+    assert app_context.client.get("/internal/gameplay/current", headers=headers).json()["items"] == []
+    repeated = app_context.client.post(f"/internal/gameplay/{PRIMARY_GROUP_CHAT_ID}/{game_type}/{created.game_id}/force-end", headers=headers)
+    assert repeated.status_code == 409
+
+
+@pytest.mark.parametrize("game", ["liar-dice", "truth-trade"])
+@pytest.mark.parametrize("minimum", [1, 11])
+def test_dice_truth_settings_reject_invalid_minimum(client, headers, game, minimum):
+    settings = {"turn_seconds": 120, "enabled": True, "min_players": minimum} if game == "liar-dice" else {"question_timeout_seconds": 300, "answer_timeout_seconds": 600, "enabled": True, "min_players": minimum}
+    assert client.patch(f"/internal/game/{game}/settings", headers=headers, json=settings).status_code == 422
+
+
+def test_liar_dice_settings_are_managed_over_core_api(client, headers):
+    initial = client.get("/internal/game/liar-dice/settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()["turn_seconds"] == 120
+    assert initial.json()["enabled"] is True
+    assert initial.json()["min_players"] == 2
+
+    updated = client.patch(
+        "/internal/game/liar-dice/settings",
+        headers=headers,
+        json={"turn_seconds": 90, "enabled": False, "min_players": 3},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["turn_seconds"] == 90
+    assert updated.json()["enabled"] is False
+    assert updated.json()["min_players"] == 3
+    legacy = client.patch("/internal/game/liar-dice/settings", headers=headers, json={"turn_seconds": 100})
+    assert legacy.json() == {"turn_seconds": 100, "enabled": False, "min_players": 3}
+    assert (
+        client.get("/internal/game/liar-dice/settings", headers=headers).json()[
+            "turn_seconds"
+        ]
+        == 100
+    )
+
+    invalid = client.patch(
+        "/internal/game/liar-dice/settings",
+        headers=headers,
+        json={"turn_seconds": 10},
+    )
+    assert invalid.status_code == 422
+
+
+def test_truth_trade_settings_are_managed_over_core_api(client, headers):
+    initial = client.get("/internal/game/truth-trade/settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json() == {
+        "question_timeout_seconds": 300,
+        "answer_timeout_seconds": 600,
+        "min_players": 2,
+        "enabled": True,
+    }
+
+    updated = client.patch(
+        "/internal/game/truth-trade/settings",
+        headers=headers,
+        json={
+            "question_timeout_seconds": 120,
+            "answer_timeout_seconds": 240,
+            "min_players": 3,
+            "enabled": False,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["question_timeout_seconds"] == 120
+    assert updated.json()["answer_timeout_seconds"] == 240
+    assert updated.json()["min_players"] == 3
+    assert updated.json()["enabled"] is False
+
+    invalid = client.patch(
+        "/internal/game/truth-trade/settings",
+        headers=headers,
+        json={
+            "question_timeout_seconds": 10,
+            "answer_timeout_seconds": 240,
+            "min_players": 3,
+        },
+    )
+    assert invalid.status_code == 422
+
+
+def test_estrus_settings_are_managed_over_core_api(client, headers):
+    initial = client.get("/internal/game/estrus/settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()["enabled"] is True
+    assert initial.json()["climax_threshold"] == 100
+    assert initial.json()["heat_p0"] == 50
+    assert initial.json()["coin_p0"] == 50
+    assert initial.json()["chopper_coin_p0"] == 50
+    assert initial.json()["chopper_coin_p1"] == 30
+    assert initial.json()["chopper_coin_p2"] == 20
+    assert initial.json()["coins_linked"] is True
+    assert initial.json()["target_daily_limit"] == 0
+    assert initial.json()["chopper_fixed_coins"] is None
+    assert initial.json()["target_fixed_coins"] is None
+
+    updated = client.patch(
+        "/internal/game/estrus/settings",
+        headers=headers,
+        json={
+            "enabled": True,
+            "climax_threshold": 200,
+            "heat_p0": 40,
+            "heat_p1": 40,
+            "heat_p2": 20,
+            "coin_p0": 50,
+            "coin_p1": 30,
+            "coin_p2": 20,
+            "chop_cooldown_seconds": 120,
+            "chopper_rank_quotas": {"rank-1": 5},
+            "combo_chop_enabled": True,
+            "g_spot_percent": 20,
+            "g_spot_heat_bonus": 15,
+            "chopper_coin_p0": 10,
+            "chopper_coin_p1": 20,
+            "chopper_coin_p2": 70,
+            "coins_linked": False,
+            "target_daily_limit": 7,
+            "chopper_fixed_coins": 5,
+            "target_fixed_coins": 7,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["climax_threshold"] == 200
+    assert updated.json()["chop_cooldown_seconds"] == 120
+    assert updated.json()["chopper_rank_quotas"] == {"rank-1": 5}
+    assert updated.json()["combo_chop_enabled"] is True
+    assert updated.json()["g_spot_percent"] == 20
+    assert updated.json()["g_spot_heat_bonus"] == 15
+    assert updated.json()["chopper_coin_p0"] == 10
+    assert updated.json()["chopper_coin_p1"] == 20
+    assert updated.json()["chopper_coin_p2"] == 70
+    assert updated.json()["coins_linked"] is False
+    assert updated.json()["target_daily_limit"] == 7
+    assert updated.json()["chopper_fixed_coins"] == 5
+    assert updated.json()["target_fixed_coins"] == 7
+    assert client.get("/internal/game/estrus/settings", headers=headers).json() == updated.json()
+
+    bad_sum = client.patch(
+        "/internal/game/estrus/settings",
+        headers=headers,
+        json={
+            "enabled": True,
+            "climax_threshold": 100,
+            "heat_p0": 10,
+            "heat_p1": 10,
+            "heat_p2": 10,
+            "coin_p0": 50,
+            "coin_p1": 30,
+            "coin_p2": 20,
+            "chop_cooldown_seconds": 0,
+        },
+    )
+    assert bad_sum.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("chopper_coin_p0", -1),
+        ("chopper_coin_p1", 101),
+        ("chopper_coin_p2", 21),
+        ("g_spot_percent", -1),
+        ("g_spot_percent", 101),
+        ("g_spot_heat_bonus", 1001),
+        ("target_daily_limit", -1),
+        ("target_daily_limit", 1000),
+        ("coins_linked", "invalid"),
+        ("chopper_fixed_coins", -1),
+        ("chopper_fixed_coins", 100000),
+        ("target_fixed_coins", -1),
+        ("target_fixed_coins", 100000),
+        ("chopper_fixed_coins", 1.5),
+        ("target_fixed_coins", 1.5),
+    ],
+)
+def test_estrus_settings_reject_invalid_deductions_and_target_limits(client, headers, field, value):
+    initial = client.get("/internal/game/estrus/settings", headers=headers).json()
+
+    response = client.patch(
+        "/internal/game/estrus/settings",
+        headers=headers,
+        json={**initial, field: value},
+    )
+
+    assert response.status_code == 422
+    assert client.get("/internal/game/estrus/settings", headers=headers).json() == initial
+
+
+@pytest.mark.parametrize("amount", [None, 0, 7])
+def test_estrus_fixed_coin_settings_round_trip_without_changing_linkage(client, headers, amount):
+    initial = client.get("/internal/game/estrus/settings", headers=headers).json()
+    payload = {**initial, "chopper_fixed_coins": amount, "target_fixed_coins": amount}
+
+    response = client.patch("/internal/game/estrus/settings", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    assert response.json() == payload
+    assert response.json()["coins_linked"] is True
+    assert client.get("/internal/game/estrus/settings", headers=headers).json() == payload
+
+
+def test_estrus_settings_without_fixed_fields_keep_random_linked_defaults(client, headers):
+    initial = client.get("/internal/game/estrus/settings", headers=headers).json()
+    payload = {
+        key: value for key, value in initial.items()
+        if key not in {"chopper_fixed_coins", "target_fixed_coins"}
+    }
+
+    response = client.patch("/internal/game/estrus/settings", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    assert response.json() == initial
 
 
 def test_daily_jobs_require_the_core_token(client, headers):
@@ -3392,10 +3715,22 @@ def test_trigger_random_event_rejects_active_game_through_internal_api(
     assert repository.list_today_random_event_schedules(NOW)[0].status == "pending"
 
 
+def _enable_random_event_vote(repository):
+    settings = repository.get_random_event_settings()
+    repository.set_random_event_settings(
+        settings.schedule_times,
+        settings.signup_notice_template,
+        settings.signup_timeout_minutes,
+        settings.reminder_interval_minutes,
+        vote_enabled=True,
+    )
+
+
 def test_random_event_vote_report_and_admin_actions(app_context, headers):
     """后台看票型、强制截止、手动指定与作废。"""
     repository = app_context.repository
     client = app_context.client
+    _enable_random_event_vote(repository)
     group = repository.bootstrap_primary_group(
         "https://www.aikda.com/chat?c=event-vote-admin", NOW
     )
@@ -3430,8 +3765,8 @@ def test_random_event_vote_report_and_admin_actions(app_context, headers):
     assert report["status"] == "open"
     assert report["group_name"] == group.name
     assert report["total_votes"] == 2
-    assert [item["position"] for item in report["candidates"]] == [1, 2, 3, 4]
-    assert [item["votes"] for item in report["candidates"]] == [1, 1, 0, 0]
+    assert [item["position"] for item in report["candidates"]] == [1, 2, 3, 4, 5, 6]
+    assert [item["votes"] for item in report["candidates"]] == [1, 1, 0, 0, 0, 0]
     assert report["candidates"][0]["voters"] == ["投票乙"]
     assert report["candidates"][1]["voters"] == ["投票甲"]
     assert report["candidates"][3]["vacant"] is True
@@ -3453,6 +3788,7 @@ def test_random_event_vote_report_and_admin_actions(app_context, headers):
 def test_random_event_vote_can_be_cancelled_from_the_admin(app_context, headers):
     repository = app_context.repository
     client = app_context.client
+    _enable_random_event_vote(repository)
     group = repository.bootstrap_primary_group(
         "https://www.aikda.com/chat?c=event-vote-cancel", NOW
     )
@@ -3482,11 +3818,11 @@ def test_random_event_vote_settings_round_trip(client, headers):
     """七个投票配置项要能从后台读、改、并把越界值挡回去。"""
     path = "/internal/game/random-events/settings"
     initial = client.get(path, headers=headers).json()
-    assert initial["vote_enabled"] is True
+    assert initial["vote_enabled"] is False
     assert initial["vote_close_offset_minutes"] == 10
     assert initial["vote_broadcast_interval_minutes"] == 30
     assert initial["vote_random_candidates"] == 3
-    assert initial["vote_ad_slot_limit"] == 1
+    assert initial["vote_ad_slot_limit"] == 3
     assert initial["vote_fallback_minutes"] == 30
     assert initial["vote_allow_change"] is True
 
@@ -3541,6 +3877,7 @@ def test_random_event_vote_settings_round_trip(client, headers):
 def test_closing_a_vote_is_not_allowed_before_its_deadline(app_context, headers):
     """自动定稿只在截止后发生；后台要提前结束必须显式 force。"""
     repository = app_context.repository
+    _enable_random_event_vote(repository)
     group = repository.bootstrap_primary_group(
         "https://www.aikda.com/chat?c=vote-settings", NOW
     )
@@ -3569,6 +3906,7 @@ def test_random_event_vote_end_to_end(app_context, headers):
 
     repository = app_context.repository
     client = app_context.client
+    _enable_random_event_vote(repository)
     group = repository.bootstrap_primary_group(
         "https://www.aikda.com/chat?c=vote-e2e", NOW
     )
@@ -3623,7 +3961,7 @@ def test_random_event_vote_end_to_end(app_context, headers):
     tick(open_tick)
     opened = "\n".join(outbound())
     assert "【事件投票】" in opened
-    assert "招商中" in opened
+    assert "优选投稿位待定" in opened
     assert "候选甲" in opened or "候选乙" in opened or "候选丙" in opened
 
     # 投票（两个人投同一个候选）
@@ -3656,3 +3994,241 @@ def test_random_event_vote_end_to_end(app_context, headers):
     tick(start_tick)
     assert repository.current_company_lottery_round() is not None
     assert any("报名" in text for text in outbound())
+
+def test_birthday_settings_are_managed_over_core_api(client, headers):
+    initial = client.get("/internal/game/birthday/settings", headers=headers)
+    payload = dict(initial.json())
+    payload.update(
+        {
+            "enabled": True,
+            "greet_times": ["08:30", "18:00"],
+            "preview_enabled": False,
+            "preview_time": "21:00",
+            "gift_amount": 30,
+            "same_day_backfill": False,
+            "edit_limit_per_year": 2,
+            "checkin_multiplier": 3,
+            "shop_discount_percent": 90,
+            "lottery_free_tickets": 2,
+            "event_reward_bonus_percent": 100,
+            "tips_enabled": False,
+            "tip_max_amount": 50,
+            "tip_window_minutes": 30,
+            "anniversary_enabled": False,
+            "greet_template": "生日快乐，{寿星}！",
+            "preview_template": "明天是 {寿星} 的生日。",
+            "tips_summary_template": "{寿星} 收到 {随礼总额} 摸鱼币。",
+        }
+    )
+    updated = client.patch(
+        "/internal/game/birthday/settings", headers=headers, json=payload
+    )
+    rejected = client.patch(
+        "/internal/game/birthday/settings",
+        headers=headers,
+        json={**payload, "shop_discount_percent": 0},
+    )
+
+    assert initial.status_code == 200
+    assert initial.json()["enabled"] is False
+    assert initial.json()["greet_times"] == ["09:00", "12:00", "17:00"]
+    assert initial.json()["gift_amount"] == 20
+    assert initial.json()["lottery_free_tickets"] == 5
+    assert updated.status_code == 200
+    assert updated.json()["greet_times"] == ["08:30", "18:00"]
+    assert updated.json()["shop_discount_percent"] == 90
+    assert rejected.status_code == 422
+
+
+def test_birthday_settings_reject_a_malformed_time(client, headers):
+    initial = client.get("/internal/game/birthday/settings", headers=headers)
+    payload = dict(initial.json())
+    payload["greet_times"] = ["9点"]
+
+    rejected = client.patch(
+        "/internal/game/birthday/settings", headers=headers, json=payload
+    )
+
+    assert rejected.status_code == 422
+
+def test_birthday_members_and_manual_greet_over_core_api(
+    client, headers, app_context
+):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import select
+
+    from dzmm_bot.core.schema import BirthdayGreetingRecord, UserRecord
+
+    repository = app_context.repository
+    now = datetime(2026, 9, 17, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    repository.create_user("birthday-1", "小明", now, 0)
+    repository.create_user("birthday-2", "小红", now, 0)
+    repository.set_employee_birthday("birthday-1", "9-17", now)
+    settings = repository.get_birthday_settings()
+    from dataclasses import replace
+
+    repository.set_birthday_settings(**vars(replace(settings, enabled=True)))
+
+    members = client.get(
+        "/internal/game/birthday/members",
+        headers=headers,
+        params={"now": now.isoformat()},
+    )
+    dry = client.post(
+        "/internal/game/birthday/greet",
+        headers=headers,
+        json={"platform_id": "birthday-1", "dry_run": True, "now": now.isoformat()},
+    )
+    real = client.post(
+        "/internal/game/birthday/greet",
+        headers=headers,
+        json={"platform_id": "birthday-1", "dry_run": False, "now": now.isoformat()},
+    )
+    missing = client.post(
+        "/internal/game/birthday/greet",
+        headers=headers,
+        json={"platform_id": "nobody", "now": now.isoformat()},
+    )
+
+    assert members.status_code == 200
+    rows = {row["display_name"]: row for row in members.json()}
+    assert rows["小明"]["month"] == 9 and rows["小明"]["is_today"] is True
+    assert rows["小红"]["month"] is None
+    assert dry.status_code == 200
+    assert "【生日祝福】" in dry.json()["text"]
+    assert dry.json()["delivered"] is False
+    assert real.status_code == 200
+    assert real.json()["delivered"] is True
+    assert missing.status_code == 404
+    with app_context.session_factory() as session:
+        user_id = session.scalar(
+            select(UserRecord.id).where(UserRecord.platform_id == "birthday-1")
+        )
+        greetings = list(session.scalars(select(BirthdayGreetingRecord)))
+        balance = session.scalar(
+            select(UserRecord.balance).where(UserRecord.id == user_id)
+        )
+    assert balance == 20  # dry-run 没发钱，真发那次发了 20
+    assert len(greetings) == 1
+
+
+def test_the_group_birthday_switch_round_trips_over_the_api(
+    client, headers, app_context
+):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    repository = app_context.repository
+    now = datetime(2026, 9, 17, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    target = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=birthday-switch", now
+    )
+    assert target.birthdays_enabled is True
+
+    updated = repository.update_group_chat(target.id, birthdays_enabled=False, now=now)
+    groups = client.get("/internal/group-chats", headers=headers)
+
+    assert updated.birthdays_enabled is False
+    assert [
+        group["birthdays_enabled"]
+        for group in groups.json()
+        if group["id"] == str(target.id)
+    ] == [False]
+
+def test_birthday_flow_end_to_end(client, headers, app_context):
+    """真实入口串一遍：登记 → 预告 → 祝福（礼金+特权）→ 随礼 → 零点结算。"""
+    from dataclasses import replace
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import select
+
+    from dzmm_bot.core.schema import (
+        BirthdayGreetingRecord,
+        OutboundRecord,
+        UserRecord,
+    )
+
+    repository = app_context.repository
+    repository.list_ranks()
+    beijing = ZoneInfo("Asia/Shanghai")
+    joined = datetime(2024, 2, 10, 12, 0, tzinfo=beijing)
+    morning = datetime(2026, 9, 17, 8, 0, tzinfo=beijing)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=e2e-birthday", morning
+    )
+    repository.create_user("e2e-a", "小明", joined, 100)
+    repository.create_user("e2e-b", "小红", joined, 100)
+    repository.set_birthday_settings(
+        **vars(replace(repository.get_birthday_settings(), enabled=True))
+    )
+
+    def inbound(message_id, platform_id, content, when):
+        return client.post(
+            "/internal/inbound",
+            headers=headers,
+            json={
+                "platform_message_id": message_id,
+                "sender_platform_id": platform_id,
+                "content": content,
+                "received_at": when.isoformat(),
+                "source_type": "group",
+                "chatroom_id": group.chatroom_id,
+            },
+        )
+
+    def tick(when):
+        return client.post(
+            "/internal/daily-jobs/run",
+            headers=headers,
+            json={"now": when.isoformat()},
+        )
+
+    def outbound_texts():
+        with app_context.session_factory() as session:
+            return [
+                record.text
+                for record in session.scalars(
+                    select(OutboundRecord).order_by(OutboundRecord.created_at)
+                )
+            ]
+
+    # 1) 登记生日（走真实入站入口）
+    assert inbound("e2e-register", "e2e-a", "/设置生日 9-17", morning).status_code == 200
+    # 2) 前一晚 20:00 的预告
+    assert tick(datetime(2026, 9, 16, 20, 0, tzinfo=beijing)).status_code == 200
+    # 3) 生日当天 09:00 的祝福
+    assert tick(datetime(2026, 9, 17, 9, 0, tzinfo=beijing)).status_code == 200
+    # 4) 同事随礼（回复寿星的消息即可）
+    assert inbound("e2e-tip", "e2e-b", "/随礼 10", datetime(2026, 9, 17, 9, 30, tzinfo=beijing)).status_code == 200
+    # 5) 寿星当天打卡（双倍）
+    assert inbound("e2e-checkin", "e2e-a", "/打卡", datetime(2026, 9, 17, 10, 0, tzinfo=beijing)).status_code == 200
+    # 6) 过了当天 24:00 结算随礼
+    assert tick(datetime(2026, 9, 18, 0, 0, 5, tzinfo=beijing)).status_code == 200
+    # 7) 再跑一个 tick，确认不重复
+    assert tick(datetime(2026, 9, 18, 0, 0, 6, tzinfo=beijing)).status_code == 200
+
+    texts = outbound_texts()
+    joined_text = "\n".join(texts)
+    assert "【生日预告】" in joined_text and "明天是 小明 的生日" in joined_text
+    assert "【生日祝福】" in joined_text and "生日礼金 20 摸鱼币" in joined_text
+    assert "/随礼 金额" in joined_text
+    assert "已给 小明 随礼 10" in joined_text
+    assert "【生日祝福·随礼】" in joined_text and "1 位同事" in joined_text
+    assert joined_text.count("【生日祝福·随礼】") == 1
+
+    with app_context.session_factory() as session:
+        balances = {
+            user.platform_id: user.balance
+            for user in session.scalars(select(UserRecord))
+        }
+        greeting = session.scalar(select(BirthdayGreetingRecord))
+    assert greeting is not None
+    assert greeting.tips_count == 1 and greeting.tips_total == 10
+    assert greeting.status == "settled"
+    assert greeting.gift_amount == 20
+    # 寿星：礼金 20 + 随礼 10 + 打卡双倍 10 = 140；同事：随礼 -10
+    assert balances["e2e-a"] == 100 + 20 + 10 + 10
+    assert balances["e2e-b"] == 100 - 10

@@ -7,6 +7,10 @@ from zoneinfo import ZoneInfo
 from dzmm_bot.runtime.contracts import InboundMessage
 
 from .group_games import GROUP_GAME_COMMANDS, GROUP_GAME_LABELS
+from .birthday import parse_visibility
+from .honors import honor_award_lines
+from .liar_dice import parse_call
+
 from .company_lottery import (
     ALL_TIERS,
     OrderKind,
@@ -27,12 +31,14 @@ from .memory_guild_match import (
 )
 from .performance import parse_postponement
 from .reply_templates import render_template, template_definition
+from .shop_cards import CATEGORY_DISPLAY_ORDER, CATEGORY_OTHER
 from .schema import PRIMARY_GROUP_CHAT_ID
 from .repository import (
     BlameGameResult,
     _short_author_name,
     CoreRepository,
     EmployeeNameTakenError,
+    _FINE_FEEDBACK_HINT,
     blame_settlement_template_values,
     company_story_novel_resource_id,
     format_employee_number,
@@ -46,7 +52,16 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
-    "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/跳过", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证", "/事件投票", "/事件投票情况",
+    "/事件投票", "/事件投票情况",
+    "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史",
+    "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/跳过", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证",
+    "/设置生日", "/我的生日", "/本月生日",
+    "/随礼",
+    "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据",
+    "/真心换真心", "/真心换真心数据", "/问题", "/真心",
+    "/罚款", "/我的罚款", "/我的津贴",
+    "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/人气榜",
+    "/设置性别", "/修改性别",
 }
 _COMMANDS.add("/随机事件时间表")
 _COMMANDS.add("/q")
@@ -93,9 +108,26 @@ class GroupCommandHandler:
             command = "/摸鱼躲猫猫"
         if command == "/me":
             command = "/我"
+        if command in {"/装备称号", "/编辑称号"}:
+            command = "/佩戴称号"
         if command == "/买彩票":
             command = "/购买彩票"
+        if command in {"/问", "/问吧"}:
+            command = "/问题"
+        if command in {"/回答", "/答"}:
+            command = "/真心"
+        if command == "/罚":
+            command = "/罚款"
+        if command == "/修改性别":
+            command = "/设置性别"
+        if command in {"/今日最受欢迎", "/发情值排名", "/最受欢迎"}:
+            command = "/人气榜"
+        if command == "/我的发情值":
+            command = "/我的凿"
         if command not in _COMMANDS:
+            dice_reply = self._liar_dice_call_step(message, content)
+            if dice_reply is not None:
+                return dice_reply
             return self._company_lottery_draft_step(message, content)
         self._repository.ensure_command_definitions()
         if not self._repository.is_command_enabled(command):
@@ -198,6 +230,8 @@ class GroupCommandHandler:
                 lines.append("发送 /下一页 查看更多。")
             lines.append("发送 /删除黑历史 编号 删除。")
             return "\n".join(lines)
+        if command in {"/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史"}:
+            return self._honors(message, command, content, received_at)
         if command in _LOTTERY_COMMANDS:
             return self._company_lottery(
                 message, command, content, received_at, group_chat_id
@@ -382,6 +416,7 @@ class GroupCommandHandler:
                 "/蹦蹦数字炸弹",
                 "/德州扑克",
                 "/国王游戏",
+                "/大话骰子",
             }
             and self._repository.performance_blocks_new_game(group_chat_id)
         ):
@@ -392,6 +427,7 @@ class GroupCommandHandler:
             and command in {
                 "/发红包", "/摸鱼躲猫猫", "/记忆考核", "/谁是卧底",
                 "/甩锅游戏", "/蹦蹦数字炸弹", "/德州扑克", "/国王游戏",
+                "/大话骰子", "/真心换真心",
             }
         ):
             return self._reply(command, "disabled", received_at)
@@ -437,6 +473,46 @@ class GroupCommandHandler:
             return self._king_game_start(message, received_at, group_chat_id)
         if command == "/国王游戏数据":
             return self._king_game_statistics(message, group_chat_id)
+        if command == "/大话骰子":
+            return self._liar_dice_start(message, received_at, group_chat_id)
+        if command == "/开骰":
+            return self._liar_dice_open(message, received_at, group_chat_id)
+        if command == "/牌局":
+            return self._liar_dice_status(message, received_at, group_chat_id)
+        if command == "/看骰":
+            if message.source_type != "direct":
+                return self._reply("/看骰", "group_only", received_at)
+            return self._liar_dice_private_hands(message)
+        if command == "/大话骰子数据":
+            return self._liar_dice_statistics(message, group_chat_id)
+        if command == "/真心换真心":
+            return self._truth_trade_start(message, received_at, group_chat_id)
+        if command == "/真心换真心数据":
+            return self._truth_trade_statistics(message, group_chat_id)
+        if command == "/问题":
+            return self._truth_trade_ask(message, content, received_at, group_chat_id)
+        if command == "/真心":
+            return self._truth_trade_answer(message, content, received_at, group_chat_id)
+        if command == "/罚款":
+            return self._discipline_fine(message, content, received_at, group_chat_id)
+        if command == "/我的罚款":
+            if message.source_type != "direct":
+                return "只能在私聊中使用 /我的罚款。"
+            return self._my_discipline_fines(message, received_at)
+        if command == "/我的津贴":
+            return self._my_allowances(message.sender_platform_id, received_at)
+        if command == "/凿":
+            return self._estrus_chop(message, content, received_at, group_chat_id)
+        if command == "/允许被凿":
+            return self._set_estrus_opt_out(message, received_at, group_chat_id, False)
+        if command == "/拒绝被凿":
+            return self._set_estrus_opt_out(message, received_at, group_chat_id, True)
+        if command == "/我的凿":
+            return self._my_estrus(message, received_at, group_chat_id)
+        if command == "/人气榜":
+            return self._estrus_popularity(message, received_at, group_chat_id)
+        if command in ("/设置性别", "/修改性别"):
+            return self._set_gender(message, content, received_at)
         if command == "/看牌":
             if message.source_type != "direct":
                 return self._reply("/看牌", "group_only", received_at)
@@ -522,6 +598,10 @@ class GroupCommandHandler:
                 )
             if summary.game_type == "king_game":
                 return self._king_game_begin(message, received_at, group_chat_id)
+            if summary.game_type == "liar_dice":
+                return self._liar_dice_begin(message, received_at, group_chat_id)
+            if summary.game_type == "truth_trade":
+                return self._truth_trade_begin(message, received_at, group_chat_id)
             return self._reply("/开始", "no_current_game", received_at)
         if command == "/报数":
             if message.source_type != "direct":
@@ -638,11 +718,15 @@ class GroupCommandHandler:
                 )
             if summary.game_type == "king_game":
                 return self._king_game_end(message, received_at, group_chat_id)
+            if summary.game_type == "liar_dice":
+                return self._liar_dice_end(message, received_at, group_chat_id)
+            if summary.game_type == "truth_trade":
+                return self._truth_trade_end(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._reply("/结束游戏", "no_current_game", received_at)
         if command == "/打卡":
-            return self._check_in(message.sender_platform_id, received_at)
+            return self._check_in(message.sender_platform_id, received_at, group_chat_id)
         if command == "/余额":
             return self._balance(message.sender_platform_id, received_at)
         if command == "/修改名称":
@@ -655,6 +739,16 @@ class GroupCommandHandler:
             return self._edit_profile_image(message, content, received_at)
         if command == "/我的档案":
             return self._my_profile(message.sender_platform_id, received_at)
+        if command == "/设置生日":
+            return self._set_birthday(
+                message.sender_platform_id, content, received_at
+            )
+        if command == "/我的生日":
+            return self._my_birthday(message.sender_platform_id, received_at)
+        if command == "/本月生日":
+            return self._month_birthdays(received_at)
+        if command == "/随礼":
+            return self._birthday_tip(message, content, received_at)
         if command == "/公司的故事集":
             resource_id = company_story_novel_resource_id(
                 self._repository.get_game_settings().company_story_novel_url
@@ -750,6 +844,10 @@ class GroupCommandHandler:
                 )
             if summary.game_type == "king_game":
                 return self._king_game_join(message, received_at, group_chat_id)
+            if summary.game_type == "liar_dice":
+                return self._liar_dice_join(message, received_at, group_chat_id)
+            if summary.game_type == "truth_trade":
+                return self._truth_trade_join(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._event_join(
@@ -796,6 +894,10 @@ class GroupCommandHandler:
                 )
             if summary.game_type == "king_game":
                 return self._king_game_leave(message, received_at, group_chat_id)
+            if summary.game_type == "liar_dice":
+                return self._liar_dice_leave(message, received_at, group_chat_id)
+            if summary.game_type == "truth_trade":
+                return self._truth_trade_leave(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._event_leave(
@@ -827,6 +929,10 @@ class GroupCommandHandler:
                 return self._king_game_continue(
                     message, received_at, group_chat_id
                 )
+            if summary.game_type == "liar_dice":
+                return self._liar_dice_continue(message, received_at, group_chat_id)
+            if summary.game_type == "truth_trade":
+                return self._truth_trade_continue(message, received_at, group_chat_id)
             if summary.game_type == "conflict":
                 return self._reply("/当前游戏", "conflict", received_at)
             return self._memory_assessment_continue(
@@ -1208,6 +1314,7 @@ class GroupCommandHandler:
             return self._reply("/当前游戏", "conflict", received_at)
         game_name = {
             "king_game": "国王游戏",
+            "liar_dice": "大话骰子",
             "never_have_i_ever": "我有你没有",
             "texas_holdem": "德州扑克",
             "number_bomb": "蹦蹦数字炸弹",
@@ -1217,6 +1324,7 @@ class GroupCommandHandler:
             "memory_single": "记忆考核",
             "memory_guild": "记忆考核公会赛",
             "random_event": "随机事件",
+            "truth_trade": "真心换真心",
         }[summary.game_type]
         if (
             summary.game_type == "number_bomb"
@@ -1248,6 +1356,8 @@ class GroupCommandHandler:
             "free_punishment": "自由惩罚",
             "awaiting_reveal": "等待国王公开",
             "revealed": "等待下一轮",
+            "calling": "叫牌中",
+            "round_end": "回合结束",
         }.get(summary.state, "进行中")
         if (
             summary.game_type == "number_bomb"
@@ -1274,6 +1384,33 @@ class GroupCommandHandler:
                     f"回应：{summary.responded_count}/"
                     f"{summary.expected_response_count}"
                 )
+            if summary.phase_deadline is not None:
+                details.append(
+                    f"截止：{summary.phase_deadline.strftime('%H:%M:%S')}"
+                )
+            if details:
+                state_name = f"{state_name}（{'；'.join(details)}）"
+        if summary.game_type == "truth_trade":
+            state_name = {
+                "asking": "提问轮",
+                "answering": "回答轮",
+                "round_complete": "轮次结束",
+            }.get(summary.state, state_name)
+            details = []
+            if summary.state == "asking" and summary.current_speaker_name:
+                details.append(
+                    f"轮到 {summary.current_speaker_name} 提问，发送 /问题 你的问题"
+                )
+            if summary.state == "answering" and summary.current_speaker_name:
+                details.append(
+                    f"{summary.current_speaker_name} 的问题收集中："
+                    f"{summary.responded_count}/{summary.expected_response_count}"
+                )
+            if summary.state == "round_complete":
+                details.append("发送 /继续 开下一轮")
+            if summary.actor_number is not None:
+                details.append(f"你的编号：{summary.actor_number}号")
+            details.append(f"当前玩家共 {len(summary.participant_names)} 人")
             if summary.phase_deadline is not None:
                 details.append(
                     f"截止：{summary.phase_deadline.strftime('%H:%M:%S')}"
@@ -1623,6 +1760,697 @@ class GroupCommandHandler:
             "号码在公开前仅国王可知；系统不会判断命令内容。"
         )
 
+    def _liar_dice_start(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /大话骰子。"
+        result = self._repository.start_liar_dice(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        messages = {
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "disabled": "大话骰子当前未开放。",
+            "multiplayer_active": "当前已有游戏或随机事件进行中。",
+            "already_active": "当前已有大话骰子对局。",
+        }
+        if result.status in messages:
+            return messages[result.status]
+        return (
+            "【大话骰子】报名已开启！想玩的发 /加入（每人 5 骰、每轮随机万能点；"
+            f"需要先和机器人私聊过），至少 {result.min_players} 人后发起者发 /开始 摇骰开局。"
+        )
+
+    def _liar_dice_join(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /加入。"
+        result = self._repository.join_liar_dice(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "signup_joined":
+            return f"已加入大话骰子，当前 {len(result.players)} 人。"
+        if result.status == "next_round_joined":
+            return "已加入大话骰子，下一轮开骰时参战。"
+        return {
+            "no_game": "当前没有可加入的大话骰子报名局，发 /大话骰子 发起。",
+            "already_joined": "你已经在当前大话骰子局中。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+        }.get(result.status, "当前不能加入大话骰子。")
+
+    def _liar_dice_begin(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /开始。"
+        result = self._repository.begin_liar_dice(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "dealing":
+            return (
+                f"【大话骰子】第 {result.round_number} 轮摇骰中（{len(result.players)} 人），"
+                "骰子正在私聊发放，未收到的话稍后私聊发 /看骰。"
+            )
+        if result.status == "missing_direct_chats":
+            return (
+                "以下成员还没有和机器人私聊过，无法私发骰子："
+                f"{result.public_message}。请先各自私聊机器人发一句话，再发 /开始。"
+            )
+        return {
+            "no_game": "当前没有可开始的大话骰子报名局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "host_only": "只有发起者可以开始大话骰子。",
+            "not_enough_players": f"当前人数不足，至少 {result.min_players} 人才能开始。",
+            "already_started": "本局大话骰子已经开始。",
+        }.get(result.status, "当前不能开始大话骰子。")
+
+    def _liar_dice_call_step(self, message: InboundMessage, content: str):
+        call = parse_call(content)
+        if call is None or message.source_type != "group":
+            return None
+        group = self._repository.resolve_enabled_group_chat(message.chatroom_id)
+        if group is None:
+            return None
+        received_at = message.received_at.astimezone(_BEIJING)
+        result = self._repository.liar_dice_call(
+            message.sender_platform_id, call, received_at, group.id
+        )
+        if result.status in {"no_game", "wrong_state", "not_joined"}:
+            return None
+        if result.status == "called":
+            return result.public_message
+        if result.status == "invalid_raise":
+            return "叫数不合法哦～要比上一个大（个数更多，或点数更大），首叫至少为在场人数～"
+        if result.status == "not_your_turn":
+            return f"还没轮到你哦～现在轮到 {result.turn_name}～"
+        return None
+
+    def _liar_dice_open(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在大话骰子所在群发送 /开骰。"
+        result = self._repository.liar_dice_open(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "opened":
+            return result.public_message
+        if result.status == "not_your_turn":
+            return f"还没轮到你哦～现在轮到 {result.turn_name}～"
+        return {
+            "no_game": "当前没有大话骰子对局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "wrong_state": "当前不在叫牌阶段，无法开牌。",
+            "no_call": "还没有人叫数呢，不能开～",
+            "own_call": "你不能开自己叫的数哦～",
+        }.get(result.status, "当前不能开牌。")
+
+    def _liar_dice_continue(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /继续。"
+        result = self._repository.liar_dice_continue(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "dealing":
+            return (
+                f"【大话骰子】第 {result.round_number} 轮摇骰中（{len(result.players)} 人），"
+                "新骰子正在私聊发放，未收到的话稍后私聊发 /看骰。"
+            )
+        if result.status == "completed":
+            return "【大话骰子】剩余人数不足 2 人，本局结束。"
+        return {
+            "no_game": "当前没有大话骰子对局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "not_participant": "只有本局参与者可以继续。",
+            "wrong_state": "本轮还在进行中，等开牌后再 /继续。",
+        }.get(result.status, "当前不能继续大话骰子。")
+
+    def _liar_dice_leave(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /退出。"
+        result = self._repository.leave_liar_dice(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "left_game":
+            return "你已退出本局大话骰子。"
+        if result.status == "leave_queued":
+            return "已登记退出，本轮结束后生效。"
+        if result.status == "completed":
+            return "【大话骰子】剩余人数不足 2 人，本局已结束。"
+        return {
+            "no_game": "当前没有大话骰子对局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "not_participant": "你没有参与当前大话骰子局。",
+        }.get(result.status, "当前不能退出大话骰子。")
+
+    def _liar_dice_end(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /结束游戏。"
+        result = self._repository.liar_dice_end(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "completed":
+            return "【大话骰子】本局结束。\n" + self._liar_dice_statistics_message(
+                result.statistics
+            )
+        return {
+            "no_game": "当前没有可结束的大话骰子局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "not_participant": "只有本局参与者可以结束游戏。",
+        }.get(result.status, "当前不能结束大话骰子。")
+
+    def _liar_dice_status(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /牌局。"
+        result = self._repository.liar_dice_status(received_at, group_chat_id)
+        if result.status == "no_game":
+            return "当前没有进行中的大话骰子局哦～发 /大话骰子 发起～"
+        if result.status in {"status_signup", "status_round_end"}:
+            return result.public_message or "【大话骰子】对局进行中。"
+        return result.public_message or "【大话骰子】对局进行中。"
+
+    def _liar_dice_private_hands(self, message):
+        result = self._repository.liar_dice_private_hands(
+            message.sender_platform_id,
+            message.received_at.astimezone(_BEIJING),
+        )
+        if result.status == "shown":
+            return result.private_message
+        return "你当前没有进行中的大话骰子骰子哦～"
+
+    def _liar_dice_statistics(self, message, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /大话骰子数据。"
+        report = self._repository.liar_dice_statistics(group_chat_id)
+        lines = ["【大话骰子数据】"]
+        if report.current is not None:
+            lines.append("本局：")
+            lines.extend(self._liar_dice_statistic_lines(report.current))
+        lines.append("总战绩：")
+        lines.extend(self._liar_dice_statistic_lines(report.career))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _liar_dice_statistic_lines(statistics) -> list[str]:
+        def line(label, leaders) -> str:
+            if not leaders:
+                return f"{label}：暂无"
+            return f"{label}：" + "、".join(
+                f"{name}（{count} 次）" for name, count in leaders
+            )
+
+        return [
+            line("开牌次数最多", statistics.opens_leaders),
+            line("虚张声势败露最多", statistics.bluff_caught_leaders),
+            line("拆穿他人最多", statistics.catch_leaders),
+            line("受罚次数最多", statistics.penalty_leaders),
+        ]
+
+    @classmethod
+    def _liar_dice_statistics_message(cls, statistics) -> str:
+        return "\n".join(
+            ("【大话骰子数据】", *cls._liar_dice_statistic_lines(statistics))
+        )
+
+    # ------------------------------------------------------------------
+    # 真心换真心
+    # ------------------------------------------------------------------
+
+    def _truth_trade_start(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /真心换真心。"
+        result = self._repository.start_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "disabled":
+            return "真心换真心当前未开放。"
+        if result.status == "already_active":
+            return "当前已有真心换真心对局。"
+        if result.status == "multiplayer_active":
+            return "当前已有游戏或随机事件进行中。"
+        return (
+            f"【真心换真心】报名开启，发送 /加入 报名；"
+            f"至少 {result.min_players} 人后发起者 /开始。"
+        )
+
+    def _truth_trade_join(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /加入。"
+        result = self._repository.join_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "no_game":
+            return "当前没有可加入的真心换真心局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "already_joined":
+            return "你已经在当前真心换真心局中。"
+        return result.public_message or "当前不能加入真心换真心。"
+
+    def _truth_trade_begin(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /开始。"
+        result = self._repository.begin_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "no_game":
+            return "当前没有可开始的真心换真心报名局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "already_started":
+            return "本局真心换真心已经开始。"
+        if result.status == "host_only":
+            return "只有发起者可以开始真心换真心。"
+        if result.status == "not_enough_players":
+            return f"报名人数不足 {result.min_players} 人，无法开始。"
+        return result.public_message or "当前不能开始真心换真心。"
+
+    def _truth_trade_ask(self, message, content, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /问 内容。"
+        # /问、/问吧 是 /问题 的别名，handle 里归一化成 /问题 路由到这里；
+        # content 保留原文，按实际前缀剥离（/问吧 必须在 /问 之前判断）
+        prefix = next(
+            p for p in ("/问吧", "/问题", "/问") if content.startswith(p)
+        )
+        payload = content[len(prefix):].strip()
+        result = self._repository.ask_truth_trade(
+            message.sender_platform_id,
+            payload,
+            received_at,
+            group_chat_id,
+        )
+        if result.status == "no_game":
+            return "当前没有进行中的真心换真心局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "not_participant":
+            return "只有当前玩家可以提问。"
+        if result.status == "not_your_turn":
+            if result.asker_position is not None and result.asker_name:
+                return (
+                    f"还没轮到你提问，当前轮到 {result.asker_position}号 "
+                    f"{result.asker_name}。"
+                )
+            return "还没轮到你提问。"
+        if result.status == "empty_question":
+            return "请发送 /问 内容，问题不能为空。"
+        return result.public_message or "当前不能提问。"
+
+    def _truth_trade_answer(self, message, content, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /回答 内容。"
+        # /回答、/答 是 /真心 的别名，handle 里归一化成 /真心 路由到这里；
+        # content 保留原文，按实际前缀剥离
+        prefix = next(
+            p for p in ("/回答", "/真心", "/答") if content.startswith(p)
+        )
+        payload = content[len(prefix):].strip()
+        result = self._repository.answer_truth_trade(
+            message.sender_platform_id,
+            payload,
+            received_at,
+            group_chat_id,
+        )
+        errors = {
+            "no_game": "当前没有进行中的真心换真心局。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "not_participant": "只有当前玩家可以回答。",
+            "wrong_state": "当前没有开放的问题。",
+            "asker_cannot_answer": "这是你提的问题，等其他人的回答吧。",
+            "not_required": "你加入晚于本题，无需回答。",
+            "already_answered": "你已经回答过本题了。",
+            "empty_answer": "请发送 /回答 内容，回答不能为空。",
+        }
+        if result.status in errors:
+            return errors[result.status]
+        return result.public_message or "当前不能回答。"
+
+    def _discipline_fine(self, message, content, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中执行罚款。"
+        # /罚 是 /罚款 的别名；content 保留原文，按实际前缀剥离（/罚款 必须在 /罚 之前判断）
+        prefix = next(p for p in ("/罚款", "/罚") if content.startswith(p))
+        payload = content[len(prefix):].strip()
+        reference = message.reference
+        if reference is not None and reference.sender_platform_id:
+            # 引用形态：引用优先于名字参数，payload 整体作为理由
+            target_platform_id = reference.sender_platform_id
+            target_name = None
+            reason = payload or None
+            via_reply = True
+        else:
+            parts = payload.split(None, 1)
+            if not parts:
+                return (
+                    "用法：引用对方消息发送 /罚款 [理由]，"
+                    "或发送 /罚款 名字 [理由]。"
+                )
+            target_name = parts[0]
+            reason = parts[1].strip() if len(parts) > 1 else None
+            target_platform_id = None
+            via_reply = False
+        result = self._repository.execute_discipline_fine(
+            message.sender_platform_id,
+            target_name=target_name,
+            target_platform_id=target_platform_id,
+            reason=reason,
+            via_reply=via_reply,
+            received_at=received_at,
+            group_chat_id=group_chat_id,
+        )
+        errors = {
+            "disabled": "风纪罚款未开启。",
+            "not_configured": "风纪罚款未配置执法部门，请在后台「职位与部门」的部门津贴中选择风纪执法。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "quota_zero": "你的职级今日无可用的罚款次数（配额为 0）。",
+            "quota_exhausted": "你今日的罚款次数已用完，明天再来吧。",
+            "target_not_joined": "目标还未入职摸鱼公司。",
+            "self": "不能罚款自己。",
+            "same_department": "不能罚款执法部门内部成员。",
+            "target_limit": "该员工今日被罚款次数已达上限。",
+        }
+        if result.status in errors:
+            return errors[result.status]
+        if result.status == "not_authorized":
+            return "只有风纪执法部门（部门津贴=风纪执法）的成员可以执行罚款。"
+        if result.status == "cooldown":
+            return f"罚款冷却中，请 {max(1, result.cooldown_remaining_seconds)} 秒后再试。"
+        if result.status == "ambiguous_target":
+            candidates = "\n".join(result.candidate_labels)
+            return f"重名员工，请按工号罚款：\n{candidates}"
+        reason_label = reason or "未填写理由"
+        deduction_note = (
+            "" if result.actual_amount == result.amount
+            else f"（余额不足，实扣 {result.actual_amount}）"
+        )
+        allowance_note = (
+            f"稽查人获得 {result.kickback} 摸鱼币津贴"
+            f"（今日津贴 {result.allowance_total}/{result.allowance_cap}）"
+        )
+        return (
+            f"【风纪罚款】{result.issuer_display_name}（{result.department_name}）对 "
+            f"{result.target_display_name} 处以 {result.amount} 摸鱼币罚款"
+            f"{deduction_note}，理由：{reason_label}\n"
+            f"已成功扣款 {result.actual_amount} 摸鱼币，{allowance_note}。\n"
+            f"{_FINE_FEEDBACK_HINT}"
+        )
+
+    def _my_discipline_fines(self, message, received_at):
+        view = self._repository.my_discipline_fines(message.sender_platform_id)
+        if view is None:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        lines = [
+            f"【我的罚款记录】累计被罚 {view.total_count} 次 / "
+            f"{view.total_amount} 摸鱼币（不含已撤销）"
+        ]
+        if not view.records:
+            lines.append("暂无记录。")
+        for index, record in enumerate(view.records, 1):
+            revoked = "（已撤销）" if record.revoked_at is not None else ""
+            reason = record.reason or "未填写理由"
+            lines.append(
+                f"{index}. {record.created_at:%m-%d %H:%M} 由 "
+                f"{record.issuer_display_name} 罚 {record.amount} 币｜{reason}{revoked}"
+            )
+        return "\n".join(lines)
+
+    def _my_allowances(self, platform_id: str, received_at) -> str:
+        breakdown = self._repository.my_allowance_breakdown(
+            platform_id, received_at
+        )
+        if breakdown is None:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        detail, total, cap = breakdown
+        date_label = received_at.astimezone(_BEIJING).strftime("%m-%d")
+        if not detail:
+            return f"【我的津贴】{date_label}\n今日暂无津贴入账（0/{cap}）。"
+        lines = [f"【我的津贴】{date_label}"]
+        lines.extend(f"{label} +{amount}" for label, amount in detail)
+        capped = "（已封顶）" if total >= cap else ""
+        lines.append(f"今日合计：{total}/{cap}{capped}")
+        return "\n".join(lines)
+
+    def _estrus_chop(self, message, content, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中使用 /凿。"
+        payload = content[len("/凿"):].strip()
+        reference = message.reference
+        times = 1
+        if reference is not None and reference.sender_platform_id:
+            # 引用形态：引用优先于名字参数；payload 为纯数字时表示连凿次数
+            target_platform_id = reference.sender_platform_id
+            target_name = None
+            if payload.isdigit():
+                times = int(payload)
+                note = None
+            else:
+                note = payload or None
+        else:
+            parts = payload.split()
+            if not parts:
+                return (
+                    "用法：引用对方消息发送 /凿 [附言] 或 /凿 [次数]，"
+                    "或发送 /凿 名字 [附言] [次数]。"
+                )
+            if parts[-1].isdigit() and len(parts) >= 2:
+                times = int(parts[-1])
+                parts = parts[:-1]
+            target_name = parts[0]
+            if target_name.startswith("/"):
+                return "那是指令，不是人名。"
+            note = " ".join(parts[1:]).strip() or None
+            target_platform_id = None
+        if times < 1:
+            times = 1
+        elif times > 50:
+            times = 50
+        result = self._repository.execute_estrus_chop(
+            message.sender_platform_id,
+            target_platform_id=target_platform_id,
+            target_name=target_name,
+            note=note,
+            times=times,
+            now=received_at,
+            group_chat_id=group_chat_id,
+        )
+        if result.status == "disabled":
+            return "凿与发情值玩法未开启。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "missing_target":
+            return (
+                "用法：引用对方消息发送 /凿 [附言] 或 /凿 [次数]，"
+                "或发送 /凿 名字 [附言] [次数]。"
+            )
+        if result.status == "target_not_found":
+            return f"没找到员工「{target_name}」。"
+        if result.status == "boss_not_found":
+            return "胆子不小，连 TA 都敢凿？不过 TA 还没入职摸鱼公司。"
+        if result.status == "group_target":
+            return "你有几个牛子？还想凿这么多！"
+        if result.status == "bot_target":
+            return "机器人大工没法被凿——TA 只负责看戏，偶尔扣你工资。"
+        if result.status == "target_not_joined":
+            return "目标还未入职摸鱼公司。"
+        if result.status == "self":
+            return "不能凿自己。"
+        if result.status == "ambiguous_target":
+            candidates = "\n".join(result.candidate_labels)
+            return f"重名员工，请按工号凿：\n{candidates}"
+        if result.status == "cooldown":
+            return f"凿冷却中，请 {max(1, result.cooldown_remaining_seconds)} 秒后再试。"
+        if result.status == "combo_disabled":
+            return (
+                f"连续凿未开启，{result.chopper_name} 只能一下一下地凿"
+                f"（后台可开启「允许连续凿」）。"
+            )
+        if result.status == "chopper_limit":
+            return (
+                f"你今天已经凿了 {result.today_chops_given} 次，"
+                f"达到职级配额（{result.daily_chops_limit} 次），明天再来吧。"
+            )
+        if result.status == "target_limit":
+            return (
+                f"{result.target_name} 今天已经被凿了 {result.today_chops_received} 次，"
+                f"达到每日上限（{result.daily_received_limit} 次），明天再来吧。"
+            )
+        if result.status == "refused":
+            return (
+                f"{result.target_name} 拒绝了 {result.chopper_name} 的凿，"
+                f"并且给了 {result.chopper_name} 一杵子。"
+            )
+        action = (
+            f"凿了 {result.times_executed} 次"
+            if result.times_executed > 1
+            else "凿了一下"
+        )
+        lines = [f"【凿】{result.chopper_name}{action}{result.target_name}"]
+        if result.note:
+            lines[0] += f"（{result.note}）"
+        if result.g_spot_hits > 0:
+            lines.append(f"🎯 凿中G点 {result.g_spot_hits} 次！")
+        lines.append(
+            f"{result.chopper_name} 共被扣除 {result.coins_deducted} 摸鱼币。"
+        )
+        if result.coins > 0:
+            lines.append(
+                f"{result.target_name} 发情值 +{result.heat_gain}"
+                f"（当前 {result.heat_now}/{result.threshold}），"
+                f"获得 {result.coins} 摸鱼币。"
+            )
+        else:
+            lines.append(
+                f"{result.target_name} 发情值 +{result.heat_gain}"
+                f"（当前 {result.heat_now}/{result.threshold}），一无所获。"
+            )
+        if result.climax_triggered:
+            lines.append(f"🔥 {result.target_name} 发情值爆表！")
+            if result.climax_text:
+                lines.append(result.climax_text)
+            climax_note = (
+                f"（连凿爆表 {result.climax_count} 次，"
+                if result.times_executed > 1
+                else "（"
+            )
+            lines.append(
+                f"{climax_note}今日第 {result.today_climaxes} 次 / "
+                f"总第 {result.total_climaxes} 次）"
+            )
+        if result.stopped_reason == "target_limit":
+            lines.append(
+                f"（连续凿提前停止：{result.target_name} 今日被凿次数已达上限）"
+            )
+        return "\n".join(lines)
+
+    def _set_estrus_opt_out(self, message, received_at, group_chat_id, opted_out):
+        if group_chat_id is None:
+            return "请在已启用的群聊中设置。"
+        display_name = self._repository.set_estrus_opt_out(
+            message.sender_platform_id, group_chat_id, opted_out
+        )
+        if display_name is None:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if opted_out:
+            return f"{display_name} 已开启拒绝被凿：今后被 /凿 时对方会吃一杵子。"
+        return f"{display_name} 已开启允许被凿：欢迎来凿。"
+
+    def _my_estrus(self, message, received_at, group_chat_id):
+        if group_chat_id is None:
+            return "请在已启用的群聊中查询。"
+        info = self._repository.get_my_estrus(
+            message.sender_platform_id, group_chat_id, received_at
+        )
+        if info is None:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        return (
+            "【我的凿】\n"
+            f"发情值：{info['heat']}/{info['threshold']}\n"
+            f"被凿：今日 {info['today_chopped']} 次 / 累计 {info['chopped_count']} 次 ｜ "
+            f"高潮：今日 {info['today_climaxes']} 次 / 总 {info['total_climaxes']} 次\n"
+            f"凿人：今日 {info['today_chops_given']} 次 / 累计 {info['total_chops_given']} 次\n"
+            f"状态：{'拒绝被凿' if info['opted_out'] else '允许被凿'}"
+        )
+
+    def _estrus_popularity(self, message, received_at, group_chat_id):
+        if group_chat_id is None:
+            return "请在已启用的群聊中查询。"
+        entries = self._repository.estrus_popularity_rankings(
+            group_chat_id, received_at
+        )
+        if not entries:
+            return "今天还没人被凿，快用 /凿 开张吧。"
+        lines = ["【人气榜】"]
+        lines.extend(
+            f"{entry['display_name']}：今日被凿{entry['today_chopped']}次"
+            for entry in entries
+        )
+        return "\n".join(lines)
+
+    def _set_gender(self, message, content, received_at):
+        tokens = content.strip().split()
+        if len(tokens) < 2:
+            return "用法：/设置性别 男 或 /设置性别 女。"
+        raw = tokens[1]
+        gender = {
+            "男": "male", "男性": "male", "male": "male", "m": "male",
+            "女": "female", "女性": "female", "female": "female", "f": "female",
+        }.get(raw.strip().lower() if raw.isascii() else raw)
+        if gender is None:
+            return "性别只能填 男 或 女。"
+        try:
+            updated = self._repository.set_user_gender(
+                message.sender_platform_id, gender
+            )
+        except ValueError as error:
+            return str(error)
+        if not updated:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        return f"已将你的性别设置为{'男' if gender == 'male' else '女'}。"
+
+    def _truth_trade_leave(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /退出。"
+        result = self._repository.leave_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "no_game":
+            return "当前没有真心换真心对局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "not_participant":
+            return "你没有参与当前真心换真心局。"
+        return result.public_message or "你已退出本局真心换真心。"
+
+    def _truth_trade_end(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /结束游戏。"
+        result = self._repository.end_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "no_game":
+            return "当前没有可结束的真心换真心局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "not_participant":
+            return "只有本局参与者可以结束游戏。"
+        return result.public_message or "【真心换真心】本局已结束。"
+
+    def _truth_trade_continue(self, message, received_at, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /继续。"
+        result = self._repository.continue_truth_trade(
+            message.sender_platform_id, received_at, group_chat_id
+        )
+        if result.status == "no_game":
+            return "当前没有真心换真心对局。"
+        if result.status == "not_joined":
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if result.status == "not_participant":
+            return "只有当前玩家可以继续下一轮。"
+        if result.status == "wrong_state":
+            return "本轮还在进行中，等本轮结算后再 /继续。"
+        if result.status == "not_enough_players":
+            return f"活跃玩家不足 {result.min_players} 人，无法继续；可 /结束游戏 收尾。"
+        return result.public_message or "当前不能继续真心换真心。"
+
+    def _truth_trade_statistics(self, message, group_chat_id):
+        if message.source_type != "group" or group_chat_id is None:
+            return "请在已启用的群聊中发送 /真心换真心数据。"
+        statistics = self._repository.truth_trade_statistics(group_chat_id)
+        if statistics.games == 0:
+            return "本群还没有真心换真心对局记录。"
+
+        def line(label, leaders) -> str:
+            if not leaders:
+                return f"{label}：暂无"
+            return f"{label}：" + "、".join(
+                f"{name}（{count} 次）" for name, count in leaders
+            )
+
+        return "\n".join((
+            "【真心换真心数据】",
+            f"对局：{statistics.games} 局 · 提问：{statistics.questions} 个 · "
+            f"回答：{statistics.answers} 条",
+            line("提问最多", statistics.ask_leaders),
+            line("回答最多", statistics.answer_leaders),
+        ))
+
     def _join(self, platform_id: str, content: str, received_at) -> str:
         parts = content.split(maxsplit=1)
         if len(parts) != 2 or not parts[1].strip():
@@ -1655,13 +2483,18 @@ class GroupCommandHandler:
             },
         )
 
-    def _check_in(self, platform_id: str, received_at) -> str:
+    def _check_in(self, platform_id: str, received_at, group_chat_id=None) -> str:
         profile = self._repository.get_user_profile(platform_id)
         if profile is None:
             return self._reply("/打卡", "not_joined", received_at)
         employee = profile.user
         reward = profile.rank.checkin_reward
-        if not self._repository.check_in(employee, received_at, reward):
+        birthday = self._repository.birthday_settings_for(employee.id, received_at)
+        if birthday is not None and birthday.checkin_multiplier > 1:
+            reward = reward * birthday.checkin_multiplier
+        if not self._repository.check_in(
+            employee, received_at, reward, group_chat_id=group_chat_id
+        ):
             return self._reply(
                 "/打卡", "already_checked_in", received_at, {"{昵称}": employee.display_name}
             )
@@ -1762,27 +2595,87 @@ class GroupCommandHandler:
         if profile is None:
             return self._reply("/我", "not_joined", received_at)
         employee = profile.user
+        title = self._repository.get_equipped_honor(platform_id, received_at)
+        display_name = employee.display_name + (f"【荣誉称号：{title}】" if title else "")
         activity = self._repository.personal_activity(platform_id, received_at)
         if activity is None:
             raise RuntimeError("employee disappeared")
-        return self._reply(
-            "/我",
-            "shown",
-            received_at,
-            {
-                "{昵称}": employee.display_name,
-                "{工号}": format_employee_number(employee.employee_number),
-                "{余额}": employee.balance,
-                "{活跃等级}": f"LV{activity.level}",
-                "{今日收益}": self._repository.today_income(employee.id, received_at),
-                "{连续打卡天数}": self._repository.consecutive_checkin_days(
-                    employee.id, received_at
-                ),
-                "{职位}": profile.rank.name,
-                "{职级}": profile.rank.level_label,
-                "{部门}": profile.department.name,
-            },
+        currency = self._repository.get_game_settings().currency_name
+        birthday_view = self._repository.get_employee_birthday(
+            platform_id, received_at
         )
+        if birthday_view is None:
+            birthday_line = "生日：未设置，用 /设置生日 月-日 告诉人事吧"
+        else:
+            days_left = (
+                birthday_view.next_occurrence - received_at.date()
+            ).days
+            countdown = "就是今天！" if days_left == 0 else f"还有 {days_left} 天"
+            birthday_line = (
+                f"生日：{self._format_birthday(birthday_view)}（{countdown}）"
+            )
+        if employee.gender == "male":
+            gender_line = "性别：男"
+        elif employee.gender == "female":
+            gender_line = "性别：女"
+        else:
+            gender_line = "性别：未设置，用 /设置性别 男 或 女 标记一下"
+        lines = [
+            display_name,
+            f"工号：{format_employee_number(employee.employee_number)}",
+            gender_line,
+            birthday_line,
+            f"职位：{profile.rank.name}（{profile.rank.level_label}）",
+            f"部门：{profile.department.name}",
+            f"当前余额：{employee.balance} {currency}。",
+            f"今日活跃度：LV{activity.level}。",
+            f"今日收益：{self._repository.today_income(employee.id, received_at)} {currency}。",
+        ]
+        allowance = self._repository.department_allowance_summary(
+            platform_id, received_at
+        )
+        if allowance is not None:
+            cap = self._repository.get_department_allowance_settings().daily_cap
+            lines.append(f"今日部门津贴：{allowance}/{cap}")
+        lines.append(
+            f"连续打卡：{self._repository.consecutive_checkin_days(employee.id, received_at)} 天。"
+        )
+        return "\n".join(lines)
+
+    def _honors(self, message, command, content, now):
+        platform_id = message.sender_platform_id
+        personal = self._repository.my_honors(platform_id, now)
+        if personal is None:
+            return "请先用 /入职 名字 加入摸鱼公司。"
+        if command == "/佩戴称号":
+            parts = content.split()
+            if len(parts) != 2 or not re.fullmatch(r"[0-9]+", parts[1]) or len(parts[1]) > 3:
+                return "用法：/佩戴称号 序号（/装备称号、/编辑称号 也可）；发送 /我的称号 查看，序号 0 取消佩戴。"
+            try:
+                name = self._repository.wear_honor(platform_id, int(parts[1]), now)
+            except (LookupError, ValueError) as error:
+                return str(error)
+            return f"已佩戴荣誉称号：{name}。" if name else "已取消佩戴荣誉称号。"
+        if command == "/荣誉榜":
+            board = self._repository.honor_board(now)
+            lines = ["【荣誉榜】"]
+            lines.extend(honor_award_lines(board["items"], public_scores=True, include_empty=True))
+            return "\n".join(lines) if board["items"] else "本期荣誉尚未结算，暂无获奖名单。"
+        if command == "/荣誉历史":
+            user = self._repository.get_user_profile(platform_id).user
+            history = self._repository.honor_history(now, user_id=user.id)
+            lines = ["【荣誉历史】（最近 20 项）"]
+            lines.extend(f"{item['week_start']}｜{item['name']}" for item in history["items"])
+            return "\n".join(lines) if history["items"] else "你还没有获得过荣誉称号。"
+        lines = ["【我的称号】", f"当前佩戴：{personal['equipped'] or '未佩戴'}"]
+        for item in personal["items"]:
+            lines.append(f"{item['number']}. {item['name']}｜历史获得 {item['total_wins']} 次｜有效至 {item['expires_at'][:10]} 00:00")
+        if not personal["items"]:
+            lines.append("当前没有可佩戴称号。")
+        if personal["history_counts"]:
+            lines.append(f"历史累计获得荣誉 {sum(personal['history_counts'].values())} 次。")
+        lines.append("发送 /佩戴称号 序号 切换（/装备称号、/编辑称号 也可），序号 0 取消佩戴。")
+        return "\n".join(lines)
 
     def _edit_profile(self, platform_id: str, content: str, received_at) -> str:
         profile_text = content[len("/编辑档案"):].strip()
@@ -1804,6 +2697,112 @@ class GroupCommandHandler:
                 },
             )
         return self._reply("/编辑档案", result.status, received_at)
+
+
+    def _set_birthday(self, platform_id: str, content: str, received_at) -> str:
+        text = content[len("/设置生日") :].strip()
+        result = self._repository.set_employee_birthday(
+            platform_id,
+            text,
+            received_at,
+            visibility=parse_visibility(text),
+        )
+        if result.status != "saved":
+            values = {}
+            if result.view is not None:
+                values["{生日}"] = self._format_birthday(result.view)
+            return self._reply("/设置生日", result.status, received_at, values)
+        view = result.view
+        assert view is not None
+        return self._reply(
+            "/设置生日",
+            "saved",
+            received_at,
+            {
+                "{生日}": self._format_birthday(view),
+                "{可见性}": "公开" if view.visibility == "public" else "不公开",
+                "{下次}": view.next_occurrence.isoformat(),
+                "{工龄}": view.tenure,
+            },
+        )
+
+
+    def _birthday_tip(self, message, content: str, received_at) -> str:
+        parts = content.split()
+        recipient_name: str | None = None
+        if len(parts) == 2:
+            amount_text = parts[1]
+            # 回复寿星的消息就等于点名（同 /发奖金 的写法），一天多人过生日时最省事
+            if message.reference is not None:
+                replied = self._repository.find_user(
+                    message.reference.sender_platform_id
+                )
+                if replied is not None:
+                    recipient_name = replied.display_name
+        elif len(parts) == 3:
+            recipient_name, amount_text = parts[1], parts[2]
+        else:
+            return self._reply("/随礼", "usage", received_at)
+        if not amount_text.isascii() or not amount_text.isdigit():
+            return self._reply("/随礼", "invalid_amount", received_at, {"{上限}": "—"})
+        result = self._repository.tip_birthday(
+            message.sender_platform_id,
+            int(amount_text),
+            received_at,
+            platform_message_id=message.platform_message_id,
+            recipient_name=recipient_name,
+        )
+        values = {
+            "{寿星}": result.recipient_name or "",
+            "{金额}": str(result.amount),
+            "{上限}": str(result.maximum) if result.maximum else "—",
+        }
+        return self._reply("/随礼", result.status, received_at, values)
+
+
+    def _my_birthday(self, platform_id: str, received_at) -> str:
+        view = self._repository.get_employee_birthday(platform_id, received_at)
+        if view is None:
+            return self._reply("/我的生日", "missing", received_at)
+        return self._reply(
+            "/我的生日",
+            "shown",
+            received_at,
+            {
+                "{生日}": self._format_birthday(view),
+                "{可见性}": "公开" if view.visibility == "public" else "不公开",
+                "{下次}": view.next_occurrence.isoformat(),
+                "{工龄}": view.tenure,
+            },
+        )
+
+    def _month_birthdays(self, received_at) -> str:
+        listing = self._repository.list_month_birthdays(received_at)
+        if not listing.entries:
+            return self._reply(
+                "/本月生日", "empty", received_at, {"{月份}": str(listing.month)}
+            )
+        names = "、".join(
+            f"{entry.display_name}（{entry.month}-{entry.day}"
+            + ("，就是今天" if entry.is_today else "")
+            + "）"
+            for entry in listing.entries
+        )
+        return self._reply(
+            "/本月生日",
+            "shown",
+            received_at,
+            {
+                "{月份}": str(listing.month),
+                "{名单}": names,
+                "{人数}": str(len(listing.entries)),
+            },
+        )
+
+    @staticmethod
+    def _format_birthday(view) -> str:
+        return f"{view.month} 月 {view.day} 日"
+
 
     def _edit_profile_image(
         self, message: InboundMessage, content: str, received_at
@@ -1850,6 +2849,10 @@ class GroupCommandHandler:
         text = self._reply(
             "/我的档案", "shown", received_at, {"{档案内容}": profile_text}
         )
+        title = self._repository.get_equipped_honor(platform_id, received_at)
+        if title:
+            employee = self._repository.find_user(platform_id)
+            text = f"{employee.display_name}【荣誉称号：{title}】\n{text}"
         if image_url is None:
             return text
         return [
@@ -1923,12 +2926,41 @@ class GroupCommandHandler:
             return self._reply("/切换部门", "already_pending", received_at)
         return self._reply("/切换部门", "unknown_department", received_at)
 
+    def _department_allowance_hints(self) -> dict[str, str]:
+        """/部门 增益提示：文案随后台津贴设置动态生成。"""
+        settings = self._repository.get_department_allowance_settings()
+        return {
+            "checkin": f"每日打卡额外 +{settings.checkin_amount} 摸鱼币",
+            "event": f"参与随机事件/公演并正常完成额外 +{settings.event_amount} 摸鱼币",
+            "game": (
+                f"开局小游戏 +{settings.game_host_amount}；"
+                f"每参与完成 {settings.game_play_step} 局 +{settings.game_play_amount}"
+            ),
+            "submission": f"随机事件投稿过审额外 +{settings.submission_amount} 摸鱼币",
+            "chat": (
+                f"水群有 {settings.chat_drop_percent}% 概率掉落 "
+                f"{settings.chat_drop_amount} 摸鱼币"
+                + (
+                    f"（同人冷却 {settings.chat_drop_cooldown_seconds} 秒）"
+                    if settings.chat_drop_cooldown_seconds > 0
+                    else ""
+                )
+            ),
+            "referral": f"每邀请新人通过链接进群 +{settings.referral_amount} 摸鱼币",
+            "discipline": "可执行风纪罚款操作，获得罚款20%的奖励",
+        }
+
     def _departments(self, received_at) -> str:
-        lines = [
-            f"{department.name}：{department.description or '暂无说明'}"
-            for department in self._repository.list_departments()
-            if department.enabled and not department.is_default
-        ]
+        hints = self._department_allowance_hints()
+        lines = []
+        for department in self._repository.list_departments():
+            if not department.enabled or department.is_default:
+                continue
+            hint = hints.get(department.allowance_kind)
+            lines.append(
+                f"{department.name}：{department.description or '暂无说明'}"
+                + (f"（部门增益：{hint}）" if hint else "")
+            )
         return self._reply(
             "/部门", "shown", received_at, {"{部门列表}": "\n".join(lines)}
         )
@@ -2159,19 +3191,33 @@ class GroupCommandHandler:
         if not items:
             return self._reply("/商店", "empty", received_at)
         currency_name = self._repository.get_game_settings().currency_name
-        return self._reply(
-            "/商店",
-            "items_available",
-            received_at,
-            {
-                "{商店列表}": "\n\n".join(
+        grouped: dict[str, list] = {}
+        for item in items:
+            grouped.setdefault(item.category or CATEGORY_OTHER, []).append(item)
+        ordered = [category for category in CATEGORY_DISPLAY_ORDER if category in grouped]
+        ordered += [
+            category
+            for category in grouped
+            if category not in CATEGORY_DISPLAY_ORDER and category != CATEGORY_OTHER
+        ]
+        if CATEGORY_OTHER in grouped:
+            ordered.append(CATEGORY_OTHER)
+        sections = []
+        for category in ordered:
+            lines = [f"◆ {category}"]
+            for item in grouped[category]:
+                lines.append(
                     f"#{item.public_number} {item.name}（{item.price} {currency_name}，库存 "
                     f"{'不限' if item.unlimited_stock else item.stock}"
                     f"{'，需 LV' + str(item.minimum_rank_order) if item.minimum_rank_order else ''}）"
                     f"\n说明：{item.description}"
-                    for item in items
                 )
-            },
+            sections.append("\n".join(lines))
+        return self._reply(
+            "/商店",
+            "items_available",
+            received_at,
+            {"{商店列表}": "\n\n".join(sections)},
         )
 
     def _purchase(
@@ -4235,6 +5281,11 @@ class GroupCommandHandler:
                     ("/发红包", "/发红包 人数 总金额：发出随机运气红包"),
                     ("/抢红包", "/抢红包：领取当前红包"),
                     ("/我", "/我：查看个人资料、收益与活跃度"),
+                    ("/我的称号", "/我的称号：查看本周可佩戴称号、有效期与累计获得次数"),
+                    ("/佩戴称号", "/佩戴称号 序号：佩戴一个称号；/装备称号、/编辑称号 等效，序号 0 取消佩戴"),
+                    ("/荣誉榜", "/荣誉榜：查看本周荣誉称号获得者"),
+                    ("/荣誉历史", "/荣誉历史：查看自己的历史获奖记录"),
+                    ("/我的津贴", "/我的津贴：查看今日各项部门津贴明细与合计"),
                     ("/我的物品", "/我的物品：查看持有物品"),
                     ("/商店", "/商店：查看可购买物品"),
                 ),
@@ -4367,6 +5418,35 @@ class GroupCommandHandler:
                     ("/结束游戏", "/结束游戏：任一参与者结束本局并公布统计"),
                 ),
             ),
+            "大话骰子": (
+                "【大话骰子】",
+                (
+                    ("/大话骰子", "/大话骰子：创建报名局（每人 5 骰 + 每轮随机万能点）"),
+                    ("/加入", "/加入：报名；对局中途加入者在下一轮生效"),
+                    ("/开始", "/开始：发起者摇骰开局，骰子私聊发放"),
+                    ("N个X", "直接发送如“3个5”：当前行动者叫数或加码"),
+                    ("/开骰", "/开骰：当前行动者质疑上一手叫数，全场明牌定胜负"),
+                    ("/牌局", "/牌局：查看座位、当前叫数与万能点状态"),
+                    ("/看骰", "私聊 /看骰：查看自己当前骰子"),
+                    ("/继续", "/继续：开牌后任一参与者开启下一轮"),
+                    ("/大话骰子数据", "/大话骰子数据：查看开牌、败露、拆穿与受罚统计"),
+                    ("/结束游戏", "/结束游戏：任一参与者结束本局并公布统计"),
+                ),
+            ),
+            "真心换真心": (
+                "【真心换真心】",
+                (
+                    ("/真心换真心", "/真心换真心：创建报名局"),
+                    ("/加入", "/加入：报名；对局中途加入者从下一个问题起参与"),
+                    ("/开始", "/开始：至少 2 人后由发起者开局"),
+                    ("/问", "轮到自己时 /问 内容：向其他人提问；/问 跳过：跳过本轮提问（/问题 也可）"),
+                    ("/回答", "其余玩家 /回答 内容：回答当前问题；/回答 跳过：记为拒答（/答、/真心 也可）"),
+                    ("/继续", "/继续：本轮结算后任一参与者开下一轮"),
+                    ("/当前游戏", "/当前游戏：查看当前进度、玩家名单与总人数"),
+                    ("/真心换真心数据", "/真心换真心数据：查看本群总战绩"),
+                    ("/结束游戏", "/结束游戏：任一参与者结束本局"),
+                ),
+            ),
             "暗网交易所": (
                 "【暗网交易所】",
                 (
@@ -4436,6 +5516,27 @@ class GroupCommandHandler:
                     ("/彩票", "奖池上限 200 摸鱼币，超出部分转入调节金；调节金累计到当前员工总数时全员各发 1 摸鱼币"),
                 ),
             ),
+            "风纪": (
+                "【风纪罚款】",
+                (
+                    ("/罚款", "执法部门成员引用他人消息发送 /罚款 [理由]：对目标处以罚款"),
+                    ("/罚款", "或 /罚款 名字 [理由]：按注册名罚款；重名请用 /罚款 #工号 [理由]"),
+                    ("/罚款", "罚款即销毁，余额不足扣到 0；执法者获得抽成津贴（计入每日 5 币封顶）"),
+                    ("/我的罚款", "私聊 /我的罚款：查看自己被罚款的记录"),
+                ),
+            ),
+            "凿与发情值": (
+                "【凿与发情值】",
+                (
+                    ("/凿", "引用对方消息发送 /凿 [附言]，或 /凿 名字 [附言]：凿一下对方"),
+                    ("/凿", "被凿者发情值随机 +0~2、获得随机摸鱼币；发情值攒满 100 触发高潮"),
+                    ("/拒绝被凿", "/拒绝被凿：不再接受被凿，凿你的人会吃一杵子"),
+                    ("/允许被凿", "/允许被凿：重新接受被凿"),
+                    ("/我的凿", "/我的凿：查看自己的发情值、被凿/凿人与高潮次数"),
+                    ("/人气榜", "/人气榜：查看今日被凿人气前 5（按今日被凿次数，每日随收益榜推送）"),
+                    ("/设置性别", "/设置性别 男|女：设置自己的性别（/修改性别 等效），影响高潮文风"),
+                ),
+            ),
         }
 
         def category_available(category: str) -> bool:
@@ -4450,6 +5551,7 @@ class GroupCommandHandler:
                         "蹦蹦数字炸弹",
                         "德州扑克",
                         "我有你没有",
+                        "真心换真心",
                         "暗网交易所",
                         "公演",
                     )
@@ -4462,10 +5564,11 @@ class GroupCommandHandler:
                 ("商店", "/帮助 商店：购买、使用、赠送与授权"),
                 (
                     "游戏",
-                    "/帮助 游戏：玩法总览；/帮助 摸鱼躲藏、/帮助 记忆考核、/帮助 谁是卧底、/帮助 甩锅游戏、/帮助 蹦蹦数字炸弹、/帮助 德州扑克、/帮助 我有你没有、/帮助 暗网交易所、/帮助 公演预约",
+                    "/帮助 游戏：玩法总览；/帮助 摸鱼躲藏、/帮助 记忆考核、/帮助 谁是卧底、/帮助 甩锅游戏、/帮助 蹦蹦数字炸弹、/帮助 德州扑克、/帮助 我有你没有、/帮助 真心换真心、/帮助 暗网交易所、/帮助 公演预约",
                 ),
                 ("随机事件", "/帮助 随机事件：报名与退出"),
                 ("彩票", "/帮助 彩票：公司双色球的玩法、奖级与开奖规则"),
+                ("风纪", "/帮助 风纪：风纪罚款"),
                 ("部门", "/帮助 部门：部门申请与审批"),
                 ("职位", "/帮助 职位：职位晋升与审批"),
             )
@@ -4485,6 +5588,7 @@ class GroupCommandHandler:
                     "蹦蹦数字炸弹",
                     "德州扑克",
                     "我有你没有",
+                    "真心换真心",
                     "暗网交易所",
                     "公演",
                 )

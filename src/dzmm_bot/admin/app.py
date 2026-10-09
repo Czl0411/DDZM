@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 import tempfile
+import time
 from secrets import compare_digest, token_urlsafe
 from typing import Annotated, Callable
 from uuid import UUID
@@ -10,6 +11,7 @@ from fastapi import (
     Depends,
     FastAPI,
     File,
+    Form,
     Header,
     HTTPException,
     Query,
@@ -22,6 +24,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from httpx import HTTPStatusError
 from sqlalchemy.exc import IntegrityError
+from starlette.concurrency import run_in_threadpool
 
 from dzmm_bot.core.database import create_session_factory
 from dzmm_bot.core.group_games import GROUP_GAME_TYPES
@@ -40,6 +43,13 @@ from .repository import (
     ConfigVersionConflictError,
     IdempotencyInProgressError,
 )
+from .shop_excel import (
+    CONTENT_TYPE as SHOP_EXCEL_CONTENT_TYPE, MAX_UPLOAD_BYTES,
+    ShopExcelUploadLimitMiddleware,
+    error_report as shop_error_report, export_workbook as export_shop_workbook,
+    parse_workbook as parse_shop_workbook,
+)
+from dzmm_bot.core.honors import HonorConfigInput, HonorSettleInput, HonorCorrectionInput
 
 
 _ROOT = Path(__file__).parent
@@ -89,6 +99,7 @@ def create_app_from_environment() -> FastAPI:
         repository=AdminRepository(create_session_factory(settings.database_url)),
         console_client=NoVNCClient(settings.novnc_port),
         websocket_connector=NoVNCWebSocketConnector(settings.novnc_port),
+        integration_api_key=settings.integration_api_key,
     )
 
 
@@ -100,10 +111,12 @@ def create_app(
     console_client: NoVNCClient | None = None,
     websocket_connector: Callable | None = None,
     profile_upload_dir: Path | None = None,
+    integration_api_key: str | None = None,
 ) -> FastAPI:
     if not admin_token:
         raise ValueError("admin_token must be nonempty")
     app = FastAPI()
+    app.add_middleware(ShopExcelUploadLimitMiddleware)
     console = console_client or NoVNCClient()
     connect_websocket = websocket_connector or NoVNCWebSocketConnector()
     upload_dir = profile_upload_dir or Path(tempfile.gettempdir()) / "dzmm-profile-images"
@@ -131,6 +144,41 @@ def create_app(
         if identity.role != "super_admin":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "super admin required")
         return identity
+
+    integration_call_times: list[float] = []
+
+    def verify_integration_key(
+        x_api_key: Annotated[str | None, Header()] = None,
+    ) -> None:
+        """集成接口鉴权：独立 API Key + 简单滑动窗口限流（60 次/分钟）。"""
+        if not integration_api_key:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "integration disabled"
+            )
+        if x_api_key is None or not compare_digest(x_api_key, integration_api_key):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unauthorized")
+        now_mono = time.monotonic()
+        while integration_call_times and now_mono - integration_call_times[0] > 60:
+            integration_call_times.pop(0)
+        if len(integration_call_times) >= 60:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS, "rate limit exceeded"
+            )
+        integration_call_times.append(now_mono)
+
+    def forward_integration(call: Callable[[], dict]) -> dict:
+        """转发 core 集成端点，把 HTTPStatusError 还原为原状态码与 detail。"""
+        try:
+            return call()
+        except HTTPStatusError as error:
+            response = error.response
+            try:
+                detail = response.json()
+                if isinstance(detail, dict) and "detail" in detail:
+                    detail = detail["detail"]
+            except Exception:
+                detail = response.text
+            raise HTTPException(response.status_code, detail) from error
 
     def idempotent_response(
         identity: AdminIdentity,
@@ -201,6 +249,11 @@ def create_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.get("/static/honors.js")
+    def honors_script() -> FileResponse:
+        return FileResponse(_ROOT / "static" / "honors.js", media_type="text/javascript",
+                            headers={"Cache-Control": "no-cache"})
+
     @app.get("/static/admin.js")
     def javascript() -> FileResponse:
         return FileResponse(
@@ -221,6 +274,14 @@ def create_app(
     def stylesheet() -> FileResponse:
         return FileResponse(
             _ROOT / "static" / "admin.css",
+            media_type="text/css",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/static/admin-refined.css")
+    def refined_stylesheet() -> FileResponse:
+        return FileResponse(
+            _ROOT / "static" / "admin-refined.css",
             media_type="text/css",
             headers={"Cache-Control": "no-store"},
         )
@@ -677,7 +738,11 @@ def create_app(
             if_match,
             lambda: _relay_core(
                 lambda: core.create_department(
-                    {"name": request["name"], "description": request.get("description", "")}
+                    {
+                        "name": request["name"],
+                        "description": request.get("description", ""),
+                        "allowance_kind": request.get("allowance_kind"),
+                    }
                 )
             ),
             scope="departments",
@@ -692,7 +757,7 @@ def create_app(
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
         if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     ) -> JSONResponse:
-        required = ("name", "description", "enabled")
+        required = ("name", "description", "enabled", "allowance_kind")
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid department")
         return versioned_configuration_response(
@@ -793,10 +858,14 @@ def create_app(
         required = ("name", "description", "price", "stock")
         if not isinstance(item, dict) or not all(key in item for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid item")
+        payload = {key: item[key] for key in required}
+        for optional in ("category", "daily_purchase_limit"):
+            if optional in item:
+                payload[optional] = item[optional]
         return idempotent_response(
             identity,
             idempotency_key,
-            lambda: (201, core.create_game_item({key: item[key] for key in required})),
+            lambda: (201, core.create_game_item(payload)),
             scope="game-items",
         )
 
@@ -815,6 +884,9 @@ def create_app(
             "minimum_rank_order",
             "unlimited_stock",
             "stock",
+            "price",
+            "category",
+            "daily_purchase_limit",
         }
         if set(request) != required:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid item")
@@ -825,11 +897,29 @@ def create_app(
             or not isinstance(request["unlimited_stock"], bool)
             or not isinstance(request["stock"], int)
             or request["stock"] < 0
+            or not isinstance(request["price"], int)
+            or request["price"] < 0
             or (
                 request["minimum_rank_order"] is not None
                 and (
                     not isinstance(request["minimum_rank_order"], int)
                     or request["minimum_rank_order"] < 1
+                )
+            )
+            or (
+                request["category"] is not None
+                and not isinstance(request["category"], str)
+            )
+            or (
+                isinstance(request["category"], str)
+                and len(request["category"].strip()) > 32
+            )
+            or (
+                request["daily_purchase_limit"] is not None
+                and (
+                    not isinstance(request["daily_purchase_limit"], int)
+                    or isinstance(request["daily_purchase_limit"], bool)
+                    or request["daily_purchase_limit"] < 0
                 )
             )
         ):
@@ -840,6 +930,124 @@ def create_app(
             lambda: (200, core.update_game_item(public_number, request)),
             scope=f"game-items:{public_number}",
         )
+
+    def shop_actor(identity: AdminIdentity) -> dict:
+        return {"actor": f"{identity.username}:{identity.account_id or 'super_admin'}",
+                "super_admin": identity.role == "super_admin"}
+
+    def relay_shop(operation: Callable[[], dict]) -> dict:
+        try:
+            return operation()
+        except HTTPStatusError as error:
+            try:
+                detail = error.response.json().get("detail", "商品操作失败")
+            except (ValueError, AttributeError):
+                detail = "商品服务暂时不可用，请稍后重试"
+            raise HTTPException(error.response.status_code, detail) from error
+
+    @app.get("/api/game/honors/config")
+    def honor_config(_: Annotated[AdminIdentity, Depends(authorize)]) -> dict:
+        return forward_integration(lambda: core.honor_get("config"))
+
+    @app.patch("/api/game/honors/config")
+    def honor_config_save(request: HonorConfigInput,
+                          identity: Annotated[AdminIdentity, Depends(require_super_admin)]) -> dict:
+        return forward_integration(lambda: core.honor_mutate("config", {
+            **request.model_dump(mode="json"), "actor": identity.username,
+        }, "PATCH"))
+
+    @app.get("/api/game/honors/preview")
+    def honor_preview(week_start: str, _: Annotated[AdminIdentity, Depends(authorize)]) -> dict:
+        return forward_integration(lambda: core.honor_get("preview", {"week_start": week_start}))
+
+    @app.post("/api/game/honors/settle")
+    def honor_settle(request: HonorSettleInput,
+                     identity: Annotated[AdminIdentity, Depends(require_super_admin)]) -> dict:
+        return forward_integration(lambda: core.honor_mutate("settle", {
+            **request.model_dump(mode="json"), "actor": identity.username,
+        }))
+
+    @app.get("/api/game/honors/periods")
+    def honor_periods(_: Annotated[AdminIdentity, Depends(authorize)],
+                      page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> dict:
+        return forward_integration(lambda: core.honor_get("periods", {"page": page, "page_size": page_size}))
+
+    @app.get("/api/game/honors/history")
+    def honor_history(_: Annotated[AdminIdentity, Depends(authorize)], user_id: UUID | None = None,
+                      title_key: str | None = None, week_start: str | None = None,
+                      page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> dict:
+        params = {"page": page, "page_size": page_size}
+        params.update({key: str(value) for key, value in {
+            "user_id": user_id, "title_key": title_key, "week_start": week_start,
+        }.items() if value is not None})
+        return forward_integration(lambda: core.honor_get("history", params))
+
+    @app.get("/api/game/users/{platform_id}/honors")
+    def employee_honors(platform_id: str, _: Annotated[AdminIdentity, Depends(authorize)]) -> dict:
+        return forward_integration(lambda: core.employee_honors(platform_id))
+
+    @app.post("/api/game/honors/awards/{award_id}/correct")
+    def honor_correct(award_id: UUID, request: HonorCorrectionInput,
+                      identity: Annotated[AdminIdentity, Depends(require_super_admin)]) -> dict:
+        return forward_integration(lambda: core.honor_mutate(f"awards/{award_id}/correct", {
+            **request.model_dump(mode="json"), "actor": identity.username,
+        }))
+
+    @app.get("/api/game/shop/catalog")
+    def shop_catalog(
+        _: Annotated[AdminIdentity, Depends(authorize)], include_deleted: bool = False,
+    ) -> dict:
+        return relay_shop(lambda: core.get_shop_catalog(include_deleted))
+
+    @app.get("/api/game/shop/excel/export")
+    def export_shop_excel(
+        _: Annotated[AdminIdentity, Depends(authorize)], include_deleted: bool = False,
+    ) -> Response:
+        catalog = relay_shop(lambda: core.get_shop_catalog(include_deleted))
+        return Response(export_shop_workbook(catalog["items"]), media_type=SHOP_EXCEL_CONTENT_TYPE,
+                        headers={"Content-Disposition": 'attachment; filename="shop-products.xlsx"', "Cache-Control": "no-store"})
+
+    @app.get("/api/game/shop/excel/template")
+    def shop_excel_template(_: Annotated[AdminIdentity, Depends(authorize)]) -> Response:
+        return Response(export_shop_workbook([]), media_type=SHOP_EXCEL_CONTENT_TYPE,
+                        headers={"Content-Disposition": 'attachment; filename="shop-template.xlsx"', "Cache-Control": "no-store"})
+
+    @app.post("/api/game/shop/excel/preview")
+    async def preview_shop_excel(
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        file: UploadFile = File(), synchronize_stock: bool = Form(False),
+    ) -> dict:
+        try:
+            data = await file.read(MAX_UPLOAD_BYTES + 1)
+            rows, errors, report_rows = await run_in_threadpool(parse_shop_workbook, data, file.filename)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        finally:
+            await file.close()
+        preview = await run_in_threadpool(relay_shop, lambda: core.preview_shop_changes({
+            "rows": rows, "parser_errors": errors, "synchronize_stock": synchronize_stock,
+            **shop_actor(identity),
+        }))
+        if preview["errors"]:
+            preview["error_report"] = await run_in_threadpool(shop_error_report, report_rows, preview["errors"])
+        return preview
+
+    @app.post("/api/game/shop/changes/preview")
+    def preview_shop_changes(
+        request: dict, identity: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
+        if set(request) - {"rows", "synchronize_stock"} or not isinstance(request.get("rows"), list) or len(request["rows"]) > 2000 or type(request.get("synchronize_stock", False)) is not bool:
+            raise HTTPException(422, "商品操作格式无效，请重新编辑")
+        return relay_shop(lambda: core.preview_shop_changes({**request, **shop_actor(identity)}))
+
+    @app.post("/api/game/shop/changes/{batch_id}/confirm")
+    def confirm_shop_changes(
+        batch_id: UUID, request: dict, identity: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
+        acknowledgements = request.get("acknowledgements", [])
+        if set(request) - {"acknowledgements"} or not isinstance(acknowledgements, list) or len(acknowledgements) > 4000 or any(not isinstance(value, str) for value in acknowledgements):
+            raise HTTPException(422, "风险确认格式无效，请重新预览")
+        return relay_shop(lambda: core.confirm_shop_changes(str(batch_id), {"acknowledgements": acknowledgements, **shop_actor(identity)}))
 
     @app.get("/api/game/shop/activity")
     def shop_activity(
@@ -1959,6 +2167,342 @@ def create_app(
             ),
             scope="random-event-settings",
         )
+
+    @app.get("/api/game/birthday/settings")
+    def birthday_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_birthday_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/birthday/settings")
+    def set_birthday_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "enabled",
+            "greet_time",
+            "preview_enabled",
+            "preview_time",
+            "gift_amount",
+            "same_day_backfill",
+            "edit_limit_per_year",
+            "checkin_multiplier",
+            "shop_discount_percent",
+            "lottery_free_tickets",
+            "event_reward_bonus_percent",
+            "tips_enabled",
+            "tip_max_amount",
+            "tip_window_minutes",
+            "anniversary_enabled",
+            "greet_template",
+            "preview_template",
+            "tips_summary_template",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_birthday_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="birthday-settings",
+        )
+
+    @app.get("/api/game/birthday/members")
+    def birthday_members(_: Annotated[None, Depends(authorize)]) -> list[dict]:
+        return _relay_core(core.list_birthday_members)
+
+    @app.post("/api/game/birthday/greet")
+    def greet_birthday(
+        request: dict,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return _relay_core(lambda: core.greet_birthday(request))
+
+    @app.patch("/api/game/birthday/groups/{group_id}")
+    def set_group_birthdays(
+        group_id: str,
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = ("birthdays_enabled", "now")
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_group_birthdays(
+                    group_id, {key: request[key] for key in required}
+                )
+            ),
+            scope="group-birthdays",
+        )
+
+    @app.get("/api/game/discipline-fine/settings")
+    def discipline_fine_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return {
+            **_relay_core(core.get_discipline_fine_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/discipline-fine/settings")
+    def set_discipline_fine_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "enabled",
+            "amount",
+            "kickback_percent",
+            "rank_quotas",
+            "cooldown_minutes",
+            "target_daily_limit",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_discipline_fine_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="discipline-fine-settings",
+        )
+
+    @app.get("/api/game/discipline-fine/records")
+    def discipline_fine_records(
+        _: Annotated[None, Depends(authorize)],
+        page: Annotated[int, Query(ge=1)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> dict:
+        return _relay_core(
+            lambda: core.list_discipline_fine_records(page, page_size)
+        )
+
+    @app.post("/api/game/discipline-fine/records/{record_id}/revoke")
+    def revoke_discipline_fine_record(
+        record_id: str,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return _relay_core(lambda: core.revoke_discipline_fine(record_id))
+
+    @app.get("/api/game/department-allowances/settings")
+    def department_allowance_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return {
+            **_relay_core(core.get_department_allowance_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/department-allowances/settings")
+    def set_department_allowance_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "checkin_amount",
+            "event_amount",
+            "game_host_amount",
+            "game_play_amount",
+            "game_play_step",
+            "submission_amount",
+            "chat_drop_percent",
+            "chat_drop_amount",
+            "chat_drop_cooldown_seconds",
+            "referral_amount",
+            "daily_cap",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_department_allowance_settings(
+                    {key: request[key] for key in required}
+                )
+            ),
+            scope="department-allowance-settings",
+        )
+
+    @app.get("/api/game/liar-dice/settings")
+    def liar_dice_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_liar_dice_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/liar-dice/settings")
+    def set_liar_dice_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        if "turn_seconds" not in request:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_liar_dice_settings(
+                    {key: request[key] for key in ("turn_seconds", "enabled", "min_players") if key in request}
+                )
+            ),
+            scope="liar-dice-settings",
+        )
+
+    @app.get("/api/game/truth-trade/settings")
+    def truth_trade_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_truth_trade_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/truth-trade/settings")
+    def set_truth_trade_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "question_timeout_seconds",
+            "answer_timeout_seconds",
+            "min_players",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_truth_trade_settings(
+                    {key: request[key] for key in required}
+                    | ({"enabled": request["enabled"]} if "enabled" in request else {})
+                )
+            ),
+            scope="truth-trade-settings",
+        )
+
+    @app.get("/api/game/estrus/settings")
+    def estrus_settings(_: Annotated[None, Depends(authorize)]) -> dict:
+        return {
+            **_relay_core(core.get_estrus_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/estrus/settings")
+    def set_estrus_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        required = (
+            "enabled",
+            "climax_threshold",
+            "heat_p0",
+            "heat_p1",
+            "heat_p2",
+            "coin_p0",
+            "coin_p1",
+            "coin_p2",
+            "chop_cooldown_seconds",
+            "chopper_rank_quotas",
+            "combo_chop_enabled",
+            "g_spot_percent",
+            "g_spot_heat_bonus",
+            "chopper_coin_p0",
+            "chopper_coin_p1",
+            "chopper_coin_p2",
+            "coins_linked",
+            "target_daily_limit",
+        )
+        if not all(key in request for key in required):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_estrus_settings(
+                    {
+                        **{key: request[key] for key in required},
+                        **{
+                            key: request[key]
+                            for key in ("chopper_fixed_coins", "target_fixed_coins")
+                            if key in request
+                        },
+                    }
+                )
+            ),
+            scope="estrus-settings",
+        )
+
+    @app.post("/api/integration/users/match")
+    def api_integration_match(
+        payload: dict,
+        _: Annotated[None, Depends(verify_integration_key)],
+    ) -> dict:
+        return forward_integration(lambda: core.integration_match(payload))
+
+    @app.get("/api/integration/users/{platform_id}/balance")
+    def api_integration_balance(
+        platform_id: str,
+        _: Annotated[None, Depends(verify_integration_key)],
+    ) -> dict:
+        return forward_integration(
+            lambda: core.integration_balance(platform_id)
+        )
+
+    @app.get("/api/integration/users/{platform_id}/game-quota")
+    def api_integration_game_quota(
+        platform_id: str,
+        _: Annotated[None, Depends(verify_integration_key)],
+    ) -> dict:
+        return forward_integration(
+            lambda: core.integration_game_quota(platform_id)
+        )
+
+    @app.post("/api/integration/coins/grant")
+    def api_integration_grant(
+        payload: dict,
+        _: Annotated[None, Depends(verify_integration_key)],
+    ) -> dict:
+        return forward_integration(lambda: core.integration_grant(payload))
+
+    @app.post("/api/integration/coins/deduct")
+    def api_integration_deduct(
+        payload: dict,
+        _: Annotated[None, Depends(verify_integration_key)],
+    ) -> dict:
+        return forward_integration(lambda: core.integration_deduct(payload))
 
     @app.get("/api/game/hide-and-seek/settings")
     def hide_and_seek_settings(_: Annotated[None, Depends(authorize)]) -> dict:

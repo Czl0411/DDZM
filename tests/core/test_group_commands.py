@@ -2986,6 +2986,33 @@ def test_department_headcount_command_honors_template_disable_and_help():
     assert _replies_for(factory, disabled.message_id) == []
 
 
+def test_department_change_cooldown_blocks_for_24h():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, _, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _receive(service, "join-1", "board", "/入职 董事", now)
+    with factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "board")
+        ).rank_id = board_rank.id
+
+    _receive(service, "join-2", "board", "/加入部门 核心技术部", now)
+    assert _latest_reply(factory) == "董事已直接加入核心技术部。"
+
+    # 24 小时内再次更换被拒，并提示剩余时间
+    _receive(service, "sw-1", "board", "/切换部门 学院", now + timedelta(hours=2))
+    assert "24 小时后才能再次更换" in _latest_reply(factory)
+    assert "还剩约" in _latest_reply(factory)
+
+    # 满 24 小时后可再次更换
+    _receive(service, "sw-2", "board", "/切换部门 学院", now + timedelta(hours=25))
+    assert _latest_reply(factory) == "董事已直接切换至学院。"
+
+
 def test_board_members_can_directly_change_departments_and_review_all_requests():
     from dzmm_bot.core.schema import RankRecord, UserRecord
 
@@ -3002,7 +3029,9 @@ def test_board_members_can_directly_change_departments_and_review_all_requests()
 
     _receive(service, "board-change", "board", "/加入部门 核心技术部", now)
     assert _latest_reply(factory) == "董事已直接加入核心技术部。"
-    _receive(service, "board-switch", "board", "/切换部门 学院", now)
+    _receive(
+        service, "board-switch", "board", "/切换部门 学院", now + timedelta(hours=25)
+    )
     assert _latest_reply(factory) == "董事已直接切换至学院。"
     _receive(service, "apply", "u1", "/加入部门 核心技术部", now)
     _receive(service, "list", "board", "/部门申请列表", now)

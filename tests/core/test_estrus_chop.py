@@ -479,23 +479,35 @@ def test_target_daily_limit_resets_at_beijing_midnight():
     assert info["heat"] == 2  # 发情值跨天不清零：两次各 +2
 
 
-def test_target_daily_limit_is_isolated_by_group_and_zero_disables_it():
+def test_target_daily_limit_shared_across_groups_and_zero_disables_it():
+    """被凿每日上限跨群共享：两个群合计计算。"""
     service, repository, factory = _service(estrus_random=_SeqRandom([0.60, 0.60] * 3))
     _join(service, "j0", "user-0", "甲", NOW)
     _join(service, "j1", "user-1", "乙", NOW)
-    group = repository.create_group_chat(
+    repository.create_group_chat(
         "二群", "https://www.aikda.com/chat?c=group-second", True, True, True, True, NOW
     )
-    _configure_estrus_settings(repository, target_daily_limit=1)
+    _configure_estrus_settings(repository, target_daily_limit=2)
 
+    # 主群 1 次 + 二群 1 次 = 合计 2 次
     _receive(service, "c1", "user-0", "/凿 乙", NOW)
     _receive(service, "c2", "user-0", "/凿 乙", NOW, chatroom_id="group-second")
+    _receive(
+        service, "c3", "user-0", "/凿 乙", NOW + timedelta(minutes=1), chatroom_id="group-second"
+    )
 
-    assert repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)["chopped_count"] == 1
-    assert repository.get_my_estrus("user-1", group.id, NOW)["chopped_count"] == 1
+    assert _joined_text(
+        factory, "乙 今天已经被凿了 2 次，达到每日上限（2 次），明天再来吧。"
+    )
+    assert repository.get_my_estrus(
+        "user-1", PRIMARY_GROUP_CHAT_ID, NOW
+    )["chopped_count"] == 2
+    # 上限设回 0 = 不限制，可继续凿
     _configure_estrus_settings(repository, target_daily_limit=0)
-    _receive(service, "c3", "user-0", "/凿 乙", NOW)
-    assert repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)["chopped_count"] == 2
+    _receive(service, "c4", "user-0", "/凿 乙", NOW + timedelta(minutes=2))
+    assert repository.get_my_estrus(
+        "user-1", PRIMARY_GROUP_CHAT_ID, NOW
+    )["chopped_count"] == 3
 
 
 def test_chop_with_zero_gains_reads_as_nothing():

@@ -14972,7 +14972,6 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     session.scalar(
                         select(func.count()).select_from(EstrusChopRecord).where(
                             EstrusChopRecord.target_user_id == user.id,
-                            EstrusChopRecord.group_chat_id == group_chat_id,
                             EstrusChopRecord.created_at >= day_start,
                             EstrusChopRecord.created_at < day_start + timedelta(days=1),
                         )
@@ -15001,7 +15000,15 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     "display_name": user.display_name,
                     "heat": state.heat if state is not None else 0,
                     "threshold": threshold,
-                    "chopped_count": state.chopped_count if state is not None else 0,
+                    # 累计被凿跨群合并：直接数全部成功记录，不用按群的状态字段
+                    "chopped_count": int(
+                        session.scalar(
+                            select(func.count()).select_from(EstrusChopRecord).where(
+                                EstrusChopRecord.target_user_id == user.id,
+                            )
+                        )
+                        or 0
+                    ),
                     "today_chopped": today_chopped,
                     "today_chops_given": today_chops_given,
                     "total_chops_given": total_chops_given,
@@ -15018,7 +15025,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
     def estrus_popularity_rankings(
         self, group_chat_id: UUID, now: datetime
     ) -> list[dict]:
-        """每日人气榜（前 5）：按当日（本群）被凿次数排名，附跨群累计被凿总数。"""
+        """每日人气榜（前 5）：按当日（跨群）被凿次数排名，附跨群累计被凿总数。"""
         day_start = now.astimezone(BEIJING).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
@@ -15030,7 +15037,6 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     EstrusChopRecord.target_user_id == UserRecord.id,
                 )
                 .where(
-                    EstrusChopRecord.group_chat_id == group_chat_id,
                     EstrusChopRecord.created_at >= day_start,
                     EstrusChopRecord.created_at < day_start + timedelta(days=1),
                 )
@@ -15349,13 +15355,13 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     day_start = now.replace(
                         hour=0, minute=0, second=0, microsecond=0
                     )
+                    # 被凿每日上限跨群合并：所有群的今日被凿共享同一上限
                     received_today = int(
                         session.scalar(
                             select(func.count())
                             .select_from(EstrusChopRecord)
                             .where(
                                 EstrusChopRecord.target_user_id == target.id,
-                                EstrusChopRecord.group_chat_id == group_chat_id,
                                 EstrusChopRecord.created_at >= day_start,
                                 EstrusChopRecord.created_at
                                 < day_start + timedelta(days=1),

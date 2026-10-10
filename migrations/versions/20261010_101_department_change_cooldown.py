@@ -15,7 +15,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("users", sa.Column("last_department_changed_at", sa.DateTime()))
+    op.add_column("users", sa.Column("last_department_changed_at", sa.DateTime(timezone=True)))
 
 
 def downgrade() -> None:

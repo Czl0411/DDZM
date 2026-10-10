@@ -248,18 +248,18 @@ def test_deployment_runs_migrations_with_the_private_environment():
     assert "runuser -u dzmm -- /opt/dzmm/venv/bin/playwright install chromium" in deploy
     worker_stop = deploy.index(
         "systemctl stop dzmm-admin-web.service dzmm-browser-worker.service "
-        "dzmm-ai-worker.service dzmm-ai-memory-worker.service"
+        "dzmm-ai-worker.service"
     )
     core_restart = deploy.index("systemctl restart dzmm-core.service")
     core_health = deploy.index("curl -fsS http://127.0.0.1:18120/healthz")
     worker_restart = deploy.index(
         "systemctl restart dzmm-admin-web.service dzmm-browser-worker.service "
-        "dzmm-ai-worker.service dzmm-ai-memory-worker.service"
+        "dzmm-ai-worker.service"
     )
     assert worker_stop < core_restart < core_health < worker_restart
 
 
-def test_deployment_starts_a_separate_ai_memory_worker():
+def test_deployment_keeps_ai_memory_worker_disabled():
     memory_worker = (
         ROOT / "deploy/systemd/dzmm-ai-memory-worker.service"
     ).read_text()
@@ -268,8 +268,9 @@ def test_deployment_starts_a_separate_ai_memory_worker():
     assert "Description=DZMM DeepSeek AI Memory Worker" in memory_worker
     assert "-m dzmm_bot.ai.memory_main" in memory_worker
     assert "After=network-online.target dzmm-core.service" in memory_worker
-    assert "dzmm-ai-memory-worker.service" in deploy
-    assert "systemctl enable dzmm-ai-memory-worker.service" in deploy
+    assert "systemctl disable --now dzmm-ai-memory-worker.service" in deploy
+    assert "systemctl enable dzmm-ai-memory-worker.service" not in deploy
+    assert "systemctl restart dzmm-ai-memory-worker.service" not in deploy
 
 
 def test_deployment_enables_the_main_ai_worker_at_boot():

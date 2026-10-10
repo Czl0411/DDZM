@@ -74,7 +74,7 @@ GitHub 只提供代码、迁移、测试、模板和文档，不包含以下内�
 | `DZMM_INTEGRATION_API_KEY` | 新增 `/api/integration` 接口的 `X-Api-Key` | 自己生成独立随机值，并交给授权调用方 | 集成接口启用时必须 |
 | `DZMM_BOT_API_TOKEN` | 平台官方 Bot 发消息 | 从实际平台的 Bot 管理入口获取 | 可选，启用 Bot 发送时需要 |
 | `DZMM_BOT_ID` | 平台官方 Bot 身份 ID | 从平台获取，与 Bot Token 对应 | 使用后台“添加长消息 Bot”时需要 |
-| `DP_API_KEY` | DeepSeek AI 调用 | 从 DeepSeek 或所用兼容服务的账号取得 | AI Worker、记忆 Worker 必须；部分生成文案也使用它 |
+| `DP_API_KEY` | DeepSeek AI 调用 | 从 DeepSeek 或所用兼容服务的账号取得 | 启用 AI Worker 或相关生成文案时需要；记忆 Worker 当前停用 |
 | SSH 私钥或其他授权登录方式 | 新电脑连接服务器 | 为新电脑配置获授权的 SSH 登录方式 | 需要远程部署时使用 |
 
 注意：`DP_API_KEY` 名称以实际代码为准，不是 `DZMM_DEEPSEEK_API_KEY`。官方 Bot Token、AI Key 由对应平台签发，不能用本地随机生成值代替。
@@ -245,7 +245,7 @@ ssh -p 22 ubuntu@43.153.194.94
 - 使用 `sudo bash deploy/scripts/provision.sh --apply` 建立服务账号与基础目录；按第 5 节建立 `/etc/dzmm/dzmm.env`。
 - 源码运行目录为 `/opt/dzmm/current`，虚拟环境为 `/opt/dzmm/venv`，浏览器 Profile 目录由环境文件指定，并由 `dzmm` 用户读写。
 - 标准发布命令为 `sudo bash /path/to/release/deploy/scripts/deploy.sh /path/to/release`，其中 release 是含 `pyproject.toml` 的独立发布目录；不要把它误写为不存在的目录。
-- 发布脚本会执行数据库迁移并启动五个服务。完整发布前准备有效的 `DP_API_KEY`，否则 AI 和记忆 Worker 会退出；测试阶段仅运行必要服务时需另行安排启动范围。
+- 发布脚本会执行数据库迁移，启动 Core、管理端、浏览器 Worker 和 AI Worker，并保持记忆 Worker 停用。启用 AI 功能前需准备有效的 `DP_API_KEY`。
 - 保留业务数据必须安全导出与恢复 PostgreSQL；群列表、商品、配置、称号和余额在数据库中，不是只迁移源码。
 - 新浏览器 Profile 建议人工重新登录专用平台账号，核对目标群、Bot 加群权限及可访问私聊。不要把旧 Profile 提交进 Git。
 - 正式切换前暂停旧实例监听，避免两套机器人同时消费同一正式群消息。恢复的数据库可能包含待发任务，应先核对队列和测试群，避免旧消息重放。
@@ -257,16 +257,16 @@ ssh -p 22 ubuntu@43.153.194.94
 | --- | --- |
 | `DZMM_INTEGRATION_API_KEY` | 重启 `dzmm-admin-web`，同步所有外部调用方 |
 | `DZMM_ADMIN_TOKEN` | 重启 `dzmm-admin-web`，更新管理员使用的凭据 |
-| `DZMM_CORE_TOKEN` | Core、管理端和三个 Worker 保持一致；先 Core 健康，再恢复管理端及 Worker |
+| `DZMM_CORE_TOKEN` | Core、管理端和运行中的 Worker 保持一致；先 Core 健康，再恢复管理端及 Worker |
 | 数据库连接串 | 重启 Core、管理端；整体环境迁移时检查全部服务 |
-| `DP_API_KEY`、AI 模型或入口 | 重启 `dzmm-ai-worker`、`dzmm-ai-memory-worker`，以及使用生成文案客户端的 `dzmm-core` |
+| `DP_API_KEY`、AI 模型或入口 | 重启 `dzmm-ai-worker`，以及使用生成文案客户端的 `dzmm-core`；记忆 Worker 保持停用 |
 | Bot Token、Bot ID、登录 URL、Profile | 重启 `dzmm-browser-worker`；Bot 发送配置变化也核对 Core 的长消息保留行为 |
 
-单独重启 Core 后，等待健康，再恢复三个 Worker：
+单独重启 Core 后，等待健康，再恢复运行中的 Worker：
 
 ```bash
-sudo systemctl reset-failed dzmm-browser-worker dzmm-ai-worker dzmm-ai-memory-worker
-sudo systemctl start dzmm-browser-worker dzmm-ai-worker dzmm-ai-memory-worker
+sudo systemctl reset-failed dzmm-browser-worker dzmm-ai-worker
+sudo systemctl start dzmm-browser-worker dzmm-ai-worker
 ```
 
 这两个命令用于 Core 已健康后的恢复，不替代先停止并重启服务以加载新环境变量。

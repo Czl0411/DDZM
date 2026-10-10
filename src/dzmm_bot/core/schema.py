@@ -2593,6 +2593,9 @@ class UserRecord(Base):
     gender: Mapped[str] = mapped_column(
         String(16), default="unknown", server_default="unknown", nullable=False
     )
+    last_department_changed_at: Mapped[datetime | None] = mapped_column(
+        BeijingDateTime
+    )
     platform_nickname_synced_at: Mapped[datetime | None] = mapped_column(
         BeijingDateTime
     )

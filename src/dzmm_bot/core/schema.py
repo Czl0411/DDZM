@@ -108,6 +108,29 @@ class GroupChatRuntimeStateRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class GroupBanRequestRecord(Base):
+    __tablename__ = "group_ban_requests"
+    __table_args__ = (
+        Index("ix_group_ban_requests_pending", "group_chat_id", "actor_platform_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    actor_platform_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_platform_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_inbound_message_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), nullable=False)
+    confirmation_inbound_message_id: Mapped[UUID | None] = mapped_column(ForeignKey("inbound_messages.id"))
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    message_excerpt: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    confirmed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    completed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    detail: Mapped[str | None] = mapped_column(Text)
+
+
 class InboundRecord(Base):
     __tablename__ = "inbound_messages"
     __table_args__ = (

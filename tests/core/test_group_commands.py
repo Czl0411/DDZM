@@ -71,6 +71,111 @@ def _latest_reply(factory):
         )
 
 
+def test_group_ban_confirmation_is_one_shot():
+    from dzmm_bot.core.schema import WorkerCommandRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    reference = MessageReference("target-message", "outsider", "text", text="一条需要处理的消息")
+    service.receive_inbound(InboundMessage("ban-1", "operator", "/ban 违规发言", now, chatroom_id="group-main", reference=reference))
+    assert "是否移除 UID outsider" in _latest_reply(factory)
+    with factory() as session:
+        assert session.query(WorkerCommandRecord).filter(WorkerCommandRecord.command.like("ban:%")).count() == 0
+
+    service.receive_inbound(InboundMessage("yes-1", "operator", "/是", now + timedelta(seconds=1), chatroom_id="group-main"))
+    assert "正在移除" in _latest_reply(factory)
+    service.receive_inbound(InboundMessage("yes-2", "operator", "/是", now + timedelta(seconds=2), chatroom_id="group-main"))
+    assert "待确认" in _latest_reply(factory)
+    with factory() as session:
+        assert session.query(WorkerCommandRecord).filter(WorkerCommandRecord.command.like("ban:%")).count() == 1
+
+
+def test_group_ban_rejections():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.create_user("employee", "员工", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    cases = [
+        ("stranger", "/ban 理由", MessageReference("m1", "outsider", "text", text="正文"), "权限"),
+        ("operator", "/ban", MessageReference("m2", "outsider", "text", text="正文"), "原因"),
+        ("operator", "/ban 理由", None, "回复"),
+        ("operator", "/ban 理由", MessageReference("m3", "operator", "text", text="正文"), "自己"),
+        ("operator", "/ban 理由", MessageReference("m4", "employee", "text", text="正文"), "已入职"),
+    ]
+    for index, (sender, content, reference, expected) in enumerate(cases):
+        service.receive_inbound(InboundMessage(f"bad-{index}", sender, content, now, chatroom_id="group-main", reference=reference))
+        assert expected in _latest_reply(factory)
+
+
+def test_group_ban_expiry_and_preview():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    reference = MessageReference("m1", "outsider", "text", text="第一行\n/bad " + "x" * 150)
+    service.receive_inbound(InboundMessage("ban-1", "operator", "/ban 理由", now, chatroom_id="group-main", reference=reference))
+    reply = _latest_reply(factory)
+    assert "\n/bad" not in reply
+    assert len(reply) < 260
+    service.receive_inbound(InboundMessage("yes-1", "operator", "/是", now + timedelta(seconds=60), chatroom_id="group-main"))
+    assert "过期" in _latest_reply(factory)
+
+
+def test_group_ban_replacement_cross_actor_and_target_onboarding():
+    from dzmm_bot.core.schema import GroupBanRequestRecord, WorkerCommandRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    first = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_group_chat("第二群", "https://www.aikda.com/chat?c=group-2", True, True, True, True, now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.create_user("other", "另一个操作员", now, 0)
+    repository.update_group_chat(first.id, ban_operator_platform_ids=["operator", "other"], now=now)
+    for number, target in enumerate(("outsider-1", "outsider-2"), start=1):
+        service.receive_inbound(InboundMessage(
+            f"ban-{number}", "operator", "/ban 理由", now,
+            chatroom_id="group-main",
+            reference=MessageReference(f"target-{number}", target, "image"),
+        ))
+    assert "[图片]" in _latest_reply(factory)
+    service.receive_inbound(InboundMessage("other-yes", "other", "/是", now, chatroom_id="group-main"))
+    assert "待确认" in _latest_reply(factory)
+    service.receive_inbound(InboundMessage("other-group-yes", "operator", "/是", now, chatroom_id="group-2"))
+    assert "待确认" in _latest_reply(factory)
+    repository.create_user("outsider-2", "新员工", now, 0)
+    service.receive_inbound(InboundMessage("owner-yes", "operator", "/是", now, chatroom_id="group-main"))
+    assert "已入职" in _latest_reply(factory)
+    with factory() as session:
+        statuses = session.scalars(select(GroupBanRequestRecord.status).order_by(GroupBanRequestRecord.created_at, GroupBanRequestRecord.id)).all()
+        assert sorted(statuses) == ["replaced", "target_joined"]
+        assert session.query(WorkerCommandRecord).filter(WorkerCommandRecord.command.like("ban:%")).count() == 0
+
+
+def test_group_ban_bypasses_gameplay_gates(monkeypatch):
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    def gameplay_should_not_run(*args, **kwargs):
+        raise AssertionError("management command entered gameplay")
+    monkeypatch.setattr(repository, "active_performance_state", gameplay_should_not_run)
+    monkeypatch.setattr(repository, "record_random_event_round", gameplay_should_not_run)
+    service.receive_inbound(InboundMessage(
+        "ban-1", "operator", "/ban 理由", now, chatroom_id="group-main",
+        reference=MessageReference("target-message", "outsider", "text", text="正文"),
+    ))
+    assert "是否移除" in _latest_reply(factory)
+    service.receive_inbound(InboundMessage("yes-1", "operator", "/是", now, chatroom_id="group-main"))
+    assert "正在移除" in _latest_reply(factory)
+
+
 def _mark_random_event_signup_notice_sent(repository):
     from dzmm_bot.core.schema import OutboundRecord, RandomEventRecord
 

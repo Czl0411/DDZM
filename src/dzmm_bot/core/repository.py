@@ -370,6 +370,7 @@ from .schema import (
     WeeklyAttendanceSettlementRecord,
     WorkerCommandRecord,
     WorkerInstanceRecord,
+    GroupBanRequestRecord,
 )
 
 
@@ -414,6 +415,14 @@ class GroupChatRuntimeState:
 
 class GroupChatConflict(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class GroupBanResult:
+    status: str
+    target_platform_id: str | None = None
+    reason: str | None = None
+    message_excerpt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2702,6 +2711,8 @@ _COMMAND_DEFINITIONS = (
     ("/事件投票情况", "/事件投票情况", "查看本期随机事件投票的当前票型"),
     ("/随机事件时间表", "/随机事件时间表", "查看全公司今天全部随机事件场次与状态"),
     ("/q", "回复消息 /q", "花 1 摸鱼币将一条群聊消息记入对应员工的黑历史册"),
+    ("/ban", "回复消息 /ban 原因", "由本群授权员工移除未入职成员（需二次确认）"),
+    ("/是", "/是", "确认本群待处理的成员移除请求"),
     ("/黑历史", "回复消息 /黑历史", "免费随机翻出被回复员工的一条黑历史"),
     ("/删除黑历史", "/删除黑历史 [编号]（仅私聊）", "查看或删除自己的黑历史"),
     ("/下一页", "/下一页（仅私聊）", "继续当前私聊分页操作"),
@@ -3347,6 +3358,113 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 raise ValueError("ban operator is not an employee")
         return values
 
+    def request_group_ban(
+        self, message: InboundMessage, group_chat_id: UUID
+    ) -> GroupBanResult:
+        with self._session() as session:
+            group = session.get(GroupChatRecord, group_chat_id, with_for_update=True)
+            if (
+                message.source_type != "group"
+                or group is None
+                or group.deleted_at is not None
+                or message.sender_platform_id not in group.ban_operator_platform_ids
+                or session.scalar(select(UserRecord.id).where(
+                    UserRecord.platform_id == message.sender_platform_id
+                )) is None
+            ):
+                return GroupBanResult("unauthorized")
+            reason = message.content.removeprefix("/ban").strip()
+            if not reason:
+                return GroupBanResult("missing_reason")
+            reference = message.reference
+            if reference is None or not reference.message_id or not reference.sender_platform_id:
+                return GroupBanResult("invalid_reply")
+            target = reference.sender_platform_id
+            if target == message.sender_platform_id:
+                return GroupBanResult("self_target")
+            if session.scalar(select(UserRecord.id).where(UserRecord.platform_id == target)) is not None:
+                return GroupBanResult("target_joined")
+            inbound = session.scalar(select(InboundRecord).where(
+                InboundRecord.group_chat_id == group_chat_id,
+                InboundRecord.platform_message_id == message.platform_message_id,
+            ))
+            if inbound is None:
+                return GroupBanResult("invalid_reply")
+            excerpt = (
+                "[图片]" if reference.content_type == "image"
+                else re.sub(r"\s+", " ", reference.text or "").strip()[:120] or "[无文字]"
+            )
+            pending = session.scalars(select(GroupBanRequestRecord).where(
+                GroupBanRequestRecord.group_chat_id == group_chat_id,
+                GroupBanRequestRecord.actor_platform_id == message.sender_platform_id,
+                GroupBanRequestRecord.status == "pending",
+            ).with_for_update()).all()
+            for previous in pending:
+                previous.status = "replaced"
+                previous.completed_at = message.received_at
+            session.add(GroupBanRequestRecord(
+                group_chat_id=group_chat_id,
+                actor_platform_id=message.sender_platform_id,
+                target_platform_id=target,
+                target_message_id=reference.message_id,
+                source_inbound_message_id=inbound.id,
+                reason=reason,
+                message_excerpt=excerpt,
+                status="pending",
+                created_at=message.received_at,
+                expires_at=message.received_at + timedelta(seconds=60),
+            ))
+            return GroupBanResult("pending", target, reason, excerpt)
+
+    def confirm_group_ban(
+        self, message: InboundMessage, group_chat_id: UUID
+    ) -> GroupBanResult:
+        if message.content.strip() != "/是" or message.source_type != "group":
+            return GroupBanResult("no_pending")
+        with self._session() as session:
+            group = session.get(GroupChatRecord, group_chat_id, with_for_update=True)
+            pending = session.scalar(select(GroupBanRequestRecord).where(
+                GroupBanRequestRecord.group_chat_id == group_chat_id,
+                GroupBanRequestRecord.actor_platform_id == message.sender_platform_id,
+                GroupBanRequestRecord.status == "pending",
+            ).order_by(GroupBanRequestRecord.created_at.desc()).with_for_update())
+            if pending is None:
+                return GroupBanResult("no_pending")
+            if message.received_at >= pending.expires_at:
+                pending.status = "expired"
+                pending.completed_at = message.received_at
+                return GroupBanResult("expired")
+            if (
+                group is None
+                or group.deleted_at is not None
+                or message.sender_platform_id not in group.ban_operator_platform_ids
+                or session.scalar(select(UserRecord.id).where(
+                    UserRecord.platform_id == message.sender_platform_id
+                )) is None
+            ):
+                pending.status = "unauthorized"
+                pending.completed_at = message.received_at
+                return GroupBanResult("unauthorized")
+            if session.scalar(select(UserRecord.id).where(
+                UserRecord.platform_id == pending.target_platform_id
+            )) is not None:
+                pending.status = "target_joined"
+                pending.completed_at = message.received_at
+                return GroupBanResult("target_joined")
+            inbound = session.scalar(select(InboundRecord).where(
+                InboundRecord.group_chat_id == group_chat_id,
+                InboundRecord.platform_message_id == message.platform_message_id,
+            ))
+            if inbound is None:
+                return GroupBanResult("no_pending")
+            pending.status = "queued"
+            pending.confirmed_at = message.received_at
+            pending.confirmation_inbound_message_id = inbound.id
+            session.add(WorkerCommandRecord(command=f"ban:{pending.id}", created_at=message.received_at))
+            return GroupBanResult(
+                "queued", pending.target_platform_id, pending.reason, pending.message_excerpt
+            )
+
     def soft_delete_group_chat(
         self, group_id: UUID, now: datetime
     ) -> GroupChatConfig:
@@ -3633,6 +3751,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 "listening_enabled": config.listening_enabled,
                 "games_enabled": config.games_enabled,
                 "enabled_game_types": list(config.enabled_game_types),
+                "ban_operator_platform_ids": list(config.ban_operator_platform_ids),
                 "random_events_enabled": config.random_events_enabled,
                 "announcements_enabled": config.announcements_enabled,
                 "adult_shop_enabled": config.adult_shop_enabled,

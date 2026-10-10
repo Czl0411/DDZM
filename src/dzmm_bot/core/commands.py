@@ -66,6 +66,7 @@ _COMMANDS = {
 _COMMANDS.add("/随机事件时间表")
 _COMMANDS.add("/q")
 _COMMANDS.update({"/黑历史", "/删除黑历史", "/下一页"})
+_COMMANDS.update({"/ban", "/是"})
 
 _LOTTERY_COMMANDS = {
     "/购买彩票",
@@ -139,6 +140,31 @@ class GroupCommandHandler:
             else None
         )
         group_chat_id = None if group is None else group.id
+        if command in {"/ban", "/是"}:
+            if group_chat_id is None:
+                return "请在群内使用此指令。"
+            result = (
+                self._repository.request_group_ban(message, group_chat_id)
+                if command == "/ban"
+                else self._repository.confirm_group_ban(message, group_chat_id)
+            )
+            if result.status == "pending":
+                return (
+                    f"是否移除 UID {result.target_platform_id}？\n"
+                    f"原消息：{result.message_excerpt}\n原因：{result.reason}\n"
+                    "发起人请在 60 秒内发送 /是。"
+                )
+            if result.status == "queued":
+                return f"正在移除 UID {result.target_platform_id}，等待平台确认。"
+            return {
+                "unauthorized": "你没有本群 /ban 权限，或已不再入职。",
+                "target_joined": "该成员已入职，不能移除。",
+                "invalid_reply": "请回复目标成员的一条消息后发送 /ban 原因。",
+                "missing_reason": "请填写移除原因：/ban 原因。",
+                "self_target": "不能移除自己。",
+                "expired": "待确认请求已过期，请重新发送 /ban 原因。",
+                "no_pending": "当前没有待确认的移除请求。",
+            }[result.status]
         if command == "/q":
             if message.source_type != "group" or group_chat_id is None:
                 return "请在群内回复一条消息后发送 /q。"

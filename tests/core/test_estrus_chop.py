@@ -674,11 +674,11 @@ def test_my_estrus_and_popularity_ranking():
 
     _receive(service, "q3", "user-0", "/人气榜", NOW)
     texts = _replies(factory)
-    assert any("【人气榜】" in text for text in texts)
-    assert any("乙：今日被凿2次" in text for text in texts)
+    assert any("【每日人气榜】" in text for text in texts)
+    assert any("乙：今日被凿2次（总计：2次）" in text for text in texts)
     # 旧指令归一化到新榜 / 新查询
     _receive(service, "q4", "user-0", "/最受欢迎", NOW)
-    assert any("【人气榜】" in text for text in _replies(factory))
+    assert any("【每日人气榜】" in text for text in _replies(factory))
     _receive(service, "q5", "user-1", "/我的发情值", NOW)
     assert any("【我的凿】" in text for text in _replies(factory))
 
@@ -699,10 +699,12 @@ def test_popularity_board_counts_today_only_and_keeps_heat():
     _receive(service, "c3", "user-0", "/凿 乙", tomorrow)
     _receive(service, "c4", "user-1", "/凿 丙", tomorrow)
 
-    _receive(service, "q1", "user-0", "/最受欢迎", tomorrow)
+    _receive(service, "q1", "user-0", "/人气榜", tomorrow)
     texts = _replies(factory)
-    assert any("乙：今日被凿1次" in text for text in texts)
-    assert any("丙：今日被凿1次" in text for text in texts)
+    assert any("【每日人气榜】" in text for text in texts)
+    # 今日只统计当日；总计跨群累计（乙累计 3 次，含昨日 2 次）
+    assert any("乙：今日被凿1次（总计：3次）" in text for text in texts)
+    assert any("丙：今日被凿1次（总计：1次）" in text for text in texts)
     assert not any("今日被凿2次" in text for text in texts)
 
     # 发情值跨天不清零：乙昨天 4，今天再 +2 → 6
@@ -1013,39 +1015,76 @@ def test_me_shows_birthday_and_gender_with_reminders():
     service, repository, factory = _service(estrus_random=_SeqRandom([]))
     _join(service, "j0", "user-0", "甲", NOW)
 
+    def _me_texts():
+        texts = _replies(factory)
+        return [
+            text
+            for text in texts
+            if "工号：" in text and "今日活跃度：" in text
+        ][-1]
+
     _receive(service, "m0", "user-0", "/我", NOW)
-    texts = _replies(factory)
-    assert any(
-        "生日：未设置，用 /设置生日 月-日 告诉人事吧" in text for text in texts
-    )
-    assert any(
-        "性别：未设置，用 /设置性别 男 或 女 标记一下" in text for text in texts
-    )
+    me0 = _me_texts()
+    # 未设置生日/性别时不再显示这两行
+    assert "性别：" not in me0
+    assert "生日：" not in me0
 
     _receive(service, "g1", "user-0", "/设置性别 女", NOW)
     _receive(service, "b1", "user-0", "/设置生日 12-25", NOW)
     _receive(service, "m1", "user-0", "/我", NOW)
-    texts = _replies(factory)
-    assert any("生日：12 月 25 日（还有" in text for text in texts)
-    assert any("性别：女" in text for text in texts)
+    me1 = _me_texts()
+    assert "性别：女" in me1
+    assert "生日：12 月 25 日（还有" in me1
     # 顺序：工号 → 性别 → 生日 → 职位 → 部门 → 余额 → 活跃度 → 收益 → 打卡
-    me_text = [
-        text
-        for text in texts
-        if "工号：" in text and "今日活跃度：" in text
-    ][-1]
     positions = [
-        me_text.index("工号："),
-        me_text.index("性别："),
-        me_text.index("生日："),
-        me_text.index("职位："),
-        me_text.index("部门："),
-        me_text.index("当前余额："),
-        me_text.index("今日活跃度："),
-        me_text.index("今日收益："),
-        me_text.index("连续打卡："),
+        me1.index("工号："),
+        me1.index("性别："),
+        me1.index("生日："),
+        me1.index("职位："),
+        me1.index("部门："),
+        me1.index("当前余额："),
+        me1.index("今日活跃度："),
+        me1.index("今日收益："),
+        me1.index("连续打卡："),
     ]
     assert positions == sorted(positions)
+
+
+def test_chopper_quota_counts_across_groups():
+    """凿人配额跨群合并：主群 + 二群共享同一配额。"""
+    service, repository, factory = _service(
+        estrus_random=_SeqRandom([0.60, 0.60] * 4)
+    )
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    _assign_rank(repository, factory, "user-0", 1)
+    rank_key = str(_rank_id(factory, 1))
+    _configure_estrus_settings(
+        repository,
+        chopper_rank_quotas={rank_key: 2},
+    )
+    repository.create_group_chat(
+        "二群", "https://www.aikda.com/chat?c=group-second", True, True, True, True, NOW
+    )
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+    _receive(
+        service, "c2", "user-0", "/凿 乙", NOW, chatroom_id="group-second"
+    )
+    assert any("【凿】甲凿了一下乙" in text for text in _replies(factory))
+
+    # 第 3 凿（任一群）被拒：配额已被两个群合计用满
+    _receive(
+        service, "c3", "user-0", "/凿 乙", NOW + timedelta(minutes=1), chatroom_id="group-second"
+    )
+    assert _joined_text(
+        factory, "你今天已经凿了 2 次，达到职级配额（2 次），明天再来吧。"
+    )
+    # /我的凿 的凿人统计也是跨群合并：今日 2 次 / 累计 2 次
+    _receive(service, "q1", "user-0", "/我的凿", NOW)
+    assert any(
+        "凿人：今日 2 次 / 累计 2 次" in text for text in _replies(factory)
+    )
 
 
 def test_set_gender_command():

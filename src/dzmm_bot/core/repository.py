@@ -426,6 +426,12 @@ class GroupBanResult:
 
 
 @dataclass(frozen=True)
+class GroupBanExecution:
+    chatroom_id: str
+    target_platform_id: str
+
+
+@dataclass(frozen=True)
 class ShopCatalogItem:
     public_number: int
     name: str
@@ -3464,6 +3470,68 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             return GroupBanResult(
                 "queued", pending.target_platform_id, pending.reason, pending.message_excerpt
             )
+
+    def claim_group_ban_execution(
+        self, request_id: UUID, now: datetime
+    ) -> GroupBanExecution | None:
+        with self._session() as session:
+            request = session.get(GroupBanRequestRecord, request_id, with_for_update=True)
+            if request is None:
+                return None
+            if request.status == "executing":
+                self._finish_group_ban(session, request, "uncertain", now)
+                return None
+            if request.status != "queued":
+                return None
+            group = session.get(GroupChatRecord, request.group_chat_id, with_for_update=True)
+            if (
+                group is None or group.deleted_at is not None
+                or not group.listening_enabled or not group.chatroom_id
+                or request.actor_platform_id not in group.ban_operator_platform_ids
+                or session.scalar(select(UserRecord.id).where(
+                    UserRecord.platform_id == request.actor_platform_id
+                )) is None
+            ):
+                self._finish_group_ban(session, request, "unauthorized", now)
+                return None
+            if session.scalar(select(UserRecord.id).where(
+                UserRecord.platform_id == request.target_platform_id
+            )) is not None:
+                self._finish_group_ban(session, request, "target_joined", now)
+                return None
+            request.status = "executing"
+            return GroupBanExecution(group.chatroom_id, request.target_platform_id)
+
+    def complete_group_ban_execution(
+        self, request_id: UUID, outcome: str, detail: str | None, now: datetime
+    ) -> bool:
+        if outcome not in {"succeeded", "failed", "uncertain"}:
+            raise ValueError("invalid group ban outcome")
+        with self._session() as session:
+            request = session.get(GroupBanRequestRecord, request_id, with_for_update=True)
+            if request is None or request.status != "executing":
+                return False
+            self._finish_group_ban(session, request, outcome, now, detail)
+            return True
+
+    def _finish_group_ban(
+        self, session: Session, request: GroupBanRequestRecord,
+        outcome: str, now: datetime, detail: str | None = None,
+    ) -> None:
+        request.status = outcome
+        request.completed_at = now
+        request.detail = detail[:500] if detail else None
+        reply = {
+            "succeeded": f"已移出 UID {request.target_platform_id}。",
+            "failed": f"移除失败：UID {request.target_platform_id}，平台未确认成功。",
+            "uncertain": f"移除 UID {request.target_platform_id} 结果不明，请人工核查；不会自动重试。",
+            "unauthorized": "移除失败：本群授权已失效。",
+            "target_joined": "移除失败：该成员已入职，不能移除。",
+        }[outcome]
+        self.enqueue_outbound(
+            request.confirmation_inbound_message_id or request.source_inbound_message_id,
+            reply, group_chat_id=request.group_chat_id,
+        )
 
     def soft_delete_group_chat(
         self, group_id: UUID, now: datetime

@@ -77,6 +77,8 @@ class ChatGateway(Protocol):
 
     def add_bot_to_chatroom(self, chatroom_id: str, bot_id: str) -> None: ...
 
+    def remove_member(self, chatroom_id: str, member_id: str) -> None: ...
+
     def lookup_platform_nickname(
         self, chatroom_id: str, platform_user_id: str
     ) -> str | None: ...
@@ -216,7 +218,7 @@ class BrowserSession:
                 {
                     "procedure": procedure,
                     "payload": payload,
-                    "method": "POST" if procedure == "chatroom.addBot" else "GET",
+                    "method": "POST" if procedure in {"chatroom.addBot", "groupChat.removeMember"} else "GET",
                     "timeoutMs": _TRPC_REQUEST_TIMEOUT_MS,
                 },
             )

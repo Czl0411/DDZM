@@ -135,6 +135,21 @@ class UpdateGroupChatRequest(ApiModel):
     now: AwareDatetime
 
 
+class GroupBanBeginRequest(ApiModel):
+    now: AwareDatetime
+
+
+class GroupBanExecutionResponse(ApiModel):
+    chatroom_id: str
+    target_platform_id: str
+
+
+class GroupBanCompleteRequest(ApiModel):
+    outcome: Literal["succeeded", "failed", "uncertain"]
+    detail: str | None = None
+    now: AwareDatetime
+
+
 class DeleteGroupChatRequest(ApiModel):
     now: AwareDatetime
 

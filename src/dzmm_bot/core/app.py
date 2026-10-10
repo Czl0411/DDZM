@@ -62,6 +62,9 @@ from .api_models import (
     FailProfileImageUploadRequest,
     GameSettingsResponse,
     GroupChatResponse,
+    GroupBanBeginRequest,
+    GroupBanCompleteRequest,
+    GroupBanExecutionResponse,
     GroupChatRuntimeResponse,
     GroupChatTargetResponse,
     IntegrationMatchRequest,
@@ -3896,6 +3899,34 @@ def create_app(
         return _worker_command_response(
             repository.enqueue_worker_command(request.command)
         )
+
+    @app.post(
+        "/internal/group-bans/{request_id}/begin-execution",
+        response_model=GroupBanExecutionResponse | None,
+    )
+    def begin_group_ban_execution(
+        request_id: UUID,
+        request: GroupBanBeginRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> GroupBanExecutionResponse | None:
+        execution = repository.claim_group_ban_execution(request_id, request.now)
+        return None if execution is None else GroupBanExecutionResponse(
+            chatroom_id=execution.chatroom_id,
+            target_platform_id=execution.target_platform_id,
+        )
+
+    @app.post(
+        "/internal/group-bans/{request_id}/complete",
+        response_model=AcceptedResponse,
+    )
+    def complete_group_ban_execution(
+        request_id: UUID,
+        request: GroupBanCompleteRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.complete_group_ban_execution(
+            request_id, request.outcome, request.detail, request.now,
+        ))
 
     @app.post(
         "/internal/worker-commands/claim",

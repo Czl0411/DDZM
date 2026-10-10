@@ -205,6 +205,14 @@ class CorePort(Protocol):
         now: datetime,
     ) -> None: ...
 
+    def begin_group_ban_execution(
+        self, request_id: UUID, now: datetime
+    ) -> tuple[str, str] | None: ...
+
+    def complete_group_ban_execution(
+        self, request_id: UUID, outcome: str, detail: str | None, now: datetime
+    ) -> bool: ...
+
     def record_audit(
         self, event_type: str, worker_id: str, recorded_at: datetime
     ) -> None: ...
@@ -625,6 +633,24 @@ class CoreClient:
                 "now": now.isoformat(),
             },
         )
+
+    def begin_group_ban_execution(
+        self, request_id: UUID, now: datetime
+    ) -> tuple[str, str] | None:
+        data = self._post(
+            f"/internal/group-bans/{request_id}/begin-execution",
+            {"now": now.isoformat()},
+        )
+        return None if data is None else (data["chatroom_id"], data["target_platform_id"])
+
+    def complete_group_ban_execution(
+        self, request_id: UUID, outcome: str, detail: str | None, now: datetime
+    ) -> bool:
+        data = self._post(
+            f"/internal/group-bans/{request_id}/complete",
+            {"outcome": outcome, "detail": detail, "now": now.isoformat()},
+        )
+        return bool(data["accepted"])
 
     def record_audit(
         self, event_type: str, worker_id: str, recorded_at: datetime

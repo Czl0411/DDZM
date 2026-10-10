@@ -88,6 +88,8 @@ class FakeRequest:
             return self.member_profile
         if procedure == "chatroom.addBot":
             return {"success": True}
+        if procedure == "groupChat.removeMember":
+            return getattr(self, "remove_result", {"success": True})
         if procedure == "chat.listAll":
             return {"items": self.rooms}
         if procedure == "chatroom.getMessages":
@@ -261,6 +263,25 @@ def test_add_bot_uses_the_logged_in_account_and_target_chatroom():
     assert request.calls == [
         ("chatroom.addBot", {"chatroomId": "target-room", "botId": "long-message-bot"})
     ]
+
+
+def test_remove_member_uses_platform_mutation():
+    request = FakeRequest()
+    request.profile = {"id": "bot-1"}
+    request.remove_result = {"success": True}
+    gateway = AikdaSocketGateway(
+        TARGET_URL, token_provider=lambda: "token", request=request,
+        socket_factory=FakeSocket, ignored_sender_ids=("long-bot",), clock=lambda: NOW,
+    )
+    gateway._bot_id = "bot-1"
+    gateway.remove_member("target-room", "outsider")
+    assert request.calls == [
+        ("groupChat.removeMember", {"chatroomId": "target-room", "memberId": "outsider"})
+    ]
+    with pytest.raises(ValueError):
+        gateway.remove_member("target-room", "bot-1")
+    with pytest.raises(ValueError):
+        gateway.remove_member("target-room", "long-bot")
 
 
 def test_lookup_platform_nickname_uses_chatroom_member_profile():

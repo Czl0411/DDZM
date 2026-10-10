@@ -176,6 +176,66 @@ def test_group_ban_bypasses_gameplay_gates(monkeypatch):
     assert "正在移除" in _latest_reply(factory)
 
 
+def _queued_group_ban():
+    from dzmm_bot.core.schema import GroupBanRequestRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    service.receive_inbound(InboundMessage(
+        "ban-1", "operator", "/ban 理由", now, chatroom_id="group-main",
+        reference=MessageReference("target-message", "outsider", "text", text="正文"),
+    ))
+    service.receive_inbound(InboundMessage("yes-1", "operator", "/是", now, chatroom_id="group-main"))
+    with factory() as session:
+        request_id = session.scalar(select(GroupBanRequestRecord.id))
+    return repository, factory, group, request_id, now
+
+
+def test_group_ban_execution_rechecks_target_and_operator():
+    repository, factory, group, request_id, now = _queued_group_ban()
+    repository.create_user("outsider", "新员工", now, 0)
+    assert repository.claim_group_ban_execution(request_id, now) is None
+    assert "已入职" in _latest_reply(factory)
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    repository.update_group_chat(group.id, ban_operator_platform_ids=[], now=now)
+    assert repository.claim_group_ban_execution(request_id, now) is None
+    assert "授权" in _latest_reply(factory)
+
+
+def test_group_ban_completion_reports_once():
+    from dzmm_bot.core.schema import OutboundRecord
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    execution = repository.claim_group_ban_execution(request_id, now)
+    assert execution.chatroom_id == "group-main"
+    assert execution.target_platform_id == "outsider"
+    assert repository.complete_group_ban_execution(request_id, "succeeded", None, now)
+    assert "已移出" in _latest_reply(factory)
+    with factory() as session:
+        count = session.query(OutboundRecord).count()
+    assert not repository.complete_group_ban_execution(request_id, "succeeded", None, now)
+    with factory() as session:
+        assert session.query(OutboundRecord).count() == count
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    assert repository.claim_group_ban_execution(request_id, now) is not None
+    assert repository.complete_group_ban_execution(request_id, "failed", "platform rejected", now)
+    assert "移除失败" in _latest_reply(factory)
+    assert "已移出" not in _latest_reply(factory)
+
+
+def test_group_ban_uncertain_attempt_is_not_repeated():
+    repository, factory, group, request_id, now = _queued_group_ban()
+    assert repository.claim_group_ban_execution(request_id, now) is not None
+    assert repository.claim_group_ban_execution(request_id, now + timedelta(seconds=30)) is None
+    assert "结果不明" in _latest_reply(factory)
+    assert not repository.complete_group_ban_execution(request_id, "succeeded", None, now)
+
+
 def _mark_random_event_signup_notice_sent(repository):
     from dzmm_bot.core.schema import OutboundRecord, RandomEventRecord
 

@@ -11,7 +11,7 @@ import logging
 from threading import Event, Lock
 from time import monotonic as default_monotonic, sleep as default_sleep
 from typing import Protocol
-from uuid import uuid5
+from uuid import UUID, uuid5
 
 from socketio.exceptions import TimeoutError as SocketTimeoutError
 
@@ -28,7 +28,7 @@ from dzmm_bot.runtime.outbound import group_message_chunks
 from .bot_api import DzmmBotSendError
 from .black_history_card import render_black_history_card
 from .core_client import CorePort, OutboundClaim, WorkerCommand
-from .aikda_socket import AikdaAuthenticationError, AikdaMessageRejectedError
+from .aikda_socket import AikdaAuthenticationError, AikdaMessageRejectedError, AikdaMemberRemovalRejectedError
 from .session import BrowserSession, ChatGateway
 
 
@@ -1008,10 +1008,30 @@ class BrowserWorker:
                 self._ensure_gateway().add_bot_to_chatroom(
                     chatroom_id, self._long_message_bot_id
                 )
+            elif command.command.startswith("ban:"):
+                request_id = UUID(command.command.removeprefix("ban:"))
+                execution = self._core.begin_group_ban_execution(request_id, self._clock())
+                if execution is not None:
+                    chatroom_id, member_id = execution
+                    outcome, detail = "succeeded", None
+                    try:
+                        self._ensure_gateway().remove_member(chatroom_id, member_id)
+                    except (AikdaMemberRemovalRejectedError, AikdaAuthenticationError, ValueError) as error:
+                        outcome, detail = "failed", str(error)
+                    except Exception as error:
+                        _LOGGER.exception("group member removal result uncertain: %s", request_id)
+                        outcome, detail = "uncertain", str(error)
+                    self._core.complete_group_ban_execution(
+                        request_id, outcome, detail, self._clock()
+                    )
             else:
                 raise ValueError(f"unsupported worker command: {command.command}")
         except Exception:
             _LOGGER.exception("worker command failed: %s", command.command)
+            if command.command.startswith("ban:"):
+                # Let the lease expire: Core will mark an already-started attempt
+                # uncertain on reclaim, without sending the platform mutation again.
+                return
             status = "failed"
         self._core.complete_command(
             command.id,

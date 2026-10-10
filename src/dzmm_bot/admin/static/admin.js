@@ -2002,6 +2002,7 @@ async function loadGroupChats() {
 }
 
 let groupBanEmployees = [];
+let groupBanLoadVersion = 0;
 
 function renderGroupBanOperators(selectedIds) {
   const search = document.querySelector("#group-chat-ban-operator-search").value.trim().toLowerCase();
@@ -2011,13 +2012,14 @@ function renderGroupBanOperators(selectedIds) {
   }).map((employee) => `<option value="${escapeHtml(employee.platform_id)}" ${selectedIds.has(employee.platform_id) ? "selected" : ""}>${escapeHtml(employee.display_name)} · ${escapeHtml(employee.platform_nickname || "平台昵称未获取")} · ${formatEmployeeNumber(employee.employee_number)}</option>`).join("");
 }
 
-async function loadGroupBanEmployees(selectedIds) {
+async function loadGroupBanEmployees(selectedIds, version) {
   const employees = [];
   for (let page = 1; ; page += 1) {
     const result = await requestGame(`/api/game/users?page=${page}&page_size=100`);
     employees.push(...result.items);
     if (result.items.length < 100) break;
   }
+  if (version !== groupBanLoadVersion) return;
   groupBanEmployees = employees;
   renderGroupBanOperators(selectedIds);
 }
@@ -2030,7 +2032,12 @@ function openGroupChatModal(group = null) {
   document.querySelector("#group-chat-room-id").value = group?.chatroom_id || "";
   document.querySelector("#group-chat-ban-operator-search").value = "";
   renderGroupBanOperators(new Set(group?.ban_operator_platform_ids || []));
-  void loadGroupBanEmployees(new Set(group?.ban_operator_platform_ids || [])).catch((error) => setResult(`加载员工失败（${error.message}）`, "error"));
+  const saveButton = document.querySelector("#save-group-chat");
+  saveButton.disabled = true;
+  const version = ++groupBanLoadVersion;
+  void loadGroupBanEmployees(new Set(group?.ban_operator_platform_ids || []), version).then(() => {
+    if (version === groupBanLoadVersion) saveButton.disabled = false;
+  }).catch((error) => setResult(`加载员工失败（${error.message}）`, "error"));
   document.querySelector("#group-chat-listening-enabled").checked = group?.listening_enabled ?? true;
   document.querySelector("#group-chat-games-enabled").checked = group?.games_enabled ?? true;
   const enabledGameTypes = new Set(group?.enabled_game_types || groupGameOptions.map(([type]) => type));
@@ -2046,6 +2053,7 @@ function openGroupChatModal(group = null) {
 }
 
 function closeGroupChatModal() {
+  groupBanLoadVersion += 1;
   groupChatModal.hidden = true;
   groupChatModal.dataset.groupId = "";
 }

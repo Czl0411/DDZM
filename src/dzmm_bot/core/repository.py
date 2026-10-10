@@ -389,6 +389,7 @@ class GroupChatConfig:
     listening_enabled: bool
     games_enabled: bool
     enabled_game_types: tuple[str, ...]
+    ban_operator_platform_ids: tuple[str, ...]
     random_events_enabled: bool
     announcements_enabled: bool
     adult_shop_enabled: bool
@@ -530,6 +531,7 @@ def _group_chat_config(record: GroupChatRecord) -> GroupChatConfig:
         listening_enabled=record.listening_enabled,
         games_enabled=record.games_enabled,
         enabled_game_types=tuple(record.enabled_game_types),
+        ban_operator_platform_ids=tuple(record.ban_operator_platform_ids),
         random_events_enabled=record.random_events_enabled,
         announcements_enabled=record.announcements_enabled,
         adult_shop_enabled=record.adult_shop_enabled,
@@ -3181,9 +3183,11 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         adult_shop_enabled: bool = False,
         performances_enabled: bool = False,
         birthdays_enabled: bool = True,
+        ban_operator_platform_ids: Sequence[str] = (),
     ) -> GroupChatConfig:
         normalized_name = self._validate_group_chat_name(name)
         with self._session() as session:
+            operators = self._validate_group_ban_operators(session, ban_operator_platform_ids)
             allowed_origin = self._primary_group_origin(session)
             normalized_url, chatroom_id = normalize_group_chat_url(
                 chat_url, allowed_origin
@@ -3204,6 +3208,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                         else enabled_game_types
                     )
                 ),
+                ban_operator_platform_ids=operators,
                 random_events_enabled=random_events_enabled,
                 announcements_enabled=announcements_enabled,
                 adult_shop_enabled=adult_shop_enabled,
@@ -3239,6 +3244,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         adult_shop_enabled: bool | None = None,
         performances_enabled: bool | None = None,
         birthdays_enabled: bool | None = None,
+        ban_operator_platform_ids: Sequence[str] | None = None,
         now: datetime,
     ) -> GroupChatConfig:
         with self._session() as session:
@@ -3310,6 +3316,10 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 record.performances_enabled = performances_enabled
             if birthdays_enabled is not None:
                 record.birthdays_enabled = birthdays_enabled
+            if ban_operator_platform_ids is not None:
+                record.ban_operator_platform_ids = self._validate_group_ban_operators(
+                    session, ban_operator_platform_ids
+                )
             record.updated_at = now
             runtime = session.get(GroupChatRuntimeStateRecord, group_id)
             if runtime is not None:
@@ -3322,6 +3332,20 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             )
             session.flush()
             return _group_chat_config(record)
+
+    def _validate_group_ban_operators(
+        self, session: Session, platform_ids: Sequence[str]
+    ) -> list[str]:
+        values = list(platform_ids)
+        if len(values) != len(set(values)) or any(not value for value in values):
+            raise ValueError("invalid ban operators")
+        if values:
+            found = set(session.scalars(select(UserRecord.platform_id).where(
+                UserRecord.platform_id.in_(values)
+            )))
+            if found != set(values):
+                raise ValueError("ban operator is not an employee")
+        return values
 
     def soft_delete_group_chat(
         self, group_id: UUID, now: datetime

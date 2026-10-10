@@ -1116,6 +1116,41 @@ def test_group_chat_duplicate_and_last_enabled_guards(repository, now):
         )
 
 
+def test_group_ban_operator_scope(repository, now):
+    first = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    second = repository.create_group_chat(
+        "第二群", "https://www.aikda.com/chat?c=group-2",
+        True, True, True, True, now,
+    )
+    repository.create_user("operator-1", "管理员甲", now, 0)
+
+    assert first.ban_operator_platform_ids == ()
+    assert second.ban_operator_platform_ids == ()
+    updated = repository.update_group_chat(
+        second.id, ban_operator_platform_ids=["operator-1"], now=now
+    )
+    assert updated.ban_operator_platform_ids == ("operator-1",)
+    assert next(group for group in repository.list_group_chats() if group.id == first.id).ban_operator_platform_ids == ()
+    assert repository.update_group_chat(second.id, name="新群名", now=now).ban_operator_platform_ids == ("operator-1",)
+
+
+def test_group_ban_operator_validation(repository, now):
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    repository.create_user("operator-1", "管理员甲", now, 0)
+    with pytest.raises(ValueError):
+        repository.update_group_chat(
+            group.id, ban_operator_platform_ids=["unknown"], now=now
+        )
+    with pytest.raises(ValueError):
+        repository.update_group_chat(
+            group.id, ban_operator_platform_ids=["operator-1", "operator-1"], now=now
+        )
+
+
 def test_group_chat_runtime_and_soft_delete(repository, now):
     from dzmm_bot.core.repository import GroupChatRuntimeUpdate
 

@@ -2001,12 +2001,36 @@ async function loadGroupChats() {
   return groupChats;
 }
 
+let groupBanEmployees = [];
+
+function renderGroupBanOperators(selectedIds) {
+  const search = document.querySelector("#group-chat-ban-operator-search").value.trim().toLowerCase();
+  document.querySelector("#group-chat-ban-operators").innerHTML = groupBanEmployees.filter((employee) => {
+    const label = `${employee.display_name} ${employee.platform_nickname || ""} ${employee.employee_number}`;
+    return selectedIds.has(employee.platform_id) || label.toLowerCase().includes(search);
+  }).map((employee) => `<option value="${escapeHtml(employee.platform_id)}" ${selectedIds.has(employee.platform_id) ? "selected" : ""}>${escapeHtml(employee.display_name)} · ${escapeHtml(employee.platform_nickname || "平台昵称未获取")} · ${formatEmployeeNumber(employee.employee_number)}</option>`).join("");
+}
+
+async function loadGroupBanEmployees(selectedIds) {
+  const employees = [];
+  for (let page = 1; ; page += 1) {
+    const result = await requestGame(`/api/game/users?page=${page}&page_size=100`);
+    employees.push(...result.items);
+    if (result.items.length < 100) break;
+  }
+  groupBanEmployees = employees;
+  renderGroupBanOperators(selectedIds);
+}
+
 function openGroupChatModal(group = null) {
   groupChatModal.dataset.groupId = group?.id || "";
   document.querySelector("#group-chat-modal-title").textContent = group ? `编辑群聊：${group.name}` : "新增群聊";
   document.querySelector("#group-chat-name").value = group?.name || "";
   document.querySelector("#group-chat-url").value = group?.chat_url || "";
   document.querySelector("#group-chat-room-id").value = group?.chatroom_id || "";
+  document.querySelector("#group-chat-ban-operator-search").value = "";
+  renderGroupBanOperators(new Set(group?.ban_operator_platform_ids || []));
+  void loadGroupBanEmployees(new Set(group?.ban_operator_platform_ids || [])).catch((error) => setResult(`加载员工失败（${error.message}）`, "error"));
   document.querySelector("#group-chat-listening-enabled").checked = group?.listening_enabled ?? true;
   document.querySelector("#group-chat-games-enabled").checked = group?.games_enabled ?? true;
   const enabledGameTypes = new Set(group?.enabled_game_types || groupGameOptions.map(([type]) => type));
@@ -3547,6 +3571,9 @@ for (const button of document.querySelectorAll(".nav-item")) {
   button.addEventListener("click", () => void loadGameView(button.dataset.view));
 }
 document.querySelector("#create-group-chat").addEventListener("click", () => openGroupChatModal());
+document.querySelector("#group-chat-ban-operator-search").addEventListener("input", () => {
+  renderGroupBanOperators(new Set([...document.querySelector("#group-chat-ban-operators").selectedOptions].map((option) => option.value)));
+});
 groupChatModal.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-group-chat-modal]")) closeGroupChatModal();
 });
@@ -3562,6 +3589,7 @@ document.querySelector("#save-group-chat").addEventListener("click", async (even
     announcements_enabled: document.querySelector("#group-chat-announcements-enabled").checked,
     adult_shop_enabled: document.querySelector("#group-chat-adult-shop-enabled").checked,
     performances_enabled: document.querySelector("#group-chat-performances-enabled").checked,
+    ban_operator_platform_ids: [...document.querySelector("#group-chat-ban-operators").selectedOptions].map((option) => option.value),
   };
   try {
     await runMutation(event.currentTarget, "保存中…", async () => {

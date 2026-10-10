@@ -2865,6 +2865,20 @@ def test_group_chat_crud_targets_and_runtime_api(app_context, headers):
     assert listed_by_id[str(primary.id)]["name"] == "主群聊"
 
 
+def test_group_ban_operator_validation_api(app_context, headers):
+    app_context.repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", NOW
+    )
+    response = app_context.client.post(
+        "/internal/group-chats", headers=headers,
+        json={
+            "name": "第二群", "chat_url": "https://www.aikda.com/chat?c=group-2",
+            "ban_operator_platform_ids": ["missing"], "now": NOW.isoformat(),
+        },
+    )
+    assert response.status_code == 409
+
+
 def test_database_backed_identifiers_reject_more_than_255_characters(
     client, headers, payload
 ):

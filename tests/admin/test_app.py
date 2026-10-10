@@ -1465,6 +1465,16 @@ def test_admin_page_contains_multi_group_controls(client):
     assert 'data-employee-group-messages' in script
 
 
+def test_admin_group_ban_operator_selector(client, headers):
+    page = client.get("/").text
+    script = client.get("/static/admin.js").text
+    assert 'id="group-chat-ban-operators"' in page
+    assert 'ban_operator_platform_ids' in script
+    assert 'employee.display_name' in script
+    assert 'employee.platform_nickname' in script
+    assert 'employee.employee_number' in script
+
+
 def test_admin_page_contains_performance_management(client):
     page = client.get("/").text
     script = client.get("/static/admin.js").text

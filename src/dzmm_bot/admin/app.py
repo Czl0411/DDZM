@@ -476,6 +476,13 @@ def create_app(
                     )
                 )
             )
+            or (
+                "ban_operator_platform_ids" in request
+                and (
+                    not isinstance(request["ban_operator_platform_ids"], list)
+                    or not all(isinstance(value, str) for value in request["ban_operator_platform_ids"])
+                )
+            )
         ):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid group chat"
@@ -487,6 +494,7 @@ def create_app(
             "enabled_game_types": request.get(
                 "enabled_game_types", list(GROUP_GAME_TYPES)
             ),
+            "ban_operator_platform_ids": request.get("ban_operator_platform_ids", []),
             "now": beijing_now().isoformat(),
         }
         return versioned_configuration_response(
@@ -514,6 +522,7 @@ def create_app(
             "listening_enabled",
             "games_enabled",
             "enabled_game_types",
+            "ban_operator_platform_ids",
             "random_events_enabled",
             "announcements_enabled",
             "adult_shop_enabled",
@@ -528,7 +537,7 @@ def create_app(
             for key in ("name", "chat_url")
         ) or any(
             key in request and not isinstance(request[key], bool)
-            for key in allowed - {"name", "chat_url", "enabled_game_types"}
+            for key in allowed - {"name", "chat_url", "enabled_game_types", "ban_operator_platform_ids"}
         ) or (
             "enabled_game_types" in request
             and (
@@ -542,6 +551,11 @@ def create_app(
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid group chat"
             )
+        if "ban_operator_platform_ids" in request and (
+            not isinstance(request["ban_operator_platform_ids"], list)
+            or not all(isinstance(value, str) for value in request["ban_operator_platform_ids"])
+        ):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid group chat")
         payload = {**request, "now": beijing_now().isoformat()}
         return versioned_configuration_response(
             identity,

@@ -74,6 +74,9 @@ class GroupChatRecord(Base):
     enabled_game_types: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=lambda: list(GROUP_GAME_TYPES)
     )
+    ban_operator_platform_ids: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
     random_events_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     announcements_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     adult_shop_enabled: Mapped[bool] = mapped_column(

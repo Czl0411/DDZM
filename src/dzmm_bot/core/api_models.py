@@ -91,6 +91,7 @@ class GroupChatResponse(ApiModel):
     listening_enabled: bool
     games_enabled: bool
     enabled_game_types: list[GroupGameType]
+    ban_operator_platform_ids: list[str]
     random_events_enabled: bool
     announcements_enabled: bool
     adult_shop_enabled: bool
@@ -110,6 +111,7 @@ class CreateGroupChatRequest(ApiModel):
     enabled_game_types: list[GroupGameType] = Field(
         default_factory=lambda: list(GROUP_GAME_TYPES)
     )
+    ban_operator_platform_ids: list[str] = Field(default_factory=list)
     random_events_enabled: bool = True
     announcements_enabled: bool = True
     adult_shop_enabled: bool = False
@@ -124,6 +126,7 @@ class UpdateGroupChatRequest(ApiModel):
     listening_enabled: bool | None = None
     games_enabled: bool | None = None
     enabled_game_types: list[GroupGameType] | None = None
+    ban_operator_platform_ids: list[str] | None = None
     random_events_enabled: bool | None = None
     announcements_enabled: bool | None = None
     adult_shop_enabled: bool | None = None

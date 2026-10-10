@@ -371,6 +371,8 @@
         <label>群名称<input id="group-chat-name" maxlength="64" required></label>
         <label>群聊链接<input id="group-chat-url" maxlength="4096" required></label>
         <label>群聊 ID（保存后自动识别）<input id="group-chat-room-id" readonly></label>
+        <label>可使用 /ban 的员工（可搜索，多选）<input id="group-chat-ban-operator-search" placeholder="搜索公司名称、平台昵称或工号"></label>
+        <select id="group-chat-ban-operators" multiple size="6" aria-label="可使用 /ban 的员工"></select>
         <div class="event-input-grid">
           <label><input id="group-chat-listening-enabled" type="checkbox"> 开启监听与回复</label>
           <label><input id="group-chat-games-enabled" type="checkbox"> 允许创建游戏</label>

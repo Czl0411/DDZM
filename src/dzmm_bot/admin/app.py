@@ -2184,7 +2184,7 @@ def create_app(
     ) -> JSONResponse:
         required = (
             "enabled",
-            "greet_time",
+            "greet_times",
             "preview_enabled",
             "preview_time",
             "gift_amount",

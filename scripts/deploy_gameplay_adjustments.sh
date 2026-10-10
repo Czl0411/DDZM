@@ -14,7 +14,11 @@ cp /tmp/core_commands.py   "$VENV/core/commands.py"
 cp /tmp/core_schema.py     "$CUR/src/dzmm_bot/core/schema.py"
 cp /tmp/core_repository.py "$CUR/src/dzmm_bot/core/repository.py"
 cp /tmp/core_commands.py   "$CUR/src/dzmm_bot/core/commands.py"
-cp /tmp/mig_100.py         "$CUR/migrations/versions/20261010_100_department_change_cooldown.py"
+cp /tmp/mig_101.py         "$CUR/migrations/versions/20261010_101_department_change_cooldown.py"
+
+# 清理误传的双 head 文件（revision 20261010_100 与服务器既有 20261006_100 撞编号分支）
+rm -f "$CUR/migrations/versions/20261010_100_department_change_cooldown.py"
+rm -f "$VENV/../dzmm_bot/migrations/versions/20261010_100_department_change_cooldown.py" 2>/dev/null || true
 
 systemctl stop dzmm-core
 set -a

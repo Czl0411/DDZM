@@ -2339,7 +2339,8 @@ class GroupCommandHandler:
         if info is None:
             return "请先用 /入职 名字 加入摸鱼公司。"
         return (
-            f"【我的凿】{info['display_name']}\n"
+            "【我的凿】\n"
+            f"名字：{info['display_name']}\n"
             f"发情值：{info['heat']}/{info['threshold']}\n"
             f"被凿：今日 {info['today_chopped']} 次 / 累计 {info['chopped_count']} 次 ｜ "
             f"高潮：今日 {info['today_climaxes']} 次 / 总 {info['total_climaxes']} 次\n"

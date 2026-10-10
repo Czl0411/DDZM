@@ -1514,6 +1514,28 @@ def _is_boss_word(name: str) -> bool:
     return any(word in lowered for word in _CHOP_BOSS_WORDS)
 
 
+# 部门变更冷却：加入/切换部门成功后 24 小时内不能再次更换
+DEPARTMENT_CHANGE_COOLDOWN = timedelta(hours=24)
+
+
+def _department_change_cooldown_left(
+    last_changed_at: datetime | None, now: datetime
+) -> int | None:
+    """距部门变更冷却结束的剩余秒数；不在冷却期返回 None。"""
+    if last_changed_at is None:
+        return None
+    last_changed = (
+        last_changed_at.astimezone(BEIJING)
+        if last_changed_at.tzinfo is not None
+        else last_changed_at.replace(tzinfo=BEIJING)
+    )
+    now = now.astimezone(BEIJING)
+    remaining = DEPARTMENT_CHANGE_COOLDOWN - (now - last_changed)
+    if remaining <= timedelta(0):
+        return None
+    return int(remaining.total_seconds())
+
+
 @dataclass(frozen=True)
 class TruthTradeSettings:
     question_timeout_seconds: int
@@ -2547,12 +2569,14 @@ class PromotionDecisionResult:
 class DepartmentChangeResult:
     status: str
     department: DepartmentRecord | None = None
+    cooldown_remaining_seconds: int = 0
 
 
 @dataclass(frozen=True)
 class DepartmentRequestResult:
     status: str
     request: DepartmentRequestRecord | None = None
+    cooldown_remaining_seconds: int = 0
 
     @property
     def number(self) -> int:
@@ -14948,7 +14972,6 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     session.scalar(
                         select(func.count()).select_from(EstrusChopRecord).where(
                             EstrusChopRecord.target_user_id == user.id,
-                            EstrusChopRecord.group_chat_id == group_chat_id,
                             EstrusChopRecord.created_at >= day_start,
                             EstrusChopRecord.created_at < day_start + timedelta(days=1),
                         )
@@ -14959,7 +14982,6 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     session.scalar(
                         select(func.count()).select_from(EstrusChopRecord).where(
                             EstrusChopRecord.chopper_user_id == user.id,
-                            EstrusChopRecord.group_chat_id == group_chat_id,
                             EstrusChopRecord.created_at >= day_start,
                             EstrusChopRecord.created_at < day_start + timedelta(days=1),
                         )
@@ -14970,7 +14992,6 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     session.scalar(
                         select(func.count()).select_from(EstrusChopRecord).where(
                             EstrusChopRecord.chopper_user_id == user.id,
-                            EstrusChopRecord.group_chat_id == group_chat_id,
                         )
                     )
                     or 0
@@ -14979,7 +15000,15 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     "display_name": user.display_name,
                     "heat": state.heat if state is not None else 0,
                     "threshold": threshold,
-                    "chopped_count": state.chopped_count if state is not None else 0,
+                    # 累计被凿跨群合并：直接数全部成功记录，不用按群的状态字段
+                    "chopped_count": int(
+                        session.scalar(
+                            select(func.count()).select_from(EstrusChopRecord).where(
+                                EstrusChopRecord.target_user_id == user.id,
+                            )
+                        )
+                        or 0
+                    ),
                     "today_chopped": today_chopped,
                     "today_chops_given": today_chops_given,
                     "total_chops_given": total_chops_given,
@@ -14996,19 +15025,18 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
     def estrus_popularity_rankings(
         self, group_chat_id: UUID, now: datetime
     ) -> list[dict]:
-        """人气榜（前 5）：按当日被凿次数，从 estrus_chops 按天统计。"""
+        """每日人气榜（前 5）：按当日（跨群）被凿次数排名，附跨群累计被凿总数。"""
         day_start = now.astimezone(BEIJING).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         with self._session() as session:
             rows = session.execute(
-                select(UserRecord.display_name, func.count())
+                select(UserRecord.id, UserRecord.display_name, func.count())
                 .join(
                     EstrusChopRecord,
                     EstrusChopRecord.target_user_id == UserRecord.id,
                 )
                 .where(
-                    EstrusChopRecord.group_chat_id == group_chat_id,
                     EstrusChopRecord.created_at >= day_start,
                     EstrusChopRecord.created_at < day_start + timedelta(days=1),
                 )
@@ -15016,9 +15044,26 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 .order_by(func.count().desc(), UserRecord.id)
                 .limit(5)
             ).all()
+            totals: dict[UUID, int] = {}
+            if rows:
+                user_ids = [row[0] for row in rows]
+                total_rows = session.execute(
+                    select(
+                        EstrusChopRecord.target_user_id, func.count()
+                    )
+                    .where(EstrusChopRecord.target_user_id.in_(user_ids))
+                    .group_by(EstrusChopRecord.target_user_id)
+                ).all()
+                totals = {
+                    user_id: int(count) for user_id, count in total_rows
+                }
         return [
-            {"display_name": name, "today_chopped": int(count)}
-            for name, count in rows
+            {
+                "display_name": name,
+                "today_chopped": int(count),
+                "total_chopped": totals.get(user_id, 0),
+            }
+            for user_id, name, count in rows
         ]
 
     def _estrus_climax_text(
@@ -15271,13 +15316,13 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     day_start = now.replace(
                         hour=0, minute=0, second=0, microsecond=0
                     )
+                    # 凿人次数跨群合并统计：所有群的今日凿数共享同一配额
                     given_today = int(
                         session.scalar(
                             select(func.count())
                             .select_from(EstrusChopRecord)
                             .where(
                                 EstrusChopRecord.chopper_user_id == chopper.id,
-                                EstrusChopRecord.group_chat_id == group_chat_id,
                                 EstrusChopRecord.created_at >= day_start,
                                 EstrusChopRecord.created_at
                                 < day_start + timedelta(days=1),
@@ -15310,13 +15355,13 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     day_start = now.replace(
                         hour=0, minute=0, second=0, microsecond=0
                     )
+                    # 被凿每日上限跨群合并：所有群的今日被凿共享同一上限
                     received_today = int(
                         session.scalar(
                             select(func.count())
                             .select_from(EstrusChopRecord)
                             .where(
                                 EstrusChopRecord.target_user_id == target.id,
-                                EstrusChopRecord.group_chat_id == group_chat_id,
                                 EstrusChopRecord.created_at >= day_start,
                                 EstrusChopRecord.created_at
                                 < day_start + timedelta(days=1),
@@ -31671,6 +31716,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
     def join_department(
         self, platform_id: str, department_name: str
     ) -> DepartmentChangeResult:
+        now = datetime.now(BEIJING)
         with self.transaction():
             with self._session() as session:
                 _, default_department = self._ensure_organization_defaults(session)
@@ -31681,6 +31727,14 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 )
                 if employee is None:
                     return DepartmentChangeResult("not_joined")
+                cooldown_left = _department_change_cooldown_left(
+                    employee.last_department_changed_at, now
+                )
+                if cooldown_left is not None:
+                    return DepartmentChangeResult(
+                        "cooldown",
+                        cooldown_remaining_seconds=cooldown_left,
+                    )
                 department = session.scalar(
                     select(DepartmentRecord).where(DepartmentRecord.name == department_name)
                 )
@@ -31689,12 +31743,14 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 if employee.department_id != default_department.id:
                     return DepartmentChangeResult("already_assigned")
                 employee.department_id = department.id
+                employee.last_department_changed_at = now
                 session.flush()
                 return DepartmentChangeResult("joined", department)
 
     def switch_department(
         self, platform_id: str, department_name: str
     ) -> DepartmentChangeResult:
+        now = datetime.now(BEIJING)
         with self.transaction():
             with self._session() as session:
                 self._ensure_organization_defaults(session)
@@ -31705,6 +31761,14 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 )
                 if employee is None:
                     return DepartmentChangeResult("not_joined")
+                cooldown_left = _department_change_cooldown_left(
+                    employee.last_department_changed_at, now
+                )
+                if cooldown_left is not None:
+                    return DepartmentChangeResult(
+                        "cooldown",
+                        cooldown_remaining_seconds=cooldown_left,
+                    )
                 department = session.scalar(
                     select(DepartmentRecord).where(DepartmentRecord.name == department_name)
                 )
@@ -31713,6 +31777,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 if employee.department_id == department.id:
                     return DepartmentChangeResult("already_in_department", department)
                 employee.department_id = department.id
+                employee.last_department_changed_at = now
                 session.flush()
                 return DepartmentChangeResult("switched", department)
 
@@ -31730,6 +31795,14 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 )
                 if employee is None:
                     return DepartmentRequestResult("not_joined")
+                cooldown_left = _department_change_cooldown_left(
+                    employee.last_department_changed_at, requested_at
+                )
+                if cooldown_left is not None:
+                    return DepartmentRequestResult(
+                        "cooldown",
+                        cooldown_remaining_seconds=cooldown_left,
+                    )
                 source_department = session.get(DepartmentRecord, employee.department_id)
                 employee_rank = session.get(RankRecord, employee.rank_id)
                 if source_department is None:
@@ -31762,6 +31835,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                         existing.state = "cancelled"
                         existing.decided_at = requested_at
                     employee.department_id = target_department.id
+                    employee.last_department_changed_at = requested_at
                     session.flush()
                     return DepartmentRequestResult(
                         "joined" if source_department.id == default_department.id else "switched"
@@ -31811,6 +31885,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     if applicant is None:
                         continue
                     applicant.department_id = request.target_department_id
+                    applicant.last_department_changed_at = now
                     request.state = "approved"
                     request.decided_at = now
                 session.flush()
@@ -31889,6 +31964,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     request.decided_at = decided_at
                     if decision == "approved":
                         applicant.department_id = request.target_department_id
+                        applicant.last_department_changed_at = decided_at
                     session.add(
                         DepartmentApprovalRecord(
                             request_id=request.id,

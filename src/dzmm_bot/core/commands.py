@@ -2340,6 +2340,7 @@ class GroupCommandHandler:
             return "请先用 /入职 名字 加入摸鱼公司。"
         return (
             "【我的凿】\n"
+            f"名字：{info['display_name']}\n"
             f"发情值：{info['heat']}/{info['threshold']}\n"
             f"被凿：今日 {info['today_chopped']} 次 / 累计 {info['chopped_count']} 次 ｜ "
             f"高潮：今日 {info['today_climaxes']} 次 / 总 {info['total_climaxes']} 次\n"
@@ -2355,9 +2356,10 @@ class GroupCommandHandler:
         )
         if not entries:
             return "今天还没人被凿，快用 /凿 开张吧。"
-        lines = ["【人气榜】"]
+        lines = ["【每日人气榜】"]
         lines.extend(
             f"{entry['display_name']}：今日被凿{entry['today_chopped']}次"
+            f"（总计：{entry['total_chopped']}次）"
             for entry in entries
         )
         return "\n".join(lines)
@@ -2604,9 +2606,7 @@ class GroupCommandHandler:
         birthday_view = self._repository.get_employee_birthday(
             platform_id, received_at
         )
-        if birthday_view is None:
-            birthday_line = "生日：未设置，用 /设置生日 月-日 告诉人事吧"
-        else:
+        if birthday_view is not None:
             days_left = (
                 birthday_view.next_occurrence - received_at.date()
             ).days
@@ -2614,23 +2614,31 @@ class GroupCommandHandler:
             birthday_line = (
                 f"生日：{self._format_birthday(birthday_view)}（{countdown}）"
             )
+        else:
+            birthday_line = None
         if employee.gender == "male":
             gender_line = "性别：男"
         elif employee.gender == "female":
             gender_line = "性别：女"
         else:
-            gender_line = "性别：未设置，用 /设置性别 男 或 女 标记一下"
+            gender_line = None
         lines = [
             display_name,
             f"工号：{format_employee_number(employee.employee_number)}",
-            gender_line,
-            birthday_line,
-            f"职位：{profile.rank.name}（{profile.rank.level_label}）",
-            f"部门：{profile.department.name}",
-            f"当前余额：{employee.balance} {currency}。",
-            f"今日活跃度：LV{activity.level}。",
-            f"今日收益：{self._repository.today_income(employee.id, received_at)} {currency}。",
         ]
+        if gender_line is not None:
+            lines.append(gender_line)
+        if birthday_line is not None:
+            lines.append(birthday_line)
+        lines.extend(
+            [
+                f"职位：{profile.rank.name}（{profile.rank.level_label}）",
+                f"部门：{profile.department.name}",
+                f"当前余额：{employee.balance} {currency}。",
+                f"今日活跃度：LV{activity.level}。",
+                f"今日收益：{self._repository.today_income(employee.id, received_at)} {currency}。",
+            ]
+        )
         allowance = self._repository.department_allowance_summary(
             platform_id, received_at
         )
@@ -2892,6 +2900,9 @@ class GroupCommandHandler:
             )
         if result.status == "already_pending":
             return self._reply("/加入部门", "already_pending", received_at)
+        if result.status == "cooldown":
+            hours = max(1, result.cooldown_remaining_seconds // 3600)
+            return f"刚变更过部门，需 24 小时后才能再次更换（还剩约 {hours} 小时）。"
         return self._reply("/加入部门", "unknown_department", received_at)
 
     def _switch_department(self, platform_id: str, content: str, received_at) -> str:
@@ -2924,6 +2935,9 @@ class GroupCommandHandler:
             return self._reply("/切换部门", "already_in_department", received_at)
         if result.status == "already_pending":
             return self._reply("/切换部门", "already_pending", received_at)
+        if result.status == "cooldown":
+            hours = max(1, result.cooldown_remaining_seconds // 3600)
+            return f"刚变更过部门，需 24 小时后才能再次更换（还剩约 {hours} 小时）。"
         return self._reply("/切换部门", "unknown_department", received_at)
 
     def _department_allowance_hints(self) -> dict[str, str]:
@@ -2934,7 +2948,7 @@ class GroupCommandHandler:
             "event": f"参与随机事件/公演并正常完成额外 +{settings.event_amount} 摸鱼币",
             "game": (
                 f"开局小游戏 +{settings.game_host_amount}；"
-                f"每参与完成 {settings.game_play_step} 局 +{settings.game_play_amount}"
+                f"每天参与满 {settings.game_play_step} 局 +{settings.game_play_amount}"
             ),
             "submission": f"随机事件投稿过审额外 +{settings.submission_amount} 摸鱼币",
             "chat": (

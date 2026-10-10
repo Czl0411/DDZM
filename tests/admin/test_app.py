@@ -705,6 +705,31 @@ class FakeCore:
     def set_board_membership(self, platform_id, member):
         return {"platform_id": platform_id, "member": member}
 
+    def get_birthday_settings(self):
+        return {
+            "enabled": False,
+            "greet_times": ["09:00", "12:00", "17:00"],
+            "preview_enabled": True,
+            "preview_time": "18:00",
+            "gift_amount": 66,
+            "same_day_backfill": True,
+            "edit_limit_per_year": 1,
+            "checkin_multiplier": 2,
+            "shop_discount_percent": 90,
+            "lottery_free_tickets": 1,
+            "event_reward_bonus_percent": 10,
+            "tips_enabled": True,
+            "tip_max_amount": 100,
+            "tip_window_minutes": 30,
+            "anniversary_enabled": True,
+            "greet_template": "t1",
+            "preview_template": "t2",
+            "tips_summary_template": "t3",
+        }
+
+    def set_birthday_settings(self, settings):
+        return settings
+
     def get_game_settings(self):
         return self.game_settings
 
@@ -2251,6 +2276,47 @@ def test_admin_estrus_panel_exposes_deductions_linking_and_target_limit(client):
     assert "data-estrus-quota" in script
     assert "chopper_rank_quotas: rankQuotas" in script
     assert ".disabled = targetFixed || chopperFixed" in script
+
+
+def test_admin_proxies_birthday_settings_and_rejects_missing_greet_times(client, headers):
+    initial = client.get("/api/game/birthday/settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()["greet_times"] == ["09:00", "12:00", "17:00"]
+
+    payload = {
+        "enabled": True,
+        "greet_times": ["09:00", "12:00", "17:00"],
+        "preview_enabled": False,
+        "preview_time": "18:00",
+        "gift_amount": 66,
+        "same_day_backfill": True,
+        "edit_limit_per_year": 1,
+        "checkin_multiplier": 2,
+        "shop_discount_percent": 90,
+        "lottery_free_tickets": 1,
+        "event_reward_bonus_percent": 10,
+        "tips_enabled": True,
+        "tip_max_amount": 100,
+        "tip_window_minutes": 30,
+        "anniversary_enabled": True,
+        "greet_template": "t1",
+        "preview_template": "t2",
+        "tips_summary_template": "t3",
+    }
+    saved = client.patch(
+        "/api/game/birthday/settings",
+        headers={**headers, "Idempotency-Key": "birthday-settings-1"},
+        json=payload,
+    )
+    assert saved.status_code == 200
+    assert saved.json()["greet_times"] == ["09:00", "12:00", "17:00"]
+    assert saved.json()["enabled"] is True
+
+    # 回归：greet_times 改版后 required 清单必须同步（曾漏改导致线上保存 422）
+    stale = {**payload, "greet_time": "09:00"}
+    del stale["greet_times"]
+    rejected = client.patch("/api/game/birthday/settings", headers=headers, json=stale)
+    assert rejected.status_code == 422
 
 
 def test_admin_proxies_game_settings(client, headers, core):

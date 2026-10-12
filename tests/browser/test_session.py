@@ -1,8 +1,11 @@
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import subprocess
+from threading import get_ident
 
+import httpx
 import pytest
 
 from dzmm_bot.browser.aikda_socket import (
@@ -119,6 +122,17 @@ class FakeRequestContext:
     def post(self, url, *, multipart):
         self.calls.append((url, multipart))
         return FakeUploadResponse()
+
+
+class ThreadBoundRequestContext(FakeRequestContext):
+    def __init__(self):
+        super().__init__()
+        self.owner_thread_id = get_ident()
+
+    def post(self, url, *, multipart):
+        if get_ident() != self.owner_thread_id:
+            raise RuntimeError("request context used from another thread")
+        return super().post(url, multipart=multipart)
 
 
 class FakeChromium:
@@ -410,6 +424,124 @@ def test_configured_session_uploads_image_as_multipart_without_hex_encoding(tmp_
             "chatroomId": "group-1",
         },
     )]
+
+
+def test_configured_session_uploads_image_from_outbound_thread(tmp_path, monkeypatch):
+    page = FakePage("https://chat.example/chat?c=group-1")
+    page.evaluate = lambda script, arg=None: (
+        "short-lived-token"
+        if "api/auth/token" in script
+        else {"id": "bot-1"}
+        if arg["procedure"] == "user.getMe"
+        else {"messages": []}
+    )
+    context = FakeContext(
+        page.url,
+        cookies=[{"name": "session", "value": "browser-session"}],
+    )
+    context.request = ThreadBoundRequestContext()
+    context.pages = [page]
+    socket = FakeSocket()
+    session = BrowserSession(
+        tmp_path / "profile",
+        "https://chat.example/login",
+        chat_url="https://chat.example/chat?c=group-1",
+        playwright_factory=lambda: FakePlaywright(FakeChromium(context)),
+        socket_factory=lambda: socket,
+    )
+    image_path = tmp_path / "history-card.png"
+    image_path.write_bytes(b"raw-image")
+    http_calls = []
+
+    def fake_post(url, **kwargs):
+        http_calls.append((url, kwargs))
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "result": {
+                    "data": {
+                        "json": {"url": "https://cdn.example/history-card.png"}
+                    }
+                }
+            },
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    gateway = session.start_headless()
+    assert gateway.is_authenticated()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = executor.submit(
+            gateway.upload_image, image_path, "image/png"
+        ).result()
+
+    assert result == {"url": "https://cdn.example/history-card.png"}
+    assert context.request.calls == []
+    assert http_calls == [(
+        "https://chat.example/api/trpc/chatroom.uploadImage",
+        {
+            "headers": {
+                "Cookie": "session=browser-session",
+                "Origin": "https://chat.example",
+                "Referer": "https://chat.example/chat?c=group-1",
+            },
+            "files": {
+                "file": ("history-card.png", b"raw-image", "image/png")
+            },
+            "data": {"chatroomId": "group-1"},
+            "timeout": 90.0,
+        },
+    )]
+
+
+def test_outbound_upload_uses_cookie_refreshed_during_socket_reconnect(
+    tmp_path, monkeypatch,
+):
+    page = FakePage("https://chat.example/chat?c=group-1")
+    page.evaluate = lambda script, arg=None: (
+        "short-lived-token"
+        if "api/auth/token" in script
+        else {"id": "bot-1"}
+        if arg["procedure"] == "user.getMe"
+        else {"messages": []}
+    )
+    context = FakeContext(
+        page.url,
+        cookies=[{"name": "session", "value": "expired-session"}],
+    )
+    context.pages = [page]
+    socket = FakeSocket()
+    session = BrowserSession(
+        tmp_path / "profile",
+        "https://chat.example/login",
+        chat_url="https://chat.example/chat?c=group-1",
+        playwright_factory=lambda: FakePlaywright(FakeChromium(context)),
+        socket_factory=lambda: socket,
+    )
+    image_path = tmp_path / "history-card.png"
+    image_path.write_bytes(b"raw-image")
+    http_calls = []
+
+    def fake_post(url, **kwargs):
+        http_calls.append((url, kwargs))
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={"url": "https://cdn.example/history-card.png"},
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    gateway = session.start_headless()
+    assert gateway.is_authenticated()
+    context._cookies = [{"name": "session", "value": "refreshed-session"}]
+    gateway.close()
+    assert gateway.is_authenticated()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(gateway.upload_image, image_path, "image/png").result()
+
+    assert http_calls[0][1]["headers"]["Cookie"] == "session=refreshed-session"
 
 
 def test_configured_session_forwards_browser_cookies_to_socket_handshake(tmp_path):

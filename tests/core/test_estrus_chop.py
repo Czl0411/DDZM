@@ -479,6 +479,85 @@ def test_target_daily_limit_resets_at_beijing_midnight():
     assert info["heat"] == 2  # 发情值跨天不清零：两次各 +2
 
 
+def test_estrus_state_and_opt_out_are_shared_across_groups():
+    service, repository, factory = _service(
+        estrus_random=_SeqRandom([0.60, 0.60] * 2)
+    )
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    second_group = repository.create_group_chat(
+        "二群",
+        "https://www.aikda.com/chat?c=group-second",
+        True,
+        True,
+        True,
+        True,
+        NOW,
+    )
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+    _receive(
+        service,
+        "c2",
+        "user-0",
+        "/凿 乙",
+        NOW + timedelta(minutes=1),
+        chatroom_id="group-second",
+    )
+
+    info = repository.get_my_estrus("user-1", second_group.id, NOW)
+    assert info["heat"] == 2
+    assert info["today_chopped"] == 2
+    assert info["chopped_count"] == 2
+
+    _receive(service, "opt-out", "user-1", "/拒绝被凿", NOW)
+    _receive(
+        service,
+        "c3",
+        "user-0",
+        "/凿 乙",
+        NOW + timedelta(minutes=2),
+        chatroom_id="group-second",
+    )
+    assert _joined_text(factory, "乙 拒绝了 甲 的凿")
+    assert repository.get_my_estrus(
+        "user-1", second_group.id, NOW
+    )["opted_out"] is True
+
+
+def test_chop_cooldown_is_shared_across_groups():
+    service, repository, factory = _service(
+        estrus_random=_SeqRandom([0.60, 0.60])
+    )
+    _join(service, "j0", "user-0", "甲", NOW)
+    _join(service, "j1", "user-1", "乙", NOW)
+    repository.create_group_chat(
+        "二群",
+        "https://www.aikda.com/chat?c=group-second",
+        True,
+        True,
+        True,
+        True,
+        NOW,
+    )
+    _configure_estrus_settings(repository, chop_cooldown_seconds=600)
+
+    _receive(service, "c1", "user-0", "/凿 乙", NOW)
+    _receive(
+        service,
+        "c2",
+        "user-0",
+        "/凿 乙",
+        NOW + timedelta(minutes=1),
+        chatroom_id="group-second",
+    )
+
+    assert _joined_text(factory, "凿冷却中，请")
+    assert repository.get_my_estrus(
+        "user-0", PRIMARY_GROUP_CHAT_ID, NOW
+    )["total_chops_given"] == 1
+
+
 def test_target_daily_limit_shared_across_groups_and_zero_disables_it():
     """被凿每日上限跨群共享：两个群合计计算。"""
     service, repository, factory = _service(estrus_random=_SeqRandom([0.60, 0.60] * 3))
@@ -1037,16 +1116,16 @@ def test_me_shows_birthday_and_gender_with_reminders():
 
     _receive(service, "m0", "user-0", "/我", NOW)
     me0 = _me_texts()
-    # 未设置生日/性别时不再显示这两行
-    assert "性别：" not in me0
-    assert "生日：" not in me0
+    assert "性别：未设置，请使用 /设置性别 男或女" in me0
+    assert "生日：未设置，请使用 /设置生日 MM-DD" in me0
 
     _receive(service, "g1", "user-0", "/设置性别 女", NOW)
     _receive(service, "b1", "user-0", "/设置生日 12-25", NOW)
     _receive(service, "m1", "user-0", "/我", NOW)
     me1 = _me_texts()
     assert "性别：女" in me1
-    assert "生日：12 月 25 日（还有" in me1
+    assert "生日：12 月 25 日" in me1
+    assert "还有" not in me1
     # 顺序：工号 → 性别 → 生日 → 职位 → 部门 → 余额 → 活跃度 → 收益 → 打卡
     positions = [
         me1.index("工号："),

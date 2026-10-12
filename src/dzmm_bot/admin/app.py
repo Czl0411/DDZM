@@ -2143,6 +2143,13 @@ def create_app(
             "global_completion_reward",
             "submission_approval_reward",
             "tipping_duration_seconds",
+            "vote_enabled",
+            "vote_close_offset_minutes",
+            "vote_broadcast_interval_minutes",
+            "vote_random_candidates",
+            "vote_ad_slot_limit",
+            "vote_fallback_minutes",
+            "vote_allow_change",
         )
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
@@ -2177,7 +2184,7 @@ def create_app(
     ) -> JSONResponse:
         required = (
             "enabled",
-            "greet_time",
+            "greet_times",
             "preview_enabled",
             "preview_time",
             "gift_amount",
@@ -3296,6 +3303,43 @@ def create_app(
         schedule_id: str, _: Annotated[None, Depends(authorize)]
     ) -> dict:
         return _relay_core(lambda: core.random_event_details(schedule_id))
+
+    @app.get("/api/game/random-events/vote")
+    def random_event_vote(_: Annotated[None, Depends(authorize)]) -> dict:
+        return _relay_core(lambda: core.random_event_vote())
+
+    @app.post("/api/game/random-events/vote/close")
+    def close_random_event_vote(
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        payload: dict | None = None,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        winner_position = None if payload is None else payload.get("winner_position")
+        scope = f"random-event-vote:close:{winner_position or 'auto'}"
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.close_random_event_vote(winner_position)
+            ),
+            scope=scope,
+        )
+
+    @app.post("/api/game/random-events/vote/cancel")
+    def cancel_random_event_vote(
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(lambda: core.cancel_random_event_vote()),
+            scope="random-event-vote:cancel",
+        )
 
     @app.post("/api/session", status_code=status.HTTP_204_NO_CONTENT)
     def create_console_session(

@@ -38,6 +38,7 @@ class FakeGateway:
     sent_to: list[tuple[str, str]] = field(default_factory=list)
     sent_shares: list[tuple[str, str, str]] = field(default_factory=list)
     sent_images: list[tuple[str, str]] = field(default_factory=list)
+    sent_images_to: list[tuple[str, str, str]] = field(default_factory=list)
     uploaded_images: list[tuple[str, str]] = field(default_factory=list)
     upload_error: Exception | None = None
     retracted: list[str] = field(default_factory=list)
@@ -136,7 +137,10 @@ class FakeGateway:
         self, chatroom_id, image_url, *, alt="image", message_id=None,
         reference=None,
     ):
-        raise AssertionError("unexpected targeted image")
+        self.sent_message_ids.append(message_id)
+        self.sent_references.append(reference)
+        self.sent_images_to.append((chatroom_id, image_url, alt))
+        return f"target-image-{len(self.sent_images_to)}"
 
     def upload_image(self, path, mime_type):
         if self.upload_error is not None:
@@ -592,6 +596,20 @@ def test_worker_dispatches_the_random_event_submission_entry_from_a_new_direct_r
     assert core.submitted_ids == ["new-submission"]
 
 
+@pytest.mark.parametrize("content", ("/删除黑历史", "/下一页"))
+def test_worker_dispatches_black_history_management_from_a_new_direct_room(
+    context, content,
+):
+    worker, gateway, _, _, core, _ = context
+    worker.run_once()
+
+    gateway.message_handler(InboundMessage(
+        f"black-history-{content}", "new-user", content, NOW,
+        source_type="direct", chatroom_id="new-direct",
+    ))
+
+    assert core.submitted_event.wait(timeout=1)
+    assert core.submitted_ids == [f"black-history-{content}"]
 def _referral_message(message_id="sys-1"):
     return InboundMessage(
         message_id, "system-sender",
@@ -1137,6 +1155,82 @@ def test_worker_sends_novel_outbound_as_a_share_card(context):
     assert gateway.sent_shares == [
         ("direct-a", "novel", "66408bb3-60a0-40e1-a434-ee40efee4d27")
     ]
+    assert gateway.sent_to == []
+
+
+def test_worker_renders_uploads_and_sends_black_history_card(context, monkeypatch):
+    worker, gateway, _, _, _, _ = context
+    rendered = []
+
+    def fake_render(payload, output_path):
+        rendered.append(payload)
+        output_path.write_bytes(b"png")
+
+    monkeypatch.setattr(
+        "dzmm_bot.browser.worker.render_black_history_card", fake_render
+    )
+    outbound = OutboundClaim(
+        OUTBOUND_ID,
+        "in-1",
+        '{"display_name":"当事人","rank_name":"实习生","text":"原话"}',
+        LEASE,
+        content_type="history_card",
+        destination_chatroom_id="group-a",
+    )
+
+    worker._send_outbound(gateway, outbound)
+
+    assert rendered == [
+        {"display_name": "当事人", "rank_name": "实习生", "text": "原话"}
+    ]
+    assert gateway.uploaded_images[0][1] == "image/png"
+    assert gateway.sent_images_to == [
+        ("group-a", "https://cdn.example.com/uploaded.png", "黑历史")
+    ]
+
+
+def test_worker_reports_an_expired_black_history_image(context, monkeypatch):
+    worker, gateway, _, _, _, _ = context
+
+    def reject_image(*args, **kwargs):
+        raise AikdaMessageRejectedError("image rejected")
+
+    monkeypatch.setattr(gateway, "send_image_to", reject_image)
+    outbound = OutboundClaim(
+        OUTBOUND_ID,
+        "in-1",
+        '{"image_url":"https://cdn.example.com/gone.png","image_alt":"旧图"}',
+        LEASE,
+        content_type="history_image",
+        destination_chatroom_id="group-a",
+    )
+
+    worker._send_outbound(gateway, outbound)
+
+    assert gateway.sent_to == [
+        ("group-a", "这条黑历史图片已经失效，暂时无法查看。")
+    ]
+
+
+def test_worker_keeps_retryable_black_history_image_rejections(context, monkeypatch):
+    worker, gateway, _, _, _, _ = context
+
+    def reject_image(*args, **kwargs):
+        raise AikdaMessageRejectedError("消息发送失败，请稍后再试")
+
+    monkeypatch.setattr(gateway, "send_image_to", reject_image)
+    outbound = OutboundClaim(
+        OUTBOUND_ID,
+        "in-1",
+        '{"image_url":"https://cdn.example.com/image.png","image_alt":"旧图"}',
+        LEASE,
+        content_type="history_image",
+        destination_chatroom_id="group-a",
+    )
+
+    with pytest.raises(AikdaMessageRejectedError, match="请稍后再试"):
+        worker._send_outbound(gateway, outbound)
+
     assert gateway.sent_to == []
 
 

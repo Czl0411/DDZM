@@ -57,6 +57,9 @@ class FakeCore:
     )
     employees: list[dict] = field(default_factory=list)
     platform_nickname_refresh_requests: int = 0
+    random_event_vote_report: dict | None = None
+    random_event_vote_closes: list = field(default_factory=list)
+    random_event_vote_cancels: int = 0
     balance_ledgers: dict[str, dict] = field(default_factory=dict)
     balance_ledger_requests: list[tuple[str, int, int]] = field(default_factory=list)
     integration_calls: list[tuple[str, object]] = field(default_factory=list)
@@ -702,6 +705,31 @@ class FakeCore:
     def set_board_membership(self, platform_id, member):
         return {"platform_id": platform_id, "member": member}
 
+    def get_birthday_settings(self):
+        return {
+            "enabled": False,
+            "greet_times": ["09:00", "12:00", "17:00"],
+            "preview_enabled": True,
+            "preview_time": "18:00",
+            "gift_amount": 66,
+            "same_day_backfill": True,
+            "edit_limit_per_year": 1,
+            "checkin_multiplier": 2,
+            "shop_discount_percent": 90,
+            "lottery_free_tickets": 1,
+            "event_reward_bonus_percent": 10,
+            "tips_enabled": True,
+            "tip_max_amount": 100,
+            "tip_window_minutes": 30,
+            "anniversary_enabled": True,
+            "greet_template": "t1",
+            "preview_template": "t2",
+            "tips_summary_template": "t3",
+        }
+
+    def set_birthday_settings(self, settings):
+        return settings
+
     def get_game_settings(self):
         return self.game_settings
 
@@ -1107,6 +1135,25 @@ class FakeCore:
             event for event in self.today_random_events if event["id"] != schedule_id
         ]
         return {"accepted": len(self.today_random_events) != before}
+
+    def random_event_vote(self):
+        return {"poll": self.random_event_vote_report}
+
+    def close_random_event_vote(self, winner_position=None):
+        if self.random_event_vote_report is not None:
+            self.random_event_vote_report["status"] = "closed"
+            self.random_event_vote_report["winner_position"] = winner_position
+            self.random_event_vote_report["fallback_reason"] = (
+                None if winner_position is None else "manual"
+            )
+        self.random_event_vote_closes.append(winner_position)
+        return {"poll": self.random_event_vote_report}
+
+    def cancel_random_event_vote(self):
+        if self.random_event_vote_report is not None:
+            self.random_event_vote_report["status"] = "cancelled"
+        self.random_event_vote_cancels += 1
+        return {"poll": self.random_event_vote_report}
 
     def get_hide_and_seek_settings(self):
         return self.hide_and_seek_settings
@@ -2231,6 +2278,47 @@ def test_admin_estrus_panel_exposes_deductions_linking_and_target_limit(client):
     assert ".disabled = targetFixed || chopperFixed" in script
 
 
+def test_admin_proxies_birthday_settings_and_rejects_missing_greet_times(client, headers):
+    initial = client.get("/api/game/birthday/settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()["greet_times"] == ["09:00", "12:00", "17:00"]
+
+    payload = {
+        "enabled": True,
+        "greet_times": ["09:00", "12:00", "17:00"],
+        "preview_enabled": False,
+        "preview_time": "18:00",
+        "gift_amount": 66,
+        "same_day_backfill": True,
+        "edit_limit_per_year": 1,
+        "checkin_multiplier": 2,
+        "shop_discount_percent": 90,
+        "lottery_free_tickets": 1,
+        "event_reward_bonus_percent": 10,
+        "tips_enabled": True,
+        "tip_max_amount": 100,
+        "tip_window_minutes": 30,
+        "anniversary_enabled": True,
+        "greet_template": "t1",
+        "preview_template": "t2",
+        "tips_summary_template": "t3",
+    }
+    saved = client.patch(
+        "/api/game/birthday/settings",
+        headers={**headers, "Idempotency-Key": "birthday-settings-1"},
+        json=payload,
+    )
+    assert saved.status_code == 200
+    assert saved.json()["greet_times"] == ["09:00", "12:00", "17:00"]
+    assert saved.json()["enabled"] is True
+
+    # 回归：greet_times 改版后 required 清单必须同步（曾漏改导致线上保存 422）
+    stale = {**payload, "greet_time": "09:00"}
+    del stale["greet_times"]
+    rejected = client.patch("/api/game/birthday/settings", headers=headers, json=stale)
+    assert rejected.status_code == 422
+
+
 def test_admin_proxies_game_settings(client, headers, core):
     initial = client.get("/api/game/settings", headers=headers)
     updated = client.patch(
@@ -3200,6 +3288,13 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
             "global_completion_reward": 10,
             "submission_approval_reward": 11,
             "tipping_duration_seconds": 180,
+            "vote_enabled": True,
+            "vote_close_offset_minutes": 15,
+            "vote_broadcast_interval_minutes": 45,
+            "vote_random_candidates": 4,
+            "vote_ad_slot_limit": 2,
+            "vote_fallback_minutes": 20,
+            "vote_allow_change": False,
         },
     )
     scene = client.post(
@@ -3220,6 +3315,13 @@ def test_admin_configures_random_event_settings_and_creates_scene(client, header
     assert core.random_event_settings["submission_draft_timeout_minutes"] == 45
     assert core.random_event_settings["global_completion_reward"] == 10
     assert core.random_event_settings["tipping_duration_seconds"] == 180
+    assert core.random_event_settings["vote_enabled"] is True
+    assert core.random_event_settings["vote_close_offset_minutes"] == 15
+    assert core.random_event_settings["vote_broadcast_interval_minutes"] == 45
+    assert core.random_event_settings["vote_random_candidates"] == 4
+    assert core.random_event_settings["vote_ad_slot_limit"] == 2
+    assert core.random_event_settings["vote_fallback_minutes"] == 20
+    assert core.random_event_settings["vote_allow_change"] is False
     assert scene.status_code == 201
     assert scene.json()["name"] == "茶水间"
     assert scene.json()["openings"] == ["咖啡机突然发出一声巨响。"]
@@ -4130,6 +4232,70 @@ def test_admin_relays_memory_guild_current_history_and_detail(
     assert history.json()["page_size"] == 10
     assert detail.json()["teams"][0]["name"] == "红队"
 
+
+def test_admin_can_read_and_steer_the_random_event_vote(core, client, headers):
+    core.random_event_vote_report = {
+        "id": "poll-1",
+        "status": "open",
+        "group_name": "主群聊",
+        "scheduled_at": "2026-08-04T21:00:00+08:00",
+        "opened_at": "2026-08-04T18:00:00+08:00",
+        "closes_at": "2026-08-04T20:50:00+08:00",
+        "closed_at": None,
+        "winner_position": None,
+        "fallback_reason": None,
+        "total_votes": 2,
+        "candidates": [
+            {
+                "position": 1,
+                "source": "random",
+                "vacant": False,
+                "scene_name": "茶水间",
+                "event_name": "咖啡事故",
+                "seat_summary": "主持 × 1",
+                "reward": 6,
+                "target_rounds": 3,
+                "votes": 2,
+                "voters": ["投票甲", "投票乙"],
+            },
+            {
+                "position": 4,
+                "source": "ad_slot",
+                "vacant": True,
+                "scene_name": None,
+                "event_name": None,
+                "seat_summary": None,
+                "reward": None,
+                "target_rounds": None,
+                "votes": 0,
+                "voters": [],
+            },
+        ],
+    }
+
+    report = client.get("/api/game/random-events/vote", headers=headers).json()
+
+    assert report["poll"]["total_votes"] == 2
+    assert report["poll"]["candidates"][0]["voters"] == ["投票甲", "投票乙"]
+    assert report["poll"]["candidates"][1]["vacant"] is True
+
+    closed = client.post(
+        "/api/game/random-events/vote/close",
+        headers={**headers, "Idempotency-Key": "vote-close", "If-Match": "0"},
+        json={"winner_position": 3},
+    )
+
+    assert closed.status_code == 200
+    assert closed.json()["poll"]["winner_position"] == 3
+    assert core.random_event_vote_closes == [3]
+
+    cancelled = client.post(
+        "/api/game/random-events/vote/cancel",
+        headers={**headers, "Idempotency-Key": "vote-cancel", "If-Match": "1"},
+    )
+
+    assert cancelled.json()["poll"]["status"] == "cancelled"
+    assert core.random_event_vote_cancels == 1
 def test_integration_endpoints_require_key_and_forward(core, console, websocket_connection, admin_repository):
     from dzmm_bot.admin.app import create_app
 

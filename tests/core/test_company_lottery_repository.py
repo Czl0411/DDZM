@@ -119,9 +119,16 @@ def test_settings_have_designed_defaults(repository):
     assert settings.enabled is True
     assert (settings.red_pool, settings.red_count, settings.blue_pool) == (10, 4, 6)
     assert settings.ticket_price == 2
-    assert settings.pool_ceiling == 200
+    assert settings.prizes == {
+        "head": 500,
+        "second": 120,
+        "third": 20,
+        "fourth": 5,
+        "fifth": 1,
+    }
+    assert settings.pool_ceiling == 1_000
     assert settings.pool_seed == 100
-    assert settings.per_person_cap == 100
+    assert settings.per_person_cap == 500
     assert settings.max_tickets_per_day == 5
     assert settings.combinations == 1_260
 
@@ -299,8 +306,9 @@ def test_daily_cap_resets_on_the_next_beijing_day(repository, seeded, now):
 
 
 def test_buy_rejects_after_close(repository, seeded, now):
+    repository.update_company_lottery_settings(close_offset_minutes=30)
     repository.ensure_company_lottery_round(now)
-    after_close = datetime(2026, 9, 14, 21, 55, tzinfo=BEIJING)
+    after_close = datetime(2026, 9, 14, 21, 30, tzinfo=BEIJING)
 
     result = repository.buy_company_lottery_tickets(
         UUID("00000000-0000-0000-0000-0000000000d1"),
@@ -310,6 +318,56 @@ def test_buy_rejects_after_close(repository, seeded, now):
     )
 
     assert result.status == "closed"
+
+
+def test_next_day_round_rejects_purchase_on_the_previous_evening(
+    repository, seeded, now
+):
+    repository.update_company_lottery_settings(close_offset_minutes=30)
+    repository.ensure_company_lottery_round(now)
+    repository.draw_company_lottery_round(DRAW_AT)
+
+    result = repository.buy_company_lottery_tickets(
+        UUID("00000000-0000-0000-0000-0000000000d5"),
+        "p2",
+        [ticket((1, 2, 3, 4), 1)],
+        datetime(2026, 9, 14, 22, 1, tzinfo=BEIJING),
+    )
+
+    assert result.status == "not_on_sale"
+
+
+def test_sale_closed_precedes_the_daily_ticket_limit(repository, seeded, now):
+    repository.update_company_lottery_settings(close_offset_minutes=30)
+    view = repository.ensure_company_lottery_round(now)
+    for index in range(5):
+        repository.buy_company_lottery_tickets(
+            UUID(f"00000000-0000-0000-0000-0000000001b{index}"),
+            "p1",
+            [ticket((1, 2, 3, index), 1)],
+            now,
+        )
+    repository.draw_company_lottery_round(DRAW_AT)
+
+    result = repository.buy_company_lottery_tickets(
+        UUID("00000000-0000-0000-0000-0000000001bf"),
+        "p1",
+        [ticket((4, 5, 6, 7), 3)],
+        datetime(2026, 9, 14, 22, 1, tzinfo=BEIJING),
+    )
+
+    assert view.round_number == 1
+    assert result.status == "not_on_sale"
+
+    tomorrow = repository.buy_company_lottery_tickets(
+        UUID("00000000-0000-0000-0000-0000000001c0"),
+        "p1",
+        [ticket((4, 5, 6, 7), 3)],
+        datetime(2026, 9, 15, 0, 1, tzinfo=BEIJING),
+    )
+
+    assert tomorrow.status == "bought"
+    assert tomorrow.round_number == 2
 
 
 def test_buy_rejects_when_balance_is_short(repository, session_factory, now):
@@ -507,7 +565,7 @@ def test_round_schedule_is_beijing_time_even_for_a_utc_clock(repository, seeded)
     view = repository.ensure_company_lottery_round(datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
     )
 
-    assert view.close_at.astimezone(BEIJING).strftime("%H:%M") == "21:50"
+    assert view.close_at.astimezone(BEIJING).strftime("%H:%M") == "21:30"
     assert view.draw_at.astimezone(BEIJING).strftime("%H:%M") == "22:00"
     assert view.draw_at.astimezone(BEIJING).date().isoformat() == "2026-09-14"
 
@@ -833,9 +891,9 @@ def test_close_marks_due_rounds_closed(repository, seeded, now):
 
     assert repository.close_company_lottery_round(now
     ) == 0
-    assert repository.close_company_lottery_round(datetime(2026, 9, 14, 21, 50, tzinfo=BEIJING)
+    assert repository.close_company_lottery_round(datetime(2026, 9, 14, 21, 30, tzinfo=BEIJING)
     ) == 1
-    assert repository.close_company_lottery_round(datetime(2026, 9, 14, 21, 55, tzinfo=BEIJING)
+    assert repository.close_company_lottery_round(datetime(2026, 9, 14, 21, 35, tzinfo=BEIJING)
     ) == 0
 
     view = repository.current_company_lottery_round()
@@ -850,7 +908,7 @@ def test_draw_waits_for_the_draw_time(repository, seeded, now):
 
 def test_draw_pays_the_head_prize(repository, seeded, now):
     view = repository.ensure_company_lottery_round(now)
-    seed_pool(repository, 100)
+    seed_pool(repository, 500)
     repository.buy_company_lottery_tickets(
         UUID("00000000-0000-0000-0000-000000000301"),
         "p1",
@@ -864,10 +922,10 @@ def test_draw_pays_the_head_prize(repository, seeded, now):
     assert result.round_number == 1
     assert result.winner_count == 1
     assert result.winners[0].tier == "head"
-    assert result.winners[0].amount == 100
+    assert result.winners[0].amount == 500
     assert result.haircut is None
-    # 100 起始 − 2 购票 + 100 中奖
-    assert balance_of(repository, "p1") == 198
+    # 500 起始 − 2 购票 + 500 中奖
+    assert balance_of(repository, "p1") == 598
 
 
 def test_draw_pays_a_fifth_prize_for_a_blue_hit(repository, seeded, now):
@@ -921,7 +979,7 @@ def test_draw_ignores_losing_tickets(repository, seeded, now):
 
 def test_draw_is_idempotent(repository, seeded, now):
     view = repository.ensure_company_lottery_round(now)
-    seed_pool(repository, 100)
+    seed_pool(repository, 500)
     repository.buy_company_lottery_tickets(
         UUID("00000000-0000-0000-0000-000000000304"),
         "p1",
@@ -934,7 +992,7 @@ def test_draw_is_idempotent(repository, seeded, now):
 
     assert first is not None
     assert second is None
-    assert balance_of(repository, "p1") == 198
+    assert balance_of(repository, "p1") == 598
 
     with repository._session() as session:
         drawn = session.scalars(
@@ -946,6 +1004,9 @@ def test_draw_is_idempotent(repository, seeded, now):
 
 
 def test_draw_merges_and_caps_per_employee(repository, seeded, now):
+    repository.update_company_lottery_settings(
+        head_prize=100, second_prize=50, per_person_cap=100
+    )
     view = repository.ensure_company_lottery_round(now)
     seed_pool(repository, 200)
     answer = answer_for(repository, view.id)
@@ -978,8 +1039,8 @@ def test_draw_haircuts_when_the_pool_is_short(repository, seeded, now):
 
     result = repository.draw_company_lottery_round(DRAW_AT)
 
-    # 奖池只有 2 币，应付 100，按比例折算
-    assert result.payable == 100
+    # 奖池只有 2 币，应付 500，按比例折算
+    assert result.payable == 500
     assert result.haircut is not None
     assert result.paid_total == 2
     assert result.winners[0].amount == 2
@@ -988,6 +1049,7 @@ def test_draw_haircuts_when_the_pool_is_short(repository, seeded, now):
 
 
 def test_draw_pours_overflow_into_the_adjustment_fund(repository, seeded, now):
+    repository.update_company_lottery_settings(pool_ceiling=200)
     view = repository.ensure_company_lottery_round(now)
     seed_pool(repository, 200)
     answer = answer_for(repository, view.id)
@@ -1307,7 +1369,7 @@ def test_run_jobs_opens_one_round_for_the_whole_company(repository, seeded, now)
 def test_run_jobs_draws_and_announces_at_the_draw_time(repository, seeded, now):
     repository.run_company_lottery_jobs(now)
     view = repository.current_company_lottery_round()
-    seed_pool(repository, 100)
+    seed_pool(repository, 500)
     repository.buy_company_lottery_tickets(
         UUID("00000000-0000-0000-0000-000000000401"),
         "p1",
@@ -1320,8 +1382,8 @@ def test_run_jobs_draws_and_announces_at_the_draw_time(repository, seeded, now):
     texts = outbound_texts(repository)
     assert len(texts) == 1
     assert "【公司双色球开奖】" in texts[0]
-    assert "🏆 一等奖 100 —— 小明" in texts[0]
-    assert "第 2 期已开卖" in texts[0]
+    assert "🏆 一等奖 500 —— 小明" in texts[0]
+    assert "第 2 期已开启，明日 00:00 开卖" in texts[0]
 
     assert repository.company_lottery_round_by_number(1).state == "drawn"
     assert repository.current_company_lottery_round().round_number == 2
@@ -1331,6 +1393,7 @@ def test_draw_uses_the_prizes_captured_when_the_round_opened(
     repository, seeded, now
 ):
     view = repository.ensure_company_lottery_round(now)
+    seed_pool(repository, 500)
     repository.buy_company_lottery_tickets(
         UUID("00000000-0000-0000-0000-000000000403"),
         "p1",
@@ -1341,7 +1404,7 @@ def test_draw_uses_the_prizes_captured_when_the_round_opened(
 
     repository.run_company_lottery_jobs(DRAW_AT)
 
-    assert balance_of(repository, "p1") == 198
+    assert balance_of(repository, "p1") == 598
 
 
 def test_draw_announcements_skip_groups_that_disabled_announcements(
@@ -1402,7 +1465,7 @@ def test_disabling_sales_does_not_strand_an_open_round(repository, seeded, now):
 
 def test_run_jobs_does_not_draw_before_the_draw_time(repository, seeded, now):
     repository.run_company_lottery_jobs(now)
-    repository.run_company_lottery_jobs(datetime(2026, 9, 14, 21, 55, tzinfo=BEIJING))
+    repository.run_company_lottery_jobs(datetime(2026, 9, 14, 21, 35, tzinfo=BEIJING))
 
     view = repository.current_company_lottery_round()
     assert view.round_number == 1
@@ -1414,7 +1477,7 @@ def test_run_jobs_reminds_before_the_close(repository, seeded, now):
     repository.run_company_lottery_jobs(now)
 
     repository.run_company_lottery_jobs(
-        datetime(2026, 9, 14, 21, 46, tzinfo=BEIJING)
+        datetime(2026, 9, 14, 21, 26, tzinfo=BEIJING)
     )
 
     texts = outbound_texts(repository)
@@ -1429,7 +1492,7 @@ def test_close_reminder_is_sent_once_per_round(repository, seeded, now):
 
     repository.run_company_lottery_jobs(now)
 
-    close_minute = datetime(2026, 9, 14, 21, 45, tzinfo=BEIJING)
+    close_minute = datetime(2026, 9, 14, 21, 25, tzinfo=BEIJING)
     for second in range(0, 5 * 60, 20):
         repository.run_company_lottery_jobs(close_minute + timedelta(seconds=second))
 
@@ -1486,7 +1549,7 @@ def test_run_jobs_does_nothing_when_disabled(repository, seeded, now):
 def test_run_jobs_is_idempotent_across_ticks(repository, seeded, now):
     repository.run_company_lottery_jobs(now)
     view = repository.current_company_lottery_round()
-    seed_pool(repository, 100)
+    seed_pool(repository, 500)
     repository.buy_company_lottery_tickets(
         UUID("00000000-0000-0000-0000-000000000402"),
         "p1",
@@ -1500,4 +1563,4 @@ def test_run_jobs_is_idempotent_across_ticks(repository, seeded, now):
 
     texts = outbound_texts(repository)
     assert sum(1 for text in texts if "【公司双色球开奖】" in text) == 1
-    assert balance_of(repository, "p1") == 198
+    assert balance_of(repository, "p1") == 598

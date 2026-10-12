@@ -27,6 +27,11 @@ def create_worker(settings: Settings) -> BrowserWorker:
         settings.login_url,
         chat_url=settings.chat_url,
         cdp_port=settings.browser_cdp_port,
+        ignored_sender_ids=(
+            (settings.long_message_bot_id,)
+            if settings.long_message_bot_id is not None
+            else ()
+        ),
     )
     worker: BrowserWorker
     desktop = AuthDesktopController(

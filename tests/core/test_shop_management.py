@@ -60,7 +60,7 @@ def test_defaults_and_export_preview_are_noops(shop):
     repository, factory = shop
     catalog = repository.get_shop_catalog()
     plan = preview(repository, [item_row(item, row=line) for line, item in enumerate(catalog["items"], 2)])
-    assert plan["summary"]["unchanged"] == 22
+    assert plan["summary"]["unchanged"] == 23
     assert not plan["warnings"]
     assert confirm(repository, plan)["count"] == 0
     assert repository.get_shop_catalog() == catalog
@@ -92,7 +92,7 @@ def test_validation_returns_all_errors_and_never_stages_invalid_batch(shop):
     assert all(error["suggestion"] and error["column"] and error["row"] for error in plan["errors"])
     with factory() as session:
         assert session.scalar(select(func.count()).select_from(ShopChangeBatchRecord)) == 0
-        assert session.scalar(select(func.count()).select_from(ItemRecord)) == 22
+        assert session.scalar(select(func.count()).select_from(ItemRecord)) == 23
 
 
 def test_create_rejects_reused_identifiers_and_duplicate_line_numbers(shop):
@@ -120,7 +120,7 @@ def test_soft_delete_system_item_does_not_respawn_and_restore_is_delisted(shop):
     repository, _ = shop
     item = repository.get_shop_catalog()["items"][0]
     confirm(repository, preview(repository, [item_row(item, operation="delete")]))
-    assert len(repository.get_shop_catalog()["items"]) == 21
+    assert len(repository.get_shop_catalog()["items"]) == 22
     deleted = next(entry for entry in repository.get_shop_catalog(True)["items"] if entry["id"] == item["id"])
     assert deleted["deleted_at"] and not deleted["enabled"]
     assert not any(entry.public_number == item["public_number"] for entry in repository.list_active_items())
@@ -202,7 +202,7 @@ def test_entire_batch_rolls_back_when_database_write_fails(shop, monkeypatch):
     with pytest.raises(RuntimeError, match="injected failure"):
         confirm(repository, plan)
     with factory() as session:
-        assert session.scalar(select(func.count()).select_from(ItemRecord)) == 22
+        assert session.scalar(select(func.count()).select_from(ItemRecord)) == 23
         assert session.scalar(select(func.count()).select_from(AuditEventRecord)) == 0
         assert session.get(ShopChangeBatchRecord, UUID(plan["batch_id"])).result is None
 

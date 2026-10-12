@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, select
@@ -248,10 +248,26 @@ def test_purchase_is_rejected_after_close():
         "m1",
         "p1",
         "/购买彩票 机选",
-        datetime(2026, 9, 14, 21, 55, tzinfo=BEIJING),
+        datetime(2026, 9, 14, 21, 30, tzinfo=BEIJING),
     )
 
     assert "停售" in _reply(factory)
+
+
+def test_next_round_says_when_it_will_open():
+    service, repository, factory, group, _ = _setup()
+    repository.draw_company_lottery_round(DRAW_AT)
+
+    _send(
+        service,
+        group,
+        "m1",
+        "p1",
+        "/购买彩票 机选",
+        datetime(2026, 9, 14, 22, 1, tzinfo=BEIJING),
+    )
+
+    assert _reply(factory) == "今日已停售，下一期将于明日 00:00 开卖。"
 
 
 def test_first_round_seeds_the_pool_so_the_head_prize_pays_out():
@@ -365,10 +381,54 @@ def test_my_tickets_lists_purchases():
     _send(service, group, "m1", "p1", "/购买彩票 03 07 09 10 + 05", now)
     _send(service, group, "m2", "p1", "/我的彩票", now)
 
+    assert _reply(factory) == "你暂无已开奖的彩票记录。"
+
+
+def test_my_tickets_hides_unsettled_rounds_from_the_default_view():
+    service, repository, factory, group, now = _setup()
+    _send(service, group, "m1", "p1", "/购买彩票 03 07 09 10 + 05", now)
+    repository.draw_company_lottery_round(DRAW_AT)
+
+    next_round_at = (DRAW_AT + timedelta(days=1)).replace(hour=12)
+    repository.ensure_company_lottery_round(next_round_at)
+    _send(
+        service,
+        group,
+        "m2",
+        "p1",
+        "/购买彩票 01 02 03 04 + 01",
+        next_round_at,
+    )
+    assert _reply(factory).startswith("✅ 已购 1 注")
+    _send(service, group, "m3", "p1", "/我的彩票", next_round_at)
+
     text = _reply(factory)
-    assert text.startswith("🎱 我的彩票")
     assert "第 1 期" in text
-    assert "累计投入 2 摸鱼币 ｜ 累计中奖 0 摸鱼币 ｜ 净收益 -2 摸鱼币" in text
+    assert "第 2 期" not in text
+    assert "累计投入 2 摸鱼币" in text
+
+
+def test_my_tickets_can_query_a_drawn_round_by_number():
+    service, repository, factory, group, now = _setup()
+    _send(service, group, "m1", "p1", "/购买彩票 03 07 09 10 + 05", now)
+    repository.draw_company_lottery_round(DRAW_AT)
+
+    next_round_at = (DRAW_AT + timedelta(days=1)).replace(hour=12)
+    repository.ensure_company_lottery_round(next_round_at)
+    _send(
+        service,
+        group,
+        "m2",
+        "p1",
+        "/购买彩票 01 02 03 04 + 01",
+        next_round_at,
+    )
+    _send(service, group, "m3", "p1", "/我的彩票 1", next_round_at)
+
+    text = _reply(factory)
+    assert "第 1 期" in text
+    assert "第 2 期" not in text
+    assert "累计投入 2 摸鱼币" in text
 
 
 def test_my_tickets_is_empty_for_a_new_employee():
@@ -418,5 +478,5 @@ def test_my_tickets_shows_the_prize_after_the_draw():
     _send(service, group, "m2", "p1", "/我的彩票", DRAW_AT)
 
     text = _reply(factory)
-    assert "+100" in text
-    assert "累计中奖 100 摸鱼币" in text
+    assert "+102" in text
+    assert "累计中奖 102 摸鱼币" in text

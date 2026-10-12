@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+import json
 from random import Random
 from zoneinfo import ZoneInfo
 
@@ -495,6 +496,107 @@ def _group_receive(service, message_id, sender, content, now, chatroom_id):
             chatroom_id=chatroom_id,
         )
     )
+
+
+def test_q_records_the_replied_employee_message() -> None:
+    service, repository, factory = _service()
+    now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=black-history-command", now
+    )
+    repository.create_user("recorder", "记录者", now, 1)
+    repository.create_user("subject", "当事人", now, 0)
+
+    service.receive_inbound(
+        InboundMessage(
+            "q-command", "recorder", "/q", now, source_type="group",
+            chatroom_id=group.chatroom_id,
+            reference=MessageReference("source-q", "subject", "text", text="原话"),
+        )
+    )
+
+    assert _latest_reply(factory) == "已记入当事人的黑历史册。"
+
+
+def test_black_history_text_is_queued_as_an_image_card() -> None:
+    service, repository, factory = _service()
+    now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=black-history-card", now
+    )
+    repository.create_user("recorder", "记录者", now, 1)
+    repository.create_user("subject", "当事人", now, 0)
+    service.receive_inbound(InboundMessage(
+        "q-card", "recorder", "/q", now, source_type="group",
+        chatroom_id=group.chatroom_id,
+        reference=MessageReference("source-card", "subject", "text", text="原话"),
+    ))
+
+    result = service.receive_inbound(InboundMessage(
+        "draw-card", "recorder", "/黑历史", now, source_type="group",
+        chatroom_id=group.chatroom_id,
+        reference=MessageReference("target-card", "subject", "text", text="随便一条"),
+    ))
+
+    outbound = _outbounds_for(factory, result.message_id)[0]
+    assert outbound.content_type == "history_card"
+    assert json.loads(outbound.text) == {
+        "display_name": "当事人", "rank_name": "实习生", "text": "原话"
+    }
+
+
+def test_black_history_image_resends_the_original_image() -> None:
+    service, repository, factory = _service()
+    now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=black-history-image", now
+    )
+    repository.create_user("recorder", "记录者", now, 1)
+    repository.create_user("subject", "当事人", now, 0)
+    service.receive_inbound(InboundMessage(
+        "q-image", "recorder", "/q", now, source_type="group",
+        chatroom_id=group.chatroom_id,
+        reference=MessageReference(
+            "source-image", "subject", "image",
+            image_url="https://cdn.example.com/history.png", alt="旧图",
+        ),
+    ))
+
+    result = service.receive_inbound(InboundMessage(
+        "draw-image", "recorder", "/黑历史", now, source_type="group",
+        chatroom_id=group.chatroom_id,
+        reference=MessageReference("target-image", "subject", "text", text="任意"),
+    ))
+
+    outbounds = _outbounds_for(factory, result.message_id)
+    assert [item.content_type for item in outbounds] == ["text", "history_image"]
+    assert json.loads(outbounds[1].text)["image_url"] == "https://cdn.example.com/history.png"
+
+
+def test_private_black_history_next_page_and_delete_feedback() -> None:
+    service, repository, factory = _service()
+    now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=black-history-pages", now
+    )
+    repository.create_user("owner", "本人", now, 20)
+    for index in range(6):
+        repository.record_black_history(
+            "owner", "owner", group.id, f"source-{index}", "text",
+            f"记录 {index}", None, None, now,
+        )
+
+    _direct_receive(service, "list-1", "owner", "/删除黑历史", now, "direct-owner")
+    second = _direct_receive(service, "list-2", "owner", "/下一页", now, "direct-owner")
+    second_text = _replies_for(factory, second.message_id)[0]
+    assert "第 2 页" in second_text
+    entry_id = repository.list_own_black_history("owner", 2)[0][0].id
+
+    deleted = _direct_receive(
+        service, "delete-1", "owner", f"/删除黑历史 {entry_id}", now, "direct-owner"
+    )
+
+    assert "剩余 5 条" in _replies_for(factory, deleted.message_id)[0]
 
 
 def _direct_receive(service, message_id, sender, content, now, chatroom_id):
@@ -2203,7 +2305,7 @@ def test_checkin_awards_five_once_per_beijing_date_and_uses_beijing_dates():
         assert checkins[0].checked_in_at.tzinfo == BEIJING
 
 
-def test_updated_economy_applies_to_future_join_and_checkin_only():
+def test_updated_economy_applies_to_future_join_but_checkin_uses_rank_reward():
     service, repository, factory = _service()
     repository.set_game_settings("工分", 3, 7, 5)
     received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
@@ -2214,10 +2316,10 @@ def test_updated_economy_applies_to_future_join_and_checkin_only():
     )
 
     _receive(service, "checkin", "platform-xiaoming", "/打卡", received_at)
-    assert _latest_reply(factory) == "打卡成功，领取 7 工分。当前余额：10 工分。"
+    assert _latest_reply(factory) == "打卡成功，领取 5 工分。当前余额：8 工分。"
 
     _receive(service, "help", "platform-xiaoming", "/帮助 基础", received_at)
-    assert "/打卡：每日领取 7 工分" in _latest_reply(factory)
+    assert "/打卡：按当前职位领取每日奖励" in _latest_reply(factory)
 
 
 def test_balance_inventory_and_shop_require_employee_and_return_persisted_data():
@@ -2236,7 +2338,7 @@ def test_balance_inventory_and_shop_require_employee_and_return_persisted_data()
     reply = _latest_reply(factory)
     assert "#1 初级赠送卡（3 摸鱼币，库存 不限，需 LV2）" in reply
     assert (
-        "#23 工位午睡券（5 摸鱼币，库存 3）\n"
+        "#24 工位午睡券（5 摸鱼币，库存 3）\n"
         "说明：允许正大光明眯十分钟。"
     ) in reply
 

@@ -2,10 +2,13 @@ import base64
 from datetime import datetime
 import json
 from pathlib import Path
+from threading import get_ident
 from time import time
 from typing import Callable, Protocol
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
+
+import httpx
 
 from dzmm_bot.runtime.contracts import (
     GroupChatTarget,
@@ -95,6 +98,7 @@ class BrowserSession:
         cdp_port: int = 19222,
         playwright_factory: Callable | None = None,
         socket_factory: Callable | None = None,
+        ignored_sender_ids: tuple[str, ...] = (),
     ) -> None:
         if cdp_port != 19222:
             raise ValueError("browser CDP port must be the isolated port 19222")
@@ -104,10 +108,13 @@ class BrowserSession:
         self.cdp_port = cdp_port
         self._playwright_factory = playwright_factory or _start_playwright
         self._socket_factory = socket_factory
+        self._ignored_sender_ids = ignored_sender_ids
         self._playwright = None
         self._context = None
         self._gateway = None
         self._attached = False
+        self._context_thread_id: int | None = None
+        self._upload_cookie_header = ""
         self._group_targets: tuple[GroupChatTarget, ...] = ()
         self._group_targets_configured = False
 
@@ -178,6 +185,8 @@ class BrowserSession:
     def _new_gateway(self) -> ChatGateway:
         if self.chat_url is None:
             return _PlaywrightGateway(self._context, self.login_url)
+        self._context_thread_id = get_ident()
+        self._upload_cookie_header = self._cookies()
         return AikdaSocketGateway(
             self.chat_url,
             token_provider=self._token,
@@ -185,6 +194,7 @@ class BrowserSession:
             upload=self._upload_image,
             cookie_provider=self._cookies,
             socket_factory=self._socket_factory,
+            ignored_sender_ids=self._ignored_sender_ids,
         )
 
     def _token(self) -> str:
@@ -248,6 +258,8 @@ class BrowserSession:
     def _upload_image(
         self, path: Path, mime_type: str, chatroom_id: str
     ) -> dict:
+        if get_ident() != self._context_thread_id:
+            return self._upload_image_http(path, mime_type, chatroom_id)
         response = self._context.request.post(
             f"{_origin(self.chat_url)}/api/trpc/chatroom.uploadImage",
             multipart={
@@ -264,14 +276,35 @@ class BrowserSession:
         body = response.json()
         return body.get("result", {}).get("data", {}).get("json", body)
 
+    def _upload_image_http(
+        self, path: Path, mime_type: str, chatroom_id: str
+    ) -> dict:
+        origin = _origin(self.chat_url)
+        response = httpx.post(
+            f"{origin}/api/trpc/chatroom.uploadImage",
+            headers={
+                "Cookie": self._upload_cookie_header,
+                "Origin": origin,
+                "Referer": self.chat_url,
+            },
+            files={"file": (path.name, path.read_bytes(), mime_type)},
+            data={"chatroomId": chatroom_id},
+            timeout=90.0,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return body.get("result", {}).get("data", {}).get("json", body)
+
     def _cookies(self) -> str:
         origin = _origin(self.chat_url)
         cookies = self._context.cookies([origin])
-        return "; ".join(
+        cookie_header = "; ".join(
             f"{cookie['name']}={cookie['value']}"
             for cookie in cookies
             if cookie.get("name") and cookie.get("value")
         )
+        self._upload_cookie_header = cookie_header
+        return cookie_header
 
     def _active_page(self):
         return next(

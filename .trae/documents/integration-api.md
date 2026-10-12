@@ -1,7 +1,7 @@
 # 摸鱼币集成接口使用说明
 
 > 版本：2026-10-04（v1，随迁移 92 上线）
-> 基地址：`http://43.153.194.94:18090/api/integration`
+> 基地址：`https://<部署域名>/api/integration`（由管理员提供实际地址）
 > 鉴权方式：请求头 `X-Api-Key`（独立 API Key，由管理员提供，与后台密码无关）
 
 ## 1. 接入要点
@@ -197,7 +197,7 @@ GET /api/integration/users/{platform_id}/game-quota
 
 ```bash
 KEY="你的X-Api-Key"
-BASE="http://43.153.194.94:18090/api/integration"
+BASE="https://<部署域名>/api/integration"
 
 # 1. 按名字找员工
 curl -s -X POST "$BASE/users/match" \

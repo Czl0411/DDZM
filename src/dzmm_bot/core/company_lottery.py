@@ -27,8 +27,8 @@ DEFAULT_RED_POOL = 10
 DEFAULT_RED_COUNT = 4
 DEFAULT_BLUE_POOL = 6
 DEFAULT_TICKET_PRICE = 2
-DEFAULT_POOL_CEILING = 200
-DEFAULT_PER_PERSON_CAP = 100
+DEFAULT_POOL_CEILING = 1_000
+DEFAULT_PER_PERSON_CAP = 500
 DEFAULT_MAX_TICKETS_PER_DAY = 5
 DEFAULT_WELFARE_PER_PERSON = 1
 DEFAULT_POOL_SEED = 100
@@ -51,12 +51,24 @@ ALL_TIERS: tuple[PrizeTier, ...] = (
 )
 
 DEFAULT_PRIZES: dict[PrizeTier, int] = {
-    PrizeTier.HEAD: 100,
-    PrizeTier.SECOND: 50,
-    PrizeTier.THIRD: 15,
+    PrizeTier.HEAD: 500,
+    PrizeTier.SECOND: 120,
+    PrizeTier.THIRD: 20,
     PrizeTier.FOURTH: 5,
     PrizeTier.FIFTH: 1,
 }
+
+
+def sale_status(*, now: datetime, close_at: datetime, draw_at: datetime) -> str:
+    """返回当前期能否销售。
+
+    开奖后会预先创建下一期，但它只能从下一自然日零点开始销售，避免
+    本日 22:00 后把新一期误当作仍可购买的「今日彩票」。
+    """
+    local_now = now.astimezone(BEIJING)
+    if local_now.date() < draw_at.astimezone(BEIJING).date():
+        return "not_on_sale"
+    return "open" if local_now < close_at else "closed"
 
 
 class OrderKind(StrEnum):

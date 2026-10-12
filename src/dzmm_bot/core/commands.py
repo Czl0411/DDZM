@@ -1,4 +1,5 @@
 from collections import Counter
+import json
 import re
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
@@ -34,6 +35,7 @@ from .shop_cards import CATEGORY_DISPLAY_ORDER, CATEGORY_OTHER
 from .schema import PRIMARY_GROUP_CHAT_ID
 from .repository import (
     BlameGameResult,
+    _short_author_name,
     CoreRepository,
     EmployeeNameTakenError,
     _FINE_FEEDBACK_HINT,
@@ -50,6 +52,7 @@ from .service import CommandReply
 
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
+    "/事件投票", "/事件投票情况",
     "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史",
     "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/跳过", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证",
     "/设置生日", "/我的生日", "/本月生日",
@@ -60,6 +63,9 @@ _COMMANDS = {
     "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/人气榜",
     "/设置性别", "/修改性别",
 }
+_COMMANDS.add("/随机事件时间表")
+_COMMANDS.add("/q")
+_COMMANDS.update({"/黑历史", "/删除黑历史", "/下一页"})
 
 _LOTTERY_COMMANDS = {
     "/购买彩票",
@@ -133,6 +139,97 @@ class GroupCommandHandler:
             else None
         )
         group_chat_id = None if group is None else group.id
+        if command == "/q":
+            if message.source_type != "group" or group_chat_id is None:
+                return "请在群内回复一条消息后发送 /q。"
+            reference = message.reference
+            if reference is None or reference.content_type not in {"text", "image"}:
+                return "请回复一条文字或图片消息后发送 /q。"
+            text_content = (reference.text or "").strip()
+            if reference.content_type == "text" and not text_content:
+                return "不能记录空消息。"
+            if reference.content_type == "image" and not _valid_image_url(reference.image_url):
+                return "这张图片无法记录。"
+            result = self._repository.record_black_history(
+                message.sender_platform_id, reference.sender_platform_id,
+                group_chat_id, reference.message_id, reference.content_type,
+                text_content or None, reference.image_url, reference.alt, received_at,
+            )
+            if result.status == "recorded":
+                subject = self._repository.find_user(reference.sender_platform_id)
+                return f"已记入{subject.display_name}的黑历史册。"
+            return {
+                "duplicate": "这条已经在黑历史册里了。",
+                "insufficient_balance": "摸鱼币不足，记录黑历史需要 1 摸鱼币。",
+                "not_joined": "消息双方都需要先入职。",
+            }.get(result.status, "记录失败，请稍后再试。")
+        if command == "/黑历史":
+            if message.source_type != "group" or message.reference is None:
+                return "请在群内回复目标员工的一条消息后发送 /黑历史。"
+            result = self._repository.draw_black_history(
+                message.reference.sender_platform_id
+            )
+            if result.status == "not_joined":
+                return "该员工尚未入职。"
+            if result.entry is None or result.subject is None:
+                return "这位员工还没有黑历史。"
+            if result.entry.content_type == "image" and result.entry.image_url:
+                return [
+                    f"翻出了{result.subject.display_name}的一条黑历史。",
+                    CommandReply(
+                        json.dumps({
+                            "image_url": result.entry.image_url,
+                            "image_alt": result.entry.image_alt or "黑历史",
+                        }, ensure_ascii=False),
+                        content_type="history_image",
+                    ),
+                ]
+            return CommandReply(
+                json.dumps({
+                    "display_name": result.subject.display_name,
+                    "rank_name": result.subject_rank_name,
+                    "text": result.entry.text_content or "（内容已失效）",
+                }, ensure_ascii=False),
+                content_type="history_card",
+            )
+        if command in {"/删除黑历史", "/下一页"}:
+            if message.source_type != "direct":
+                return "请私聊总监事管理自己的黑历史。"
+            parts = content.split(maxsplit=1)
+            if command == "/下一页" and not self._repository.has_black_history_delete_draft(
+                message.sender_platform_id
+            ):
+                return "当前没有可翻页的黑历史列表，请先发送 /删除黑历史。"
+            if command == "/删除黑历史" and len(parts) == 2 and parts[1].strip().isdigit():
+                result = self._repository.delete_own_black_history(
+                    message.sender_platform_id, int(parts[1].strip()), received_at
+                )
+                if result.status == "deleted":
+                    return f"黑历史已删除，已扣除 5 摸鱼币。剩余 {result.remaining_count} 条。"
+                return {
+                    "not_found": "未找到这条属于你的黑历史。",
+                    "insufficient_balance": "摸鱼币不足，删除需要 5 摸鱼币。",
+                    "not_joined": "请先入职。",
+                }[result.status]
+            next_page = command == "/下一页" or (
+                len(parts) == 2 and parts[1].strip() == "下一页"
+            )
+            page = self._repository.black_history_delete_page(
+                message.sender_platform_id, next_page, received_at
+            )
+            entries, total = self._repository.list_own_black_history(message.sender_platform_id, page)
+            if not entries:
+                return "没有更多黑历史了。" if page > 1 else "你还没有可删除的黑历史。"
+            lines = [f"你的黑历史（第 {page} 页，删除每条 5 摸鱼币）："]
+            lines.extend(
+                f"#{entry.id} {entry.created_at.astimezone(_BEIJING):%Y-%m-%d} "
+                f"{'[图片]' if entry.content_type == 'image' else (entry.text_content or '')[:30]}"
+                for entry in entries
+            )
+            if total > page * 5:
+                lines.append("发送 /下一页 查看更多。")
+            lines.append("发送 /删除黑历史 编号 删除。")
+            return "\n".join(lines)
         if command in {"/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史"}:
             return self._honors(message, command, content, received_at)
         if command in _LOTTERY_COMMANDS:
@@ -713,6 +810,12 @@ class GroupCommandHandler:
             return self._promotion_decision(
                 message.sender_platform_id, command, content, received_at
             )
+        if command in {"/事件投票", "/事件投票情况"}:
+            return self._random_event_vote(
+                message, command, content, received_at
+            )
+        if command == "/随机事件时间表":
+            return self._random_event_time_table(group_chat_id, received_at)
         if command == "/加入":
             summary = self._repository.active_gameplay_summary(
                 message.sender_platform_id,
@@ -2237,6 +2340,7 @@ class GroupCommandHandler:
             return "请先用 /入职 名字 加入摸鱼公司。"
         return (
             "【我的凿】\n"
+            f"名字：{info['display_name']}\n"
             f"发情值：{info['heat']}/{info['threshold']}\n"
             f"被凿：今日 {info['today_chopped']} 次 / 累计 {info['chopped_count']} 次 ｜ "
             f"高潮：今日 {info['today_climaxes']} 次 / 总 {info['total_climaxes']} 次\n"
@@ -2503,21 +2607,15 @@ class GroupCommandHandler:
             platform_id, received_at
         )
         if birthday_view is not None:
-            days_left = (
-                birthday_view.next_occurrence - received_at.date()
-            ).days
-            countdown = "就是今天！" if days_left == 0 else f"还有 {days_left} 天"
-            birthday_line = (
-                f"生日：{self._format_birthday(birthday_view)}（{countdown}）"
-            )
+            birthday_line = f"生日：{self._format_birthday(birthday_view)}"
         else:
-            birthday_line = None
+            birthday_line = "生日：未设置，请使用 /设置生日 MM-DD"
         if employee.gender == "male":
             gender_line = "性别：男"
         elif employee.gender == "female":
             gender_line = "性别：女"
         else:
-            gender_line = None
+            gender_line = "性别：未设置，请使用 /设置性别 男或女"
         lines = [
             display_name,
             f"工号：{format_employee_number(employee.employee_number)}",
@@ -2573,12 +2671,18 @@ class GroupCommandHandler:
             return "\n".join(lines) if history["items"] else "你还没有获得过荣誉称号。"
         lines = ["【我的称号】", f"当前佩戴：{personal['equipped'] or '未佩戴'}"]
         for item in personal["items"]:
-            lines.append(f"{item['number']}. {item['name']}｜历史获得 {item['total_wins']} 次｜有效至 {item['expires_at'][:10]} 00:00")
+            expires_at = item["expires_at"][:16].replace("T", " ")
+            lines.append(
+                f"{item['number']}. {item['name']}｜历史获得 {item['total_wins']} 次｜有效至 {expires_at}"
+            )
         if not personal["items"]:
             lines.append("当前没有可佩戴称号。")
-        if personal["history_counts"]:
-            lines.append(f"历史累计获得荣誉 {sum(personal['history_counts'].values())} 次。")
-        lines.append("发送 /佩戴称号 序号 切换（/装备称号、/编辑称号 也可），序号 0 取消佩戴。")
+        lines.append(
+            f"历史累计获得荣誉 {sum(personal['history_counts'].values())} 次。"
+        )
+        lines.append(
+            "发送 /装备称号 序号 切换，/装备称号 0 取消佩戴（/佩戴称号、/编辑称号也可）。"
+        )
         return "\n".join(lines)
 
     def _edit_profile(self, platform_id: str, content: str, received_at) -> str:
@@ -3182,6 +3286,25 @@ class GroupCommandHandler:
                 else message.reference.sender_platform_id
             ),
         )
+        if result.status == "event_ad_slot_required":
+            draft = self._repository.start_random_event_ad_slot(
+                message.sender_platform_id,
+                int(parts[1]),
+                group_chat_id,
+                received_at,
+            )
+            if draft.status != "started":
+                return self._reply("/使用", f"ad_slot_{draft.status}", received_at)
+            return (
+                "请选择要锁定优选投稿位的场次：\n"
+                + "\n".join(
+                    f"{slot.position}. {slot.group_name}｜"
+                    f"{slot.scheduled_at.strftime('%H:%M')}"
+                    f"｜优选投稿位 {slot.taken}/{slot.limit}"
+                    for slot in draft.schedules
+                )
+                + "\n回复 /选择 场次序号。"
+            )
         if result.status == "adult_required":
             result = self._repository.start_adult_shop_item(
                 message.platform_message_id,
@@ -4373,6 +4496,121 @@ class GroupCommandHandler:
         }
         return self._reply("/加入", "failed", received_at, {"{原因}": reasons[status]})
 
+    def _random_event_vote(
+        self, message: InboundMessage, command: str, content: str, received_at
+    ) -> str:
+        """`/事件投票 序号` 与 `/事件投票情况`：全公司对下一场演什么表决。"""
+        if message.source_type != "group":
+            return self._reply(command, "group_only", received_at)
+        if command == "/事件投票情况":
+            view = self._repository.random_event_poll_view(
+                message.sender_platform_id
+            )
+            if view is None or view.status != "open":
+                return self._reply("/事件投票情况", "none", received_at)
+            return self._reply(
+                "/事件投票情况",
+                "shown",
+                received_at,
+                {"{票型}": self._random_event_vote_tally(view)},
+            )
+        parts = content.split(maxsplit=1)
+        if len(parts) != 2 or not parts[1].strip().isdigit():
+            return self._reply("/事件投票", "usage", received_at)
+        position = int(parts[1].strip())
+        result = self._repository.cast_random_event_vote(
+            message.sender_platform_id, position, received_at
+        )
+        if result.status in {
+            "no_poll",
+            "closed",
+            "no_candidate",
+            "vacant",
+            "not_joined",
+            "already_voted",
+        }:
+            return self._reply(
+                "/事件投票", result.status, received_at, {"{序号}": position}
+            )
+        view = result.view
+        candidate = (
+            None
+            if view is None
+            else next(
+                (item for item in view.candidates if item.position == position), None
+            )
+        )
+        return self._reply(
+            "/事件投票",
+            "changed" if result.status == "changed" else "recorded",
+            received_at,
+            {
+                "{序号}": position,
+                "{事件}": (
+                    "未命名"
+                    if candidate is None or not candidate.scene_name
+                    else candidate.scene_name
+                ),
+                "{票数}": 0 if candidate is None else candidate.votes,
+            },
+        )
+
+    def _random_event_time_table(self, group_chat_id, received_at) -> str:
+        schedules = self._repository.list_today_random_event_schedules(received_at)
+        if not schedules:
+            return "今天没有随机事件场次。"
+        groups = {
+            group.id: group.name
+            for group in self._repository.list_group_chats(include_deleted=True)
+        }
+        available = {
+            slot.schedule_id: slot
+            for slot in self._repository.random_event_ad_slot_schedules(
+                None, received_at
+            )
+        }
+        status_labels = {
+            "pending": "待开始",
+            "signup": "报名中",
+            "in_progress": "进行中",
+            "tipping": "打赏中",
+            "ended": "已结束",
+            "dissolved": "已解散",
+            "skipped": "已跳过",
+        }
+        return "【随机事件时间表】\n" + "\n".join(
+            f"{schedule.scheduled_at.strftime('%H:%M')}｜"
+            f"{groups.get(schedule.group_chat_id, '未知群聊')}｜"
+            f"{status_labels.get(schedule.status, schedule.status)}"
+            + (
+                f"｜优选投稿位 {available[schedule.id].taken}/"
+                f"{available[schedule.id].limit}"
+                if schedule.id in available
+                else ""
+            )
+            for schedule in schedules
+        )
+
+    def _random_event_vote_tally(self, view) -> str:
+        lines = [
+            f"【事件投票】{view.scheduled_at.strftime('%H:%M')} 那场，"
+            f"{view.closes_at.strftime('%H:%M')} 截止，已投 {view.total_votes} 票"
+        ]
+        for candidate in view.candidates:
+            if candidate.vacant:
+                lines.append(f"{candidate.position}. ✨ 优选投稿位待定")
+            else:
+                lines.append(
+                    f"{candidate.position}. 《{candidate.scene_name}》 "
+                    f"by {_short_author_name(candidate.author_name)} "
+                    f"{candidate.votes} 票"
+                )
+        if view.my_position is not None:
+            lines.append(f"你投的是 {view.my_position} 号")
+        else:
+            lines.append("你还没投票，回复 /事件投票 序号")
+        return "\n".join(lines)
+
     def _event_leave(
         self, platform_id: str, received_at, group_chat_id=None
     ) -> str:
@@ -5088,6 +5326,8 @@ class GroupCommandHandler:
                     ("/投稿", "/投稿 随机事件：进入私聊投稿向导"),
                     ("/我的投稿", "/我的投稿：查看最近投稿状态"),
                     ("/撤回投稿", "/撤回投稿 编号：撤回待审核投稿"),
+                    ("/随机事件时间表", "/随机事件时间表：查看全公司今天全部场次与状态"),
+                    ("/使用", "/使用 优选投稿卡编号：在群内选择场次和已审核投稿，确认后锁定优选投稿位"),
                 ),
             ),
             "摸鱼躲藏": (
@@ -5283,7 +5523,7 @@ class GroupCommandHandler:
                     ("/购买彩票", "/购买彩票 N 注：进入逐注填写，手选与「机选」可以混用"),
                     ("/确认彩票", "/确认彩票：一次性扣款并提交草稿里的全部号码"),
                     ("/取消彩票", "/取消彩票：放弃草稿，不扣款"),
-                    ("/我的彩票", "/我的彩票：查看本人近期投注、累计投入、累计中奖与净收益"),
+                    ("/我的彩票", "/我的彩票 [期号]：查看最近一期或指定已开奖期的投注；下方为已开奖期累计统计"),
                     ("/彩票验证", "/彩票验证 期号：查看已开奖期次的号码、盐与承诺哈希"),
                     ("/彩票", "规则：每注 2 摸鱼币，每人每个自然日最多 5 注，同一期同一组号码只能买一次；开奖前 10 分钟停售，22:00 开奖"),
                     ("/彩票", "奖级：一等奖 100、二等奖 50、三等奖 15、四等奖 5、五等奖 1；任意中奖概率 26.59%，每注长期期望返回约 1.19 摸鱼币"),
@@ -5306,8 +5546,8 @@ class GroupCommandHandler:
                     ("/凿", "被凿者发情值随机 +0~2、获得随机摸鱼币；发情值攒满 100 触发高潮"),
                     ("/拒绝被凿", "/拒绝被凿：不再接受被凿，凿你的人会吃一杵子"),
                     ("/允许被凿", "/允许被凿：重新接受被凿"),
-                    ("/我的凿", "/我的凿：查看自己的发情值、被凿/凿人与高潮次数"),
-                    ("/人气榜", "/人气榜：查看今日被凿人气前 5（按今日被凿次数，每日随收益榜推送）"),
+                    ("/我的凿", "/我的凿：查看自己的发情值、被凿/凿人与高潮次数（所有群合并统计）"),
+                    ("/人气榜", "/人气榜：查看所有群合并后的今日被凿人气前 5（每日随收益榜推送）"),
                     ("/设置性别", "/设置性别 男|女：设置自己的性别（/修改性别 等效），影响高潮文风"),
                 ),
             ),
@@ -5411,6 +5651,7 @@ class GroupCommandHandler:
         "limit": "draft_limit",
         "not_joined": "not_joined",
         "closed": "closed",
+        "not_on_sale": "not_on_sale",
         "disabled": "disabled",
     }
 
@@ -5418,6 +5659,7 @@ class GroupCommandHandler:
         "bought": "bought",
         "disabled": "disabled",
         "closed": "closed",
+        "not_on_sale": "not_on_sale",
         "not_joined": "not_joined",
         "daily_limit": "daily_limit",
         "round_full": "round_full",
@@ -5499,11 +5741,46 @@ class GroupCommandHandler:
             )
 
         if command == "/我的彩票":
+            parts = content.split()
+            if len(parts) > 2 or (
+                len(parts) == 2 and not parts[1].lstrip("#").isdigit()
+            ):
+                return self._reply("/我的彩票", "usage", received_at)
+            round_number = (
+                None if len(parts) == 1 else int(parts[1].lstrip("#"))
+            )
+            if round_number is not None:
+                view = self._repository.company_lottery_round_by_number(round_number)
+                if view is None:
+                    return self._reply(
+                        "/我的彩票", "not_found", received_at,
+                        {"{期号}": round_number},
+                    )
+                if view.state != "drawn":
+                    return self._reply(
+                        "/我的彩票", "not_drawn", received_at,
+                        {"{期号}": round_number},
+                    )
             history = self._repository.own_company_lottery_bets(
-                message.sender_platform_id
+                message.sender_platform_id,
+                drawn_only=True,
+                round_number=round_number,
             )
             if not history.bets:
-                return self._reply("/我的彩票", "empty", received_at)
+                if round_number is not None:
+                    return self._reply(
+                        "/我的彩票", "not_bought", received_at,
+                        {"{期号}": round_number},
+                    )
+                return self._reply(
+                    "/我的彩票",
+                    "empty"
+                    if not self._repository.own_company_lottery_bets(
+                        message.sender_platform_id
+                    ).bets
+                    else "no_drawn",
+                    received_at,
+                )
             return self._reply(
                 "/我的彩票",
                 "shown",

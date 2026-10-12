@@ -98,11 +98,11 @@ def test_catalog_hides_adult_items_until_group_switch_is_enabled(
 ) -> None:
     repository, factory = setup_repository
 
-    assert len(repository.list_shop_items()) == 9
+    assert len(repository.list_shop_items()) == 10
     with factory.begin() as session:
         session.get(GroupChatRecord, PRIMARY_GROUP_CHAT_ID).adult_shop_enabled = True
 
-    assert len(repository.list_shop_items()) == 22
+    assert len(repository.list_shop_items()) == 23
 
 
 def test_purchase_is_atomic_numbered_and_idempotent(setup_repository, now) -> None:
@@ -187,6 +187,61 @@ def test_purchase_enforces_shared_daily_limit_rank_stock_and_adult_switch(
         ).status
         == "out_of_stock"
     )
+
+
+def test_event_ad_slot_is_limited_to_one_purchase_per_day(
+    setup_repository, now
+) -> None:
+    repository, _ = setup_repository
+    repository.create_user("ad-buyer", "广告作者", now, 100)
+    item_number = _number(repository, "event_ad_slot")
+
+    first = repository.purchase_shop_item(
+        _inbound(repository, "ad-buyer", now),
+        "ad-buyer",
+        item_number,
+        PRIMARY_GROUP_CHAT_ID,
+        now,
+    )
+    second = repository.purchase_shop_item(
+        _inbound(repository, "ad-buyer", now),
+        "ad-buyer",
+        item_number,
+        PRIMARY_GROUP_CHAT_ID,
+        now,
+    )
+
+    assert first.status == "purchased"
+    assert second.status == "daily_limit"
+    assert (
+        repository.purchase_shop_item(
+            _inbound(repository, "ad-buyer", now + timedelta(days=1)),
+            "ad-buyer",
+            item_number,
+            PRIMARY_GROUP_CHAT_ID,
+            now + timedelta(days=1),
+        ).status
+        == "purchased"
+    )
+
+
+def test_catalog_renames_the_existing_event_ad_slot(setup_repository) -> None:
+    repository, factory = setup_repository
+    repository.list_active_items()
+    with factory.begin() as session:
+        item = session.scalar(
+            select(ItemRecord).where(ItemRecord.system_key == "event_ad_slot")
+        )
+        item.name = "事件广告卡"
+        item.description = "旧说明"
+
+    item = next(
+        item for item in repository.list_shop_items()
+        if item.system_key == "event_ad_slot"
+    )
+
+    assert item.name == "优选投稿卡"
+    assert "优选投稿位" in item.description
 
 
 def test_purchase_without_daily_limit_is_unrestricted(setup_repository, now) -> None:
@@ -351,6 +406,46 @@ def test_ordinary_cards_apply_effects_and_keep_generic_item(
         ).status
         == "no_effect"
     )
+
+
+def test_scratch_card_uses_its_saved_reward_range(setup_repository, now) -> None:
+    repository, _ = setup_repository
+    repository.create_user("scratch-owner", "刮卡者", now, 100)
+    number = _number(repository, "scratch_a")
+
+    repository.update_shop_item(
+        number,
+        description="随机获得 7–7 摸鱼币",
+        enabled=True,
+        minimum_rank_order=None,
+        unlimited_stock=True,
+        stock=0,
+        scratch_reward_min=7,
+        scratch_reward_max=7,
+    )
+    updated = next(item for item in repository.list_active_items() if item.public_number == number)
+    assert (updated.category, updated.daily_purchase_limit) == ("刮刮乐", 3)
+    assert (
+        repository.purchase_shop_item(
+            _inbound(repository, "scratch-owner", now),
+            "scratch-owner",
+            number,
+            PRIMARY_GROUP_CHAT_ID,
+            now,
+        ).status
+        == "purchased"
+    )
+
+    result = repository.use_ordinary_shop_item(
+        _inbound(repository, "scratch-owner", now, "/使用"),
+        "scratch-owner",
+        number,
+        PRIMARY_GROUP_CHAT_ID,
+        now,
+    )
+
+    assert result.status == "completed"
+    assert result.reward == 7
 
 
 def test_disabled_owned_system_card_can_still_be_used(setup_repository, now) -> None:

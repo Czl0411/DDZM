@@ -835,7 +835,7 @@ def test_company_lottery_overview_manual_draw_and_pool_deposit(app_context, head
     assert drawn.status_code == 200
     assert drawn.json()["round_number"] == 1
     assert drawn.json()["winner_count"] == 1
-    assert drawn.json()["paid_total"] == 100
+    assert drawn.json()["paid_total"] == 102
     assert drawn.json()["next_round_number"] == 2
 
     after = app_context.client.get(
@@ -847,15 +847,15 @@ def test_company_lottery_overview_manual_draw_and_pool_deposit(app_context, head
     first_round = after["rounds"][1]
     assert first_round["state"] == "drawn"
     assert first_round["answer"] is not None
-    assert first_round["paid_total"] == 100
+    assert first_round["paid_total"] == 102
     assert after["prizes"][0]["display_name"] == "接口甲"
     assert after["prizes"][0]["tier"] == "head"
     assert after["employees"][0] == {
         "display_name": "接口甲",
         "tickets": 1,
         "cost": 2,
-        "prize": 100,
-        "net": 98,
+        "prize": 102,
+        "net": 100,
     }
     assert any(entry["kind"] == "deposit" for entry in after["ledger"])
 
@@ -978,7 +978,7 @@ def test_company_lottery_end_to_end_from_sale_to_next_round(app_context, headers
     client.post(
         "/internal/daily-jobs/run",
         headers=headers,
-        json={"now": NOW.replace(hour=21, minute=46, tzinfo=BEIJING).isoformat()},
+        json={"now": NOW.replace(hour=21, minute=26, tzinfo=BEIJING).isoformat()},
     )
     assert any("停售" in text for text in outbound_texts())
 
@@ -998,8 +998,18 @@ def test_company_lottery_end_to_end_from_sale_to_next_round(app_context, headers
     announcement = "\n".join(outbound_texts())
     assert "【公司双色球开奖】" in announcement
     assert "端到端丙" in announcement
-    assert "第 2 期已开卖" in announcement
-    assert repository.find_user("e2e-3").balance == 198 + 100
+    assert "第 2 期已开启，明日 00:00 开卖" in announcement
+    # 机选票也是真随机、也可能中奖，奖池不够时头奖会按比例折算，所以按实际派奖额断言
+    head_prize = next(
+        item
+        for item in repository.company_lottery_overview().prizes
+        if item.display_name == "端到端丙"
+    )
+    assert head_prize.tier == "head"
+    assert (
+        repository.find_user("e2e-3").balance
+        == 198 + head_prize.prize_amount
+    )
     assert repository.find_user("e2e-2").balance == 196
 
     settled = repository.company_lottery_round_by_number(1)
@@ -1020,10 +1030,10 @@ def test_company_lottery_end_to_end_from_sale_to_next_round(app_context, headers
     )
     assert any("公司福利发放" in text for text in outbound_texts())
     assert repository.company_lottery_balances()[1] == 5 - 3
-    assert repository.find_user("e2e-3").balance == 298 + 1
+    assert repository.find_user("e2e-3").balance == 198 + head_prize.prize_amount + 1
     assert repository.find_user("e2e-2").balance == 196 + 1
 
-    # 下一期已经开卖且没有泄露号码
+    # 下一期已生成、尚未泄露号码；它会在次日零点开卖。
     next_round = repository.current_company_lottery_round()
     assert next_round.round_number == 2
     assert next_round.state == "open"
@@ -1896,6 +1906,29 @@ def test_manual_login_api_allows_one_operator_and_any_cancellation(client, heade
     assert client.get("/internal/admin/login/lease", headers=headers).json() is None
 
 
+def test_game_management_updates_scratch_card_reward_range(client, headers):
+    items = client.get("/internal/game/items", headers=headers).json()["items"]
+    scratch = next(item for item in items if item["system_key"] == "scratch_a")
+
+    response = client.patch(
+        f"/internal/game/items/{scratch['public_number']}",
+        headers=headers,
+        json={
+            "description": "随机获得 7–7 摸鱼币",
+            "enabled": True,
+            "minimum_rank_order": None,
+            "unlimited_stock": True,
+            "stock": 0,
+            "scratch_reward_min": 7,
+            "scratch_reward_max": 7,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["scratch_reward_min"] == 7
+    assert response.json()["scratch_reward_max"] == 7
+
+
 def test_game_management_lists_commands_employees_and_shop_items(client, headers):
     commands = client.get("/internal/game/commands", headers=headers)
     disabled = client.patch(
@@ -1910,7 +1943,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
         json={"name": "工位午睡券", "description": "眯十分钟。", "price": 5, "stock": 3},
     )
     updated_item = client.patch(
-        "/internal/game/items/23",
+        f"/internal/game/items/{created_item.json()['public_number']}",
         headers=headers,
         json={
             "description": "使用后可以安心休息十分钟。",
@@ -1927,6 +1960,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
+            "/事件投票", "/事件投票情况", "/随机事件时间表", "/q", "/黑历史", "/删除黑历史", "/下一页",
             "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史",
             "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/投稿", "/我的投稿", "/撤回投稿", "/上一步", "/取消投稿", "/确认取消投稿", "/确认投稿", "/继续添加", "/事件完成", "/修改身份", "/删除身份", "/修改事件", "/删除事件", "/设置生日", "/我的生日", "/本月生日", "/随礼", "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据", "/真心换真心", "/真心换真心数据", "/问题", "/真心", "/罚款", "/我的罚款", "/我的津贴", "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/人气榜", "/设置性别"
             }
@@ -1957,10 +1991,10 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
     assert updated_item.json()["category"] == "收藏"
     assert updated_item.json()["daily_purchase_limit"] == 2
     item_page = items.json()
-    assert item_page["total"] == 23
+    assert item_page["total"] == 24
     assert item_page["pages"] == 2
     assert item_page["items"][0] == {
-        "public_number": 23,
+        "public_number": created_item.json()["public_number"],
         "name": "工位午睡券",
         "description": "使用后可以安心休息十分钟。",
         "price": 5,
@@ -1968,6 +2002,8 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
         "unlimited_stock": False,
         "system_key": None,
         "effect_type": None,
+        "scratch_reward_min": None,
+        "scratch_reward_max": None,
         "minimum_rank_order": None,
         "enabled": True,
         "category": "收藏",
@@ -2056,9 +2092,9 @@ def test_game_management_returns_paginated_employees_and_items(
     assert len(employees.json()["items"]) == 1
     assert employees.json()["items"][0]["employee_number"] == 1
     assert items.status_code == 200
-    assert items.json()["total"] == 43
+    assert items.json()["total"] == 44
     assert items.json()["pages"] == 3
-    assert len(items.json()["items"]) == 3
+    assert len(items.json()["items"]) == 4
 
 
 def test_shop_admin_activity_and_control_endpoints(app_context, headers):
@@ -3678,6 +3714,287 @@ def test_trigger_random_event_rejects_active_game_through_internal_api(
     assert response.json() == {"detail": "当前有游戏进行中"}
     assert repository.list_today_random_event_schedules(NOW)[0].status == "pending"
 
+
+def _enable_random_event_vote(repository):
+    settings = repository.get_random_event_settings()
+    repository.set_random_event_settings(
+        settings.schedule_times,
+        settings.signup_notice_template,
+        settings.signup_timeout_minutes,
+        settings.reminder_interval_minutes,
+        vote_enabled=True,
+    )
+
+
+def test_random_event_vote_report_and_admin_actions(app_context, headers):
+    """后台看票型、强制截止、手动指定与作废。"""
+    repository = app_context.repository
+    client = app_context.client
+    _enable_random_event_vote(repository)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=event-vote-admin", NOW
+    )
+    repository.create_user("vote-1", "投票甲", NOW, 100)
+    repository.create_user("vote-2", "投票乙", NOW, 100)
+    for name in ("甲", "乙", "丙"):
+        repository.create_random_event_scene(
+            name, "报名", ["开场"], 6, 3, [("主持", 1)]
+        )
+    target = NOW + timedelta(hours=3)
+    with app_context.session_factory.begin() as session:
+        session.add(
+            RandomEventScheduleRecord(
+                group_chat_id=group.id,
+                event_date=target.date(),
+                scheduled_at=target,
+                status="pending",
+            )
+        )
+    view = repository.create_random_event_poll(NOW)
+    repository.cast_random_event_vote("vote-1", 1, NOW)
+    repository.cast_random_event_vote("vote-2", 1, NOW)
+    repository.cast_random_event_vote("vote-1", 2, NOW)
+
+    assert (
+        client.get("/internal/game/random-events/vote").status_code == 401
+    )
+    report = client.get(
+        "/internal/game/random-events/vote", headers=headers
+    ).json()["poll"]
+
+    assert report["status"] == "open"
+    assert report["group_name"] == group.name
+    assert report["total_votes"] == 2
+    assert [item["position"] for item in report["candidates"]] == [1, 2, 3, 4, 5, 6]
+    assert [item["votes"] for item in report["candidates"]] == [1, 1, 0, 0, 0, 0]
+    assert report["candidates"][0]["voters"] == ["投票乙"]
+    assert report["candidates"][1]["voters"] == ["投票甲"]
+    assert report["candidates"][3]["vacant"] is True
+    assert report["candidates"][3]["source"] == "ad_slot"
+    assert report["winner_position"] is None
+
+    overridden = client.post(
+        "/internal/game/random-events/vote/close",
+        headers=headers,
+        json={"winner_position": 3},
+    ).json()["poll"]
+
+    assert overridden["status"] == "closed"
+    assert overridden["winner_position"] == 3
+    assert overridden["fallback_reason"] == "manual"
+    assert view is not None
+
+
+def test_random_event_vote_can_be_cancelled_from_the_admin(app_context, headers):
+    repository = app_context.repository
+    client = app_context.client
+    _enable_random_event_vote(repository)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=event-vote-cancel", NOW
+    )
+    for name in ("甲", "乙", "丙"):
+        repository.create_random_event_scene(
+            name, "报名", ["开场"], 6, 3, [("主持", 1)]
+        )
+    target = NOW + timedelta(hours=3)
+    with app_context.session_factory.begin() as session:
+        session.add(
+            RandomEventScheduleRecord(
+                group_chat_id=group.id,
+                event_date=target.date(),
+                scheduled_at=target,
+                status="pending",
+            )
+        )
+    repository.create_random_event_poll(NOW)
+
+    cancelled = client.post(
+        "/internal/game/random-events/vote/cancel", headers=headers
+    ).json()["poll"]
+
+    assert cancelled["status"] == "cancelled"
+
+def test_random_event_vote_settings_round_trip(client, headers):
+    """七个投票配置项要能从后台读、改、并把越界值挡回去。"""
+    path = "/internal/game/random-events/settings"
+    initial = client.get(path, headers=headers).json()
+    assert initial["vote_enabled"] is False
+    assert initial["vote_close_offset_minutes"] == 10
+    assert initial["vote_broadcast_interval_minutes"] == 30
+    assert initial["vote_random_candidates"] == 3
+    assert initial["vote_ad_slot_limit"] == 3
+    assert initial["vote_fallback_minutes"] == 30
+    assert initial["vote_allow_change"] is True
+
+    updated = client.patch(
+        path,
+        headers=headers,
+        json={
+            "schedule_times": initial["schedule_times"],
+            "signup_notice_template": initial["signup_notice_template"],
+            "signup_timeout_minutes": initial["signup_timeout_minutes"],
+            "reminder_interval_minutes": initial["reminder_interval_minutes"],
+            "signup_allowed_commands": initial["signup_allowed_commands"],
+            "in_progress_allowed_commands": initial["in_progress_allowed_commands"],
+            "blocked_message": initial["blocked_message"],
+            "vote_close_offset_minutes": 15,
+            "vote_broadcast_interval_minutes": 45,
+            "vote_random_candidates": 4,
+            "vote_ad_slot_limit": 0,
+            "vote_fallback_minutes": 20,
+            "vote_allow_change": False,
+            "vote_enabled": False,
+        },
+    )
+
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["vote_close_offset_minutes"] == 15
+    assert body["vote_broadcast_interval_minutes"] == 45
+    assert body["vote_random_candidates"] == 4
+    assert body["vote_ad_slot_limit"] == 0
+    assert body["vote_fallback_minutes"] == 20
+    assert body["vote_allow_change"] is False
+    assert body["vote_enabled"] is False
+
+    rejected = client.patch(
+        path,
+        headers=headers,
+        json={
+            "schedule_times": initial["schedule_times"],
+            "signup_notice_template": initial["signup_notice_template"],
+            "signup_timeout_minutes": initial["signup_timeout_minutes"],
+            "reminder_interval_minutes": initial["reminder_interval_minutes"],
+            "signup_allowed_commands": initial["signup_allowed_commands"],
+            "in_progress_allowed_commands": initial["in_progress_allowed_commands"],
+            "blocked_message": initial["blocked_message"],
+            "vote_random_candidates": 99,
+        },
+    )
+    assert rejected.status_code == 422
+
+
+def test_closing_a_vote_is_not_allowed_before_its_deadline(app_context, headers):
+    """自动定稿只在截止后发生；后台要提前结束必须显式 force。"""
+    repository = app_context.repository
+    _enable_random_event_vote(repository)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=vote-settings", NOW
+    )
+    for name in ("甲", "乙", "丙"):
+        repository.create_random_event_scene(
+            name, "报名", ["开场"], 6, 3, [("主持", 1)]
+        )
+    target = NOW + timedelta(hours=3)
+    with app_context.session_factory.begin() as session:
+        session.add(
+            RandomEventScheduleRecord(
+                group_chat_id=group.id,
+                event_date=target.date(),
+                scheduled_at=target,
+                status="pending",
+            )
+        )
+    repository.create_random_event_poll(NOW)
+
+    assert repository.close_random_event_poll(NOW).status == "not_due"
+    assert repository.close_random_event_poll(NOW, force=True).status == "closed"
+
+def test_random_event_vote_end_to_end(app_context, headers):
+    """开投 → 投票 → 播报 → 定稿 → 预告 → 开演，全走两个真实入口。"""
+    from dzmm_bot.core.company_lottery import BEIJING
+
+    repository = app_context.repository
+    client = app_context.client
+    _enable_random_event_vote(repository)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=vote-e2e", NOW
+    )
+    repository.create_user("vote-e2e-1", "投票甲", NOW, 100)
+    repository.create_user("vote-e2e-2", "投票乙", NOW, 100)
+    for name in ("候选甲", "候选乙", "候选丙"):
+        repository.create_random_event_scene(
+            name, "报名", ["开场"], 6, 3, [("主持", 1)]
+        )
+    # 只留一个当日晚间场次，让目标场次确定
+    repository.set_random_event_settings(["23:59"], "{可选身份}", 15, 5)
+
+    def tick(when):
+        response = client.post(
+            "/internal/daily-jobs/run", headers=headers, json={"now": when.isoformat()}
+        )
+        assert response.status_code == 200
+
+    def outbound():
+        from dzmm_bot.core.schema import OutboundRecord
+
+        with app_context.session_factory() as session:
+            return list(
+                session.scalars(
+                    select(OutboundRecord.text).order_by(
+                        OutboundRecord.reply_index, OutboundRecord.created_at
+                    )
+                )
+            )
+
+    def send(message_id, sender, content, when):
+        response = client.post(
+            "/internal/inbound",
+            headers=headers,
+            json={
+                "platform_message_id": message_id,
+                "sender_platform_id": sender,
+                "content": content,
+                "received_at": when.isoformat(),
+                "chatroom_id": group.chatroom_id,
+            },
+        )
+        assert response.status_code == 200
+
+    beijing = NOW.astimezone(BEIJING)
+    open_tick = beijing.replace(hour=20, minute=0)
+    close_tick = beijing.replace(hour=23, minute=49)
+    preview_tick = beijing.replace(hour=23, minute=54)
+    start_tick = beijing.replace(hour=23, minute=59)
+
+    # 开投：上一场结束（这里没有上一场，直接开投）
+    tick(open_tick)
+    opened = "\n".join(outbound())
+    assert "【事件投票】" in opened
+    assert "优选投稿位待定" in opened
+    assert "候选甲" in opened or "候选乙" in opened or "候选丙" in opened
+
+    # 投票（两个人投同一个候选）
+    report = repository.random_event_poll_report()
+    target = next(c for c in report.candidates if not c.vacant)
+    send("vote-e2e-a", "vote-e2e-1", f"/事件投票 {target.position}", open_tick)
+    send("vote-e2e-b", "vote-e2e-2", f"/事件投票 {target.position}", open_tick)
+    assert repository.random_event_poll_report().total_votes == 2
+
+    # 播报（半小时间隔后）
+    tick(open_tick + timedelta(minutes=45))
+    assert any("票型" in text for text in outbound())
+
+    # 截止定稿
+    tick(close_tick)
+    closed = repository.random_event_poll_report()
+    assert closed.status == "closed"
+    assert closed.winner_position == target.position
+    assert any("【事件投票·结果】" in text for text in outbound())
+
+    # 预告：此时事件名已经定稿
+    tick(preview_tick)
+    texts = outbound()
+    result_index = next(i for i, text in enumerate(texts) if "【事件投票·结果】" in text)
+    notice_index = next(i for i, text in enumerate(texts) if "【随机事件预告】" in text)
+    assert result_index < notice_index
+    assert target.scene_name in texts[notice_index]
+
+    # 开演：报名中
+    tick(start_tick)
+    assert repository.current_company_lottery_round() is not None
+    assert any("报名" in text for text in outbound())
+
 def test_birthday_settings_are_managed_over_core_api(client, headers):
     initial = client.get("/internal/game/birthday/settings", headers=headers)
     payload = dict(initial.json())
@@ -3915,4 +4232,3 @@ def test_birthday_flow_end_to_end(client, headers, app_context):
     # 寿星：礼金 20 + 随礼 10 + 打卡双倍 10 = 140；同事：随礼 -10
     assert balances["e2e-a"] == 100 + 20 + 10 + 10
     assert balances["e2e-b"] == 100 - 10
-

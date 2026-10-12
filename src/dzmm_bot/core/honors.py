@@ -74,7 +74,7 @@ METRIC_LABELS = {
     "tip_given": "随机事件与公演支出的有效打赏总金额",
     "performance": "已结束的随机事件、公演中的有效参演次数",
     "submission": "本周审核通过的投稿次数（按审核时间）",
-    "chopped": "本周成功被凿次数",
+    "chopped": "本周成功被凿次数（所有群合并统计）",
     "market_spend": "最终结算的暗网消费金额（按结算时间）",
     "market_sales": "最终结算的暗网卖出次数（按结算时间）",
     "market_income": "最终结算的暗网净收益（扣除手续费）",
@@ -400,7 +400,6 @@ class HonorsMixin:
             scores["submission"][user_id] = count
         for user_id, count in session.execute(select(EstrusChopRecord.target_user_id, func.count()).where(
             EstrusChopRecord.created_at >= start, EstrusChopRecord.created_at < end,
-            EstrusChopRecord.group_chat_id.in_(groups),
         ).group_by(EstrusChopRecord.target_user_id)):
             scores["chopped"][user_id] = count
         for listing in session.scalars(select(DarkMarketListingRecord).where(

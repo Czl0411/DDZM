@@ -372,6 +372,9 @@ class ShopManagementMixin:
                         if field == "stock" and before and not batch.plan["synchronize_stock"]:
                             continue
                         setattr(item, field, after[field])
+                    if item.effect_type == "scratch":
+                        item.scratch_reward_min = item.effect_config["reward_min"]
+                        item.scratch_reward_max = item.effect_config["reward_max"]
                 elif change["operation"] == "delete":
                     item.deleted_at = now
                     item.enabled = False

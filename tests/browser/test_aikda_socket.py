@@ -732,6 +732,30 @@ def test_self_message_arriving_during_connection_is_ignored(gateway):
     assert adapter.read_new() == []
 
 
+def test_configured_long_message_bot_is_ignored(gateway):
+    """Bot 的系统通知不能再次进入公演或随机事件的入站流程。"""
+    _, socket, request = gateway
+    adapter = AikdaSocketGateway(
+        TARGET_URL,
+        token_provider=lambda: "short-lived-token",
+        request=request,
+        socket_factory=lambda: socket,
+        clock=lambda: NOW,
+        ignored_sender_ids=("long-message-bot",),
+    )
+
+    assert adapter.read_new() == []
+    socket.trigger(
+        "message:new",
+        {
+            "chatroomId": "room-1",
+            "message": message("reminder-1", "long-message-bot", "【公演即将开始】"),
+        },
+    )
+
+    assert adapter.read_new() == []
+
+
 def test_send_requires_successful_ack(gateway):
     """Fails if a send is reported before Aikda acknowledges it."""
     adapter, socket, _ = gateway

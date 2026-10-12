@@ -29,12 +29,18 @@ _DIRECT_COMMANDS = {
     "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开",
     "/查看暗网", "/登陆暗网", "/登录暗网", "/暗网", "/确认收货", "/投诉",
     "/我的公演预约", "/取消公演预约", "/延期", "/公司的故事集",
+    # 投票是全公司对"下一场演什么"的表决，私聊也要给一句「回群里投」
+    "/事件投票", "/事件投票情况",
+    "/删除黑历史",
+    "/下一页",
     "/看骰", "/我的罚款",
     "/设置性别", "/修改性别",
 }
 _RANDOM_EVENT_INDEPENDENT_COMMANDS = {
     "/我的称号", "/佩戴称号", "/装备称号", "/编辑称号", "/荣誉榜", "/荣誉历史",
     "/发红包", "/抢红包", "/打赏", "/余额", "/当前游戏", "/随礼",
+    "/随机事件时间表", "/使用", "/选择", "/下一页", "/确认优选投稿",
+    "/确认广告位", "/取消使用",
 }
 
 _LOGGER = logging.getLogger(__name__)
@@ -144,7 +150,25 @@ class CoreService:
                 ) or (
                     command == "/跳过" and draft_step == "cover"
                 )
-                if draft_step is not None and (
+                ad_slot_step = self._repository.random_event_ad_slot_draft_step(
+                    message.sender_platform_id, message.received_at
+                )
+                if ad_slot_step is not None and command in {
+                    "/选择",
+                    "/下一页",
+                    "/确认优选投稿",
+                    "/确认广告位",
+                    "/取消使用",
+                }:
+                    direct_reply = self._random_event_ad_slot_reply(
+                        self._repository.consume_random_event_ad_slot_draft(
+                            message.sender_platform_id,
+                            message.content,
+                            message.received_at,
+                            guided_by_schedule=False,
+                        )
+                    )
+                elif draft_step is not None and (
                     draft_control_command
                     or not message.content.lstrip().startswith("/")
                 ):
@@ -345,6 +369,22 @@ class CoreService:
                         ),
                     )
                     return ReceiveResult(stored.id, True)
+            ad_slot_step = self._repository.random_event_ad_slot_draft_step(
+                message.sender_platform_id, message.received_at
+            )
+            if ad_slot_step is not None and command in {
+                "/选择", "/下一页", "/确认优选投稿", "/确认广告位", "/取消使用",
+            }:
+                reply = self._random_event_ad_slot_reply(
+                    self._repository.consume_random_event_ad_slot_draft(
+                        message.sender_platform_id,
+                        message.content,
+                        message.received_at,
+                        guided_by_schedule=True,
+                    )
+                )
+            else:
+                reply = None
             had_active_game_context = self._repository.user_has_active_game_context(
                 message.sender_platform_id,
                 None if group_context is None else group_context.group_chat_id,
@@ -361,7 +401,8 @@ class CoreService:
                     message.received_at,
                     chatroom_id=group_context.chatroom_id,
                 )
-            reply = self._command_handler.handle(message)
+            if reply is None:
+                reply = self._command_handler.handle(message)
             if isinstance(reply, list):
                 replies.extend(
                     item if isinstance(item, CommandReply) else CommandReply(item)
@@ -525,6 +566,76 @@ class CoreService:
             "starting_price": "请发送起拍价（1–99999 的整数）。",
         }
         return prompts.get(result.step)
+
+    @staticmethod
+    def _random_event_ad_slot_reply(result) -> str:
+        """优选投稿卡群内向导的回执；每条拒绝都要说清楚原因。"""
+        def works_page() -> str:
+            start = (result.work_page - 1) * 5
+            page = result.works[start:start + 5]
+            return "\n".join(
+                f"{work.position}. 《{work.scene_name}》" for work in page
+            )
+
+        def schedule_label(schedule) -> str:
+            if schedule is None:
+                return "该场"
+            return schedule.scheduled_at.strftime("%H:%M")
+
+        def schedule_group_suffix(schedule) -> str:
+            if schedule is None or not schedule.group_name:
+                return ""
+            return f"（{schedule.group_name}）"
+
+        if result.status in {"schedule_picked", "page"}:
+            schedule = result.selected_schedule
+            time_label = schedule_label(schedule)
+            suffix = "\n回复 /下一页 查看更多。" if result.work_page * 5 < len(result.works) else ""
+            return (
+                f"已选择 {time_label} 场{schedule_group_suffix(schedule)}。"
+                "请选择要投放的已审核投稿：\n"
+                f"{works_page()}\n回复 /选择 投稿序号。{suffix}"
+            )
+        if result.status == "picked":
+            work = result.selected
+            name = "这件作品" if work is None else f"《{work.scene_name}》"
+            schedule = result.selected_schedule
+            time_label = schedule_label(schedule)
+            return (
+                f"已选中{name}，将锁定到 {time_label} 场"
+                f"{schedule_group_suffix(schedule)}。"
+                "回复 /确认优选投稿 提交，提交后才会消耗这张卡。"
+            )
+        if result.status == "consumed":
+            work = result.selected
+            name = "这件作品" if work is None else f"《{work.scene_name}》"
+            schedule = result.selected_schedule
+            time_label = schedule_label(schedule)
+            return (
+                f"✅ {name}已锁定 {time_label} 场的优选投稿位"
+                f"{schedule_group_suffix(schedule)}。"
+            )
+        if result.status == "cancelled":
+            return "已取消优选投稿卡向导，这张卡未消耗。"
+        return {
+            "pick_usage": "请用 /选择 序号 继续。",
+            "pick_missing": "没有这个序号，看看上面的列表。",
+            "pick_required": "请先选择场次和投稿。",
+            "schedule_missing": "没有这个场次序号，看看上面的时间表。",
+            "schedule_required": "请先用 /选择 场次序号。",
+            "last_page": "已经是最后一页了。",
+            "no_draft": "优选投稿卡向导已经结束了，请重新发送 /使用 商品编号。",
+            "not_joined": "请先用 /入职 名字 加入摸鱼公司。",
+            "poll_closed": "本期投票已经截止了，这张卡留着下次用。",
+            "schedule_closed": "这个场次已经不能锁定了，这张卡留着下次用。",
+            "slot_taken": "这个场次的优选投稿位已经满了，这张卡留着下次用。",
+            "already_reserved": "你已经锁定过这场的优选投稿位了，这张卡留着下次用。",
+            "scene_taken": "这件作品已经在候选列表里了，换一件吧。",
+            "scene_unavailable": "这件作品暂时不能使用，换一件吧。",
+            "slot_disabled": "本期没有开放优选投稿位，这张卡留着下次用。",
+            "item_missing": "这张优选投稿卡当前不可用。",
+            "disabled": "随机事件投票当前没有开启。",
+        }.get(result.status, "这条消息没看懂，回复 /选择 序号 或 /确认优选投稿。")
 
     @staticmethod
     def _performance_draft_reply(result):

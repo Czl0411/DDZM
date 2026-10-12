@@ -164,6 +164,13 @@ SYSTEM_SHOP_ITEMS = (
         recipient_count=1,
         duration_minutes=1440,
     ),
+    SystemShopItem(
+        "event_ad_slot",
+        "优选投稿卡",
+        8,
+        "event_ad_slot",
+        "把一件已审核的随机事件投稿锁定到今天指定场次的优选投稿位；能不能当选仍看投票",
+    ),
 )
 
 
@@ -203,6 +210,8 @@ def item_category(item: SystemShopItem) -> str | None:
         return CATEGORY_GIFT
     if item.effect_type == "scratch":
         return CATEGORY_SCRATCH
+    if item.effect_type == "event_ad_slot":
+        return "event_ad_slot"
     if item.effect_type in ("ai_quota", "multiplayer_quota"):
         return CATEGORY_FUNCTION
     if item.effect_type.startswith("adult_"):
@@ -216,4 +225,6 @@ def item_daily_purchase_limit(item: SystemShopItem) -> int | None:
         return _GIFT_DAILY_LIMIT
     if item.effect_type == "scratch":
         return _SCRATCH_DAILY_LIMIT
+    if item.effect_type == "event_ad_slot":
+        return 1
     return None

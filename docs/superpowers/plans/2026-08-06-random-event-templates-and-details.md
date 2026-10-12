@@ -232,12 +232,12 @@ Expected: 所有测试通过；只保留现有集成跳过项。
 
 - [ ] **Step 2: Deploy and migrate**
 
-Run: `git archive --format=tar HEAD | ssh ubuntu@43.153.194.94 'tar -xf - -C /tmp/dzmm-release && sudo bash /tmp/dzmm-release/deploy/scripts/deploy.sh /tmp/dzmm-release && sudo systemctl restart dzmm-core dzmm-admin-web dzmm-browser-worker'`  
+Run: `git archive --format=tar HEAD | ssh "$DZMM_SSH_TARGET" 'tar -xf - -C /tmp/dzmm-release && sudo bash /tmp/dzmm-release/deploy/scripts/deploy.sh /tmp/dzmm-release && sudo systemctl restart dzmm-core dzmm-admin-web dzmm-browser-worker'`
 Expected: Alembic 升级至新版本，三个服务重启成功。
 
 - [ ] **Step 3: Verify production and commit plan**
 
-Run: `ssh ubuntu@43.153.194.94 'systemctl is-active dzmm-core dzmm-admin-web dzmm-browser-worker'`  
+Run: `ssh "$DZMM_SSH_TARGET" 'systemctl is-active dzmm-core dzmm-admin-web dzmm-browser-worker'`
 Expected: 三行均为 `active`。
 
 ```bash

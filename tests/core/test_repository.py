@@ -8361,7 +8361,13 @@ def test_random_event_daily_schedule_does_not_repeat_an_unstarted_scene(
             scene_name, "报名", ["开场"], 1, 1, [("员工", 1)]
         )
     repository.set_random_event_settings(
-        ["10:00", "12:00", "14:00"], "可选身份：{可选身份}", 15, 5
+        ["10:00", "12:00", "14:00"],
+        "可选身份：{可选身份}",
+        15,
+        5,
+        # 这条用例验的是"排期时就随机冻结场景"的老行为，投票开启后由投票定稿，
+        # 所以显式关掉投票来覆盖旧的随机路径。
+        vote_enabled=False,
     )
     monkeypatch.setattr("dzmm_bot.core.repository.randbelow", lambda _: 0)
 
@@ -8599,7 +8605,14 @@ def test_random_event_schedule_prefers_never_performed_scene(
     repository.create_random_event_scene(
         "未演绎场景", "报名", ["开始。"], 1, 1, [("员工", 1)]
     )
-    repository.set_random_event_settings(["10:05"], "报名：{可选身份}", 15, 5)
+    repository.set_random_event_settings(
+        ["10:05"],
+        "报名：{可选身份}",
+        15,
+        5,
+        # 验的是旧随机路径的选池偏好，投票开启后由投票定稿，这里显式关掉投票。
+        vote_enabled=False,
+    )
 
     with session_factory() as session:
         historical_schedule = RandomEventScheduleRecord(
@@ -9506,10 +9519,10 @@ def test_random_event_tip_transfers_real_balance_and_is_idempotent(
         "打赏员工",
         "收款员工",
     )
-    assert (first.sender_balance, first.recipient_balance) == (5, 6)
+    assert (first.sender_balance, first.recipient_balance) == (5, 11)
     assert duplicate.status == "duplicate"
     assert repository.find_user("tip-donor").balance == 5
-    assert repository.find_user("tip-target-1").balance == 6
+    assert repository.find_user("tip-target-1").balance == 11
     with session_factory() as session:
         tips = list(session.scalars(select(RandomEventTipRecord)))
         transactions = list(
@@ -9572,7 +9585,7 @@ def test_random_event_tip_rejections_do_not_change_balance(repository, session_f
         assert result.status == expected
 
     assert repository.find_user("tip-donor").balance == 10
-    assert repository.find_user("tip-target-1").balance == 1
+    assert repository.find_user("tip-target-1").balance == 6
     assert repository.find_user("tip-target-2").balance == 0
     with session_factory() as session:
         assert session.scalar(select(func.count(RandomEventTipRecord.id))) == 0
@@ -10597,8 +10610,8 @@ def test_item_page_returns_newest_records_and_total(repository, session_factory,
 
     items, total = repository.list_active_items_page(3, 20)
 
-    assert total == 43
-    assert [item.name for item in items] == ["物品2", "物品1", "物品0"]
+    assert total == 44
+    assert [item.name for item in items] == ["物品3", "物品2", "物品1", "物品0"]
 
 
 def test_daily_jobs_backfill_current_day_history_and_legacy_checkin_income(
@@ -10665,6 +10678,61 @@ def test_activity_settlement_is_once_and_negative_does_not_reduce_today_income(
     ) == 1
     repository.run_daily_jobs(today + timedelta(minutes=1))
     assert repository.find_user("u1").balance == -3
+
+
+def test_activity_settlement_scan_runs_once_per_day(
+    repository, session_factory
+):
+    from dzmm_bot.core.schema import BEIJING
+
+    yesterday = datetime(2026, 8, 5, 23, 59, tzinfo=BEIJING)
+    today = datetime(2026, 8, 6, 0, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", yesterday, 0)
+    repository.record_activity("u1", yesterday, "一二三四五六七八九十")
+    repository.run_daily_jobs(today)
+    activity_scans = []
+
+    def capture_activity_scan(execute_state):
+        if execute_state.is_select and "FROM daily_activities" in str(
+            execute_state.statement
+        ):
+            activity_scans.append(execute_state.statement)
+
+    event.listen(session_factory.class_, "do_orm_execute", capture_activity_scan)
+    try:
+        repository.run_daily_jobs(today + timedelta(minutes=1))
+    finally:
+        event.remove(session_factory.class_, "do_orm_execute", capture_activity_scan)
+
+    assert activity_scans == []
+
+
+def test_activity_settlement_restart_skips_conflict_inserts(
+    repository, session_factory
+):
+    from dzmm_bot.core.repository import CoreRepository
+    from dzmm_bot.core.schema import BEIJING
+
+    yesterday = datetime(2026, 8, 5, 23, 59, tzinfo=BEIJING)
+    today = datetime(2026, 8, 6, 0, 0, tzinfo=BEIJING)
+    repository.create_user("u1", "小明", yesterday, 0)
+    repository.record_activity("u1", yesterday, "一二三四五六七八九十")
+    repository.run_daily_jobs(today)
+    settlement_inserts = []
+
+    def capture_settlement_insert(execute_state):
+        if execute_state.is_insert and "activity_reward_settlements" in str(
+            execute_state.statement
+        ):
+            settlement_inserts.append(execute_state.statement)
+
+    event.listen(session_factory.class_, "do_orm_execute", capture_settlement_insert)
+    try:
+        CoreRepository(session_factory).run_daily_jobs(today + timedelta(minutes=1))
+    finally:
+        event.remove(session_factory.class_, "do_orm_execute", capture_settlement_insert)
+
+    assert settlement_inserts == []
 
 
 def test_due_income_report_is_queued_once_and_empty_slot_is_skipped(repository, session_factory):

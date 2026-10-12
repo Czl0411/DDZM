@@ -255,6 +255,27 @@ class RandomEventSettingsRecord(Base):
     tipping_duration_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, default=120, server_default="120"
     )
+    vote_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    vote_close_offset_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=10, server_default="10"
+    )
+    vote_broadcast_interval_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=30, server_default="30"
+    )
+    vote_random_candidates: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=3, server_default="3"
+    )
+    vote_ad_slot_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=3, server_default="3"
+    )
+    vote_fallback_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=30, server_default="30"
+    )
+    vote_allow_change: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
 
 
 class HideAndSeekSettingsRecord(Base):
@@ -2178,6 +2199,149 @@ class RandomEventTipRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class RandomEventPollRecord(Base):
+    """全公司唯一一份投票：为某个"待开始"场次决定演哪个场景。"""
+
+    __tablename__ = "random_event_polls"
+    __table_args__ = (
+        UniqueConstraint("target_schedule_id"),
+        Index("ix_random_event_polls_status_close", "status", "closes_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    target_schedule_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_event_schedules.id"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), default="open", nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    closes_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    # 赢家候选：不设外键，避免 polls ↔ candidates 循环依赖
+    winner_candidate_id: Mapped[UUID | None] = mapped_column(Uuid)
+    announced_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    last_tally_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    fallback_reason: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class RandomEventPollCandidateRecord(Base):
+    """每期 4 位：1–3 是随机候选，第 4 位是事件广告卡位（未被买下时 vacant）。"""
+
+    __tablename__ = "random_event_poll_candidates"
+    __table_args__ = (
+        UniqueConstraint("poll_id", "position"),
+        UniqueConstraint("poll_id", "scene_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    poll_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_event_polls.id"), nullable=False
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    scene_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("random_event_scenes.id")
+    )
+    template_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("random_event_scene_openings.id")
+    )
+    scene_name: Mapped[str | None] = mapped_column(String(64))
+    event_name: Mapped[str | None] = mapped_column(String(64))
+    seat_summary: Mapped[str | None] = mapped_column(String(255))
+    author_name: Mapped[str | None] = mapped_column(String(64))
+    reward: Mapped[int | None] = mapped_column(Integer)
+    target_rounds: Mapped[int | None] = mapped_column(Integer)
+    vacant: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, default=beijing_now, nullable=False
+    )
+
+
+class RandomEventPollVoteRecord(Base):
+    """每人一票，可改票：unique(poll_id, user_id)。"""
+
+    __tablename__ = "random_event_poll_votes"
+    __table_args__ = (UniqueConstraint("poll_id", "user_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    poll_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_event_polls.id"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    candidate_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_event_poll_candidates.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class RandomEventAdSlotRecord(Base):
+    """事件广告卡的使用记录：某位作者把某个作品送进了某期投票的广告位。"""
+
+    __tablename__ = "random_event_ad_slots"
+    __table_args__ = (
+        UniqueConstraint("poll_id", "user_id"),
+        Index("ix_random_event_ad_slots_poll", "poll_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    scene_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_event_scenes.id"), nullable=False
+    )
+    item_id: Mapped[UUID] = mapped_column(ForeignKey("items.id"), nullable=False)
+    schedule_id: Mapped[UUID] = mapped_column(
+        ForeignKey("random_event_schedules.id"), nullable=False
+    )
+    poll_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("random_event_polls.id")
+    )
+    candidate_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("random_event_poll_candidates.id")
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), default="consumed", server_default="consumed", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class RandomEventAdSlotDraftRecord(Base):
+    """广告卡向导草稿：一人一份，15 分钟没动作就作废（卡还在库存里）。"""
+
+    __tablename__ = "random_event_ad_slot_drafts"
+    __table_args__ = (UniqueConstraint("user_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    item_id: Mapped[UUID] = mapped_column(ForeignKey("items.id"), nullable=False)
+    group_chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("group_chats.id"), nullable=False
+    )
+    schedule_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("random_event_schedules.id")
+    )
+    poll_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("random_event_polls.id")
+    )
+    current_step: Mapped[str] = mapped_column(
+        String(32), default="pick_event", nullable=False
+    )
+    scene_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("random_event_scenes.id")
+    )
+    work_page: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    last_activity_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class PerformanceSettingsRecord(Base):
     __tablename__ = "performance_settings"
 
@@ -2450,6 +2614,33 @@ class UserRecord(Base):
     rank_id: Mapped[UUID | None] = mapped_column(ForeignKey("ranks.id"))
     department_id: Mapped[UUID | None] = mapped_column(ForeignKey("departments.id"))
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class BlackHistoryEntryRecord(Base):
+    __tablename__ = "black_history_entries"
+    __table_args__ = (
+        UniqueConstraint("group_chat_id", "source_platform_message_id"),
+        Index("ix_black_history_entries_subject_id", "subject_user_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    subject_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    recorder_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    source_platform_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    text_content: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    image_alt: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class BlackHistoryDeleteDraftRecord(Base):
+    __tablename__ = "black_history_delete_drafts"
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    page: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
 class ProfileImageUploadRecord(Base):
@@ -2796,7 +2987,8 @@ class EstrusStateRecord(Base):
         BeijingDateTime, default=beijing_now, nullable=False
     )
     __table_args__ = (
-        UniqueConstraint("group_chat_id", "user_id", name="ux_estrus_state"),
+        # 凿状态跨群共享；group_chat_id 只保留历史来源，不参与隔离。
+        UniqueConstraint("user_id", name="ux_estrus_state_user"),
     )
 
 
@@ -3138,6 +3330,8 @@ class ItemRecord(Base):
     unlimited_stock: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     system_key: Mapped[str | None] = mapped_column(String(64), unique=True)
     effect_type: Mapped[str | None] = mapped_column(String(32))
+    scratch_reward_min: Mapped[int | None] = mapped_column(Integer)
+    scratch_reward_max: Mapped[int | None] = mapped_column(Integer)
     effect_config: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     configuration_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
@@ -3589,17 +3783,17 @@ class CompanyLotterySettingsRecord(Base):
     blue_pool: Mapped[int] = mapped_column(Integer, default=6, nullable=False)
 
     ticket_price: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
-    head_prize: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
-    second_prize: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
-    third_prize: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
+    head_prize: Mapped[int] = mapped_column(Integer, default=500, nullable=False)
+    second_prize: Mapped[int] = mapped_column(Integer, default=120, nullable=False)
+    third_prize: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     fourth_prize: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
     fifth_prize: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
-    pool_ceiling: Mapped[int] = mapped_column(Integer, default=200, nullable=False)
+    pool_ceiling: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
     pool_seed: Mapped[int] = mapped_column(
         Integer, default=100, server_default="100", nullable=False
     )
-    per_person_cap: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    per_person_cap: Mapped[int] = mapped_column(Integer, default=500, nullable=False)
     max_tickets_per_day: Mapped[int] = mapped_column(
         Integer, default=5, server_default="5", nullable=False
     )
@@ -3610,7 +3804,7 @@ class CompanyLotterySettingsRecord(Base):
     draw_hour: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
     draw_minute: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     close_offset_minutes: Mapped[int] = mapped_column(
-        Integer, default=10, server_default="10", nullable=False
+        Integer, default=30, server_default="30", nullable=False
     )
     notify_offset_minutes: Mapped[int] = mapped_column(
         Integer, default=5, server_default="5", nullable=False

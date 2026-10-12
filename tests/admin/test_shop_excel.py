@@ -66,11 +66,11 @@ def test_export_roundtrip_and_template_have_three_sheets(context):
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content))
     assert workbook.sheetnames == ["商品列表", "填写说明", "效果字典"]
-    assert workbook["商品列表"].max_row == 23
+    assert workbook["商品列表"].max_row == 24
     workbook.close()
     preview = upload(client, response.content)
     assert preview.status_code == 200, preview.text
-    assert preview.json()["summary"]["unchanged"] == 22
+    assert preview.json()["summary"]["unchanged"] == 23
     assert not preview.json()["errors"]
     assert confirm(client, preview.json()).json()["count"] == 0
     template = client.get("/api/game/shop/excel/template", headers=HEADERS)

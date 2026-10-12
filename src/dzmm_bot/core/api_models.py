@@ -270,7 +270,7 @@ class OutboundClaimResponse(ApiModel):
     inbound_message_id: UUID | None
     group_chat_id: UUID | None
     text: str
-    content_type: Literal["text", "image", "novel"]
+    content_type: Literal["text", "image", "novel", "history_card", "history_image"]
     image_url: str | None
     image_alt: str | None
     lease_token: UUID
@@ -558,6 +558,8 @@ class ItemResponse(ApiModel):
     unlimited_stock: bool
     system_key: str | None
     effect_type: str | None
+    scratch_reward_min: int | None
+    scratch_reward_max: int | None
     minimum_rank_order: int | None
     enabled: bool
     category: str | None = None
@@ -595,7 +597,9 @@ class UpdateItemRequest(ApiModel):
     minimum_rank_order: int | None = Field(default=None, ge=1, le=999)
     unlimited_stock: bool
     stock: int = Field(ge=0, le=99999)
-    price: int = Field(ge=0, le=999)
+    scratch_reward_min: int | None = Field(default=None, ge=0, le=99999)
+    scratch_reward_max: int | None = Field(default=None, ge=0, le=99999)
+    price: int | None = Field(default=None, ge=0, le=999)
     category: str | None = Field(default=None, max_length=32)
     daily_purchase_limit: int | None = Field(default=None, ge=0, le=99)
 
@@ -1443,6 +1447,13 @@ class RandomEventSettingsResponse(ApiModel):
     global_completion_reward: int = Field(default=6, ge=0, le=999)
     submission_approval_reward: int = Field(default=10, ge=0, le=999)
     tipping_duration_seconds: int = Field(default=120, ge=10, le=3600)
+    vote_enabled: bool = True
+    vote_close_offset_minutes: int = Field(default=10, ge=1, le=720)
+    vote_broadcast_interval_minutes: int = Field(default=30, ge=1, le=720)
+    vote_random_candidates: int = Field(default=3, ge=1, le=5)
+    vote_ad_slot_limit: int = Field(default=3, ge=0, le=3)
+    vote_fallback_minutes: int = Field(default=30, ge=1, le=720)
+    vote_allow_change: bool = True
 
 
 class SetRandomEventSettingsRequest(RandomEventSettingsResponse):
@@ -1454,6 +1465,13 @@ class SetRandomEventSettingsRequest(RandomEventSettingsResponse):
     global_completion_reward: int | None = Field(default=None, ge=0, le=999)
     submission_approval_reward: int | None = Field(default=None, ge=0, le=999)
     tipping_duration_seconds: int | None = Field(default=None, ge=10, le=3600)
+    vote_enabled: bool | None = None
+    vote_close_offset_minutes: int | None = Field(default=None, ge=1, le=720)
+    vote_broadcast_interval_minutes: int | None = Field(default=None, ge=1, le=720)
+    vote_random_candidates: int | None = Field(default=None, ge=1, le=5)
+    vote_ad_slot_limit: int | None = Field(default=None, ge=0, le=3)
+    vote_fallback_minutes: int | None = Field(default=None, ge=1, le=720)
+    vote_allow_change: bool | None = None
 
 
 class HideAndSeekSettingsResponse(ApiModel):
@@ -1720,6 +1738,44 @@ class RandomEventScheduleResponse(ApiModel):
     event_name: str | None
     is_cross_day: bool
     has_details: bool = False
+
+
+class RandomEventPollCandidateResponse(ApiModel):
+    position: int
+    source: str
+    vacant: bool
+    scene_name: str | None
+    event_name: str | None
+    seat_summary: str | None
+    reward: int | None
+    target_rounds: int | None
+    votes: int
+    voters: list[str] = Field(default_factory=list)
+    author_name: str | None = None
+
+
+class RandomEventPollReportResponse(ApiModel):
+    id: UUID
+    status: str
+    group_name: str
+    scheduled_at: datetime
+    opened_at: datetime
+    closes_at: datetime
+    closed_at: datetime | None
+    winner_position: int | None
+    fallback_reason: str | None
+    total_votes: int
+    candidates: list[RandomEventPollCandidateResponse]
+
+
+class RandomEventVoteResponse(ApiModel):
+    poll: RandomEventPollReportResponse | None = None
+
+
+class RandomEventVoteCloseRequest(ApiModel):
+    """不给 `winner_position` 就是立刻截止；给了就是管理员指定（可改判）。"""
+
+    winner_position: int | None = Field(default=None, ge=1, le=10)
 
 
 class PaginatedRandomEventSchedulesResponse(ApiModel):

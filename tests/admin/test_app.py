@@ -1988,6 +1988,20 @@ def test_admin_custom_command_image_upload_and_rejects_invalid_file(
     assert list(tmp_path.iterdir()) == [saved]
 
 
+def test_custom_command_ui_has_editor_and_four_reply_types(client, headers):
+    page = client.get("/", headers=headers).text
+    script = client.get("/static/admin.js", headers=headers).text
+    assert 'id="add-custom-command"' in page
+    assert 'id="custom-command-modal"' in page
+    assert 'id="custom-command-image-file"' in page
+    for reply_type in ("text", "image", "group_invite", "novel"):
+        assert f'value="{reply_type}"' in page
+    assert 'data-custom-command-action="edit"' in script
+    assert 'data-custom-command-action="delete"' in script
+    assert '"/api/game/custom-commands"' in script
+    assert '"/api/game/custom-command-images"' in script
+
+
 def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):
     core.employees = [
         {

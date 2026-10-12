@@ -116,6 +116,139 @@ def test_command_registry_exposes_exact_enabled_syntax(repository):
     )
 
 
+def test_custom_command_repository_keeps_builtin_rows_and_supports_lifecycle(repository):
+    created = repository.create_custom_command(
+        "/公告", "群内公告", "text", "今天开会", None, True
+    )
+    assert (created.is_custom, created.reply_type, created.reply_value) == (
+        True, "text", "今天开会"
+    )
+    assert repository.get_enabled_custom_command("/公告").reply_value == "今天开会"
+    renamed = repository.update_custom_command(
+        "/公告", "/新公告", "更新", "text", "明天开会", None, False
+    )
+    assert renamed.command == "/新公告"
+    assert repository.get_enabled_custom_command("/公告") is None
+    assert repository.get_enabled_custom_command("/新公告") is None
+    assert repository.set_command_enabled("/新公告", True)
+    assert repository.get_enabled_custom_command("/新公告").reply_value == "明天开会"
+    with pytest.raises(ValueError):
+        repository.update_custom_command(
+            "/打卡", "/打卡", "篡改", "text", "正文", None, True
+        )
+    assert not repository.delete_custom_command("/打卡")
+    assert repository.is_command_enabled("/打卡")
+    assert repository.delete_custom_command("/新公告")
+    assert repository.get_enabled_custom_command("/新公告") is None
+
+
+@pytest.mark.parametrize(
+    "command,reply_type,content",
+    [
+        ("/打卡", "text", "正文"),
+        ("/带 空格", "text", "正文"),
+        ("/空", "text", ""),
+        ("/过长", "text", "字" * 2001),
+        ("/错误群", "group_invite", "https://www.ivorune.xyz/chat?c=abc"),
+        ("/错误域", "group_invite", "https://evil.example/invite/abc"),
+        ("/空邀请码", "group_invite", "https://www.ivorune.xyz/invite/"),
+        ("/错误小说", "novel", "https://www.ivorune.xyz/novel/not-a-uuid"),
+    ],
+)
+def test_custom_command_repository_rejects_invalid_content(
+    repository, command, reply_type, content
+):
+    with pytest.raises(ValueError):
+        repository.create_custom_command(
+            command, "说明", reply_type, content, None, True
+        )
+
+
+def test_custom_command_repository_stores_share_resource_ids(repository):
+    invite = repository.create_custom_command(
+        "/进群", "群入口", "group_invite",
+        "https://www.ivorune.xyz/invite/abc123", None, True,
+    )
+    novel = repository.create_custom_command(
+        "/看小说", "小说", "novel",
+        "https://www.ivorune.xyz/novel/66408bb3-60a0-40e1-a434-ee40efee4d27",
+        None, True,
+    )
+    assert invite.reply_value == "abc123"
+    assert novel.reply_value == "66408bb3-60a0-40e1-a434-ee40efee4d27"
+
+
+def test_custom_command_image_requires_completed_upload_and_keeps_old_reply(repository, now):
+    first = repository.create_custom_command_image_upload(
+        "/tmp/first.png", "first.png", "image/png", now
+    )
+    with pytest.raises(ValueError):
+        repository.create_custom_command(
+            "/图片", "图片", "image", None, first.id, True
+        )
+    claim = repository.claim_custom_command_image_upload("worker-a", now, 30)
+    assert claim.id == first.id
+    assert not repository.complete_custom_command_image_upload(
+        first.id, "worker-b", claim.lease_token, "https://cdn.example/first.png", now
+    )
+    assert repository.complete_custom_command_image_upload(
+        first.id, "worker-a", claim.lease_token, "https://cdn.example/first.png", now
+    )
+    created = repository.create_custom_command(
+        "/图片", "图片", "image", None, first.id, True
+    )
+    assert created.reply_value == "https://cdn.example/first.png"
+    second = repository.create_custom_command_image_upload(
+        "/tmp/second.png", "second.png", "image/png", now
+    )
+    claim = repository.claim_custom_command_image_upload("worker-a", now, 30)
+    assert repository.fail_custom_command_image_upload(
+        second.id, "worker-a", claim.lease_token, "upload_failed", now
+    )
+    with pytest.raises(ValueError):
+        repository.update_custom_command(
+            "/图片", "/图片", "图片", "image", None, second.id, True
+        )
+    assert repository.get_enabled_custom_command("/图片").reply_value == (
+        "https://cdn.example/first.png"
+    )
+
+
+def test_custom_command_image_cleanup_releases_temp_path(repository, now):
+    task = repository.create_custom_command_image_upload(
+        "/tmp/custom.png", "custom.png", "image/png", now
+    )
+    upload_claim = repository.claim_custom_command_image_upload("worker-a", now, 30)
+    assert repository.complete_custom_command_image_upload(
+        task.id, "worker-a", upload_claim.lease_token,
+        "https://cdn.example/custom.png", now,
+    )
+    cleanup = repository.claim_custom_command_image_cleanup("worker-b", now, 30)
+    assert (cleanup.id, cleanup.temp_path) == (task.id, "/tmp/custom.png")
+    assert not repository.complete_custom_command_image_cleanup(
+        task.id, "worker-a", cleanup.lease_token, now
+    )
+    assert repository.complete_custom_command_image_cleanup(
+        task.id, "worker-b", cleanup.lease_token, now
+    )
+    assert repository.get_custom_command_image_upload(task.id).temp_path == ""
+
+
+def test_custom_command_image_rejects_text_field(repository, now):
+    task = repository.create_custom_command_image_upload(
+        "/tmp/custom.png", "custom.png", "image/png", now
+    )
+    claim = repository.claim_custom_command_image_upload("worker-a", now, 30)
+    assert repository.complete_custom_command_image_upload(
+        task.id, "worker-a", claim.lease_token,
+        "https://cdn.example/custom.png", now,
+    )
+    with pytest.raises(ValueError):
+        repository.create_custom_command(
+            "/图片", "图片", "image", "不该发送的文字", task.id, True
+        )
+
+
 def test_personal_profile_reply_templates_are_managed(repository):
     assert {
         template.scenario

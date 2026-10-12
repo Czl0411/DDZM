@@ -187,9 +187,34 @@ class CommandDefinitionRecord(Base):
     syntax: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_custom: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reply_type: Mapped[str | None] = mapped_column(String(32))
+    reply_value: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
+
+
+class CustomCommandImageUploadRecord(Base):
+    __tablename__ = "custom_command_image_uploads"
+    __table_args__ = (
+        Index("ix_custom_command_image_uploads_claim", "status", "lease_expires_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    temp_path: Mapped[str] = mapped_column(Text, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    lease_worker_id: Mapped[str | None] = mapped_column(String(255))
+    lease_token: Mapped[UUID | None] = mapped_column(Uuid)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    result_url: Mapped[str | None] = mapped_column(Text)
+    failure_summary: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
 
 
 class CommandReplyTemplateRecord(Base):

@@ -216,6 +216,7 @@ from .schema import (
     BlameIncidentCardRecord,
     CommandDefinitionRecord,
     CommandReplyTemplateRecord,
+    CustomCommandImageUploadRecord,
     CompanyLotteryBetRecord,
     CompanyLotteryDraftRecord,
     CompanyLotteryPoolLedgerRecord,
@@ -4099,6 +4100,259 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             if record is None:
                 return False
             record.enabled = enabled
+            session.flush()
+            return True
+
+    @staticmethod
+    def _custom_command_name(command: str) -> str:
+        if (
+            not isinstance(command, str)
+            or not command.startswith("/")
+            or len(command) < 2
+            or len(command) > 32
+            or any(character.isspace() for character in command)
+        ):
+            raise ValueError("指令名称必须以 / 开头，不能包含空白，且不超过 32 字符")
+        return command
+
+    @staticmethod
+    def _custom_reply_value(
+        session: Session,
+        reply_type: str,
+        content: str | None,
+        upload_task_id: UUID | None,
+        previous: CommandDefinitionRecord | None = None,
+    ) -> str:
+        if reply_type == "image":
+            if content is not None:
+                raise ValueError("图片回复不能包含文本内容")
+            if upload_task_id is None:
+                if previous is not None and previous.reply_type == "image" and previous.reply_value:
+                    return previous.reply_value
+                raise ValueError("请先上传图片")
+            task = session.get(CustomCommandImageUploadRecord, UUID(str(upload_task_id)))
+            if task is None or task.status != "completed" or not task.result_url:
+                raise ValueError("图片尚未上传成功")
+            return task.result_url
+        if upload_task_id is not None or not isinstance(content, str):
+            raise ValueError("回复内容与类型不匹配")
+        if reply_type == "text":
+            if not content.strip() or len(content) > 2000:
+                raise ValueError("文本回复不能为空且不超过 2000 字符")
+            return content
+        if reply_type == "novel":
+            resource_id = company_story_novel_resource_id(content)
+            if resource_id is None:
+                raise ValueError("小说链接格式不正确")
+            return resource_id
+        if reply_type == "group_invite":
+            parsed = urlsplit(content.strip())
+            match = re.fullmatch(r"/invite/([A-Za-z0-9_-]+)", parsed.path)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or parsed.netloc not in {"ivorune.xyz", "www.ivorune.xyz"}
+                or parsed.query or parsed.fragment or match is None
+            ):
+                raise ValueError("群聊邀请链接格式不正确")
+            return match.group(1)
+        raise ValueError("不支持的回复类型")
+
+    def create_custom_command(
+        self, command: str, description: str, reply_type: str,
+        content: str | None, upload_task_id: UUID | None, enabled: bool,
+    ) -> CommandDefinitionRecord:
+        self.ensure_command_definitions()
+        command = self._custom_command_name(command)
+        with self._session() as session:
+            if session.get(CommandDefinitionRecord, command) is not None:
+                raise ValueError("指令名称已被占用")
+            value = self._custom_reply_value(session, reply_type, content, upload_task_id)
+            record = CommandDefinitionRecord(
+                command=command, syntax=command, description=description.strip(),
+                enabled=enabled, is_custom=True, reply_type=reply_type,
+                reply_value=value, created_at=beijing_now(),
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def update_custom_command(
+        self, old_command: str, command: str, description: str, reply_type: str,
+        content: str | None, upload_task_id: UUID | None, enabled: bool,
+    ) -> CommandDefinitionRecord:
+        command = self._custom_command_name(command)
+        with self._session() as session:
+            record = session.get(CommandDefinitionRecord, old_command)
+            if record is None or not record.is_custom:
+                raise ValueError("只能编辑自定义指令")
+            if command != old_command and session.get(CommandDefinitionRecord, command) is not None:
+                raise ValueError("指令名称已被占用")
+            value = self._custom_reply_value(
+                session, reply_type, content, upload_task_id, record
+            )
+            record.command = command
+            record.syntax = command
+            record.description = description.strip()
+            record.reply_type = reply_type
+            record.reply_value = value
+            record.enabled = enabled
+            session.flush()
+            return record
+
+    def delete_custom_command(self, command: str) -> bool:
+        with self._session() as session:
+            record = session.get(CommandDefinitionRecord, command)
+            if record is None or not record.is_custom:
+                return False
+            session.delete(record)
+            session.flush()
+            return True
+
+    def get_enabled_custom_command(self, command: str) -> CommandDefinitionRecord | None:
+        with self._session() as session:
+            return session.scalar(select(CommandDefinitionRecord).where(
+                CommandDefinitionRecord.command == command,
+                CommandDefinitionRecord.is_custom.is_(True),
+                CommandDefinitionRecord.enabled.is_(True),
+            ))
+
+    def create_custom_command_image_upload(
+        self, temp_path: str, original_filename: str, mime_type: str, now: datetime,
+    ) -> CustomCommandImageUploadRecord:
+        with self._session() as session:
+            record = CustomCommandImageUploadRecord(
+                temp_path=temp_path, original_filename=original_filename,
+                mime_type=mime_type, status="pending", attempt_count=0,
+                created_at=now, updated_at=now,
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def get_custom_command_image_upload(
+        self, task_id: UUID | str,
+    ) -> CustomCommandImageUploadRecord | None:
+        with self._session() as session:
+            return session.get(CustomCommandImageUploadRecord, UUID(str(task_id)))
+
+    def claim_custom_command_image_upload(
+        self, worker_id: str, now: datetime, lease_seconds: int,
+    ) -> CustomCommandImageUploadRecord | None:
+        with self._session() as session:
+            record = session.scalar(
+                select(CustomCommandImageUploadRecord)
+                .where(
+                    CustomCommandImageUploadRecord.status.in_(("pending", "processing")),
+                    or_(
+                        CustomCommandImageUploadRecord.lease_expires_at.is_(None),
+                        CustomCommandImageUploadRecord.lease_expires_at <= now,
+                    ),
+                )
+                .order_by(CustomCommandImageUploadRecord.created_at, CustomCommandImageUploadRecord.id)
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            if record is None:
+                return None
+            record.status = "processing"
+            record.lease_worker_id = worker_id
+            record.lease_token = uuid4()
+            record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            record.attempt_count += 1
+            record.updated_at = now
+            session.flush()
+            return record
+
+    def _finish_custom_command_image_upload(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        status: str, value: str, now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(
+                select(CustomCommandImageUploadRecord).where(
+                    CustomCommandImageUploadRecord.id == UUID(str(task_id)),
+                    CustomCommandImageUploadRecord.status == "processing",
+                    CustomCommandImageUploadRecord.lease_worker_id == worker_id,
+                    CustomCommandImageUploadRecord.lease_token == UUID(str(lease_token)),
+                    CustomCommandImageUploadRecord.lease_expires_at > now,
+                ).with_for_update()
+            )
+            if record is None:
+                return False
+            record.status = status
+            if status == "completed":
+                record.result_url = value.strip()
+            else:
+                record.failure_summary = value[:128]
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            record.updated_at = now
+            record.completed_at = now
+            session.flush()
+            return True
+
+    def complete_custom_command_image_upload(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        result_url: str, now: datetime,
+    ) -> bool:
+        return self._finish_custom_command_image_upload(
+            task_id, worker_id, lease_token, "completed", result_url, now
+        )
+
+    def fail_custom_command_image_upload(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        failure_summary: str, now: datetime,
+    ) -> bool:
+        return self._finish_custom_command_image_upload(
+            task_id, worker_id, lease_token, "failed", failure_summary, now
+        )
+
+    def claim_custom_command_image_cleanup(
+        self, worker_id: str, now: datetime, lease_seconds: int,
+    ) -> CustomCommandImageUploadRecord | None:
+        with self._session() as session:
+            record = session.scalar(
+                select(CustomCommandImageUploadRecord).where(
+                    CustomCommandImageUploadRecord.status.in_(("completed", "failed")),
+                    CustomCommandImageUploadRecord.temp_path != "",
+                    or_(
+                        CustomCommandImageUploadRecord.lease_expires_at.is_(None),
+                        CustomCommandImageUploadRecord.lease_expires_at <= now,
+                    ),
+                ).order_by(
+                    CustomCommandImageUploadRecord.completed_at,
+                    CustomCommandImageUploadRecord.id,
+                ).with_for_update(skip_locked=True).limit(1)
+            )
+            if record is None:
+                return None
+            record.lease_worker_id = worker_id
+            record.lease_token = uuid4()
+            record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            record.updated_at = now
+            session.flush()
+            return record
+
+    def complete_custom_command_image_cleanup(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(select(CustomCommandImageUploadRecord).where(
+                CustomCommandImageUploadRecord.id == UUID(str(task_id)),
+                CustomCommandImageUploadRecord.status.in_(("completed", "failed")),
+                CustomCommandImageUploadRecord.lease_worker_id == worker_id,
+                CustomCommandImageUploadRecord.lease_token == UUID(str(lease_token)),
+                CustomCommandImageUploadRecord.lease_expires_at > now,
+            ).with_for_update())
+            if record is None:
+                return False
+            record.temp_path = ""
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            record.updated_at = now
             session.flush()
             return True
 

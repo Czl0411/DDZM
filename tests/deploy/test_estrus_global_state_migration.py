@@ -68,7 +68,7 @@ def test_estrus_global_state_migration_merges_legacy_group_rows(tmp_path, monkey
         )
 
     config = Config(str(ROOT / "alembic.ini"))
-    command.stamp(config, "20261010_102")
+    command.stamp(config, "20261011_103")
     command.upgrade(config, "20261012_103")
 
     with engine.connect() as connection:

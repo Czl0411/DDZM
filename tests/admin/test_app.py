@@ -596,6 +596,31 @@ class FakeCore:
     def list_game_commands(self):
         return self.command_definitions
 
+    def create_custom_command(self, payload):
+        record = {
+            "command": payload["command"], "description": payload["description"],
+            "enabled": payload["enabled"], "is_custom": True,
+            "reply_type": payload["reply_type"], "reply_value": payload["content"],
+            "templates": [],
+        }
+        self.command_definitions.append(record)
+        return record
+
+    def update_custom_command(self, payload):
+        record = next(item for item in self.command_definitions if item["command"] == payload["old_command"])
+        record.update(
+            command=payload["command"], description=payload["description"],
+            enabled=payload["enabled"], reply_type=payload["reply_type"],
+            reply_value=payload["content"],
+        )
+        return record
+
+    def delete_custom_command(self, old_command):
+        self.command_definitions = [
+            item for item in self.command_definitions if item["command"] != old_command
+        ]
+        return {"deleted": True}
+
     def set_game_command_enabled(self, command, enabled):
         record = next(item for item in self.command_definitions if item["command"] == command)
         record["enabled"] = enabled
@@ -1871,6 +1896,54 @@ def test_admin_dashboard_exposes_game_navigation_and_proxies_game_data(
     assert commands.json()[0]["command"] == "/打卡"
     assert disabled.json()["enabled"] is False
     assert item.status_code == 201
+
+
+def test_admin_custom_command_api_versions_and_reloads(client, headers, core):
+    payload = {
+        "command": "/公告", "description": "公告", "enabled": True,
+        "reply_type": "text", "content": "今天开会", "upload_task_id": None,
+    }
+    created = client.post("/api/game/custom-commands", headers=headers, json=payload)
+    assert created.status_code == 201
+    assert created.json()["reply_value"] == "今天开会"
+    assert created.json()["version"] == 1
+    assert client.post(
+        "/api/game/custom-commands", headers=headers, json=payload
+    ).json() == created.json()
+    assert len(core.command_definitions) == 2
+    listed = client.get("/api/game/commands", headers=headers).json()
+    assert next(row for row in listed if row["command"] == "/公告")["version"] == 1
+    assert next(row for row in listed if row["command"] == "/打卡")["templates"]
+    updated = client.put(
+        "/api/game/custom-commands",
+        headers={**headers, "If-Match": "1", "Idempotency-Key": "update-command"},
+        json={**payload, "old_command": "/公告", "command": "/通知", "content": "明天开会"},
+    )
+    assert updated.status_code == 200
+    assert (updated.json()["command"], updated.json()["version"]) == ("/通知", 2)
+    removed = client.request(
+        "DELETE", "/api/game/custom-commands",
+        headers={**headers, "If-Match": "2", "Idempotency-Key": "delete-command"},
+        json={"old_command": "/通知"},
+    )
+    assert removed.status_code == 200
+    assert removed.json() == {"deleted": True, "version": 3}
+    assert [row["command"] for row in client.get("/api/game/commands", headers=headers).json()] == ["/打卡"]
+
+
+def test_admin_custom_command_api_rejects_stale_version(client, headers):
+    payload = {
+        "command": "/公告", "description": "公告", "enabled": True,
+        "reply_type": "text", "content": "今天开会",
+    }
+    first = client.post("/api/game/custom-commands", headers=headers, json=payload)
+    assert first.status_code == 201
+    stale = client.post(
+        "/api/game/custom-commands",
+        headers={**headers, "Idempotency-Key": "another-request"},
+        json={**payload, "command": "/第二条"},
+    )
+    assert stale.status_code == 409
 
 
 def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):

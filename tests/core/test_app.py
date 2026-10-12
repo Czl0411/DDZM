@@ -94,6 +94,65 @@ def test_internal_inbound_rejects_missing_core_token(client, payload):
     assert client.post("/internal/inbound", json=payload).status_code == 401
 
 
+def test_custom_command_core_api_lifecycle(client, headers):
+    body = {
+        "command": "/公告", "description": "群内公告", "enabled": True,
+        "reply_type": "text", "content": "今天开会", "upload_task_id": None,
+    }
+    assert client.post("/internal/game/custom-commands", json=body).status_code == 401
+    created = client.post("/internal/game/custom-commands", headers=headers, json=body)
+    assert created.status_code == 201
+    assert (created.json()["is_custom"], created.json()["reply_value"]) == (
+        True, "今天开会"
+    )
+    listed = client.get("/internal/game/commands", headers=headers).json()
+    assert next(row for row in listed if row["command"] == "/公告")["templates"] == []
+    assert next(row for row in listed if row["command"] == "/打卡")["is_custom"] is False
+    updated = client.put(
+        "/internal/game/custom-commands", headers=headers,
+        json={**body, "old_command": "/公告", "command": "/通知", "content": "明天开会"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["command"] == "/通知"
+    assert updated.json()["reply_value"] == "明天开会"
+    assert client.request(
+        "DELETE", "/internal/game/custom-commands", headers=headers,
+        json={"old_command": "/通知"},
+    ).status_code == 200
+    assert all(
+        row["command"] != "/通知"
+        for row in client.get("/internal/game/commands", headers=headers).json()
+    )
+
+
+@pytest.mark.parametrize("command", ["/暗网", "/me", "/第3场"])
+def test_custom_command_core_api_rejects_reserved_aliases(client, headers, command):
+    response = client.post(
+        "/internal/game/custom-commands", headers=headers,
+        json={
+            "command": command, "description": "冲突", "enabled": True,
+            "reply_type": "text", "content": "正文",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_custom_command_core_api_rejects_bad_share_and_builtin_delete(client, headers):
+    bad_share = client.post(
+        "/internal/game/custom-commands", headers=headers,
+        json={
+            "command": "/进群", "description": "入口", "enabled": True,
+            "reply_type": "group_invite",
+            "content": "https://www.ivorune.xyz/chat?c=group-main",
+        },
+    )
+    assert bad_share.status_code == 422
+    assert client.request(
+        "DELETE", "/internal/game/custom-commands", headers=headers,
+        json={"old_command": "/打卡"},
+    ).status_code == 404
+
+
 def test_internal_inbound_is_idempotent(client, headers, payload):
     first = client.post("/internal/inbound", headers=headers, json=payload)
     second = client.post("/internal/inbound", headers=headers, json=payload)

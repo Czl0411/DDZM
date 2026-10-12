@@ -397,6 +397,26 @@ class CommandDefinitionResponse(ApiModel):
     description: str
     enabled: bool
     templates: list[CommandTemplateResponse]
+    is_custom: bool = False
+    reply_type: str | None = None
+    reply_value: str | None = None
+
+
+class CustomCommandRequest(ApiModel):
+    command: str = Field(min_length=2, max_length=32)
+    description: str = Field(min_length=1, max_length=200)
+    enabled: bool = True
+    reply_type: Literal["text", "image", "group_invite", "novel"]
+    content: str | None = None
+    upload_task_id: UUID | None = None
+
+
+class UpdateCustomCommandRequest(CustomCommandRequest):
+    old_command: str = Field(min_length=2, max_length=32)
+
+
+class DeleteCustomCommandRequest(ApiModel):
+    old_command: str = Field(min_length=2, max_length=32)
 
 
 class SetCommandEnabledRequest(ApiModel):

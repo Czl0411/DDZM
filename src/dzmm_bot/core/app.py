@@ -48,6 +48,9 @@ from .api_models import (
     CompleteProfileImageUploadRequest,
     CommandDefinitionResponse,
     CommandTemplateResponse,
+    CustomCommandRequest,
+    UpdateCustomCommandRequest,
+    DeleteCustomCommandRequest,
     CreateGroupChatRequest,
     CreateDepartmentRequest,
     CreateAIPlayerImpressionRequest,
@@ -229,7 +232,7 @@ from .api_models import (
 )
 from .database import create_session_factory
 from .honors import HonorConfigRequest, HonorSettleRequest, HonorCorrectionRequest, HonorConflict
-from .commands import GroupCommandHandler
+from .commands import GroupCommandHandler, is_reserved_command_name
 from .company_lottery import PrizeTier
 from .repository import (
     ActivityLevelRule,
@@ -1137,6 +1140,9 @@ def create_app(
                 command=record.command,
                 description=record.description,
                 enabled=record.enabled,
+                is_custom=record.is_custom,
+                reply_type=record.reply_type,
+                reply_value=record.reply_value,
                 templates=[
                     _template_response(
                         definition,
@@ -1149,6 +1155,60 @@ def create_app(
             )
             for record in repository.list_command_definitions()
         ]
+
+    @app.post(
+        "/internal/game/custom-commands",
+        response_model=CommandDefinitionResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_custom_command(
+        request: CustomCommandRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> CommandDefinitionResponse:
+        if is_reserved_command_name(request.command):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "指令名称已被占用")
+        try:
+            record = repository.create_custom_command(**request.model_dump())
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error))
+        return CommandDefinitionResponse(
+            command=record.command, description=record.description,
+            enabled=record.enabled, templates=[], is_custom=True,
+            reply_type=record.reply_type, reply_value=record.reply_value,
+        )
+
+    @app.put(
+        "/internal/game/custom-commands", response_model=CommandDefinitionResponse
+    )
+    def update_custom_command(
+        request: UpdateCustomCommandRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> CommandDefinitionResponse:
+        if not any(
+            row.command == request.old_command and row.is_custom
+            for row in repository.list_command_definitions()
+        ):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown custom command")
+        if is_reserved_command_name(request.command):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "指令名称已被占用")
+        try:
+            record = repository.update_custom_command(**request.model_dump())
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error))
+        return CommandDefinitionResponse(
+            command=record.command, description=record.description,
+            enabled=record.enabled, templates=[], is_custom=True,
+            reply_type=record.reply_type, reply_value=record.reply_value,
+        )
+
+    @app.delete("/internal/game/custom-commands")
+    def delete_custom_command(
+        request: DeleteCustomCommandRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        if not repository.delete_custom_command(request.old_command):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown custom command")
+        return {"deleted": True}
 
     @app.patch(
         "/internal/game/commands", response_model=CommandDefinitionResponse
@@ -1168,6 +1228,9 @@ def create_app(
             command=record.command,
             description=record.description,
             enabled=record.enabled,
+            is_custom=record.is_custom,
+            reply_type=record.reply_type,
+            reply_value=record.reply_value,
             templates=[
                 _template_response(
                     definition,

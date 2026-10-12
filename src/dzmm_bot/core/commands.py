@@ -84,6 +84,21 @@ _DARK_MARKET_QUERY_ALIASES = {
     "/暗网": "/查看暗网",
 }
 
+_COMMAND_ALIASES = {
+    "/开始摸鱼躲藏", "/躲", "/me", "/装备称号", "/编辑称号",
+    "/买彩票", "/问", "/问吧", "/回答", "/答", "/罚",
+    "/今日最受欢迎", "/发情值排名", "/最受欢迎", "/我的发情值",
+}
+
+
+def is_reserved_command_name(command: str) -> bool:
+    return (
+        command in _COMMANDS
+        or command in _COMMAND_ALIASES
+        or command in _DARK_MARKET_QUERY_ALIASES
+        or bool(re.fullmatch(r"/第[1-9]\d*场", command))
+    )
+
 
 def _valid_image_url(value: str | None) -> bool:
     if value is None:

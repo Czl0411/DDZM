@@ -608,6 +608,49 @@ def create_app(
         version = repository.config_version()
         return [{**command, "version": version} for command in core.list_game_commands()]
 
+    @app.post("/api/game/custom-commands", status_code=status.HTTP_201_CREATED)
+    def create_custom_command(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity, idempotency_key, if_match,
+            lambda: _relay_core(lambda: core.create_custom_command(request)),
+            scope=f"custom-command:{request.get('command')}",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    @app.put("/api/game/custom-commands")
+    def update_custom_command(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity, idempotency_key, if_match,
+            lambda: _relay_core(lambda: core.update_custom_command(request)),
+            scope=f"custom-command:{request.get('old_command')}",
+        )
+
+    @app.delete("/api/game/custom-commands")
+    def delete_custom_command(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        old_command = request.get("old_command")
+        if not isinstance(old_command, str):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid command")
+        return versioned_configuration_response(
+            identity, idempotency_key, if_match,
+            lambda: _relay_core(lambda: core.delete_custom_command(old_command)),
+            scope=f"custom-command:{old_command}",
+        )
+
     @app.patch("/api/game/commands")
     def set_game_command_enabled(
         request: dict,

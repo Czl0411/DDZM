@@ -153,6 +153,48 @@ def test_custom_command_core_api_rejects_bad_share_and_builtin_delete(client, he
     ).status_code == 404
 
 
+def test_custom_command_image_internal_upload_lifecycle(client, headers, app_context):
+    created = client.post(
+        "/internal/game/custom-command-images", headers=headers,
+        json={"temp_path": "/tmp/custom.png", "original_filename": "custom.png",
+              "mime_type": "image/png", "now": NOW.isoformat()},
+    )
+    assert created.status_code == 201
+    task_id = created.json()["id"]
+    claim = client.post(
+        "/internal/custom-command-images/claim", headers=headers,
+        json={"worker_id": "worker-a", "now": NOW.isoformat(), "lease_seconds": 30},
+    ).json()
+    assert (claim["id"], claim["temp_path"]) == (task_id, "/tmp/custom.png")
+    invalid = client.post(
+        f"/internal/custom-command-images/{task_id}/completed", headers=headers,
+        json={"worker_id": "worker-a", "lease_token": str(UUID(int=99)),
+              "result_url": "https://cdn.example.com/custom.png", "now": NOW.isoformat()},
+    )
+    assert invalid.json() == {"accepted": False}
+    completed = client.post(
+        f"/internal/custom-command-images/{task_id}/completed", headers=headers,
+        json={"worker_id": "worker-a", "lease_token": claim["lease_token"],
+              "result_url": "https://cdn.example.com/custom.png", "now": NOW.isoformat()},
+    )
+    assert completed.json() == {"accepted": True}
+    assert client.get(
+        f"/internal/custom-command-images/{task_id}", headers=headers
+    ).json()["result_url"] == "https://cdn.example.com/custom.png"
+    cleanup = client.post(
+        "/internal/custom-command-image-cleanups/claim", headers=headers,
+        json={"worker_id": "worker-a", "now": (NOW + timedelta(seconds=1)).isoformat(),
+              "lease_seconds": 30},
+    ).json()
+    assert cleanup["temp_path"] == "/tmp/custom.png"
+    assert client.post(
+        f"/internal/custom-command-image-cleanups/{task_id}/completed", headers=headers,
+        json={"worker_id": "worker-a", "lease_token": cleanup["lease_token"],
+              "now": (NOW + timedelta(seconds=2)).isoformat()},
+    ).json() == {"accepted": True}
+    assert app_context.repository.get_custom_command_image_upload(task_id).temp_path == ""
+
+
 def test_internal_inbound_is_idempotent(client, headers, payload):
     first = client.post("/internal/inbound", headers=headers, json=payload)
     second = client.post("/internal/inbound", headers=headers, json=payload)

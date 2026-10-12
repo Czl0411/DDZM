@@ -274,6 +274,11 @@ class FakeCore:
     upload_cleanup_tasks: list = field(default_factory=list)
     upload_cleanups: list[tuple] = field(default_factory=list)
     upload_completion_accepted: bool = True
+    custom_upload_tasks: list = field(default_factory=list)
+    custom_upload_completions: list[tuple] = field(default_factory=list)
+    custom_upload_failures: list[tuple] = field(default_factory=list)
+    custom_upload_cleanup_tasks: list = field(default_factory=list)
+    custom_upload_cleanups: list[tuple] = field(default_factory=list)
     group_targets: tuple[GroupChatTarget, ...] = ()
     group_runtime_updates: list[tuple] = field(default_factory=list)
     confirm_error: Exception | None = None
@@ -424,6 +429,34 @@ class FakeCore:
         self, task_id, worker_id, lease_token, now
     ):
         self.upload_cleanups.append((task_id, worker_id, lease_token, now))
+
+    def claim_custom_command_image_upload(self, worker_id, now, lease_seconds):
+        return self.custom_upload_tasks.pop(0) if self.custom_upload_tasks else None
+
+    def complete_custom_command_image_upload(
+        self, task_id, worker_id, lease_token, result_url, now
+    ):
+        self.custom_upload_completions.append(
+            (task_id, worker_id, lease_token, result_url, now)
+        )
+        return True
+
+    def fail_custom_command_image_upload(
+        self, task_id, worker_id, lease_token, failure_summary, now
+    ):
+        self.custom_upload_failures.append(
+            (task_id, worker_id, lease_token, failure_summary, now)
+        )
+        return True
+
+    def claim_custom_command_image_cleanup(self, worker_id, now, lease_seconds):
+        return self.custom_upload_cleanup_tasks.pop(0) if self.custom_upload_cleanup_tasks else None
+
+    def complete_custom_command_image_cleanup(
+        self, task_id, worker_id, lease_token, now
+    ):
+        self.custom_upload_cleanups.append((task_id, worker_id, lease_token, now))
+        return True
 
 
 @pytest.fixture
@@ -1032,6 +1065,56 @@ def test_worker_reports_profile_image_upload_failure_and_removes_temp_file(
         task_id, "worker-a", LEASE, "upload_failed", NOW,
     )]
     assert not upload_path.exists()
+
+
+def test_worker_uploads_and_cleans_custom_command_image(context, tmp_path):
+    from dzmm_bot.browser.core_client import CustomCommandImageUploadClaim
+
+    worker, gateway, _, _, core, _ = context
+    upload_path = tmp_path / "custom.png"
+    upload_path.write_bytes(b"image")
+    task_id = UUID(int=25)
+    core.custom_upload_tasks = [CustomCommandImageUploadClaim(
+        task_id, str(upload_path), "custom.png", "image/png", LEASE, 1
+    )]
+    worker.run_once()
+    assert core.custom_upload_completions == [(
+        task_id, "worker-a", LEASE, "https://cdn.example.com/uploaded.png", NOW,
+    )]
+    assert not upload_path.exists()
+
+
+def test_worker_reports_custom_command_image_failure(context, tmp_path):
+    from dzmm_bot.browser.core_client import CustomCommandImageUploadClaim
+
+    worker, gateway, _, _, core, _ = context
+    upload_path = tmp_path / "custom.webp"
+    upload_path.write_bytes(b"image")
+    gateway.upload_error = RuntimeError("platform rejected upload")
+    task_id = UUID(int=26)
+    core.custom_upload_tasks = [CustomCommandImageUploadClaim(
+        task_id, str(upload_path), "custom.webp", "image/webp", LEASE, 1
+    )]
+    worker.run_once()
+    assert core.custom_upload_failures == [(
+        task_id, "worker-a", LEASE, "upload_failed", NOW,
+    )]
+    assert not upload_path.exists()
+
+
+def test_worker_cleans_completed_custom_command_image_task(context, tmp_path):
+    from dzmm_bot.browser.core_client import ProfileImageCleanupClaim
+
+    worker, _, _, _, core, _ = context
+    upload_path = tmp_path / "old.png"
+    upload_path.write_bytes(b"image")
+    task_id = UUID(int=27)
+    core.custom_upload_cleanup_tasks = [ProfileImageCleanupClaim(
+        task_id, str(upload_path), LEASE
+    )]
+    worker.run_once()
+    assert not upload_path.exists()
+    assert core.custom_upload_cleanups == [(task_id, "worker-a", LEASE, NOW)]
 
 
 def test_worker_keeps_profile_image_temp_file_when_completion_is_rejected(

@@ -201,6 +201,8 @@ class BrowserWorker:
         self._start_outbound_if_idle(gateway)
         self._process_profile_image_cleanup()
         self._process_profile_image_upload(gateway)
+        self._process_custom_command_image_cleanup()
+        self._process_custom_command_image_upload(gateway)
         if self._listening:
             try:
                 direct_targets = self._core.direct_inbound_chatroom_ids()
@@ -346,6 +348,51 @@ class BrowserWorker:
             _LOGGER.exception("profile image temp cleanup failed: %s", claim.id)
             return
         self._core.complete_profile_image_cleanup(
+            claim.id, self._worker_id, claim.lease_token, self._clock()
+        )
+
+    def _process_custom_command_image_upload(self, gateway: ChatGateway) -> None:
+        claim = self._core.claim_custom_command_image_upload(
+            self._worker_id, self._clock(), self._lease_seconds
+        )
+        if claim is None:
+            return
+        path = Path(claim.temp_path)
+        reported = False
+        try:
+            result = gateway.upload_image(path, claim.mime_type)
+            image_url = result.get("url") if isinstance(result, dict) else None
+            if not isinstance(image_url, str) or not image_url:
+                raise ValueError("upload response missing image URL")
+            reported = self._core.complete_custom_command_image_upload(
+                claim.id, self._worker_id, claim.lease_token,
+                image_url, self._clock(),
+            )
+        except Exception:
+            _LOGGER.exception("custom command image upload failed: %s", claim.id)
+            try:
+                reported = self._core.fail_custom_command_image_upload(
+                    claim.id, self._worker_id, claim.lease_token,
+                    "upload_failed", self._clock(),
+                )
+            except Exception:
+                _LOGGER.exception("custom command image upload failure report failed: %s", claim.id)
+        finally:
+            if reported:
+                path.unlink(missing_ok=True)
+
+    def _process_custom_command_image_cleanup(self) -> None:
+        claim = self._core.claim_custom_command_image_cleanup(
+            self._worker_id, self._clock(), self._lease_seconds
+        )
+        if claim is None:
+            return
+        try:
+            Path(claim.temp_path).unlink(missing_ok=True)
+        except OSError:
+            _LOGGER.exception("custom command image temp cleanup failed: %s", claim.id)
+            return
+        self._core.complete_custom_command_image_cleanup(
             claim.id, self._worker_id, claim.lease_token, self._clock()
         )
 

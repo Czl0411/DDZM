@@ -1233,15 +1233,7 @@ def create_app(
             )
         )
 
-    @app.post(
-        "/api/game/users/{platform_id}/profile-image",
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def upload_personal_profile_image(
-        platform_id: str,
-        _: Annotated[None, Depends(authorize)],
-        file: Annotated[UploadFile, File()],
-    ) -> dict:
+    async def save_uploaded_image(file: UploadFile, fallback_name: str) -> dict:
         allowed = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
         if file.content_type not in allowed:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid image type")
@@ -1275,18 +1267,53 @@ def create_app(
                 )
             upload = {
                 "temp_path": str(destination),
-                "original_filename": file.filename or "profile-image",
+                "original_filename": file.filename or fallback_name,
                 "mime_type": file.content_type,
                 "now": beijing_now().isoformat(),
             }
-            return _relay_core(
-                lambda: core.create_profile_image_upload(platform_id, upload)
-            )
+            return upload
         except Exception:
             destination.unlink(missing_ok=True)
             raise
         finally:
             await file.close()
+
+    @app.post(
+        "/api/game/users/{platform_id}/profile-image",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def upload_personal_profile_image(
+        platform_id: str,
+        _: Annotated[None, Depends(authorize)],
+        file: Annotated[UploadFile, File()],
+    ) -> dict:
+        upload = await save_uploaded_image(file, "profile-image")
+        try:
+            return _relay_core(lambda: core.create_profile_image_upload(platform_id, upload))
+        except Exception:
+            Path(upload["temp_path"]).unlink(missing_ok=True)
+            raise
+
+    @app.post(
+        "/api/game/custom-command-images",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def upload_custom_command_image(
+        _: Annotated[None, Depends(authorize)],
+        file: Annotated[UploadFile, File()],
+    ) -> dict:
+        upload = await save_uploaded_image(file, "custom-command-image")
+        try:
+            return _relay_core(lambda: core.create_custom_command_image_upload(upload))
+        except Exception:
+            Path(upload["temp_path"]).unlink(missing_ok=True)
+            raise
+
+    @app.get("/api/game/custom-command-images/{task_id}")
+    def custom_command_image_upload_status(
+        task_id: str, _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return _relay_core(lambda: core.get_custom_command_image_upload(task_id))
 
     @app.get("/api/game/profile-image-uploads/{task_id}")
     def personal_profile_image_upload_status(

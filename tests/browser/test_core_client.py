@@ -507,6 +507,37 @@ def test_core_client_claims_and_completes_profile_image_upload():
     )
 
 
+def test_core_client_claims_and_completes_custom_command_image_upload():
+    from dzmm_bot.browser.core_client import CoreClient
+
+    observed = []
+    task_id = "00000000-0000-0000-0000-000000000013"
+    lease_token = "00000000-0000-0000-0000-000000000014"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append((request.url.path, json.loads(request.content)))
+        if request.url.path.endswith("/claim"):
+            return httpx.Response(200, json={
+                "id": task_id, "temp_path": "/tmp/custom.png",
+                "original_filename": "custom.png", "mime_type": "image/png",
+                "lease_token": lease_token, "attempt_count": 1,
+            })
+        return httpx.Response(200, json={"accepted": True})
+
+    client = CoreClient(
+        "http://core.test", "token",
+        client=httpx.Client(base_url="http://core.test", transport=httpx.MockTransport(handler)),
+    )
+    now = datetime(2026, 8, 13, tzinfo=UTC)
+    claim = client.claim_custom_command_image_upload("worker-a", now, 30)
+    assert claim.temp_path == "/tmp/custom.png"
+    assert client.complete_custom_command_image_upload(
+        claim.id, "worker-a", claim.lease_token,
+        "https://cdn.example.com/custom.png", now,
+    )
+    assert observed[1][0] == f"/internal/custom-command-images/{task_id}/completed"
+
+
 def test_core_client_claims_and_completes_profile_image_cleanup():
     from dzmm_bot.browser.core_client import CoreClient
 

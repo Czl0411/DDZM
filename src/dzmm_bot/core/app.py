@@ -51,6 +51,8 @@ from .api_models import (
     CustomCommandRequest,
     UpdateCustomCommandRequest,
     DeleteCustomCommandRequest,
+    CustomCommandImageUploadClaimResponse,
+    CustomCommandImageUploadStatusResponse,
     CreateGroupChatRequest,
     CreateDepartmentRequest,
     CreateAIPlayerImpressionRequest,
@@ -1003,6 +1005,108 @@ def create_app(
     ) -> AcceptedResponse:
         return AcceptedResponse(accepted=repository.complete_profile_image_cleanup(
             task_id, request.worker_id, request.lease_token, request.now
+        ))
+
+    @app.post(
+        "/internal/game/custom-command-images",
+        response_model=CustomCommandImageUploadStatusResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_custom_command_image_upload(
+        request: CreateProfileImageUploadRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> CustomCommandImageUploadStatusResponse:
+        record = repository.create_custom_command_image_upload(
+            request.temp_path, request.original_filename, request.mime_type, request.now,
+        )
+        return CustomCommandImageUploadStatusResponse(
+            id=record.id, status=record.status,
+            result_url=record.result_url, failure_summary=record.failure_summary,
+        )
+
+    @app.get(
+        "/internal/custom-command-images/{task_id}",
+        response_model=CustomCommandImageUploadStatusResponse,
+    )
+    def custom_command_image_upload_status(
+        task_id: UUID, _: Annotated[None, Depends(authorize)],
+    ) -> CustomCommandImageUploadStatusResponse:
+        record = repository.get_custom_command_image_upload(task_id)
+        if record is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "upload not found")
+        return CustomCommandImageUploadStatusResponse(
+            id=record.id, status=record.status,
+            result_url=record.result_url, failure_summary=record.failure_summary,
+        )
+
+    @app.post(
+        "/internal/custom-command-images/claim",
+        response_model=CustomCommandImageUploadClaimResponse | None,
+    )
+    def claim_custom_command_image_upload(
+        request: ClaimRequest, _: Annotated[None, Depends(authorize)],
+    ) -> CustomCommandImageUploadClaimResponse | None:
+        record = repository.claim_custom_command_image_upload(
+            request.worker_id, request.now, request.lease_seconds,
+        )
+        if record is None:
+            return None
+        return CustomCommandImageUploadClaimResponse(
+            id=record.id, temp_path=record.temp_path,
+            original_filename=record.original_filename, mime_type=record.mime_type,
+            lease_token=record.lease_token, attempt_count=record.attempt_count,
+        )
+
+    @app.post(
+        "/internal/custom-command-images/{task_id}/completed",
+        response_model=AcceptedResponse,
+    )
+    def complete_custom_command_image_upload(
+        task_id: UUID, request: CompleteProfileImageUploadRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.complete_custom_command_image_upload(
+            task_id, request.worker_id, request.lease_token, request.result_url, request.now,
+        ))
+
+    @app.post(
+        "/internal/custom-command-images/{task_id}/failed",
+        response_model=AcceptedResponse,
+    )
+    def fail_custom_command_image_upload(
+        task_id: UUID, request: FailProfileImageUploadRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.fail_custom_command_image_upload(
+            task_id, request.worker_id, request.lease_token, request.failure_summary, request.now,
+        ))
+
+    @app.post(
+        "/internal/custom-command-image-cleanups/claim",
+        response_model=ProfileImageCleanupClaimResponse | None,
+    )
+    def claim_custom_command_image_cleanup(
+        request: ClaimRequest, _: Annotated[None, Depends(authorize)],
+    ) -> ProfileImageCleanupClaimResponse | None:
+        record = repository.claim_custom_command_image_cleanup(
+            request.worker_id, request.now, request.lease_seconds,
+        )
+        if record is None:
+            return None
+        return ProfileImageCleanupClaimResponse(
+            id=record.id, temp_path=record.temp_path, lease_token=record.lease_token,
+        )
+
+    @app.post(
+        "/internal/custom-command-image-cleanups/{task_id}/completed",
+        response_model=AcceptedResponse,
+    )
+    def complete_custom_command_image_cleanup(
+        task_id: UUID, request: RecalledRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.complete_custom_command_image_cleanup(
+            task_id, request.worker_id, request.lease_token, request.now,
         ))
 
     @app.post(

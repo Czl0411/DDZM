@@ -95,6 +95,8 @@ class FakeCore:
     personal_profile_images: dict[str, str | None] = field(default_factory=dict)
     profile_uploads: dict[str, dict] = field(default_factory=dict)
     last_profile_upload: dict | None = None
+    custom_command_uploads: dict[str, dict] = field(default_factory=dict)
+    last_custom_command_upload: dict | None = None
     activity_settings: dict = field(
         default_factory=lambda: {
             "rules": [
@@ -786,6 +788,16 @@ class FakeCore:
 
     def get_profile_image_upload(self, task_id):
         return self.profile_uploads[task_id]
+
+    def create_custom_command_image_upload(self, upload):
+        self.last_custom_command_upload = upload
+        task = {"id": "custom-upload-1", "status": "pending", "result_url": None,
+                "failure_summary": None}
+        self.custom_command_uploads[task["id"]] = task
+        return task
+
+    def get_custom_command_image_upload(self, task_id):
+        return self.custom_command_uploads[task_id]
 
     def clear_profile_image(self, platform_id):
         self.personal_profile_images[platform_id] = None
@@ -1944,6 +1956,36 @@ def test_admin_custom_command_api_rejects_stale_version(client, headers):
         json={**payload, "command": "/第二条"},
     )
     assert stale.status_code == 409
+
+
+def test_admin_custom_command_image_upload_and_rejects_invalid_file(
+    tmp_path, core, console, websocket_connection, admin_repository, headers,
+):
+    from dzmm_bot.admin.app import create_app
+
+    client = TestClient(create_app(
+        "admin-secret", core, repository=admin_repository,
+        console_client=console, websocket_connector=websocket_connection.connect,
+        profile_upload_dir=tmp_path,
+    ))
+    valid = client.post(
+        "/api/game/custom-command-images", headers=headers,
+        files={"file": ("custom.png", b"\x89PNG\r\n\x1a\nimage-data", "image/png")},
+    )
+    assert valid.status_code == 202
+    assert client.get(
+        "/api/game/custom-command-images/custom-upload-1", headers=headers,
+    ).json()["status"] == "pending"
+    saved = Path(core.last_custom_command_upload["temp_path"])
+    assert saved.read_bytes().startswith(b"\x89PNG")
+    for data, mime in ((b"not-png", "image/png"),
+                       (b"\x89PNG\r\n\x1a\n" + b"x" * (10 * 1024 * 1024), "image/png")):
+        response = client.post(
+            "/api/game/custom-command-images", headers=headers,
+            files={"file": ("bad.png", data, mime)},
+        )
+        assert response.status_code == 422
+    assert list(tmp_path.iterdir()) == [saved]
 
 
 def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):

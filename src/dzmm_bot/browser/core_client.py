@@ -64,6 +64,16 @@ class ProfileImageUploadClaim:
 
 
 @dataclass(frozen=True)
+class CustomCommandImageUploadClaim:
+    id: UUID
+    temp_path: str
+    original_filename: str
+    mime_type: str
+    lease_token: UUID
+    attempt_count: int
+
+
+@dataclass(frozen=True)
 class ProfileImageCleanupClaim:
     id: UUID
     temp_path: str
@@ -116,6 +126,28 @@ class CorePort(Protocol):
     def fail_profile_image_upload(
         self, task_id: UUID, worker_id: str, lease_token: UUID,
         failure_summary: str, now: datetime,
+    ) -> bool: ...
+
+    def claim_custom_command_image_upload(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> CustomCommandImageUploadClaim | None: ...
+
+    def complete_custom_command_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        result_url: str, now: datetime,
+    ) -> bool: ...
+
+    def fail_custom_command_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        failure_summary: str, now: datetime,
+    ) -> bool: ...
+
+    def claim_custom_command_image_cleanup(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageCleanupClaim | None: ...
+
+    def complete_custom_command_image_cleanup(
+        self, task_id: UUID, worker_id: str, lease_token: UUID, now: datetime
     ) -> bool: ...
 
     def claim_profile_image_cleanup(
@@ -401,6 +433,66 @@ class CoreClient:
                 "worker_id": worker_id, "lease_token": str(lease_token),
                 "failure_summary": failure_summary, "now": now.isoformat(),
             },
+        )
+        return bool(data["accepted"])
+
+    def claim_custom_command_image_upload(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> CustomCommandImageUploadClaim | None:
+        data = self._post(
+            "/internal/custom-command-images/claim",
+            _claim_payload(worker_id, now, lease_seconds),
+        )
+        if data is None:
+            return None
+        return CustomCommandImageUploadClaim(
+            id=UUID(data["id"]), temp_path=data["temp_path"],
+            original_filename=data["original_filename"], mime_type=data["mime_type"],
+            lease_token=UUID(data["lease_token"]), attempt_count=data["attempt_count"],
+        )
+
+    def complete_custom_command_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        result_url: str, now: datetime,
+    ) -> bool:
+        data = self._post(
+            f"/internal/custom-command-images/{task_id}/completed",
+            {"worker_id": worker_id, "lease_token": str(lease_token),
+             "result_url": result_url, "now": now.isoformat()},
+        )
+        return bool(data["accepted"])
+
+    def fail_custom_command_image_upload(
+        self, task_id: UUID, worker_id: str, lease_token: UUID,
+        failure_summary: str, now: datetime,
+    ) -> bool:
+        data = self._post(
+            f"/internal/custom-command-images/{task_id}/failed",
+            {"worker_id": worker_id, "lease_token": str(lease_token),
+             "failure_summary": failure_summary, "now": now.isoformat()},
+        )
+        return bool(data["accepted"])
+
+    def claim_custom_command_image_cleanup(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> ProfileImageCleanupClaim | None:
+        data = self._post(
+            "/internal/custom-command-image-cleanups/claim",
+            _claim_payload(worker_id, now, lease_seconds),
+        )
+        if data is None:
+            return None
+        return ProfileImageCleanupClaim(
+            id=UUID(data["id"]), temp_path=data["temp_path"],
+            lease_token=UUID(data["lease_token"]),
+        )
+
+    def complete_custom_command_image_cleanup(
+        self, task_id: UUID, worker_id: str, lease_token: UUID, now: datetime
+    ) -> bool:
+        data = self._post(
+            f"/internal/custom-command-image-cleanups/{task_id}/completed",
+            {"worker_id": worker_id, "lease_token": str(lease_token), "now": now.isoformat()},
         )
         return bool(data["accepted"])
 

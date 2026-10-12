@@ -811,6 +811,22 @@ class ProfileImageUploadStatusResponse(ApiModel):
     expected_profile_version: int = Field(ge=0)
 
 
+class CustomCommandImageUploadClaimResponse(ApiModel):
+    id: UUID
+    temp_path: str
+    original_filename: str
+    mime_type: str
+    lease_token: UUID
+    attempt_count: int = Field(ge=1)
+
+
+class CustomCommandImageUploadStatusResponse(ApiModel):
+    id: UUID
+    status: Literal["pending", "processing", "completed", "failed"]
+    result_url: str | None
+    failure_summary: str | None
+
+
 class AIRankQuotaResponse(ApiModel):
     rank_id: UUID
     rank_name: str

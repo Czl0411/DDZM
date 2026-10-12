@@ -38,6 +38,7 @@ from .repository import (
     _short_author_name,
     CoreRepository,
     EmployeeNameTakenError,
+    GroupBanInProgressError,
     _FINE_FEEDBACK_HINT,
     blame_settlement_template_values,
     company_story_novel_resource_id,
@@ -2492,6 +2493,8 @@ class GroupCommandHandler:
             )
         except EmployeeNameTakenError:
             return self._reply("/入职", "name_taken", received_at)
+        except GroupBanInProgressError:
+            return "该成员的群移除操作正在进行或结果待核查，请联系管理员核查后再入职。"
         if not created:
             return self._reply(
                 "/入职",

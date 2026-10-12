@@ -236,6 +236,80 @@ def test_group_ban_uncertain_attempt_is_not_repeated():
     assert not repository.complete_group_ban_execution(request_id, "succeeded", None, now)
 
 
+def test_group_ban_room_change_never_redirects_removal():
+    from dzmm_bot.core.schema import GroupBanRequestRecord
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    repository.update_group_chat(
+        group.id, chat_url="https://www.aikda.com/chat?c=other-room", now=now
+    )
+    assert repository.claim_group_ban_execution(request_id, now) is None
+    with factory() as session:
+        assert session.get(GroupBanRequestRecord, request_id).status == "unauthorized"
+
+
+def test_group_ban_revoked_pending_request_stays_invalid_after_regrant():
+    from dzmm_bot.core.schema import GroupBanRequestRecord, WorkerCommandRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    service.receive_inbound(InboundMessage(
+        "ban-1", "operator", "/ban 理由", now, chatroom_id="group-main",
+        reference=MessageReference("target-message", "outsider", "text", text="正文"),
+    ))
+    repository.update_group_chat(group.id, ban_operator_platform_ids=[], now=now)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    service.receive_inbound(InboundMessage(
+        "yes-1", "operator", "/是", now + timedelta(seconds=1), chatroom_id="group-main"
+    ))
+    assert "待确认" in _latest_reply(factory)
+    with factory() as session:
+        assert session.scalar(select(GroupBanRequestRecord.status)) == "unauthorized"
+        assert session.query(WorkerCommandRecord).filter(WorkerCommandRecord.command.like("ban:%")).count() == 0
+
+
+def test_group_ban_completion_and_outbox_rollback_together(monkeypatch):
+    from dzmm_bot.core.schema import GroupBanRequestRecord, OutboundRecord
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    assert repository.claim_group_ban_execution(request_id, now) is not None
+    with factory() as session:
+        original_count = session.query(OutboundRecord).count()
+    original_enqueue = repository.enqueue_outbound
+
+    def fail_after_enqueue(*args, **kwargs):
+        original_enqueue(*args, **kwargs)
+        raise RuntimeError("injected failure after enqueue")
+
+    monkeypatch.setattr(repository, "enqueue_outbound", fail_after_enqueue)
+    with pytest.raises(RuntimeError, match="injected failure"):
+        repository.complete_group_ban_execution(request_id, "succeeded", None, now)
+    with factory() as session:
+        assert session.get(GroupBanRequestRecord, request_id).status == "executing"
+        assert session.query(OutboundRecord).count() == original_count
+
+
+def test_group_ban_execution_reserves_target_until_result():
+    from dzmm_bot.core.repository import GroupBanInProgressError
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    assert repository.claim_group_ban_execution(request_id, now) is not None
+    with pytest.raises(GroupBanInProgressError):
+        repository.create_user("outsider", "新员工", now, 0)
+    assert repository.complete_group_ban_execution(request_id, "failed", None, now)
+    _, created = repository.create_user("outsider", "新员工", now, 0)
+    assert created
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    assert repository.claim_group_ban_execution(request_id, now) is not None
+    assert repository.claim_group_ban_execution(request_id, now + timedelta(seconds=30)) is None
+    with pytest.raises(GroupBanInProgressError):
+        repository.create_user("outsider", "新员工", now, 0)
+
+
 def _mark_random_event_signup_notice_sent(repository):
     from dzmm_bot.core.schema import OutboundRecord, RandomEventRecord
 

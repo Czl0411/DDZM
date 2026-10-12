@@ -2681,6 +2681,10 @@ class EmployeeNameTakenError(ValueError):
     pass
 
 
+class GroupBanInProgressError(RuntimeError):
+    pass
+
+
 _COMMAND_DEFINITIONS = (
     ("/我的称号", "/我的称号", "查看当前可佩戴称号和历史获得次数"),
     ("/佩戴称号", "/佩戴称号 序号", "选择佩戴称号（/装备称号、/编辑称号 等效），序号 0 取消佩戴"),
@@ -3333,10 +3337,22 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 record.performances_enabled = performances_enabled
             if birthdays_enabled is not None:
                 record.birthdays_enabled = birthdays_enabled
+            removed_ban_operators: set[str] = set()
             if ban_operator_platform_ids is not None:
-                record.ban_operator_platform_ids = self._validate_group_ban_operators(
+                next_ban_operators = self._validate_group_ban_operators(
                     session, ban_operator_platform_ids
                 )
+                removed_ban_operators = set(record.ban_operator_platform_ids) - set(next_ban_operators)
+                record.ban_operator_platform_ids = next_ban_operators
+            if next_chatroom_id != before.chatroom_id or removed_ban_operators:
+                pending_bans = session.scalars(select(GroupBanRequestRecord).where(
+                    GroupBanRequestRecord.group_chat_id == group_id,
+                    GroupBanRequestRecord.status == "pending",
+                ).with_for_update()).all()
+                for pending_ban in pending_bans:
+                    if next_chatroom_id != before.chatroom_id or pending_ban.actor_platform_id in removed_ban_operators:
+                        pending_ban.status = "unauthorized"
+                        pending_ban.completed_at = now
             record.updated_at = now
             runtime = session.get(GroupChatRuntimeStateRecord, group_id)
             if runtime is not None:
@@ -3447,6 +3463,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 or session.scalar(select(UserRecord.id).where(
                     UserRecord.platform_id == message.sender_platform_id
                 )) is None
+                or session.get(InboundRecord, pending.source_inbound_message_id).chatroom_id != group.chatroom_id
             ):
                 pending.status = "unauthorized"
                 pending.completed_at = message.received_at
@@ -3474,7 +3491,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
     def claim_group_ban_execution(
         self, request_id: UUID, now: datetime
     ) -> GroupBanExecution | None:
-        with self._session() as session:
+        with self.transaction(), self._session() as session:
             request = session.get(GroupBanRequestRecord, request_id, with_for_update=True)
             if request is None:
                 return None
@@ -3484,9 +3501,11 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             if request.status != "queued":
                 return None
             group = session.get(GroupChatRecord, request.group_chat_id, with_for_update=True)
+            source = session.get(InboundRecord, request.source_inbound_message_id)
             if (
                 group is None or group.deleted_at is not None
                 or not group.listening_enabled or not group.chatroom_id
+                or source is None or source.chatroom_id != group.chatroom_id
                 or request.actor_platform_id not in group.ban_operator_platform_ids
                 or session.scalar(select(UserRecord.id).where(
                     UserRecord.platform_id == request.actor_platform_id
@@ -3494,20 +3513,21 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             ):
                 self._finish_group_ban(session, request, "unauthorized", now)
                 return None
+            self._lock_employee_identity_gate(session)
             if session.scalar(select(UserRecord.id).where(
                 UserRecord.platform_id == request.target_platform_id
             )) is not None:
                 self._finish_group_ban(session, request, "target_joined", now)
                 return None
             request.status = "executing"
-            return GroupBanExecution(group.chatroom_id, request.target_platform_id)
+            return GroupBanExecution(source.chatroom_id, request.target_platform_id)
 
     def complete_group_ban_execution(
         self, request_id: UUID, outcome: str, detail: str | None, now: datetime
     ) -> bool:
         if outcome not in {"succeeded", "failed", "uncertain"}:
             raise ValueError("invalid group ban outcome")
-        with self._session() as session:
+        with self.transaction(), self._session() as session:
             request = session.get(GroupBanRequestRecord, request_id, with_for_update=True)
             if request is None or request.status != "executing":
                 return False
@@ -31518,6 +31538,11 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 if existing is not None:
                     return existing, False
                 employee_number = self._take_employee_number(session)
+                if session.scalar(select(GroupBanRequestRecord.id).where(
+                    GroupBanRequestRecord.target_platform_id == platform_id,
+                    GroupBanRequestRecord.status.in_(("executing", "uncertain")),
+                )) is not None:
+                    raise GroupBanInProgressError("group removal is in progress")
                 if session.scalar(
                     select(UserRecord.id).where(
                         UserRecord.display_name == normalized_name

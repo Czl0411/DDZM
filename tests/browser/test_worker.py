@@ -1319,6 +1319,19 @@ def test_worker_sends_novel_outbound_as_a_share_card(context):
     assert gateway.sent_to == []
 
 
+def test_worker_sends_custom_command_group_invite_as_share_card(context):
+    worker, gateway, _, _, _, _ = context
+    outbound = OutboundClaim(
+        OUTBOUND_ID, "in-1", "group-code", LEASE,
+        content_type="group_invite", destination_chatroom_id="group-1",
+    )
+
+    worker._send_outbound(gateway, outbound)
+
+    assert gateway.sent_shares == [("group-1", "group_invite", "group-code")]
+    assert gateway.sent_to == []
+
+
 def test_worker_renders_uploads_and_sends_black_history_card(context, monkeypatch):
     worker, gateway, _, _, _, _ = context
     rendered = []

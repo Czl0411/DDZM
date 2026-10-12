@@ -145,7 +145,19 @@ class GroupCommandHandler:
             dice_reply = self._liar_dice_call_step(message, content)
             if dice_reply is not None:
                 return dice_reply
-            return self._company_lottery_draft_step(message, content)
+            lottery_reply = self._company_lottery_draft_step(message, content)
+            if lottery_reply is not None:
+                return lottery_reply
+            if message.source_type != "group" or message.chatroom_id is None:
+                return None
+            if self._repository.resolve_enabled_group_chat(message.chatroom_id) is None:
+                return None
+            record = self._repository.get_enabled_custom_command(content)
+            if record is None:
+                return None
+            if record.reply_type == "image":
+                return CommandReply("", content_type="image", image_url=record.reply_value)
+            return CommandReply(record.reply_value, content_type=record.reply_type)
         self._repository.ensure_command_definitions()
         if not self._repository.is_command_enabled(command):
             return None

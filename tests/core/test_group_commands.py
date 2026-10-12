@@ -737,6 +737,92 @@ def _group_receive(service, message_id, sender, content, now, chatroom_id):
     )
 
 
+def test_custom_command_replies_with_four_types_in_monitored_groups():
+    from dzmm_bot.core.schema import OutboundRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 12, 12, 0, tzinfo=BEIJING)
+    first = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    second = repository.create_group_chat(
+        "第二群", "https://www.aikda.com/chat?c=group-two",
+        True, True, True, True, now,
+    )
+    repository.create_custom_command("/公告", "公告", "text", "今天开会", None, True)
+    repository.create_custom_command(
+        "/群入口", "群入口", "group_invite",
+        "https://www.ivorune.xyz/invite/group-code", None, True,
+    )
+    repository.create_custom_command(
+        "/小说", "小说", "novel",
+        "https://www.ivorune.xyz/novel/66408bb3-60a0-40e1-a434-ee40efee4d27", None, True,
+    )
+    task = repository.create_custom_command_image_upload(
+        "/tmp/custom.png", "custom.png", "image/png", now,
+    )
+    claim = repository.claim_custom_command_image_upload("worker", now, 30)
+    repository.complete_custom_command_image_upload(
+        task.id, "worker", claim.lease_token, "https://cdn.example.com/custom.png", now,
+    )
+    repository.create_custom_command("/图片", "图片", "image", None, task.id, True)
+    expected = [
+        ("/公告", "text", "今天开会", None),
+        ("/群入口", "group_invite", "group-code", None),
+        ("/小说", "novel", "66408bb3-60a0-40e1-a434-ee40efee4d27", None),
+        ("/图片", "image", "", "https://cdn.example.com/custom.png"),
+    ]
+    for index, (command, kind, text, image_url) in enumerate(expected):
+        group = first if index % 2 == 0 else second
+        result = _group_receive(
+            service, f"custom-{index}", "outsider", command, now, group.chatroom_id,
+        )
+        with factory() as session:
+            [reply] = session.scalars(select(OutboundRecord).where(
+                OutboundRecord.inbound_message_id == result.message_id
+            )).all()
+        assert (reply.content_type, reply.text, reply.image_url) == (kind, text, image_url)
+        assert reply.destination_chatroom_id == group.chatroom_id
+
+
+def test_custom_command_ignores_direct_unmonitored_disabled_and_arguments():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 12, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_custom_command("/公告", "公告", "text", "今天开会", None, True)
+    direct = service.receive_inbound(InboundMessage(
+        "custom-direct", "outsider", "/公告", now,
+        source_type="direct", chatroom_id="direct-a",
+    ))
+    unknown = _group_receive(service, "custom-other", "outsider", "/公告", now, "unknown-group")
+    extra = _group_receive(service, "custom-extra", "outsider", "/公告 now", now, group.chatroom_id)
+    assert _replies_for(factory, direct.message_id) == []
+    assert _replies_for(factory, unknown.message_id) == []
+    assert _replies_for(factory, extra.message_id) == []
+    repository.set_command_enabled("/公告", False)
+    disabled = _group_receive(service, "custom-disabled", "outsider", "/公告", now, group.chatroom_id)
+    assert _replies_for(factory, disabled.message_id) == []
+    repository.delete_custom_command("/公告")
+    removed = _group_receive(service, "custom-removed", "outsider", "/公告", now, group.chatroom_id)
+    assert _replies_for(factory, removed.message_id) == []
+
+
+def test_custom_command_does_not_bypass_random_event_gate():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 12, 10, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_custom_command("/公告", "公告", "text", "今天开会", None, True)
+    repository.create_random_event_scene(
+        "茶水间", "咖啡机响了。", ["开始。"], 4, 1, [("员工", 2)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "可选身份：{可选身份}", 15, 5,
+        blocked_message="活动进行中，监事暂不处理。",
+    )
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    result = _group_receive(service, "custom-event", "outsider", "/公告", now, group.chatroom_id)
+    assert _replies_for(factory, result.message_id) == ["活动进行中，监事暂不处理。"]
+
+
 def test_q_records_the_replied_employee_message() -> None:
     service, repository, factory = _service()
     now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)

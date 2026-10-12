@@ -2094,16 +2094,21 @@ async function loadGroupChats() {
 
 let groupBanEmployees = [];
 let groupBanLoadVersion = 0;
+let groupBanSelectedIds = new Set();
 
-function renderGroupBanOperators(selectedIds) {
+function renderGroupBanOperators() {
   const search = document.querySelector("#group-chat-ban-operator-search").value.trim().toLowerCase();
   document.querySelector("#group-chat-ban-operators").innerHTML = groupBanEmployees.filter((employee) => {
     const label = `${employee.display_name} ${employee.platform_nickname || ""} ${employee.employee_number}`;
-    return selectedIds.has(employee.platform_id) || label.toLowerCase().includes(search);
-  }).map((employee) => `<option value="${escapeHtml(employee.platform_id)}" ${selectedIds.has(employee.platform_id) ? "selected" : ""}>${escapeHtml(employee.display_name)} · ${escapeHtml(employee.platform_nickname || "平台昵称未获取")} · ${formatEmployeeNumber(employee.employee_number)}</option>`).join("");
+    return label.toLowerCase().includes(search);
+  }).map((employee) => `<label class="group-admin-option"><input type="checkbox" value="${escapeHtml(employee.platform_id)}" ${groupBanSelectedIds.has(employee.platform_id) ? "checked" : ""}><span>${escapeHtml(employee.display_name)} · ${escapeHtml(employee.platform_nickname || "平台昵称未获取")} · ${formatEmployeeNumber(employee.employee_number)}</span></label>`).join("") || '<small class="muted">没有匹配的已入职员工。</small>';
+  const selected = groupBanEmployees.filter((employee) => groupBanSelectedIds.has(employee.platform_id));
+  document.querySelector("#group-chat-selected-admins").innerHTML = selected.length
+    ? selected.map((employee) => `<button class="variable-chip" data-remove-group-admin="${escapeHtml(employee.platform_id)}" type="button" aria-label="移除管理员 ${escapeHtml(employee.display_name)}">${escapeHtml(employee.display_name)} · ${formatEmployeeNumber(employee.employee_number)} ×</button>`).join("")
+    : '<small class="muted">尚未选择管理员。</small>';
 }
 
-async function loadGroupBanEmployees(selectedIds, version) {
+async function loadGroupBanEmployees(version) {
   const employees = [];
   for (let page = 1; ; page += 1) {
     const result = await requestGame(`/api/game/users?page=${page}&page_size=100`);
@@ -2112,7 +2117,7 @@ async function loadGroupBanEmployees(selectedIds, version) {
   }
   if (version !== groupBanLoadVersion) return;
   groupBanEmployees = employees;
-  renderGroupBanOperators(selectedIds);
+  renderGroupBanOperators();
 }
 
 function openGroupChatModal(group = null) {
@@ -2122,11 +2127,13 @@ function openGroupChatModal(group = null) {
   document.querySelector("#group-chat-url").value = group?.chat_url || "";
   document.querySelector("#group-chat-room-id").value = group?.chatroom_id || "";
   document.querySelector("#group-chat-ban-operator-search").value = "";
-  renderGroupBanOperators(new Set(group?.ban_operator_platform_ids || []));
+  groupBanSelectedIds = new Set(group?.ban_operator_platform_ids || []);
+  groupBanEmployees = [];
+  renderGroupBanOperators();
   const saveButton = document.querySelector("#save-group-chat");
   saveButton.disabled = true;
   const version = ++groupBanLoadVersion;
-  void loadGroupBanEmployees(new Set(group?.ban_operator_platform_ids || []), version).then(() => {
+  void loadGroupBanEmployees(version).then(() => {
     if (version === groupBanLoadVersion) saveButton.disabled = false;
   }).catch((error) => setResult(`加载员工失败（${error.message}）`, "error"));
   document.querySelector("#group-chat-listening-enabled").checked = group?.listening_enabled ?? true;
@@ -3671,7 +3678,19 @@ for (const button of document.querySelectorAll(".nav-item")) {
 }
 document.querySelector("#create-group-chat").addEventListener("click", () => openGroupChatModal());
 document.querySelector("#group-chat-ban-operator-search").addEventListener("input", () => {
-  renderGroupBanOperators(new Set([...document.querySelector("#group-chat-ban-operators").selectedOptions].map((option) => option.value)));
+  renderGroupBanOperators();
+});
+document.querySelector("#group-chat-ban-operators").addEventListener("change", (event) => {
+  if (!event.target.matches('input[type="checkbox"]')) return;
+  if (event.target.checked) groupBanSelectedIds.add(event.target.value);
+  else groupBanSelectedIds.delete(event.target.value);
+  renderGroupBanOperators();
+});
+document.querySelector("#group-chat-selected-admins").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-remove-group-admin]");
+  if (!button) return;
+  groupBanSelectedIds.delete(button.dataset.removeGroupAdmin);
+  renderGroupBanOperators();
 });
 groupChatModal.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-group-chat-modal]")) closeGroupChatModal();
@@ -3688,7 +3707,7 @@ document.querySelector("#save-group-chat").addEventListener("click", async (even
     announcements_enabled: document.querySelector("#group-chat-announcements-enabled").checked,
     adult_shop_enabled: document.querySelector("#group-chat-adult-shop-enabled").checked,
     performances_enabled: document.querySelector("#group-chat-performances-enabled").checked,
-    ban_operator_platform_ids: [...document.querySelector("#group-chat-ban-operators").selectedOptions].map((option) => option.value),
+    ban_operator_platform_ids: [...groupBanSelectedIds],
   };
   try {
     await runMutation(event.currentTarget, "保存中…", async () => {

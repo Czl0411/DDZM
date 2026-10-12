@@ -28,6 +28,12 @@ from .aikda_socket import (
 _TRPC_REQUEST_TIMEOUT_MS = 5_000
 
 
+class ImageUploadRejectedError(RuntimeError):
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(f"Aikda image upload failed (HTTP {status_code})")
+
+
 class ChatGateway(Protocol):
     def configure_group_rooms(
         self, targets: tuple[GroupChatTarget, ...]
@@ -274,7 +280,7 @@ class BrowserSession:
             },
         )
         if not response.ok:
-            raise RuntimeError("Aikda image upload failed")
+            raise ImageUploadRejectedError(response.status)
         body = response.json()
         return body.get("result", {}).get("data", {}).get("json", body)
 
@@ -293,7 +299,8 @@ class BrowserSession:
             data={"chatroomId": chatroom_id},
             timeout=90.0,
         )
-        response.raise_for_status()
+        if not response.is_success:
+            raise ImageUploadRejectedError(response.status_code)
         body = response.json()
         return body.get("result", {}).get("data", {}).get("json", body)
 

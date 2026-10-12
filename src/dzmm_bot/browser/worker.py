@@ -29,7 +29,7 @@ from .bot_api import DzmmBotSendError
 from .black_history_card import render_black_history_card
 from .core_client import CorePort, OutboundClaim, WorkerCommand
 from .aikda_socket import AikdaAuthenticationError, AikdaMessageRejectedError, AikdaMemberRemovalRejectedError
-from .session import BrowserSession, ChatGateway
+from .session import BrowserSession, ChatGateway, ImageUploadRejectedError
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -368,12 +368,16 @@ class BrowserWorker:
                 claim.id, self._worker_id, claim.lease_token,
                 image_url, self._clock(),
             )
-        except Exception:
+        except Exception as exc:
             _LOGGER.exception("custom command image upload failed: %s", claim.id)
+            summary = (
+                f"平台上传返回 HTTP {exc.status_code}"
+                if isinstance(exc, ImageUploadRejectedError) else "upload_failed"
+            )
             try:
                 reported = self._core.fail_custom_command_image_upload(
                     claim.id, self._worker_id, claim.lease_token,
-                    "upload_failed", self._clock(),
+                    summary, self._clock(),
                 )
             except Exception:
                 _LOGGER.exception("custom command image upload failure report failed: %s", claim.id)

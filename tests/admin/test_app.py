@@ -1533,10 +1533,116 @@ def test_admin_group_ban_operator_selector(client, headers):
     page = client.get("/").text
     script = client.get("/static/admin.js").text
     assert 'id="group-chat-ban-operators"' in page
+    assert 'id="group-chat-selected-admins"' in page
+    assert "本群管理员" in page
+    assert "当前仅授权 /ban" in page
     assert 'ban_operator_platform_ids' in script
     assert 'employee.display_name' in script
     assert 'employee.platform_nickname' in script
     assert 'employee.employee_number' in script
+
+
+def test_group_admin_selection_stays_visible_while_searching():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is needed for the group admin UI regression test")
+    script_path = Path(__file__).resolve().parents[2] / "src/dzmm_bot/admin/static/admin.js"
+    scenario = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const start = source.indexOf('let groupBanEmployees =');
+const end = source.indexOf('\nfunction openGroupChatModal', start);
+const eventStart = source.indexOf('document.querySelector("#group-chat-ban-operator-search").addEventListener("input",');
+const eventEnd = source.indexOf('\ngroupChatModal.addEventListener', eventStart);
+assert.ok(start >= 0 && end > start && eventStart >= 0 && eventEnd > eventStart);
+const nodes = new Map();
+function node(selector) {
+  if (!nodes.has(selector)) nodes.set(selector, {
+    value: '', innerHTML: '', listeners: {},
+    addEventListener(event, callback) { this.listeners[event] = callback; },
+  });
+  return nodes.get(selector);
+}
+const context = vm.createContext({
+  document: {querySelector: node},
+  escapeHtml: (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
+  formatEmployeeNumber: (value) => `#${String(value).padStart(4, '0')}`,
+});
+vm.runInContext(source.slice(start, end), context);
+vm.runInContext(source.slice(eventStart, eventEnd), context);
+vm.runInContext(`groupBanEmployees = [
+  {platform_id: 'one', display_name: '阿甲', platform_nickname: '甲', employee_number: 1},
+  {platform_id: 'two', display_name: '阿乙', platform_nickname: '乙', employee_number: 2},
+]; groupBanSelectedIds = new Set(['one']); renderGroupBanOperators();`, context);
+assert.ok(node('#group-chat-selected-admins').innerHTML.includes('阿甲'));
+assert.ok(node('#group-chat-ban-operators').innerHTML.includes('type="checkbox"'));
+node('#group-chat-ban-operators').listeners.change({target: {
+  type: 'checkbox', value: 'two', checked: true, matches: () => true,
+}});
+assert.equal(vm.runInContext('groupBanSelectedIds.size', context), 2);
+node('#group-chat-ban-operator-search').value = '乙';
+node('#group-chat-ban-operator-search').listeners.input();
+assert.ok(node('#group-chat-selected-admins').innerHTML.includes('阿甲'));
+assert.ok(node('#group-chat-selected-admins').innerHTML.includes('阿乙'));
+node('#group-chat-selected-admins').listeners.click({target: {
+  closest: () => ({dataset: {removeGroupAdmin: 'one'}}),
+}});
+assert.equal(vm.runInContext('groupBanSelectedIds.has("one")', context), false);
+assert.equal(vm.runInContext('groupBanSelectedIds.has("two")', context), true);
+"""
+    result = subprocess.run(
+        [node, "-e", scenario, str(script_path)], capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_group_admin_save_uses_current_checked_ids():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is needed for the group admin UI regression test")
+    script_path = Path(__file__).resolve().parents[2] / "src/dzmm_bot/admin/static/admin.js"
+    scenario = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const start = source.indexOf('document.querySelector("#save-group-chat").addEventListener("click",');
+const end = source.indexOf('\ndocument.querySelector("#group-chat-list").addEventListener', start);
+assert.ok(start >= 0 && end > start);
+const nodes = new Map();
+function node(selector) {
+  if (!nodes.has(selector)) nodes.set(selector, {
+    value: '', checked: false, listeners: {},
+    addEventListener(event, callback) { this.listeners[event] = callback; },
+  });
+  return nodes.get(selector);
+}
+let saved;
+const context = vm.createContext({
+  document: {querySelector: node},
+  groupChatModal: {dataset: {groupId: 'group-1'}},
+  groupGameOptions: [],
+  groupBanSelectedIds: new Set(['two']),
+  configurationHeaders: () => ({}),
+  runMutation: async (button, label, callback) => callback(),
+  requestGame: async (path, options) => {
+    saved = {path, body: JSON.parse(options.body)};
+    return {version: 2};
+  },
+  closeGroupChatModal() {}, loadGroupChats: async () => {}, setResult() {},
+});
+vm.runInContext(source.slice(start, end), context);
+node('#save-group-chat').listeners.click({currentTarget: node('#save-group-chat')}).then(() => {
+  assert.equal(saved.path, '/api/group-chats/group-1');
+  assert.equal(JSON.stringify(saved.body.ban_operator_platform_ids), '["two"]');
+}).catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        [node, "-e", scenario, str(script_path)], capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_admin_page_contains_performance_management(client):

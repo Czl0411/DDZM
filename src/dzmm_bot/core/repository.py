@@ -698,9 +698,7 @@ _DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE = (
     "请使用 /加入 身份 报名，报名将在 {报名截止分钟} 分钟后截止。"
 )
 _COMPANY_STORY_NOVEL_URL_PATTERN = re.compile(
-    r"https?://(?:www\.)?ivorune\.xyz/novel/"
-    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
-    r"(?:[?#]\S*)?",
+    r"/novel/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
 )
 _UNSET = object()
@@ -722,7 +720,18 @@ def _normalize_company_story_novel_url(value: str | None | object) -> str | None
 def company_story_novel_resource_id(value: str | None) -> str | None:
     if not isinstance(value, str):
         return None
-    match = _COMPANY_STORY_NOVEL_URL_PATTERN.fullmatch(value.strip())
+    try:
+        parsed = urlsplit(value.strip())
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if (
+        parsed.scheme not in {"http", "https"} or not hostname
+        or any(character.isspace() for character in hostname)
+        or parsed.username is not None or parsed.password is not None
+    ):
+        return None
+    match = _COMPANY_STORY_NOVEL_URL_PATTERN.fullmatch(parsed.path)
     return None if match is None else match.group(1).lower()
 _RANDOM_EVENT_AD_SLOT_DRAFT_TIMEOUT_MINUTES = 15
 _DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS = ("/加入", "/退出", "/事件投票", "/事件投票情况")
@@ -4146,11 +4155,16 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 raise ValueError("小说链接格式不正确")
             return resource_id
         if reply_type == "group_invite":
-            parsed = urlsplit(content.strip())
+            try:
+                parsed = urlsplit(content.strip())
+                hostname = parsed.hostname
+            except ValueError:
+                raise ValueError("群聊邀请链接格式不正确") from None
             match = re.fullmatch(r"/invite/([A-Za-z0-9_-]+)", parsed.path)
             if (
                 parsed.scheme not in {"http", "https"}
-                or parsed.netloc not in {"ivorune.xyz", "www.ivorune.xyz"}
+                or not hostname or any(character.isspace() for character in hostname)
+                or parsed.username is not None or parsed.password is not None
                 or parsed.query or parsed.fragment or match is None
             ):
                 raise ValueError("群聊邀请链接格式不正确")

@@ -150,7 +150,7 @@ def test_custom_command_repository_keeps_builtin_rows_and_supports_lifecycle(rep
         ("/空", "text", ""),
         ("/过长", "text", "字" * 2001),
         ("/错误群", "group_invite", "https://www.ivorune.xyz/chat?c=abc"),
-        ("/错误域", "group_invite", "https://evil.example/invite/abc"),
+        ("/错误协议", "group_invite", "ftp://example.com/invite/abc"),
         ("/空邀请码", "group_invite", "https://www.ivorune.xyz/invite/"),
         ("/错误小说", "novel", "https://www.ivorune.xyz/novel/not-a-uuid"),
     ],
@@ -175,6 +175,20 @@ def test_custom_command_repository_stores_share_resource_ids(repository):
         None, True,
     )
     assert invite.reply_value == "abc123"
+    assert novel.reply_value == "66408bb3-60a0-40e1-a434-ee40efee4d27"
+
+
+def test_custom_command_share_links_accept_different_entry_domains(repository):
+    invite = repository.create_custom_command(
+        "/主群", "群入口", "group_invite",
+        "https://www.aikda.com/invite/U7rnPhJj", None, True,
+    )
+    novel = repository.create_custom_command(
+        "/新小说", "小说", "novel",
+        "https://www.aikda.com/novel/66408bb3-60a0-40e1-a434-ee40efee4d27",
+        None, True,
+    )
+    assert invite.reply_value == "U7rnPhJj"
     assert novel.reply_value == "66408bb3-60a0-40e1-a434-ee40efee4d27"
 
 

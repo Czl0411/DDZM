@@ -1102,6 +1102,26 @@ def test_worker_reports_custom_command_image_failure(context, tmp_path):
     assert not upload_path.exists()
 
 
+def test_worker_reports_platform_image_upload_status_safely(context, tmp_path):
+    from dzmm_bot.browser.core_client import CustomCommandImageUploadClaim
+    from dzmm_bot.browser.session import ImageUploadRejectedError
+
+    worker, gateway, _, _, core, _ = context
+    upload_path = tmp_path / "custom.webp"
+    upload_path.write_bytes(b"image")
+    gateway.upload_error = ImageUploadRejectedError(415)
+    task_id = UUID(int=27)
+    core.custom_upload_tasks = [CustomCommandImageUploadClaim(
+        task_id, str(upload_path), "custom.webp", "image/webp", LEASE, 1
+    )]
+
+    worker.run_once()
+
+    assert core.custom_upload_failures == [(
+        task_id, "worker-a", LEASE, "平台上传返回 HTTP 415", NOW,
+    )]
+
+
 def test_worker_cleans_completed_custom_command_image_task(context, tmp_path):
     from dzmm_bot.browser.core_client import ProfileImageCleanupClaim
 

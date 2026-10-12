@@ -125,7 +125,10 @@ def test_custom_command_core_api_lifecycle(client, headers):
     )
 
 
-@pytest.mark.parametrize("command", ["/暗网", "/me", "/第3场"])
+@pytest.mark.parametrize(
+    "command",
+    ["/暗网", "/me", "/第3场", "/选择", "/确认优选投稿", "/确认广告位"],
+)
 def test_custom_command_core_api_rejects_reserved_aliases(client, headers, command):
     response = client.post(
         "/internal/game/custom-commands", headers=headers,
@@ -135,6 +138,25 @@ def test_custom_command_core_api_rejects_reserved_aliases(client, headers, comma
         },
     )
     assert response.status_code == 422
+
+
+def test_custom_command_core_api_rejects_rename_to_workflow_command(client, headers):
+    original = {
+        "command": "/公告", "description": "公告", "enabled": True,
+        "reply_type": "text", "content": "今天开会",
+    }
+    assert client.post(
+        "/internal/game/custom-commands", headers=headers, json=original,
+    ).status_code == 201
+    renamed = client.put(
+        "/internal/game/custom-commands", headers=headers,
+        json={**original, "old_command": "/公告", "command": "/选择"},
+    )
+    assert renamed.status_code == 422
+    assert any(
+        row["command"] == "/公告"
+        for row in client.get("/internal/game/commands", headers=headers).json()
+    )
 
 
 def test_custom_command_core_api_rejects_bad_share_and_builtin_delete(client, headers):

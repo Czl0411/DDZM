@@ -805,6 +805,25 @@ def test_custom_command_ignores_direct_unmonitored_disabled_and_arguments():
     assert _replies_for(factory, removed.message_id) == []
 
 
+def test_help_lists_only_enabled_custom_commands():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 12, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_custom_command("/公告", "今日公告", "text", "今天开会", None, True)
+
+    index = _group_receive(service, "custom-help-index", "viewer", "/帮助", now, group.chatroom_id)
+    detail = _group_receive(service, "custom-help-detail", "viewer", "/帮助 自定义", now, group.chatroom_id)
+    assert "/帮助 自定义" in "\n".join(_replies_for(factory, index.message_id))
+    assert "/公告：今日公告" in "\n".join(_replies_for(factory, detail.message_id))
+
+    repository.set_command_enabled("/公告", False)
+    disabled = _group_receive(service, "custom-help-disabled", "viewer", "/帮助 自定义", now, group.chatroom_id)
+    assert "/公告" not in "\n".join(_replies_for(factory, disabled.message_id))
+    repository.delete_custom_command("/公告")
+    removed = _group_receive(service, "custom-help-removed", "viewer", "/帮助 自定义", now, group.chatroom_id)
+    assert "/公告" not in "\n".join(_replies_for(factory, removed.message_id))
+
+
 def test_custom_command_does_not_bypass_random_event_gate():
     service, repository, factory = _service()
     now = datetime(2026, 10, 12, 10, 0, tzinfo=BEIJING)

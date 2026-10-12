@@ -88,6 +88,7 @@ _COMMAND_ALIASES = {
     "/开始摸鱼躲藏", "/躲", "/me", "/装备称号", "/编辑称号",
     "/买彩票", "/问", "/问吧", "/回答", "/答", "/罚",
     "/今日最受欢迎", "/发情值排名", "/最受欢迎", "/我的发情值",
+    "/选择", "/确认优选投稿", "/确认广告位",
 }
 
 
@@ -5322,9 +5323,9 @@ class GroupCommandHandler:
         )
 
     def _help(self, content: str, received_at) -> str:
-        commands = {
-            item.command for item in self._repository.list_enabled_command_definitions()
-        }
+        definitions = self._repository.list_enabled_command_definitions()
+        commands = {item.command for item in definitions}
+        custom_commands = [item for item in definitions if item.is_custom]
         settings = self._repository.get_game_settings()
         topic = content.split(maxsplit=1)[1].strip() if len(content.split(maxsplit=1)) == 2 else ""
         topic = {
@@ -5609,6 +5610,8 @@ class GroupCommandHandler:
         }
 
         def category_available(category: str) -> bool:
+            if category == "自定义":
+                return bool(custom_commands)
             if category == "游戏":
                 return any(
                     any(command in commands for command, _ in guides[name][1])
@@ -5640,6 +5643,7 @@ class GroupCommandHandler:
                 ("风纪", "/帮助 风纪：风纪罚款"),
                 ("部门", "/帮助 部门：部门申请与审批"),
                 ("职位", "/帮助 职位：职位晋升与审批"),
+                ("自定义", "/帮助 自定义：群内自定义指令"),
             )
             guide = "发送 /帮助 分类，查看详细用法：\n" + "\n".join(
                 line
@@ -5673,6 +5677,10 @@ class GroupCommandHandler:
                     "私聊 /报数 数字、/跳过 编号、/继续、/结束游戏；"
                     "发送 /蹦蹦数字炸弹 积分赛 可开启固定8人、12轮积分赛"
                 )
+        elif topic == "自定义":
+            guide = "【自定义指令】\n" + "\n".join(
+                f"{item.command}：{item.description}" for item in custom_commands
+            ) if custom_commands else "该分类暂未开放。"
         elif topic in guides:
             title, entries = guides[topic]
             lines = [line for command, line in entries if command in commands]

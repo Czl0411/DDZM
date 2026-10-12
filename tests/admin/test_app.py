@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 import json
 from pathlib import Path
+import shutil
+import subprocess
 
 import httpx
 import pytest
@@ -2000,6 +2002,56 @@ def test_custom_command_ui_has_editor_and_four_reply_types(client, headers):
     assert 'data-custom-command-action="delete"' in script
     assert '"/api/game/custom-commands"' in script
     assert '"/api/game/custom-command-images"' in script
+
+
+def test_custom_command_upload_does_not_overwrite_reopened_editor():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is needed for the async UI regression test")
+    script_path = Path(__file__).resolve().parents[2] / "src/dzmm_bot/admin/static/admin.js"
+    scenario = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const start = source.indexOf('async function uploadCustomCommandImage(file) {');
+const end = source.indexOf('\nasync function requestGame(', start);
+const functionSource = source.slice(start, end);
+let releaseStatus;
+let notifyStatus;
+const statusStarted = new Promise(resolve => { notifyStatus = resolve; });
+const context = {
+  customCommandUploadGeneration: 0,
+  customCommandModal: {dataset: {uploading: 'false'}},
+  customCommandImageStatus: {textContent: ''},
+  customCommandImagePreview: {src: '', hidden: true},
+  customCommandImageTaskId: null,
+  customCommandImageUrl: null,
+  updateCustomCommandFields() {},
+  FormData: class { append() {} },
+  requestGame(path) {
+    if (path === '/api/game/custom-command-images') return Promise.resolve({id: 'old-task'});
+    notifyStatus();
+    return new Promise(resolve => { releaseStatus = resolve; });
+  },
+};
+(async () => {
+  const upload = vm.runInNewContext(functionSource + '; uploadCustomCommandImage({})', context);
+  await statusStarted;
+  context.customCommandUploadGeneration += 1;
+  context.customCommandModal.dataset.uploading = 'false';
+  context.customCommandImageUrl = 'https://cdn.example.com/new.png';
+  context.customCommandImagePreview.src = context.customCommandImageUrl;
+  releaseStatus({status: 'completed', result_url: 'https://cdn.example.com/old.png'});
+  await upload;
+  assert.equal(context.customCommandImageUrl, 'https://cdn.example.com/new.png');
+  assert.equal(context.customCommandImageTaskId, null);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        [node, "-e", scenario, str(script_path)], capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):

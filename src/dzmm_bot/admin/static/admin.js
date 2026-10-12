@@ -1972,9 +1972,11 @@ async function uploadCustomCommandImage(file) {
     const form = new FormData();
     form.append("file", file);
     const task = await requestGame("/api/game/custom-command-images", {method: "POST", body: form});
+    if (generation !== customCommandUploadGeneration) return;
     for (let attempt = 0; attempt < 60; attempt += 1) {
       if (generation !== customCommandUploadGeneration) return;
       const status = await requestGame(`/api/game/custom-command-images/${encodeURIComponent(task.id)}`);
+      if (generation !== customCommandUploadGeneration) return;
       if (status.status === "completed") {
         customCommandImageTaskId = task.id;
         customCommandImageUrl = status.result_url;

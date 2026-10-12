@@ -159,6 +159,26 @@ def test_phase_two_game_counts_and_king_round_metrics(context):
         assert session.scalar(select(func.count()).select_from(GameParticipationRecord)) == 4
 
 
+def test_chop_honor_metric_is_shared_across_groups(context):
+    repository, factory = context
+    configure(repository)
+    second_group = repository.create_group_chat(
+        "二群",
+        "https://www.aikda.com/chat?c=group-second",
+        True,
+        True,
+        True,
+        True,
+        INITIAL,
+    )
+    chop(repository, factory, "male-1", group_id=PRIMARY_GROUP_CHAT_ID, now=midnight(WEEK))
+    chop(repository, factory, "male-1", group_id=second_group.id, now=midnight(WEEK) + timedelta(hours=1))
+
+    report = repository.preview_honors(WEEK, SETTLED)
+    user_id = repository.find_user("male-1").id
+    assert candidate_score(report, "charm_m", user_id) == 2
+
+
 @pytest.mark.parametrize("revealed", [False, True])
 def test_phase_two_admin_force_end_king_game_records_only_revealed_games(context, revealed):
     repository, factory = context
@@ -559,7 +579,11 @@ def test_name_suffix_wear_cancel_expiry_and_direct_commands(context, wear_comman
                                              source_type="direct", chatroom_id="dm"))
 
     assert command("/我").splitlines()[0] == "糯糯"
-    assert "最有魅力帅哥" in command("/我的称号")
+    honors_text = command("/我的称号")
+    assert "最有魅力帅哥" in honors_text
+    assert "有效至 2026-10-19 00:00" in honors_text
+    assert "历史累计获得荣誉 1 次。" in honors_text
+    assert "发送 /装备称号 序号 切换" in honors_text
     assert "已佩戴" in command("/佩戴称号 1")
     assert command("/我").splitlines()[0] == "糯糯【荣誉称号：最有魅力帅哥】"
     assert command("/me").splitlines()[0] == "糯糯【荣誉称号：最有魅力帅哥】"

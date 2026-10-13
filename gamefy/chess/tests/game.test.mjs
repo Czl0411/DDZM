@@ -5,6 +5,40 @@ import { resolveRoomId, ChessClient, canMove, canChat } from '../publish/game.js
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
 
+test('concurrent requests share one credential request', async () => {
+  let calls = 0;
+  const client = new ChessClient({
+    sdk: { user: { info: async () => { calls++; await new Promise(r => setTimeout(r, 5)); return { token: 'token' }; } } },
+    fetchImpl: async () => ({ ok: true, json: async () => [] }), apiBase: 'https://chess.example.com',
+  });
+  await Promise.all([client.rooms(), client.rooms(), client.rooms()]);
+  assert.equal(calls, 1);
+});
+
+test('persistent 401 does not repeatedly mint credentials', async () => {
+  let calls = 0;
+  const client = new ChessClient({
+    sdk: { user: { info: async () => ({ token: `token-${++calls}` }) } },
+    fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({ detail: 'invalid' }) }),
+    apiBase: 'https://chess.example.com',
+  });
+  await assert.rejects(client.rooms());
+  await assert.rejects(client.rooms());
+  assert.equal(calls, 2);
+});
+
+test('late 401 for old credential reuses already refreshed credential', async () => {
+  let calls = 0;
+  const client = new ChessClient({
+    sdk: { user: { info: async () => ({ token: `token-${++calls}` }) } },
+    fetchImpl: async () => {}, apiBase: 'https://chess.example.com',
+  });
+  const old = await client.auth();
+  await client.auth(true, old);
+  assert.equal(await client.auth(true, old), 'token-2');
+  assert.equal(calls, 2);
+});
+
 test('signed-in player without a token sees service failure and retries are cooled down', async () => {
   let calls = 0;
   const client = new ChessClient({

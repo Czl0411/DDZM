@@ -25,30 +25,45 @@ export class ChessClient {
     this.base = roomId ? `${this.root}/${roomId}` : this.root;
     this.token = null;
     this.authRetryAt = 0;
+    this.authPending = null;
+    this.refreshRetryAt = 0;
     this.state = null;
   }
   rooms() { return this.request('/rooms'); }
   selectRoom(roomId) { this.base = `${this.root}/${roomId}`; }
-  async auth(force = false) {
-    if (force || !this.token) {
-      if (Date.now() < this.authRetryAt) throw new Error('登录凭证暂不可用，请稍后再试，避免连续刷新。');
-      const info = await this.sdk.user.info();
-      this.token = info?.token;
-      if (!this.token) {
-        this.authRetryAt = Date.now() + 60000;
-        throw new Error(info?.id ? '平台暂未签发登录凭证，可能限流或服务异常。请至少等待 60 秒后再刷新棋局。' : '请先登录 DZMM。');
-      }
-      this.authRetryAt = 0;
+  async auth(force = false, rejectedToken = this.token) {
+    if (this.authPending) return this.authPending;
+    if (force && rejectedToken !== this.token) force = false;
+    if (!force && this.token) return this.token;
+    if (Date.now() < this.authRetryAt || (force && Date.now() < this.refreshRetryAt)) {
+      throw new Error('登录凭证暂不可用，请稍后再试，避免连续刷新。');
     }
-    return this.token;
+    if (force) this.refreshRetryAt = Date.now() + 60000;
+    this.authPending = (async () => {
+      try {
+        const info = await this.sdk.user.info();
+        this.token = info?.token;
+        if (!this.token) {
+          throw new Error(info?.id ? '平台暂未签发登录凭证，可能限流或服务异常。请至少等待 60 秒后再刷新棋局。' : '请先登录 DZMM。');
+        }
+        this.authRetryAt = 0;
+        return this.token;
+      } catch (error) {
+        this.authRetryAt = Date.now() + 60000;
+        throw error;
+      }
+    })();
+    try { return await this.authPending; }
+    finally { this.authPending = null; }
   }
   async request(suffix = '', options = {}) {
+    let sentToken;
     const send = async () => this.fetchImpl(this.base + suffix, {
       ...options,
-      headers: { Authorization: `Bearer ${await this.auth()}`, ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { Authorization: `Bearer ${sentToken = await this.auth()}`, ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
     });
     let response = await send();
-    if (response.status === 401) { await this.auth(true); response = await send(); }
+    if (response.status === 401) { await this.auth(true, sentToken); response = await send(); }
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       const error = new Error(typeof data.detail === 'string' ? data.detail : '请求失败，请刷新棋局。');
@@ -76,10 +91,11 @@ export class ChessClient {
       try {
         onState(await this.snapshot());
         if (signal.aborted) break;
+        const sentToken = await this.auth();
         let response = await this.fetchImpl(`${this.base}/events`, {
-          headers: { Authorization: `Bearer ${await this.auth()}` }, signal,
+          headers: { Authorization: `Bearer ${sentToken}` }, signal,
         });
-        if (response.status === 401) { await this.auth(true); continue; }
+        if (response.status === 401) { await this.auth(true, sentToken); continue; }
         if (!response.ok || !response.body) throw new Error('棋局连接中断');
         const reader = response.body.getReader();
         const decoder = new TextDecoder();

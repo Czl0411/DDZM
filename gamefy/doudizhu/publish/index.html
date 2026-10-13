@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>群友斗地主</title><link rel="stylesheet" href="./style.css"></head>
+<body><main>
+<header><div><small>好友牌局 · 经典三人</small><h1>群友斗地主 <span>♠</span></h1></div><button id="refresh" class="quiet">刷新</button></header>
+<p id="feedback" role="status" aria-live="polite">正在读取玩家身份…</p>
+<section id="lobby"><div class="section-title"><h2>牌局大厅</h2><span>不涉及摸鱼币</span></div><p class="muted">在开放群发送 /斗地主 创建房间。入座需要四位码，观战无需入座。</p><div id="rooms"></div></section>
+<section id="table" hidden>
+<nav><button id="back" class="quiet">‹ 房间列表</button><span id="room-label"></span><span id="multiplier" class="gold"></span></nav>
+<div id="opponents"></div>
+<section class="felt"><div id="bottom"></div><div id="phase-label"></div><div id="countdown" aria-live="off"></div><div id="plays"></div><div id="result" hidden></div><div class="watermark">群友斗地主</div></section>
+<div id="self"></div>
+<div id="claim-panel" hidden><input id="code" inputmode="numeric" maxlength="4" placeholder="四位入座码" aria-label="四位入座码"><button id="claim">入座</button></div>
+<div id="actions"></div>
+<div id="play-actions" hidden><button id="pass" class="quiet">不出</button><button id="hint" class="quiet">提示</button><button id="play">出牌</button></div>
+<div id="hand" aria-label="我的手牌"></div>
+<details id="chat"><summary>本局聊天 <span>棋逢对手，也交朋友</span></summary><div id="messages" aria-live="polite"></div><div class="chat-compose"><input id="chat-input" maxlength="300" placeholder="玩家与观众都能发言" aria-label="聊天消息"><button id="chat-send">发送</button></div></details>
+</section>
+<footer>经典叫分 · 三人准备开局 · 断线可重连</footer>
+</main><script src="./config.js"></script><script type="module" src="./game.js"></script></body></html>

@@ -17,6 +17,7 @@ def upgrade():
         sa.Column('short_id', sa.String(12), nullable=False, unique=True),
         sa.Column('code', sa.String(4), nullable=False),
         sa.Column('seats', sa.JSON(), nullable=False), sa.Column('ready', sa.JSON(), nullable=False),
+        sa.Column('presence', sa.JSON(), nullable=False),
         sa.Column('phase', sa.String(16), nullable=False), sa.Column('round_id', sa.Uuid()),
         sa.Column('round_number', sa.Integer(), nullable=False), sa.Column('redeals', sa.Integer(), nullable=False),
         sa.Column('version', sa.Integer(), nullable=False),

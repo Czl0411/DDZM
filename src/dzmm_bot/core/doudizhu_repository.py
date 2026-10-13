@@ -62,12 +62,17 @@ class DoudizhuRepositoryMixin:
         round_row = session.get(Round, room.round_id) if room.round_id else None
         state = round_row.state if round_row else None
         seat = room.seats.index(str(user.id)) if str(user.id) in room.seats else None
+        if seat is not None:
+            previous_seen = room.presence.get(str(seat))
+            if not previous_seen or (now - datetime.fromisoformat(previous_seen)).total_seconds() >= 10:
+                room.presence = {**room.presence, str(seat): now.isoformat()}
         players = []
         for i, uid in enumerate(room.seats):
             person = session.get(UserRecord, UUID(uid)) if uid else None
             players.append({'name': person.display_name if person else '已离职玩家', 'ready': room.ready[i],
                 'count': len(state['hands'][i]) if state else 0,
-                'trustee': state['trustees'][i] if state else False} if uid else None)
+                'trustee': state['trustees'][i] if state else False,
+                'online': bool(room.presence.get(str(i))) and (now - datetime.fromisoformat(room.presence[str(i)])).total_seconds() < 30} if uid else None)
         messages = session.execute(select(Message, UserRecord.display_name).join(UserRecord, UserRecord.id == Message.user_id)
             .where(Message.room_id == room.id, Message.round_id == room.round_id)
             .order_by(Message.created_at.desc(), Message.id.desc()).limit(100)).all()
@@ -174,6 +179,7 @@ class DoudizhuRepositoryMixin:
                         room.phase, room.deadline = 'cancelled', None
                     else:
                         seats[seat], ready[seat] = None, False
+                        room.presence = {k: v for k, v in room.presence.items() if k != str(seat)}
                 else:
                     raise ValueError('当前不能进行该操作')
                 room.seats, room.ready = seats, ready

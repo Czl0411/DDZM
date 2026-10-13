@@ -84,3 +84,14 @@ def test_action_validation_and_suggestions(ddz):
     uid = ['host', 'alice', 'bob'][room['turn']]
     assert client.post(path + '/actions', headers=headers(uid), json=payload).status_code == 409
     assert client.get(path + '/suggestions', headers=headers('viewer')).status_code == 409
+
+
+def test_seat_presence_expires_without_resetting_clock(ddz):
+    repo = ddz[0]
+    room = dealt(ddz)
+    rid = UUID(room['id'])
+    one = repo.doudizhu_view(rid, 'alice', NOW)
+    assert one['players'][1]['online'] is True
+    later = repo.doudizhu_view(rid, 'viewer', NOW + timedelta(seconds=31))
+    assert later['players'][1]['online'] is False
+    assert later['deadline'] == one['deadline'] and later['version'] == one['version']

@@ -2677,6 +2677,7 @@ class DoudizhuRoomRecord(Base):
     code: Mapped[str] = mapped_column(String(4), nullable=False)
     seats: Mapped[list] = mapped_column(JSON, nullable=False)
     ready: Mapped[list] = mapped_column(JSON, nullable=False)
+    presence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     phase: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     round_id: Mapped[UUID | None] = mapped_column(Uuid)
     round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

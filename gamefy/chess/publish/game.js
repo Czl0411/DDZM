@@ -15,7 +15,7 @@ export function canMove(state) {
   return !!state && state.game.status === 'playing' && state.role === state.game.position?.turn;
 }
 
-export function canChat(state) { return !!state && state.game.status === 'playing'; }
+export function canChat(state) { return !!state && ['waiting', 'playing'].includes(state.game.status); }
 
 export class ChessClient {
   constructor({ sdk, fetchImpl, apiBase, roomId }) {
@@ -189,7 +189,7 @@ async function boot() {
   }
   function renderBoard() {
     board.replaceChildren();
-    const rows = state.game.position?.board || Array(10).fill('.........');
+    const rows = state.game.position?.board || ['rheakaehr', '.........', '.c.....c.', 'p.p.p.p.p', '.........', '.........', 'P.P.P.P.P', '.C.....C.', '.........', 'RHEAKAEHR'];
     const flip = state.role === 'black';
     for (let row = 0; row < 10; row++) for (let col = 0; col < 9; col++) {
       const x = flip ? 8 - col : col;
@@ -199,6 +199,7 @@ async function boot() {
       cell.type = 'button';
       cell.className = `cell${row === 4 ? ' river' : ''}${selected?.[0] === x && selected?.[1] === y ? ' selected' : ''}`;
       cell.setAttribute('aria-label', `${x},${y}${PIECE[piece] || ''}`);
+      cell.setAttribute('aria-pressed', String(selected?.[0] === x && selected?.[1] === y));
       if (piece !== '.') {
         const disk = document.createElement('span');
         disk.className = `piece ${piece === piece.toUpperCase() ? 'red' : 'black'}`;
@@ -224,6 +225,14 @@ async function boot() {
     serverOffset = Date.now() - Date.parse(next.server_time || new Date().toISOString());
     const game = next.game;
     document.querySelector('#players').textContent = `红方 ${game.red_name || '待定'} · 黑方 ${game.black_name || '待定'}`;
+    for (const color of ['red', 'black']) {
+      const player = document.querySelector(`#${color}-player`);
+      player.classList.toggle('active', game.status === 'playing' && game.position?.turn === color);
+      document.querySelector(`#${color}-name`).textContent = game[`${color}_name`] || '等待入座';
+      document.querySelector(`#${color}-side`).textContent = `${color === 'red' ? '红方' : '黑方'}${next.role === color ? ' · 你' : ''}`;
+    }
+    board.before(document.querySelector(next.role === 'black' ? '#red-player' : '#black-player'));
+    board.after(document.querySelector(next.role === 'black' ? '#black-player' : '#red-player'));
     status.textContent = error ? '正在重新连接…' : game.status === 'waiting' ? '等待第二位棋手入座' : game.status === 'cancelled' ? '棋局已取消' : game.status === 'finished' ? `已结束：${game.result}` : `进行中 · 你是${next.role === 'spectator' ? '观众' : next.role === 'red' ? '红方' : '黑方'}`;
     document.querySelector('#claim-panel').hidden = game.status !== 'waiting' || next.role !== 'spectator';
     document.querySelector('#actions').hidden = !['red', 'black'].includes(next.role) || game.status !== 'playing';
@@ -234,6 +243,7 @@ async function boot() {
     document.querySelector('#offer-label').textContent = game.pending_offer ? `对手请求${game.pending_offer === 'undo' ? '悔棋' : '和棋'}` : '';
     document.querySelector('#chat-input').disabled = !canChat(next);
     document.querySelector('#chat-send').disabled = !canChat(next);
+    document.querySelector('#chat-input').placeholder = canChat(next) ? '聊聊这盘棋…' : '棋局已结束，聊天记录已保留';
     const list = document.querySelector('#chat-list');
     list.replaceChildren();
     for (const message of next.messages || []) {

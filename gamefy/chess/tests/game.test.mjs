@@ -114,6 +114,7 @@ test('spectators cannot move but may chat until terminal state', () => {
   const playing = { role: 'spectator', game: { status: 'playing', position: { turn: 'red' } } };
   assert.equal(canMove(playing), false);
   assert.equal(canChat(playing), true);
+  assert.equal(canChat({ ...playing, game: { status: 'waiting' } }), true);
   assert.equal(canMove({ ...playing, role: 'red' }), true);
   assert.equal(canChat({ ...playing, game: { status: 'finished' } }), false);
 });

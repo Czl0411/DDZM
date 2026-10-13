@@ -64,3 +64,13 @@ def test_concurrent_claim_has_one_winner(chess_repo):
         results = list(pool.map(lambda pid: repo.claim_chess_seat(game.id, pid, game.code, NOW), ("alice", "bob")))
     assert sorted(result.status for result in results) == ["claimed", "occupied"]
     assert repo.get_chess_game(game.id).version == 1
+
+
+def test_registered_players_can_chat_while_waiting(chess_repo):
+    repo, factory, inbound_id = chess_repo
+    game = repo.create_chess_game("creator", PRIMARY_GROUP_CHAT_ID, inbound_id, NOW)
+    for pid in ("creator", "bob"):
+        message = repo.chess_chat(game.id, pid, "等你来下棋", NOW)
+        assert message["text"] == "等你来下棋"
+    with pytest.raises(ValueError):
+        repo.chess_chat(game.id, "nobody", "hello", NOW)

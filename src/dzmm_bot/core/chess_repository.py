@@ -381,7 +381,7 @@ class ChessRepositoryMixin:
         with self._session() as session:
             game = session.scalar(select(ChessGameRecord).where(ChessGameRecord.id == game_id).with_for_update())
             user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
-            if game is None or user is None or game.status != "playing":
+            if game is None or user is None or game.status not in ("waiting", "playing"):
                 raise ValueError("当前不可发送聊天")
             last = session.scalar(
                 select(ChessMessageRecord.created_at)

@@ -2177,7 +2177,6 @@ class GroupCommandHandler:
             "quota_exhausted": "你今日的罚款次数已用完，明天再来吧。",
             "target_not_joined": "目标还未入职摸鱼公司。",
             "self": "不能罚款自己。",
-            "same_department": "不能罚款执法部门内部成员。",
             "target_limit": "该员工今日被罚款次数已达上限。",
         }
         if result.status in errors:
@@ -2664,21 +2663,15 @@ class GroupCommandHandler:
             platform_id, received_at
         )
         if birthday_view is not None:
-            days_left = (
-                birthday_view.next_occurrence - received_at.date()
-            ).days
-            countdown = "就是今天！" if days_left == 0 else f"还有 {days_left} 天"
-            birthday_line = (
-                f"生日：{self._format_birthday(birthday_view)}（{countdown}）"
-            )
+            birthday_line = f"生日：{self._format_birthday(birthday_view)}"
         else:
-            birthday_line = None
+            birthday_line = "生日：未设置，请使用 /设置生日 MM-DD"
         if employee.gender == "male":
             gender_line = "性别：男"
         elif employee.gender == "female":
             gender_line = "性别：女"
         else:
-            gender_line = None
+            gender_line = "性别：未设置，请使用 /设置性别 男或女"
         lines = [
             display_name,
             f"工号：{format_employee_number(employee.employee_number)}",
@@ -2734,12 +2727,18 @@ class GroupCommandHandler:
             return "\n".join(lines) if history["items"] else "你还没有获得过荣誉称号。"
         lines = ["【我的称号】", f"当前佩戴：{personal['equipped'] or '未佩戴'}"]
         for item in personal["items"]:
-            lines.append(f"{item['number']}. {item['name']}｜历史获得 {item['total_wins']} 次｜有效至 {item['expires_at'][:10]} 00:00")
+            expires_at = item["expires_at"][:16].replace("T", " ")
+            lines.append(
+                f"{item['number']}. {item['name']}｜历史获得 {item['total_wins']} 次｜有效至 {expires_at}"
+            )
         if not personal["items"]:
             lines.append("当前没有可佩戴称号。")
-        if personal["history_counts"]:
-            lines.append(f"历史累计获得荣誉 {sum(personal['history_counts'].values())} 次。")
-        lines.append("发送 /佩戴称号 序号 切换（/装备称号、/编辑称号 也可），序号 0 取消佩戴。")
+        lines.append(
+            f"历史累计获得荣誉 {sum(personal['history_counts'].values())} 次。"
+        )
+        lines.append(
+            "发送 /装备称号 序号 切换，/装备称号 0 取消佩戴（/佩戴称号、/编辑称号也可）。"
+        )
         return "\n".join(lines)
 
     def _edit_profile(self, platform_id: str, content: str, received_at) -> str:
@@ -5603,8 +5602,8 @@ class GroupCommandHandler:
                     ("/凿", "被凿者发情值随机 +0~2、获得随机摸鱼币；发情值攒满 100 触发高潮"),
                     ("/拒绝被凿", "/拒绝被凿：不再接受被凿，凿你的人会吃一杵子"),
                     ("/允许被凿", "/允许被凿：重新接受被凿"),
-                    ("/我的凿", "/我的凿：查看自己的发情值、被凿/凿人与高潮次数"),
-                    ("/人气榜", "/人气榜：查看今日被凿人气前 5（按今日被凿次数，每日随收益榜推送）"),
+                    ("/我的凿", "/我的凿：查看自己的发情值、被凿/凿人与高潮次数（所有群合并统计）"),
+                    ("/人气榜", "/人气榜：查看所有群合并后的今日被凿人气前 5（每日随收益榜推送）"),
                     ("/设置性别", "/设置性别 男|女：设置自己的性别（/修改性别 等效），影响高潮文风"),
                 ),
             ),

@@ -2803,8 +2803,8 @@ _COMMAND_DEFINITIONS = (
     ("/凿", "/凿 名字 [附言]", "凿一下别人：目标发情值随机上涨并获得随机摸鱼币，可引用回复目标消息"),
     ("/允许被凿", "/允许被凿", "允许别人凿自己（默认开启）"),
     ("/拒绝被凿", "/拒绝被凿", "拒绝被凿：之后被 /凿 时对方会吃一杵子"),
-    ("/我的凿", "/我的凿", "查看自己的发情值、被凿/凿人与高潮次数"),
-    ("/人气榜", "/人气榜", "查看今日被凿人气前 5 名（按今日被凿次数）"),
+    ("/我的凿", "/我的凿", "查看自己的发情值、被凿/凿人与高潮次数（所有群合并统计）"),
+    ("/人气榜", "/人气榜", "查看今日被凿人气前 5 名（所有群合并统计）"),
     ("/设置性别", "/设置性别 男|女", "设置自己的性别（/修改性别 等效），影响高潮文字文风"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
@@ -15186,18 +15186,60 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         return row
 
     def _estrus_state_row(
-        self, session: Session, group_chat_id: UUID, user_id: UUID
+        self,
+        session: Session,
+        group_chat_id: UUID,
+        user_id: UUID,
+        *,
+        active_date: date | None = None,
     ) -> EstrusStateRecord:
-        row = session.scalar(
-            select(EstrusStateRecord).where(
-                EstrusStateRecord.group_chat_id == group_chat_id,
-                EstrusStateRecord.user_id == user_id,
+        rows = list(
+            session.scalars(
+                select(EstrusStateRecord)
+                .where(EstrusStateRecord.user_id == user_id)
+                .order_by(EstrusStateRecord.created_at, EstrusStateRecord.id)
             )
         )
-        if row is None:
+        if not rows:
             row = EstrusStateRecord(group_chat_id=group_chat_id, user_id=user_id)
             session.add(row)
             session.flush()
+            return row
+
+        # 旧版本按群保存状态。首次访问时将同一用户的历史状态合并，
+        # 之后只保留一行；group_chat_id 仅保留为历史来源字段，不再参与隔离。
+        row = next(
+            (candidate for candidate in rows if candidate.group_chat_id == group_chat_id),
+            rows[0],
+        )
+        if len(rows) == 1:
+            return row
+
+        reference_date = active_date or max(
+            (
+                candidate.last_active_date
+                for candidate in rows
+                if candidate.last_active_date is not None
+            ),
+            default=None,
+        )
+        row.heat = sum(int(candidate.heat) for candidate in rows)
+        row.chopped_count = sum(int(candidate.chopped_count) for candidate in rows)
+        row.total_climaxes = sum(int(candidate.total_climaxes) for candidate in rows)
+        row.today_climaxes = sum(
+            int(candidate.today_climaxes)
+            for candidate in rows
+            if reference_date is not None
+            and candidate.last_active_date == reference_date
+        )
+        row.last_active_date = reference_date
+        row.opted_out = any(bool(candidate.opted_out) for candidate in rows)
+        row.created_at = min(candidate.created_at for candidate in rows)
+        row.updated_at = max(candidate.updated_at for candidate in rows)
+        for duplicate in rows:
+            if duplicate is not row:
+                session.delete(duplicate)
+        session.flush()
         return row
 
     @staticmethod
@@ -15425,7 +15467,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
     def set_estrus_opt_out(
         self, platform_id: str, group_chat_id: UUID, opted_out: bool
     ) -> str | None:
-        """切换自己是否允许被凿；未入职返回 None。"""
+        """切换自己是否允许被凿；状态对所有群生效。"""
         with self.transaction():
             with self._session() as session:
                 user = session.scalar(
@@ -15435,9 +15477,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 )
                 if user is None:
                     return None
-                state = self._estrus_state_row(
-                    session, group_chat_id, user.id
-                )
+                state = self._estrus_state_row(session, group_chat_id, user.id)
                 state.opted_out = opted_out
                 state.updated_at = datetime.now(BEIJING)
                 return user.display_name
@@ -15453,20 +15493,15 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 threshold = int(
                     self._estrus_settings_row(session).climax_threshold
                 )
-                row = session.execute(
-                    select(UserRecord, EstrusStateRecord)
-                    .outerjoin(
-                        EstrusStateRecord,
-                        (EstrusStateRecord.user_id == UserRecord.id)
-                        & (EstrusStateRecord.group_chat_id == group_chat_id),
-                    )
-                    .where(UserRecord.platform_id == platform_id)
-                ).first()
-                if row is None:
+                user = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if user is None:
                     return None
-                user, state = row
-                if state is not None:
-                    self._estrus_daily_reset(state, today)
+                state = self._estrus_state_row(
+                    session, group_chat_id, user.id, active_date=today
+                )
+                self._estrus_daily_reset(state, today)
                 today_chopped = int(
                     session.scalar(
                         select(func.count()).select_from(EstrusChopRecord).where(
@@ -15524,7 +15559,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
     def estrus_popularity_rankings(
         self, group_chat_id: UUID, now: datetime
     ) -> list[dict]:
-        """每日人气榜（前 5）：按当日（跨群）被凿次数排名，附跨群累计被凿总数。"""
+        """每日人气榜（前 5）：所有群合并排名，附跨群累计被凿总数。"""
         day_start = now.astimezone(BEIJING).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
@@ -15790,7 +15825,6 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     last_created = session.scalar(
                         select(func.max(EstrusChopRecord.created_at)).where(
                             EstrusChopRecord.chopper_user_id == chopper.id,
-                            EstrusChopRecord.group_chat_id == group_chat_id,
                         )
                     )
                     if last_created is not None:
@@ -30199,8 +30233,6 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     return DisciplineFineResult("target_not_joined")
                 if target.id == issuer.id:
                     return DisciplineFineResult("self")
-                if target.department_id in enforcement_ids:
-                    return DisciplineFineResult("same_department")
                 if settings_record.target_daily_limit > 0:
                     fined_today = int(
                         session.scalar(

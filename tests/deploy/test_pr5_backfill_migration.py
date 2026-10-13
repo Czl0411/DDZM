@@ -20,11 +20,14 @@ def _migration():
     return module
 
 
-def test_pr5_backfill_follows_custom_commands_without_second_head():
+def test_pr6_migrations_merge_into_deployed_main_chain_without_second_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
 
-    assert script.get_heads() == ["20261012_105"]
+    assert script.get_heads() == ["20261013_106"]
     assert script.get_revision("20261012_105").down_revision == "20261012_104"
+    assert script.get_revision("20261013_106").down_revision == (
+        "20261012_105", "20261012_103"
+    )
 
 
 def test_pr5_backfill_preserves_live_economy_settings(monkeypatch):
@@ -140,7 +143,7 @@ def test_pr5_backfill_adds_missing_tables_and_columns(tmp_path, monkeypatch):
     config = Config(str(ROOT / "alembic.ini"))
     command.stamp(config, "20261012_104")
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "20261012_105")
 
     inspector = sa.inspect(engine)
     assert {"random_event_polls", "random_event_poll_candidates", "random_event_poll_votes",

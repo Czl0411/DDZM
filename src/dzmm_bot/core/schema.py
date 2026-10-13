@@ -3038,7 +3038,8 @@ class EstrusStateRecord(Base):
         BeijingDateTime, default=beijing_now, nullable=False
     )
     __table_args__ = (
-        UniqueConstraint("group_chat_id", "user_id", name="ux_estrus_state"),
+        # 凿状态跨群共享；group_chat_id 只保留历史来源，不参与隔离。
+        UniqueConstraint("user_id", name="ux_estrus_state_user"),
     )
 
 

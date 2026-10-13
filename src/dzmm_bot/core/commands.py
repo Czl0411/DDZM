@@ -95,11 +95,13 @@ class GroupCommandHandler:
     def __init__(
         self, repository: CoreRepository, *, chess_game_id: str | None = None,
         chess_game_url: str | None = None, chess_public_api_url: str | None = None,
+        chess_test_chatroom_id: str | None = None,
     ) -> None:
         self._repository = repository
         self._chess_game_id = chess_game_id
         self._chess_game_url = chess_game_url
         self._chess_public_api_url = chess_public_api_url
+        self._chess_test_chatroom_id = chess_test_chatroom_id
 
     def handle(self, message: InboundMessage) -> str | list[str] | None:
         content = message.content.strip()
@@ -149,6 +151,8 @@ class GroupCommandHandler:
         if command == "/象棋":
             if group_chat_id is None:
                 return "请在已监听的群聊发送 /象棋。"
+            if self._chess_test_chatroom_id and message.chatroom_id != self._chess_test_chatroom_id:
+                return "象棋目前仅在测试群开放。"
             if self._repository.find_user(message.sender_platform_id) is None:
                 return "请先用 /入职 名称 加入摸鱼公司。"
             url = self._chess_game_url

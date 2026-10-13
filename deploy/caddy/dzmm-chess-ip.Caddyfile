@@ -1,0 +1,23 @@
+{
+    auto_https disable_redirects
+    default_sni 49.234.20.159
+}
+
+:80 {
+    root * /usr/share/caddy
+    file_server
+}
+
+https://49.234.20.159 {
+    tls /etc/caddy/certs/chess-ip.crt /etc/caddy/certs/chess-ip.key
+
+    handle /api/chess/* {
+        reverse_proxy 127.0.0.1:18120 {
+            flush_interval -1
+        }
+    }
+
+    handle {
+        respond 404
+    }
+}

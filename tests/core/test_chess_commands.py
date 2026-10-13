@@ -58,6 +58,31 @@ def test_unconfigured_or_unregistered_does_not_create(tmp_path):
         assert session.scalars(select(ChessGameRecord)).all() == []
 
 
+def test_chess_command_only_creates_games_in_configured_test_group(tmp_path):
+    _, repo, factory = setup(tmp_path)
+    repo.create_group_chat(
+        "其他群", "https://www.aikda.com/chat?c=other", True, True,
+        False, False, NOW,
+    )
+    service = CoreService(repo, GroupCommandHandler(
+        repo, chess_game_id="game-id", chess_game_url=GAME_URL,
+        chess_public_api_url=API_URL, chess_test_chatroom_id="chess",
+    ))
+    service.receive_inbound(InboundMessage(
+        "chess-other", "creator", "/象棋", NOW,
+        source_type="group", chatroom_id="other",
+    ))
+    with factory() as session:
+        assert session.scalars(select(ChessGameRecord)).all() == []
+        replies = session.scalars(select(OutboundRecord)).all()
+        assert len(replies) == 1 and "仅在测试群开放" in replies[0].text
+
+    send(service, "1")
+    with factory() as session:
+        games = session.scalars(select(ChessGameRecord)).all()
+        assert len(games) == 1
+
+
 def test_sent_gate_and_expiry(tmp_path):
     service, repo, factory = setup(tmp_path)
     send(service, "1")

@@ -105,6 +105,21 @@ def headers(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_uid_mode_is_explicit_and_retains_employee_and_player_checks(api):
+    secure, repo, game, _ = api
+    uid = lambda value: {"Authorization": f"ChessUid {value}"}
+    assert secure.get('/api/chess/rooms', headers=uid('creator')).status_code == 401
+    client = TestClient(create_app(repo, 'core', clock=lambda: NOW,
+        chess_game_id='3761638', chess_allow_uid=True))
+    assert client.get('/api/chess/rooms').status_code == 401
+    assert client.get('/api/chess/rooms', headers=uid('stranger')).status_code == 403
+    assert client.get('/api/chess/rooms', headers=uid('creator')).status_code == 200
+    path = f'/api/chess/{game.id}'
+    assert client.post(path+'/claim', headers=uid('opponent'), json={'code':game.code}).status_code == 200
+    assert client.post(path+'/actions', headers=uid('spectator'), json={'action':'resign','version':1}).status_code == 422
+    assert client.get('/internal/status', headers=uid('creator')).status_code in (401, 403)
+
+
 def test_card_id_and_signed_game_audience_are_separate(api):
     _, repo, _, token = api
     audience = "00400412-d145-4a78-848e-3962bc375891"

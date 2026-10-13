@@ -40,16 +40,19 @@ class ChatPayload(BaseModel):
     text: str = Field(min_length=1, max_length=300)
 
 
-def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], datetime]) -> APIRouter:
+def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], datetime], *, allow_uid: bool = False) -> APIRouter:
     router = APIRouter(prefix="/api/chess")
 
     def employee(authorization: str | None) -> str:
-        if authorization is None or not authorization.startswith("Bearer "):
+        if allow_uid and authorization and authorization.startswith("ChessUid "):
+            platform_id = authorization[len("ChessUid "):].strip()
+        elif authorization and authorization.startswith("Bearer "):
+            try:
+                platform_id = verify_gamefy_token(authorization[7:], game_id)
+            except ValueError as error:
+                raise HTTPException(401, str(error)) from error
+        else:
             raise HTTPException(401, "请先登录 DZMM")
-        try:
-            platform_id = verify_gamefy_token(authorization[7:], game_id)
-        except ValueError as error:
-            raise HTTPException(401, str(error)) from error
         if repository.find_user(platform_id) is None:
             raise HTTPException(403, "请先入职")
         return platform_id
@@ -131,7 +134,8 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
     async def events(room_id: UUID, request: Request, authorization: str | None = Header(default=None)):
         pid = employee(authorization)
         initial = snapshot(room_id, pid)
-        expires_at = jwt.decode(authorization[7:], options={"verify_signature": False})["exp"]
+        expires_at = (time.time() + 1800 if authorization.startswith("ChessUid ")
+                      else jwt.decode(authorization[7:], options={"verify_signature": False})["exp"])
 
         async def stream():
             previous = None

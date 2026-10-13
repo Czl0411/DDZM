@@ -5,64 +5,44 @@ import { resolveRoomId, ChessClient, canMove, canChat } from '../publish/game.js
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
 
-test('concurrent requests share one credential request', async () => {
+test('UID works when platform token is missing and concurrent requests share identity lookup', async () => {
   let calls = 0;
+  const authorizations = [];
   const client = new ChessClient({
-    sdk: { user: { info: async () => { calls++; await new Promise(r => setTimeout(r, 5)); return { token: 'token' }; } } },
-    fetchImpl: async () => ({ ok: true, json: async () => [] }), apiBase: 'https://chess.example.com',
+    sdk: { user: { info: async () => { calls++; await new Promise(r => setTimeout(r, 5)); return { id: 'player', token: null }; } } },
+    fetchImpl: async (_, options) => { authorizations.push(options.headers.Authorization); return { ok: true, json: async () => [] }; },
+    apiBase: 'https://chess.example.com',
   });
   await Promise.all([client.rooms(), client.rooms(), client.rooms()]);
   assert.equal(calls, 1);
+  assert.deepEqual(authorizations, ['ChessUid player', 'ChessUid player', 'ChessUid player']);
 });
 
-test('persistent 401 does not repeatedly mint credentials', async () => {
-  let calls = 0;
-  const client = new ChessClient({
-    sdk: { user: { info: async () => ({ token: `token-${++calls}` }) } },
-    fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({ detail: 'invalid' }) }),
-    apiBase: 'https://chess.example.com',
-  });
-  await assert.rejects(client.rooms());
-  await assert.rejects(client.rooms());
-  assert.equal(calls, 2);
-});
-
-test('late 401 for old credential reuses already refreshed credential', async () => {
-  let calls = 0;
-  const client = new ChessClient({
-    sdk: { user: { info: async () => ({ token: `token-${++calls}` }) } },
-    fetchImpl: async () => {}, apiBase: 'https://chess.example.com',
-  });
-  const old = await client.auth();
-  await client.auth(true, old);
-  assert.equal(await client.auth(true, old), 'token-2');
-  assert.equal(calls, 2);
-});
-
-test('signed-in player without a token sees service failure and retries are cooled down', async () => {
-  let calls = 0;
-  const client = new ChessClient({
-    sdk: { user: { info: async () => { calls++; return { id: 'player', token: null }; } } },
-    fetchImpl: async () => { throw Error('must not request backend without token'); },
-    apiBase: 'https://chess.example.com',
-  });
-  await assert.rejects(client.rooms(), /平台暂未签发登录凭证/);
-  await assert.rejects(client.rooms(), /稍后再试/);
-  assert.equal(calls, 1);
-});
-
-test('anonymous player still sees login instruction', async () => {
+test('missing UID prevents backend requests', async () => {
   const client = new ChessClient({
     sdk: { user: { info: async () => ({ id: null, token: null }) } },
-    fetchImpl: async () => {}, apiBase: 'https://chess.example.com',
+    fetchImpl: async () => { assert.fail('must not request without UID'); },
+    apiBase: 'https://chess.example.com',
   });
-  await assert.rejects(client.rooms(), /请先登录 DZMM/);
+  await assert.rejects(client.rooms(), /无法读取玩家身份/);
+});
+
+test('401 does not retry platform identity or backend requests', async () => {
+  let infoCalls = 0, requests = 0;
+  const client = new ChessClient({
+    sdk: { user: { info: async () => { infoCalls++; return { id: 'player' }; } } },
+    fetchImpl: async () => { requests++; return { ok: false, status: 401, json: async () => ({ detail: 'denied' }) }; },
+    apiBase: 'https://chess.example.com',
+  });
+  await assert.rejects(client.rooms(), /denied/);
+  assert.equal(infoCalls, 1);
+  assert.equal(requests, 1);
 });
 
 test('card entry lists rooms then selects a room without launch params', async () => {
   const paths = [];
   const client = new ChessClient({
-    sdk: { user: { info: async () => ({ token: 'token' }) } },
+    sdk: { user: { info: async () => ({ id: 'player' }) } },
     apiBase: 'https://chess.example.com',
     fetchImpl: async (url) => {
       paths.push(url);
@@ -83,22 +63,9 @@ test('launch gp is validated and per-tab hash restores its own room', () => {
   assert.equal(resolveRoomId(JSON.stringify({ roomId: '../../other' }), ''), null);
 });
 
-test('a renewed platform token retries a request after 401', async () => {
-  let infoCalls = 0;
-  const sdk = { user: { info: async () => ({ token: `token-${++infoCalls}` }) } };
-  const headers = [];
-  const fetchImpl = async (_, options) => {
-    headers.push(options.headers.Authorization);
-    return { ok: headers.length > 1, status: headers.length > 1 ? 200 : 401, json: async () => ({ game: { status: 'waiting' } }) };
-  };
-  const client = new ChessClient({ sdk, fetchImpl, apiBase: 'https://chess.example.com', roomId: A });
-  await client.snapshot();
-  assert.deepEqual(headers, ['Bearer token-1', 'Bearer token-2']);
-});
-
 test('browser fetch keeps the global receiver', async () => {
   const client = new ChessClient({
-    sdk: { user: { info: async () => ({ token: 'token' }) } },
+    sdk: { user: { info: async () => ({ id: 'player' }) } },
     apiBase: 'https://chess.example.com', roomId: A,
     fetchImpl: function () {
       assert.equal(this, globalThis);
@@ -110,7 +77,7 @@ test('browser fetch keeps the global receiver', async () => {
 
 test('different room clients never redirect each other and stale moves reload', async () => {
   const paths = [];
-  const sdk = { user: { info: async () => ({ token: 'token' }) } };
+  const sdk = { user: { info: async () => ({ id: 'player' }) } };
   let count = 0;
   const fetchImpl = async (url) => {
     paths.push(url);
@@ -132,7 +99,7 @@ test('different room clients never redirect each other and stale moves reload', 
 test('chess actions include the displayed game version', async () => {
   let body;
   const client = new ChessClient({
-    sdk: { user: { info: async () => ({ token: 'token' }) } },
+    sdk: { user: { info: async () => ({ id: 'player' }) } },
     apiBase: 'https://chess.example.com', roomId: A,
     fetchImpl: async (_, options) => {
       body = JSON.parse(options.body);
@@ -156,7 +123,7 @@ test('reconnect reloads the authoritative snapshot before reopening SSE', async 
   const controller = new AbortController();
   let snapshots = 0;
   const client = new ChessClient({
-    sdk: { user: { info: async () => ({ token: 'token' }) } },
+    sdk: { user: { info: async () => ({ id: 'player' }) } },
     apiBase: 'https://chess.example.com', roomId: A,
     fetchImpl: async (url) => {
       calls.push(url.endsWith('/events') ? 'events' : 'snapshot');

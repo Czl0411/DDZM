@@ -295,6 +295,7 @@ def create_app_from_environment() -> FastAPI:
         settings.core_token,
         require_group_chat_bootstrap=True,
         chess_game_id=settings.chess_game_id,
+        chess_token_audience=settings.chess_token_audience,
         chess_game_url=settings.chess_game_url,
         chess_public_api_url=settings.chess_public_api_url,
         chess_test_chatroom_id=settings.chess_test_chatroom_id,
@@ -338,6 +339,7 @@ def create_app(
     require_group_chat_bootstrap: bool = False,
     cover_image_validator=None,
     chess_game_id: str | None = None,
+    chess_token_audience: str | None = None,
     chess_game_url: str | None = None,
     chess_public_api_url: str | None = None,
     chess_test_chatroom_id: str | None = None,
@@ -348,7 +350,7 @@ def create_app(
             CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"],
             allow_headers=["Authorization", "Content-Type"],
         )
-        app.include_router(chess_router(repository, chess_game_id, clock))
+        app.include_router(chess_router(repository, chess_token_audience or chess_game_id, clock))
     if cover_image_validator is None:
         cover_image_validator = HttpCoverImageValidator(httpx.Client(timeout=5))
     service = CoreService(

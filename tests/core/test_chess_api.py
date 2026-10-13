@@ -105,6 +105,16 @@ def headers(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_card_id_and_signed_game_audience_are_separate(api):
+    _, repo, _, token = api
+    audience = "00400412-d145-4a78-848e-3962bc375891"
+    client = TestClient(create_app(repo, "core", clock=lambda: NOW,
+        chess_game_id="3761638", chess_token_audience=audience))
+    assert client.get("/api/chess/rooms", headers=headers(token(aud=audience))).status_code == 200
+    assert client.get("/api/chess/rooms", headers=headers(token(aud="3761638"))).status_code == 401
+    assert client.get("/api/chess/rooms", headers=headers(token(aud="another-game"))).status_code == 401
+
+
 def test_lobby_requires_employee_and_does_not_leak_codes(api):
     client, repo, game, token = api
     path = "/api/chess/rooms"

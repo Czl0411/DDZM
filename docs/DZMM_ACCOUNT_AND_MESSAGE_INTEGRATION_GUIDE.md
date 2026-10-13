@@ -558,7 +558,7 @@ curl -fsS http://127.0.0.1:18120/healthz
 上线前必须完成以下配置，缺一项时 `/象棋` 不创建对局：
 
 1. 在 Gamefy 将 `gamefy/chess/publish/` 作为游戏卡内容发布，取得真实游戏 ID 和卡片 URL。`config.js` 中 `CHESS_API_BASE` 填公网 HTTPS API 源站，不要填任何密钥。须用真实玩家页面验证 Bot 生成的 `gp={"roomId":"…"}` 能被 `dzmm.getLaunchParams()` 读到；Workbench 预览不能代替。
-2. Core 环境填 `DZMM_CHESS_GAME_ID`、`DZMM_CHESS_GAME_URL`、`DZMM_CHESS_PUBLIC_API_URL`。`GAME_ID` 必须与 Gamefy JWT 的 `aud` 相同；`GAME_URL` 是群里可点开的卡片链接；`PUBLIC_API_URL` 应与 `config.js` 的 API 源站一致。三项均不应含凭据。
+2. Core 环境填 `DZMM_CHESS_GAME_ID`、`DZMM_CHESS_TOKEN_AUDIENCE`、`DZMM_CHESS_GAME_URL`、`DZMM_CHESS_PUBLIC_API_URL`。`GAME_ID` 是分享卡片的数字编号；`TOKEN_AUDIENCE` 是平台签发 JWT 的游戏 UUID（`aud`），两者不同，必须分别配置并严格验签。`GAME_URL` 是卡片链接；`PUBLIC_API_URL` 应与 `config.js` 的 API 源站一致。配置均不应含凭据。
    只在指定群联调时，另填 `DZMM_CHESS_TEST_CHATROOM_ID` 为群链接 `c=` 后的 ID；其他已监听群的 `/象棋` 不会创建对局。
 3. 用 [Caddy 示例](../deploy/caddy/dzmm-chess-ip.Caddyfile)（或 [Nginx 示例](../deploy/nginx/dzmm-chess.conf.example)）给 Core 的 `/api/chess/` 配 HTTPS 反向代理。不要把 `/internal/` 或管理页面放到这个公网域名；Core 自身仍监听 `127.0.0.1:18120`。
 4. 备份数据库后按标准发布流程安装新依赖、运行 Alembic 迁移、重启 Core/Worker，并检查迁移单一 head、`/healthz`、群消息出站和棋局 API。失败时停止新入口、恢复上一个服务版本；数据库回滚必须依据实际迁移状态单独评估，不能盲目降级。

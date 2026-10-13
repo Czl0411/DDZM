@@ -2667,6 +2667,57 @@ class UserRecord(Base):
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class DoudizhuRoomRecord(Base):
+    __tablename__ = "doudizhu_rooms"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    inbound_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), unique=True, nullable=False)
+    creator_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    short_id: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)
+    code: Mapped[str] = mapped_column(String(4), nullable=False)
+    seats: Mapped[list] = mapped_column(JSON, nullable=False)
+    ready: Mapped[list] = mapped_column(JSON, nullable=False)
+    phase: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    round_id: Mapped[UUID | None] = mapped_column(Uuid)
+    round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    redeals: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+
+
+class DoudizhuRoundRecord(Base):
+    __tablename__ = "doudizhu_rounds"
+    __table_args__ = (UniqueConstraint("room_id", "number"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("doudizhu_rooms.id"), nullable=False)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[dict] = mapped_column(JSON, nullable=False)
+    notice_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class DoudizhuRequestRecord(Base):
+    __tablename__ = "doudizhu_requests"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("doudizhu_rooms.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class DoudizhuMessageRecord(Base):
+    __tablename__ = "doudizhu_messages"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("doudizhu_rooms.id"), nullable=False)
+    round_id: Mapped[UUID | None] = mapped_column(Uuid)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    content: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class ChessGameRecord(Base):
     __tablename__ = "chess_games"
 

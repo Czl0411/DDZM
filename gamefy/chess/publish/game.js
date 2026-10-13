@@ -114,6 +114,21 @@ async function boot() {
   let roomId = location.hash === '#lobby' ? null : resolveRoomId(launch?.gp, location.hash);
   if (!/^https:\/\//.test(window.CHESS_API_BASE || '')) { status.textContent = '棋局 API 尚未配置 HTTPS 地址。'; showReady(); return; }
   const client = new ChessClient({ sdk: window.dzmm, fetchImpl: fetch, apiBase: window.CHESS_API_BASE, roomId });
+  let lastRoomKey;
+  try { lastRoomKey = `chess:last-room:${await client.identity()}`; }
+  catch (error) { status.textContent = error.message; showReady(); return; }
+  if (!roomId && location.hash !== '#lobby') {
+    try {
+      const saved = (await window.dzmm.kv.get(lastRoomKey))?.value;
+      if (typeof saved === 'string' && UUID.test(saved)) {
+        const rooms = await client.rooms();
+        if (rooms.some(room => room.id === saved)) {
+          roomId = saved;
+          client.selectRoom(roomId);
+        }
+      }
+    } catch { /* A missing platform save must not block the room list. */ }
+  }
   if (!roomId) {
     const lobby = document.querySelector('#lobby');
     lobby.hidden = false;
@@ -143,6 +158,8 @@ async function boot() {
     document.querySelector('.layout').hidden = false;
   }
   location.hash = `room=${roomId}`;
+  try { await window.dzmm.kv.put(lastRoomKey, roomId, { flush: true }); }
+  catch { document.querySelector('#feedback').textContent = '未能保存最近棋局，下次请从列表进入。'; }
   document.querySelector('#back-to-rooms').addEventListener('click', () => {
     location.hash = 'lobby';
     location.reload();
@@ -233,16 +250,29 @@ async function boot() {
     }
     clocks(); renderBoard(); showReady();
   }
-  document.querySelector('#claim-panel').addEventListener('submit', async event => {
-    event.preventDefault();
-    try { render(await client.claim(document.querySelector('#claim-code').value.trim())); }
-    catch (error) { status.textContent = error.message; }
+  const feedback = document.querySelector('#feedback');
+  const claimButton = document.querySelector('#claim-seat');
+  claimButton.addEventListener('click', async () => {
+    const code = document.querySelector('#claim-code').value.trim();
+    if (!/^[0-9]{4}$/.test(code)) { feedback.textContent = '请输入四位数字入座码。'; return; }
+    claimButton.disabled = true;
+    feedback.textContent = '正在申请入座…';
+    try { render(await client.claim(code)); feedback.textContent = '入座成功。'; }
+    catch (error) {
+      feedback.textContent = ({ invalid_code: '入座码不正确，请核对群内消息。', expired: '入座码已过期，请重新创建棋局。', occupied: '席位已被抢占或棋局已结束。', same_player: '你已是创建者，不能抢第二席。', not_announced: '入座码尚未发送到群，请稍后再试。', not_joined: '请先入职后再加入棋局。', not_found: '棋局不存在，请返回列表。' })[error.message] || error.message;
+    }
+    finally { claimButton.disabled = false; }
   });
-  document.querySelector('#chat-form').addEventListener('submit', async event => {
-    event.preventDefault();
+  document.querySelector('#claim-code').addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); claimButton.click(); }
+  });
+  document.querySelector('#chat-send').addEventListener('click', async () => {
     const input = document.querySelector('#chat-input');
     try { render(await client.chat(input.value)); input.value = ''; }
-    catch (error) { status.textContent = error.message; }
+    catch (error) { feedback.textContent = error.message; }
+  });
+  document.querySelector('#chat-input').addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); document.querySelector('#chat-send').click(); }
   });
   for (const button of document.querySelectorAll('[data-action]')) button.addEventListener('click', async () => {
     const action = button.dataset.action;

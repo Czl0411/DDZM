@@ -91,6 +91,20 @@ def headers(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_lobby_requires_employee_and_does_not_leak_codes(api):
+    client, repo, game, token = api
+    path = "/api/chess/rooms"
+    assert client.get(path).status_code == 401
+    assert client.get(path, headers=headers(token("stranger"))).status_code == 403
+    response = client.get(path, headers=headers(token("spectator")))
+    assert response.status_code == 200
+    assert response.json() == [{"id": str(game.id), "creator_name": "creator", "status": "waiting"}]
+    repo.claim_chess_seat(game.id, "opponent", game.code, NOW)
+    assert client.get(path, headers=headers(token("spectator"))).json()[0]["status"] == "playing"
+    repo.settle_chess_deadline(game.id, NOW + timedelta(minutes=1))
+    assert client.get(path, headers=headers(token("spectator"))).json() == []
+
+
 def test_api_requires_joined_identity_and_protects_code(api):
     client, _, game, token = api
     path = f"/api/chess/{game.id}"

@@ -81,6 +81,11 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
             "moves": repository.chess_moves(room_id), "server_time": clock(),
         })
 
+    @router.get("/rooms")
+    def rooms(authorization: str | None = Header(default=None)) -> list[dict]:
+        employee(authorization)
+        return repository.list_chess_rooms(clock())
+
     @router.get("/{room_id}")
     def get_game(room_id: UUID, authorization: str | None = Header(default=None)) -> dict:
         return snapshot(room_id, employee(authorization))

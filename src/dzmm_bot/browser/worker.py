@@ -789,7 +789,7 @@ class BrowserWorker:
                         reference=reference,
                     )
                 )
-        if outbound.content_type in {"novel", "group_invite"}:
+        if outbound.content_type in {"novel", "group_invite", "character"}:
             if outbound.destination_chatroom_id is not None:
                 send_share = lambda: gateway.send_share_to(
                     outbound.destination_chatroom_id,

@@ -5,6 +5,22 @@ import { resolveRoomId, ChessClient, canMove, canChat } from '../publish/game.js
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
 
+test('card entry lists rooms then selects a room without launch params', async () => {
+  const paths = [];
+  const client = new ChessClient({
+    sdk: { user: { info: async () => ({ token: 'token' }) } },
+    apiBase: 'https://chess.example.com',
+    fetchImpl: async (url) => {
+      paths.push(url);
+      return { ok: true, json: async () => [] };
+    },
+  });
+  await client.rooms();
+  client.selectRoom(A);
+  await client.snapshot();
+  assert.deepEqual(paths, ['https://chess.example.com/api/chess/rooms', `https://chess.example.com/api/chess/${A}`]);
+});
+
 test('launch gp is validated and per-tab hash restores its own room', () => {
   assert.equal(resolveRoomId(JSON.stringify({ roomId: A }), `#room=${B}`), A);
   assert.equal(resolveRoomId(null, `#room=${B}`), B);

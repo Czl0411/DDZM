@@ -43,8 +43,10 @@ def test_chess_command_creates_parallel_links_without_game_slot(tmp_path):
         games = session.scalars(select(ChessGameRecord).order_by(ChessGameRecord.created_at)).all()
         replies = session.scalars(select(OutboundRecord).order_by(OutboundRecord.created_at)).all()
     assert len(games) == 2 and games[0].id != games[1].id
-    assert len(replies) == 2
-    assert all("先输入先得" in item.text and "gp=" in item.text for item in replies)
+    assert len(replies) == 4
+    assert [item.content_type for item in replies] == ["character", "text", "character", "text"]
+    assert all(item.text == "game-id" for item in replies[::2])
+    assert all("先输入先得" in item.text and "https://" not in item.text for item in replies[1::2])
     assert all(item.group_chat_id == games[0].group_chat_id for item in replies)
     assert repo.claim_chess_seat(games[0].id, "creator", games[0].code, NOW).status == "same_player"
 
@@ -94,4 +96,8 @@ def test_sent_gate_and_expiry(tmp_path):
     assert repo.claim_chess_seat(game_id, "second", code, NOW).status == "not_announced"
     with factory.begin() as session:
         session.get(OutboundRecord, reply.id).status = "sent"
+    assert repo.claim_chess_seat(game_id, "second", code, NOW).status == "not_announced"
+    with factory.begin() as session:
+        text_reply = session.scalar(select(OutboundRecord).where(OutboundRecord.content_type == "text"))
+        text_reply.status = "sent"
     assert repo.claim_chess_seat(game_id, "second", code, NOW + timedelta(minutes=10, seconds=1)).status == "expired"

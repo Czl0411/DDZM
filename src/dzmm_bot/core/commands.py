@@ -1,7 +1,7 @@
 from collections import Counter
 import json
 import re
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from dzmm_bot.runtime.contracts import InboundMessage
@@ -192,15 +192,15 @@ class GroupCommandHandler:
             if inbound_id is None:
                 raise RuntimeError("象棋发起消息尚未入站")
             game = self._repository.create_chess_game(message.sender_platform_id, group_chat_id, inbound_id, received_at)
-            parsed = urlsplit(url)
-            params = [(key, value) for key, value in parse_qsl(parsed.query) if key != "gp"]
-            params.append(("gp", json.dumps({"roomId": str(game.id)}, separators=(",", ":"))))
-            game_link = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(params), parsed.fragment))
-            return (
-                f"♟ 象棋对局已创建\n{game_link}\n"
-                f"入座码：{game.code}（10 分钟有效）\n"
-                "另一位已入职群友输入入座码先输入先得；其余已入职群友可直接观战。"
-            )
+            return [
+                CommandReply(self._chess_game_id, content_type="character"),
+                CommandReply(
+                    f"♟ 象棋对局已创建 · {str(game.id)[:8]}\n"
+                    f"入座码：{game.code}（10 分钟有效）\n"
+                    "打开上方象棋卡片，选择对应编号的棋局。\n"
+                    "另一位已入职群友输入入座码先输入先得；其余已入职群友可直接观战。"
+                ),
+            ]
         if command in {"/ban", "/是"}:
             if group_chat_id is None:
                 return "请在群内使用此指令。"

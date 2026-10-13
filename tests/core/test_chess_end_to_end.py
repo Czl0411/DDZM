@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 import jwt
@@ -57,12 +56,16 @@ def test_bot_to_gamefy_two_rooms_spectator_reconnect_and_final_notice(tmp_path, 
     with factory.begin() as session:
         games = session.scalars(select(ChessGameRecord).order_by(ChessGameRecord.created_at)).all()
         replies = session.scalars(select(OutboundRecord).order_by(OutboundRecord.created_at)).all()
-        assert len(games) == 2 and len(replies) == 2
+        assert len(games) == 2 and len(replies) == 4
         ids = [game.id for game in games]
         codes = [game.code for game in games]
-        for game, reply in zip(games, replies):
-            assert str(game.id) in parse_qs(urlsplit(reply.text.splitlines()[1]).query)["gp"][0]
+        for game, reply in zip(games, replies[1::2]):
+            assert str(game.id)[:8] in reply.text
+        for reply in replies:
             reply.status = "sent"
+
+    rooms = client.get("/api/chess/rooms", headers=header("spectator")).json()
+    assert {room["id"] for room in rooms} == {str(room_id) for room_id in ids}
 
     first = f"/api/chess/{ids[0]}"
     second = f"/api/chess/{ids[1]}"

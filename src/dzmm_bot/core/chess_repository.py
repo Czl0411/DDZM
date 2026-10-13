@@ -106,6 +106,24 @@ class ChessRepositoryMixin:
                 raise ValueError("棋局不存在")
             return self._chess_view(session, row)
 
+    def list_chess_rooms(self, now: datetime) -> list[dict]:
+        with self._session() as session:
+            rows = session.execute(
+                select(ChessGameRecord, UserRecord.display_name)
+                .join(UserRecord, UserRecord.id == ChessGameRecord.creator_user_id)
+                .where(
+                    (ChessGameRecord.status == "playing")
+                    | ((ChessGameRecord.status == "waiting") & (ChessGameRecord.claim_deadline > now)),
+                    select(OutboundRecord.id).where(
+                        OutboundRecord.inbound_message_id == ChessGameRecord.inbound_message_id,
+                        OutboundRecord.content_type == "text",
+                        OutboundRecord.status == "sent",
+                    ).exists(),
+                )
+                .order_by(ChessGameRecord.created_at.desc())
+            ).all()
+            return [{"id": str(row.id), "creator_name": name, "status": row.status} for row, name in rows]
+
     def claim_chess_seat(
         self, game_id: UUID, platform_id: str, code: str, now: datetime
     ) -> ChessClaimResult:
@@ -129,6 +147,7 @@ class ChessRepositoryMixin:
                     OutboundRecord.inbound_message_id == row.inbound_message_id,
                     OutboundRecord.group_chat_id == row.group_chat_id,
                     OutboundRecord.status == "sent",
+                    OutboundRecord.content_type == "text",
                 ).limit(1)
             )
             if sent is None:

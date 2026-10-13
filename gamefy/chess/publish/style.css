@@ -5,6 +5,7 @@ main { max-width: 1100px; margin: auto; padding: 14px; }
 h1 { margin: 0; font-size: 1.4rem; }
 header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
 #status { margin: 0; color: #685b4d; }
+#rooms { display: grid; gap: 10px; margin-top: 12px; }
 .layout { display: grid; grid-template-columns: minmax(0, 610px) minmax(230px, 1fr); gap: 16px; }
 .table, aside { background: #fffaf0; border: 1px solid #dac8a6; border-radius: 12px; padding: 14px; }
 #players { font-weight: 700; text-align: center; }

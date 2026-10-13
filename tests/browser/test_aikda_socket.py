@@ -864,13 +864,17 @@ def test_send_image_uses_platform_image_content(gateway):
     }
 
 
-def test_send_novel_share_uses_structured_share_content(gateway):
+@pytest.mark.parametrize("share_type,resource_id", [
+    ("novel", "66408bb3-60a0-40e1-a434-ee40efee4d27"),
+    ("character", "3761638"),
+])
+def test_send_novel_share_uses_structured_share_content(gateway, share_type, resource_id):
     adapter, socket, _ = gateway
 
     platform_message_id = adapter.send_share_to(
         "direct-1",
-        "novel",
-        "66408bb3-60a0-40e1-a434-ee40efee4d27",
+        share_type,
+        resource_id,
         message_id="novel-outbound-1",
     )
 
@@ -879,8 +883,8 @@ def test_send_novel_share_uses_structured_share_content(gateway):
     assert send_call[1]["chatroomId"] == "direct-1"
     assert send_call[1]["message"]["content"] == {
         "type": "share",
-        "shareType": "novel",
-        "resourceId": "66408bb3-60a0-40e1-a434-ee40efee4d27",
+        "shareType": share_type,
+        "resourceId": resource_id,
     }
 
 

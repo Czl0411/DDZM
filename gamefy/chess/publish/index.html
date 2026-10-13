@@ -11,8 +11,10 @@
 <body>
   <main>
     <header><h1>♟ 群聊象棋</h1><p id="status">正在连接棋局…</p></header>
+    <section id="lobby" hidden><h2>选择棋局</h2><button id="refresh-rooms" type="button">刷新棋局</button><div id="rooms"></div></section>
     <section class="layout">
       <div class="table">
+        <button id="back-to-rooms" type="button">返回棋局列表</button>
         <div id="players">红方 · 黑方</div>
         <div class="clocks"><span>🔴 <b id="red-clock">15:00</b></span><span>⚫ <b id="black-clock">15:00</b></span></div>
         <div class="step-clock">本步剩余 <b id="move-clock">60</b> 秒</div>

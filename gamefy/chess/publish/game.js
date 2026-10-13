@@ -21,10 +21,13 @@ export class ChessClient {
   constructor({ sdk, fetchImpl, apiBase, roomId }) {
     this.sdk = sdk;
     this.fetchImpl = fetchImpl.bind(globalThis);
-    this.base = `${apiBase.replace(/\/$/, '')}/api/chess/${roomId}`;
+    this.root = `${apiBase.replace(/\/$/, '')}/api/chess`;
+    this.base = roomId ? `${this.root}/${roomId}` : this.root;
     this.token = null;
     this.state = null;
   }
+  rooms() { return this.request('/rooms'); }
+  selectRoom(roomId) { this.base = `${this.root}/${roomId}`; }
   async auth(force = false) {
     if (force || !this.token) {
       this.token = (await this.sdk.user.info())?.token;
@@ -103,11 +106,42 @@ async function boot() {
     if (!ready) { ready = true; loading?.ready(); }
   };
   const launch = await window.dzmm.getLaunchParams();
-  const roomId = resolveRoomId(launch?.gp, location.hash);
-  if (!roomId) { status.textContent = '没有有效棋局，请从群内链接进入。'; showReady(); return; }
-  location.hash = `room=${roomId}`;
+  let roomId = location.hash === '#lobby' ? null : resolveRoomId(launch?.gp, location.hash);
   if (!/^https:\/\//.test(window.CHESS_API_BASE || '')) { status.textContent = '棋局 API 尚未配置 HTTPS 地址。'; showReady(); return; }
   const client = new ChessClient({ sdk: window.dzmm, fetchImpl: fetch, apiBase: window.CHESS_API_BASE, roomId });
+  if (!roomId) {
+    const lobby = document.querySelector('#lobby');
+    lobby.hidden = false;
+    document.querySelector('.layout').hidden = true;
+    showReady();
+    roomId = await new Promise(resolve => {
+      const refresh = async () => {
+        const list = document.querySelector('#rooms');
+        try {
+          const rooms = await client.rooms();
+          list.replaceChildren();
+          status.textContent = rooms.length ? '选择棋局，输入入座码加入；也可以直接观战。' : '暂无可加入或观战的棋局。';
+          for (const room of rooms) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = `${room.creator_name} · ${room.id.slice(0, 8)} · ${room.status === 'waiting' ? '等待入座' : '正在对局'} · 进入 / 观战`;
+            button.addEventListener('click', () => resolve(room.id));
+            list.append(button);
+          }
+        } catch (error) { status.textContent = error.message; }
+      };
+      document.querySelector('#refresh-rooms').addEventListener('click', refresh);
+      refresh();
+    });
+    client.selectRoom(roomId);
+    lobby.hidden = true;
+    document.querySelector('.layout').hidden = false;
+  }
+  location.hash = `room=${roomId}`;
+  document.querySelector('#back-to-rooms').addEventListener('click', () => {
+    location.hash = 'lobby';
+    location.reload();
+  });
   const controller = new AbortController();
   let state = null;
   let selected = null;

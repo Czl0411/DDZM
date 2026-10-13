@@ -42,6 +42,10 @@ class ChessClaimResult:
     game: ChessGameView | None = None
 
 
+class ChessRateLimitError(ValueError):
+    pass
+
+
 class ChessRepositoryMixin:
     @staticmethod
     def _position_data(position: ChessPosition) -> dict:
@@ -296,3 +300,40 @@ class ChessRepositoryMixin:
                 elif self._timeout_chess(session, row, now):
                     count += 1
         return count
+
+    def chess_messages(self, game_id: UUID) -> list[dict]:
+        with self._session() as session:
+            row = session.get(ChessGameRecord, game_id)
+            if row is None or row.status == "finished":
+                return []
+            records = session.scalars(
+                select(ChessMessageRecord)
+                .where(ChessMessageRecord.game_id == game_id)
+                .order_by(ChessMessageRecord.created_at, ChessMessageRecord.id)
+            ).all()
+            return [
+                {"id": str(item.id), "sender": session.get(UserRecord, item.user_id).display_name,
+                 "text": item.content, "created_at": item.created_at.isoformat()}
+                for item in records
+            ]
+
+    def chess_chat(self, game_id: UUID, platform_id: str, text: str, now: datetime) -> dict:
+        content = text.strip()
+        if not content or len(content) > 300 or any(ord(char) < 32 and char not in "\n\t" for char in content):
+            raise ValueError("聊天内容须为 1～300 字纯文字")
+        with self._session() as session:
+            game = session.scalar(select(ChessGameRecord).where(ChessGameRecord.id == game_id).with_for_update())
+            user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
+            if game is None or user is None or game.status != "playing":
+                raise ValueError("当前不可发送聊天")
+            last = session.scalar(
+                select(ChessMessageRecord.created_at)
+                .where(ChessMessageRecord.game_id == game_id, ChessMessageRecord.user_id == user.id)
+                .order_by(ChessMessageRecord.created_at.desc()).limit(1)
+            )
+            if last is not None and (now - last).total_seconds() < 2:
+                raise ChessRateLimitError("请稍后再发")
+            message = ChessMessageRecord(game_id=game_id, user_id=user.id, content=content, created_at=now)
+            session.add(message)
+            session.flush()
+            return {"id": str(message.id), "sender": user.display_name, "text": content, "created_at": now.isoformat()}

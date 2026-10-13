@@ -8,6 +8,7 @@ import httpx
 import logging
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from uvicorn import Config, Server
@@ -245,6 +246,7 @@ from .performance import HttpCoverImageValidator
 from .shop_management import ShopChangesConfirmRequest, ShopChangesPreviewRequest
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
+from .chess_api import chess_router
 
 
 def create_server(repository: CoreRepository, settings: Settings) -> Server:
@@ -254,6 +256,7 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
             repository,
             settings.core_token,
             require_group_chat_bootstrap=True,
+            chess_game_id=settings.chess_game_id,
         ),
         host="127.0.0.1",
         port=settings.core_api_port,
@@ -280,6 +283,7 @@ def create_app_from_environment() -> FastAPI:
         repository,
         settings.core_token,
         require_group_chat_bootstrap=True,
+        chess_game_id=settings.chess_game_id,
     )
 
 
@@ -319,8 +323,15 @@ def create_app(
     clock: Callable[[], datetime] = beijing_now,
     require_group_chat_bootstrap: bool = False,
     cover_image_validator=None,
+    chess_game_id: str | None = None,
 ) -> FastAPI:
     app = FastAPI()
+    if chess_game_id:
+        app.add_middleware(
+            CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
+        app.include_router(chess_router(repository, chess_game_id, clock))
     if cover_image_validator is None:
         cover_image_validator = HttpCoverImageValidator(httpx.Client(timeout=5))
     service = CoreService(

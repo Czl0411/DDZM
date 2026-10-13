@@ -18,6 +18,7 @@ dependencies = [
     "python-multipart>=0.0.20,<1",
     "openpyxl>=3.1,<4",
     "defusedxml>=0.7,<1",
+    "PyJWT[crypto]>=2.8,<3",
 ]
 
 [project.optional-dependencies]

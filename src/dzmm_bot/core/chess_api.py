@@ -1,0 +1,135 @@
+"""Authenticated public API for the Gamefy chess board."""
+
+import asyncio
+from dataclasses import asdict
+from datetime import datetime
+import json
+from typing import Callable
+from uuid import UUID
+
+from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from .chess_auth import verify_gamefy_token
+from .chess_repository import ChessRateLimitError
+from .chess_rules import IllegalChessMove
+from .repository import CoreRepository
+
+
+class ClaimPayload(BaseModel):
+    code: str = Field(pattern=r"^\d{4}$")
+
+
+class MovePayload(BaseModel):
+    from_xy: tuple[int, int]
+    to_xy: tuple[int, int]
+    version: int
+
+
+class ActionPayload(BaseModel):
+    action: str
+
+
+class ChatPayload(BaseModel):
+    text: str = Field(min_length=1, max_length=300)
+
+
+def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], datetime]) -> APIRouter:
+    router = APIRouter(prefix="/api/chess")
+
+    def employee(authorization: str | None) -> str:
+        if authorization is None or not authorization.startswith("Bearer "):
+            raise HTTPException(401, "请先登录 DZMM")
+        try:
+            platform_id = verify_gamefy_token(authorization[7:], game_id)
+        except ValueError as error:
+            raise HTTPException(401, str(error)) from error
+        if repository.find_user(platform_id) is None:
+            raise HTTPException(403, "请先入职")
+        return platform_id
+
+    def snapshot(room_id: UUID, platform_id: str) -> dict:
+        try:
+            game = repository.get_chess_game(room_id)
+        except ValueError as error:
+            raise HTTPException(404, str(error)) from error
+        data = asdict(game)
+        data.pop("code", None)
+        if platform_id == game.red_platform_id:
+            role = "red"
+        elif platform_id == game.black_platform_id:
+            role = "black"
+        elif platform_id == game.creator_platform_id and game.status == "waiting":
+            role = "creator"
+        else:
+            role = "spectator"
+        for key in ("creator", "opponent", "red", "black"):
+            player = data.get(f"{key}_platform_id")
+            data[f"{key}_name"] = repository.find_user(player).display_name if player else None
+        for key in ("creator", "opponent", "red", "black", "offer"):
+            data.pop(f"{key}_platform_id", None)
+        return jsonable_encoder({"game": data, "role": role, "messages": repository.chess_messages(room_id)})
+
+    @router.get("/{room_id}")
+    def get_game(room_id: UUID, authorization: str | None = Header(default=None)) -> dict:
+        return snapshot(room_id, employee(authorization))
+
+    @router.post("/{room_id}/claim")
+    def claim(room_id: UUID, payload: ClaimPayload, authorization: str | None = Header(default=None)) -> dict:
+        pid = employee(authorization)
+        result = repository.claim_chess_seat(room_id, pid, payload.code, clock())
+        if result.status != "claimed":
+            raise HTTPException(409, result.status)
+        return snapshot(room_id, pid)
+
+    @router.post("/{room_id}/moves")
+    def move(room_id: UUID, payload: MovePayload, authorization: str | None = Header(default=None)) -> dict:
+        pid = employee(authorization)
+        try:
+            repository.play_chess(room_id, pid, payload.from_xy, payload.to_xy, payload.version, clock())
+        except (ValueError, IllegalChessMove) as error:
+            raise HTTPException(422, str(error)) from error
+        return snapshot(room_id, pid)
+
+    @router.post("/{room_id}/actions")
+    def action(room_id: UUID, payload: ActionPayload, authorization: str | None = Header(default=None)) -> dict:
+        pid = employee(authorization)
+        try:
+            repository.chess_action(room_id, pid, payload.action, clock())
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return snapshot(room_id, pid)
+
+    @router.post("/{room_id}/chat")
+    def chat(room_id: UUID, payload: ChatPayload, authorization: str | None = Header(default=None)) -> dict:
+        pid = employee(authorization)
+        try:
+            return repository.chess_chat(room_id, pid, payload.text, clock())
+        except ChessRateLimitError as error:
+            raise HTTPException(429, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @router.get("/{room_id}/events")
+    async def events(room_id: UUID, request: Request, authorization: str | None = Header(default=None)):
+        pid = employee(authorization)
+        initial = snapshot(room_id, pid)
+
+        async def stream():
+            previous = None
+            current = initial
+            while not await request.is_disconnected():
+                encoded = json.dumps(current, ensure_ascii=False, separators=(",", ":"))
+                if encoded != previous:
+                    yield f"event: snapshot\ndata: {encoded}\n\n"
+                    previous = encoded
+                else:
+                    yield ": keepalive\n\n"
+                await asyncio.sleep(1)
+                current = snapshot(room_id, pid)
+
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+
+    return router

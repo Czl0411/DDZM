@@ -22,6 +22,9 @@ class Settings:
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_base_url: str = "https://api.deepseek.com"
     integration_api_key: str | None = None
+    chess_game_id: str | None = None
+    chess_game_url: str | None = None
+    chess_public_api_url: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -56,6 +59,9 @@ class Settings:
                 "DZMM_DEEPSEEK_BASE_URL", "https://api.deepseek.com"
             ),
             integration_api_key=_optional("DZMM_INTEGRATION_API_KEY"),
+            chess_game_id=_optional("DZMM_CHESS_GAME_ID", empty_as_none=True),
+            chess_game_url=_optional("DZMM_CHESS_GAME_URL", empty_as_none=True),
+            chess_public_api_url=_optional("DZMM_CHESS_PUBLIC_API_URL", empty_as_none=True),
         )
 
 

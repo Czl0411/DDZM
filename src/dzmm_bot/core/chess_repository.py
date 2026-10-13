@@ -215,8 +215,12 @@ class ChessRepositoryMixin:
             history = tuple(self._position(record.position_before) for record in records) + (position, next_position)
             moves = tuple(ChessMove(record.from_x, record.from_y, record.to_x, record.to_y) for record in records) + (move,)
             violation = adjudicate_repetition(history, moves)
-            if isinstance(violation, ChessViolation) and violation.reason != "long_check" and violation.side == position.turn:
-                raise IllegalChessMove("长将／长捉须变着")
+            long_chase_loss = (
+                isinstance(violation, ChessViolation)
+                and violation.reason == "long_chase"
+                and violation.side == position.turn
+                and history.count(next_position) >= 4
+            )
             elapsed = self._elapsed_ms(row, now)
             if position.turn == "red":
                 row.red_remaining_ms -= elapsed
@@ -236,6 +240,9 @@ class ChessRepositoryMixin:
             if isinstance(violation, ChessViolation) and violation.reason == "long_check":
                 winner = "black" if violation.side == "red" else "red"
                 self._finish_chess(session, row, f"{winner}:long_check", now)
+            elif long_chase_loss:
+                winner = "black" if position.turn == "red" else "red"
+                self._finish_chess(session, row, f"{winner}:long_chase", now)
             elif outcome is not None:
                 self._finish_chess(session, row, f"{outcome.winner}:{outcome.reason}", now)
             return self._chess_view(session, row)

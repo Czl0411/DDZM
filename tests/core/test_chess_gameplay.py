@@ -158,3 +158,36 @@ def test_obvious_perpetual_check_is_adjudicated(active):
             current.version, NOW + timedelta(seconds=index),
         )
     assert current.status == "finished" and current.result == "black:long_check"
+
+
+@pytest.mark.parametrize(
+    ("last_move", "expected_status", "expected_result"),
+    [
+        (ChessMove(2, 6, 1, 6), "finished", "black:long_chase"),
+        (ChessMove(2, 6, 3, 6), "playing", None),
+    ],
+)
+def test_obvious_perpetual_chase_allows_two_turns_to_change(active, last_move, expected_status, expected_result):
+    repo, factory, game = active
+    from dzmm_bot.core.schema import ChessGameRecord
+
+    rows = [["."] * 9 for _ in range(10)]
+    for x, y, piece in ((4, 9, "K"), (4, 0, "k"), (4, 5, "P"), (2, 6, "R"), (1, 3, "h")):
+        rows[y][x] = piece
+    start = ChessPosition(tuple("".join(row) for row in rows), "red")
+    with factory.begin() as session:
+        session.get(ChessGameRecord, game.id).position = repo._position_data(start)
+    cycle = (
+        ChessMove(2, 6, 1, 6), ChessMove(1, 3, 2, 5),
+        ChessMove(1, 6, 2, 6), ChessMove(2, 5, 1, 3),
+    )
+    current = game
+    for index, move in enumerate(cycle * 3 + (last_move,), 1):
+        mover = game.red_platform_id if index % 2 else game.black_platform_id
+        current = repo.play_chess(
+            game.id, mover, (move.from_x, move.from_y), (move.to_x, move.to_y),
+            current.version, NOW + timedelta(seconds=index),
+        )
+        if index == 9:
+            assert current.status == "playing"
+    assert current.status == expected_status and current.result == expected_result

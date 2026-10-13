@@ -1,7 +1,7 @@
 from collections import Counter
 import json
 import re
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 from dzmm_bot.runtime.contracts import InboundMessage
@@ -64,6 +64,7 @@ _COMMANDS = {
     "/设置性别", "/修改性别",
 }
 _COMMANDS.add("/随机事件时间表")
+_COMMANDS.add("/象棋")
 _COMMANDS.add("/q")
 _COMMANDS.update({"/黑历史", "/删除黑历史", "/下一页"})
 
@@ -91,8 +92,14 @@ def _valid_image_url(value: str | None) -> bool:
 
 
 class GroupCommandHandler:
-    def __init__(self, repository: CoreRepository) -> None:
+    def __init__(
+        self, repository: CoreRepository, *, chess_game_id: str | None = None,
+        chess_game_url: str | None = None, chess_public_api_url: str | None = None,
+    ) -> None:
         self._repository = repository
+        self._chess_game_id = chess_game_id
+        self._chess_game_url = chess_game_url
+        self._chess_public_api_url = chess_public_api_url
 
     def handle(self, message: InboundMessage) -> str | list[str] | None:
         content = message.content.strip()
@@ -139,6 +146,27 @@ class GroupCommandHandler:
             else None
         )
         group_chat_id = None if group is None else group.id
+        if command == "/象棋":
+            if group_chat_id is None:
+                return "请在已监听的群聊发送 /象棋。"
+            if self._repository.find_user(message.sender_platform_id) is None:
+                return "请先用 /入职 名称 加入摸鱼公司。"
+            url = self._chess_game_url
+            if not self._chess_game_id or not url or not self._chess_public_api_url or urlsplit(url).scheme != "https" or urlsplit(self._chess_public_api_url).scheme != "https":
+                return "象棋入口尚未配置完成。"
+            inbound_id = self._repository.chess_inbound_id(group_chat_id, message.platform_message_id)
+            if inbound_id is None:
+                raise RuntimeError("象棋发起消息尚未入站")
+            game = self._repository.create_chess_game(message.sender_platform_id, group_chat_id, inbound_id, received_at)
+            parsed = urlsplit(url)
+            params = [(key, value) for key, value in parse_qsl(parsed.query) if key != "gp"]
+            params.append(("gp", json.dumps({"roomId": str(game.id)}, separators=(",", ":"))))
+            game_link = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(params), parsed.fragment))
+            return (
+                f"♟ 象棋对局已创建\n{game_link}\n"
+                f"入座码：{game.code}（10 分钟有效）\n"
+                "另一位已入职群友输入入座码先输入先得；其余已入职群友可直接观战。"
+            )
         if command == "/q":
             if message.source_type != "group" or group_chat_id is None:
                 return "请在群内回复一条消息后发送 /q。"
@@ -5418,6 +5446,10 @@ class GroupCommandHandler:
                     ("/结束游戏", "/结束游戏：任一参与者结束本局并公布统计"),
                 ),
             ),
+            "象棋": (
+                "【象棋】",
+                (("/象棋", "/象棋：在群里创建可并行的 H5 对局；第二位棋手凭 4 位码抢座，其他人可观战"),),
+            ),
             "大话骰子": (
                 "【大话骰子】",
                 (
@@ -5587,6 +5619,7 @@ class GroupCommandHandler:
                     "甩锅游戏",
                     "蹦蹦数字炸弹",
                     "德州扑克",
+                    "象棋",
                     "我有你没有",
                     "真心换真心",
                     "暗网交易所",

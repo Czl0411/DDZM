@@ -257,6 +257,8 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
             settings.core_token,
             require_group_chat_bootstrap=True,
             chess_game_id=settings.chess_game_id,
+            chess_game_url=settings.chess_game_url,
+            chess_public_api_url=settings.chess_public_api_url,
         ),
         host="127.0.0.1",
         port=settings.core_api_port,
@@ -284,6 +286,8 @@ def create_app_from_environment() -> FastAPI:
         settings.core_token,
         require_group_chat_bootstrap=True,
         chess_game_id=settings.chess_game_id,
+        chess_game_url=settings.chess_game_url,
+        chess_public_api_url=settings.chess_public_api_url,
     )
 
 
@@ -324,6 +328,8 @@ def create_app(
     require_group_chat_bootstrap: bool = False,
     cover_image_validator=None,
     chess_game_id: str | None = None,
+    chess_game_url: str | None = None,
+    chess_public_api_url: str | None = None,
 ) -> FastAPI:
     app = FastAPI()
     if chess_game_id:
@@ -336,7 +342,10 @@ def create_app(
         cover_image_validator = HttpCoverImageValidator(httpx.Client(timeout=5))
     service = CoreService(
         repository,
-        GroupCommandHandler(repository),
+        GroupCommandHandler(
+            repository, chess_game_id=chess_game_id,
+            chess_game_url=chess_game_url, chess_public_api_url=chess_public_api_url,
+        ),
         cover_image_validator=cover_image_validator,
     )
 
@@ -3850,6 +3859,7 @@ def create_app(
         _: Annotated[None, Depends(authorize)],
     ) -> AcceptedResponse:
         repository.run_daily_jobs(request.now)
+        repository.advance_chess_deadlines(request.now)
         return AcceptedResponse(accepted=True)
 
     @app.get(

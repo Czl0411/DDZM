@@ -47,6 +47,14 @@ class ChessRateLimitError(ValueError):
 
 
 class ChessRepositoryMixin:
+    def chess_inbound_id(self, group_chat_id: UUID, platform_message_id: str) -> UUID | None:
+        with self._session() as session:
+            return session.scalar(select(InboundRecord.id).where(
+                InboundRecord.group_chat_id == group_chat_id,
+                InboundRecord.platform_message_id == platform_message_id,
+                InboundRecord.source_type == "group",
+            ))
+
     @staticmethod
     def _position_data(position: ChessPosition) -> dict:
         return {"board": list(position.board), "turn": position.turn}
@@ -79,7 +87,7 @@ class ChessRepositoryMixin:
             inbound = session.get(InboundRecord, inbound_id)
             if creator is None:
                 raise ValueError("只有已入职用户可以发起象棋")
-            if group is None or not group.listening_enabled or inbound is None or inbound.group_chat_id != group_chat_id:
+            if group is None or not group.listening_enabled or inbound is None or inbound.group_chat_id != group_chat_id or inbound.sender_platform_id != creator_platform_id:
                 raise ValueError("群聊或入站消息不可用")
             row = ChessGameRecord(
                 group_chat_id=group_chat_id, inbound_message_id=inbound_id,

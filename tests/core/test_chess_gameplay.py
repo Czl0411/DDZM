@@ -64,17 +64,17 @@ def test_undo_draw_and_resignation(active):
     repo, _, game = active
     red, black = game.red_platform_id, game.black_platform_id
     moved = repo.play_chess(game.id, red, (0, 6), (0, 5), 1, NOW + timedelta(seconds=10))
-    offered = repo.chess_action(game.id, red, "offer_undo", NOW + timedelta(seconds=11))
+    offered = repo.chess_action(game.id, red, "offer_undo", NOW + timedelta(seconds=11), moved.version)
     assert offered.pending_offer == "undo"
     with pytest.raises(ValueError):
-        repo.chess_action(game.id, red, "accept_undo", NOW + timedelta(seconds=12))
-    undone = repo.chess_action(game.id, black, "accept_undo", NOW + timedelta(seconds=15))
+        repo.chess_action(game.id, red, "accept_undo", NOW + timedelta(seconds=12), offered.version)
+    undone = repo.chess_action(game.id, black, "accept_undo", NOW + timedelta(seconds=15), offered.version)
     assert undone.position["board"][6][0] == "P"
     assert undone.red_remaining_ms == 890000
     assert undone.black_remaining_ms == 895000
     assert undone.position["turn"] == "red"
-    repo.chess_action(game.id, black, "offer_draw", NOW + timedelta(seconds=16))
-    drawn = repo.chess_action(game.id, red, "accept_draw", NOW + timedelta(seconds=17))
+    draw_offer = repo.chess_action(game.id, black, "offer_draw", NOW + timedelta(seconds=16), undone.version)
+    drawn = repo.chess_action(game.id, red, "accept_draw", NOW + timedelta(seconds=17), draw_offer.version)
     assert drawn.status == "finished" and drawn.result == "draw:agreement"
 
 
@@ -102,7 +102,7 @@ def test_restart_does_not_reset_clock_and_resign_is_terminal(active):
     assert restarted.advance_chess_deadlines(NOW + timedelta(seconds=61)) == 0
     assert restarted.get_chess_game(game.id).status == "finished"
     with pytest.raises(ValueError):
-        repo.chess_action(game.id, game.red_platform_id, "resign", NOW + timedelta(seconds=62))
+        repo.chess_action(game.id, game.red_platform_id, "resign", NOW + timedelta(seconds=62), game.version)
 
 
 def test_total_clock_precedes_step_clock(active):
@@ -118,8 +118,22 @@ def test_total_clock_precedes_step_clock(active):
 
 def test_resignation_needs_no_opponent_approval(active):
     repo, _, game = active
-    resigned = repo.chess_action(game.id, game.red_platform_id, "resign", NOW + timedelta(seconds=1))
+    resigned = repo.chess_action(game.id, game.red_platform_id, "resign", NOW + timedelta(seconds=1), game.version)
     assert resigned.result == "black:resign"
+
+
+def test_old_offer_response_cannot_apply_to_a_later_offer(active):
+    repo, _, game = active
+    red, black = game.red_platform_id, game.black_platform_id
+    first = repo.chess_action(game.id, red, "offer_draw", NOW, game.version)
+    declined = repo.chess_action(game.id, black, "decline_draw", NOW, first.version)
+    second = repo.chess_action(game.id, red, "offer_draw", NOW, declined.version)
+    with pytest.raises(ValueError, match="版本"):
+        repo.chess_action(game.id, black, "accept_draw", NOW, first.version)
+    unchanged = repo.get_chess_game(game.id)
+    assert unchanged.status == "playing" and unchanged.version == second.version
+    accepted = repo.chess_action(game.id, black, "accept_draw", NOW, second.version)
+    assert accepted.result == "draw:agreement"
 
 
 def test_obvious_perpetual_check_is_adjudicated(active):

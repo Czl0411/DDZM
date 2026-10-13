@@ -33,6 +33,7 @@ class MovePayload(BaseModel):
 
 class ActionPayload(BaseModel):
     action: str
+    version: int
 
 
 class ChatPayload(BaseModel):
@@ -54,6 +55,7 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
         return platform_id
 
     def snapshot(room_id: UUID, platform_id: str) -> dict:
+        repository.settle_chess_deadline(room_id, clock())
         try:
             game = repository.get_chess_game(room_id)
         except ValueError as error:
@@ -104,7 +106,7 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
     def action(room_id: UUID, payload: ActionPayload, authorization: str | None = Header(default=None)) -> dict:
         pid = employee(authorization)
         try:
-            repository.chess_action(room_id, pid, payload.action, clock())
+            repository.chess_action(room_id, pid, payload.action, clock(), payload.version)
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         return snapshot(room_id, pid)
@@ -113,6 +115,7 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
     def chat(room_id: UUID, payload: ChatPayload, authorization: str | None = Header(default=None)) -> dict:
         pid = employee(authorization)
         try:
+            repository.settle_chess_deadline(room_id, clock())
             return repository.chess_chat(room_id, pid, payload.text, clock())
         except ChessRateLimitError as error:
             raise HTTPException(429, str(error)) from error

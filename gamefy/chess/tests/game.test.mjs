@@ -59,6 +59,20 @@ test('different room clients never redirect each other and stale moves reload', 
   ]);
 });
 
+test('chess actions include the displayed game version', async () => {
+  let body;
+  const client = new ChessClient({
+    sdk: { user: { info: async () => ({ token: 'token' }) } },
+    apiBase: 'https://chess.example.com', roomId: A,
+    fetchImpl: async (_, options) => {
+      body = JSON.parse(options.body);
+      return { ok: true, status: 200, json: async () => ({ game: { version: 8 } }) };
+    },
+  });
+  await client.action('accept_draw', 7);
+  assert.deepEqual(body, { action: 'accept_draw', version: 7 });
+});
+
 test('spectators cannot move but may chat until terminal state', () => {
   const playing = { role: 'spectator', game: { status: 'playing', position: { turn: 'red' } } };
   assert.equal(canMove(playing), false);

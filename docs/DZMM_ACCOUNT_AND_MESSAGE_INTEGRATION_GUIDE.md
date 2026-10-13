@@ -564,4 +564,6 @@ curl -fsS http://127.0.0.1:18120/healthz
 
 安全边界：H5 的 `dzmm.user.info()` token 只经 Bearer 头发给棋局 API；服务端用平台 JWKS 验 RS256、`iss`、`aud` 和有效期，并用签名后的 `sub` 查本地 `users.platform_id`。四位码不是登录凭据。不得把 token 放进链接、聊天、KV 或日志。正式启用前要在真实已入职账号上确认 token `sub` 与本地 `platform_id` 匹配。
 
+落子与悔棋／和棋／认输请求均提交当前棋局版本；旧页面的过期请求会被拒绝并重新获取局面。页面读取棋局或发送聊天时也会由 Core 结算已到期的时钟，不仅依赖 Worker 的定时扫描。
+
 本地检查：`.venv/bin/python -m pytest tests/core/test_chess_*.py tests/deploy/test_chess_migration.py -q` 和 `node --test gamefy/chess/tests/game.test.mjs`。这些测试不能证明真实 Gamefy 卡片、HTTPS/CORS、浏览器沙箱及 Bot 群链接已验收。复杂重复棋例的 2020 规则裁决尚需专项复核，未完成前不要向玩家开放正式对局。

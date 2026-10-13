@@ -56,7 +56,7 @@ export class ChessClient {
   }
   move(from_xy, to_xy, version) { return this.post('/moves', { from_xy, to_xy, version }); }
   claim(code) { return this.post('/claim', { code }); }
-  action(action) { return this.post('/actions', { action }); }
+  action(action, version) { return this.post('/actions', { action, version }); }
   async chat(text) {
     await this.request('/chat', { method: 'POST', body: JSON.stringify({ text }) });
     return this.snapshot();
@@ -202,7 +202,7 @@ async function boot() {
   for (const button of document.querySelectorAll('[data-action]')) button.addEventListener('click', async () => {
     const action = button.dataset.action;
     if (action === 'resign' && !confirm('确定认输吗？')) return;
-    try { render(await client.action(action)); }
+    try { render(await client.action(action, state.game.version)); }
     catch (error) { render(client.state); status.textContent = error.message; }
   });
   setInterval(clocks, 250);

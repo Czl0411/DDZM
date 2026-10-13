@@ -82,7 +82,7 @@ def test_bot_to_gamefy_two_rooms_spectator_reconnect_and_final_notice(tmp_path, 
     assert client.get(first, headers=header("creator")).json()["game"]["version"] == 2
     assert client.get(second, headers=header("creator")).json()["game"]["version"] == 1
     assert client.get(first, headers=header("opponent")).json()["messages"][0]["text"] == "好棋"
-    ended = client.post(first + "/actions", headers=header(red), json={"action": "resign"})
+    ended = client.post(first + "/actions", headers=header(red), json={"action": "resign", "version": 2})
     assert ended.status_code == 200 and ended.json()["game"]["status"] == "finished"
     assert client.get(first, headers=header("spectator")).json()["messages"] == []
     assert client.post(first + "/chat", headers=header("spectator"), json={"text": "赛后"}).status_code == 422

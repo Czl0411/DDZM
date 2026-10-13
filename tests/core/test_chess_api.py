@@ -111,3 +111,33 @@ def test_claim_chat_rate_limit_and_invalid_input(api):
     assert client.post(path + "/chat", headers=headers(token("spectator")), json={"text": "x" * 301}).status_code == 422
     assert client.post(path + "/moves", headers=headers(token("spectator")), json={"bad": 1}).status_code == 422
     assert repo.get_chess_game(game.id).version == 1
+
+
+def test_get_settles_expired_room_without_worker(api):
+    _, repo, game, token = api
+    repo.claim_chess_seat(game.id, "opponent", game.code, NOW)
+    client = TestClient(create_app(repo, "core", clock=lambda: NOW + timedelta(seconds=60), chess_game_id="test-game"))
+    path = f"/api/chess/{game.id}"
+    response = client.get(path, headers=headers(token("spectator")))
+    assert response.status_code == 200
+    assert response.json()["game"]["status"] == "finished"
+    assert response.json()["game"]["result"] == "black:step_timeout"
+    assert client.post(path + "/chat", headers=headers(token("spectator")), json={"text": "还能聊吗"}).status_code == 422
+
+
+def test_actions_require_current_version(api):
+    client, repo, game, token = api
+    repo.claim_chess_seat(game.id, "opponent", game.code, NOW)
+    path = f"/api/chess/{game.id}/actions"
+    red = repo.get_chess_game(game.id).red_platform_id
+    black = repo.get_chess_game(game.id).black_platform_id
+    assert client.post(path, headers=headers(token(red)), json={"action": "offer_draw"}).status_code == 422
+    first = client.post(path, headers=headers(token(red)), json={"action": "offer_draw", "version": 1})
+    assert first.status_code == 200
+    declined = client.post(path, headers=headers(token(black)), json={"action": "decline_draw", "version": 2})
+    assert declined.status_code == 200
+    second = client.post(path, headers=headers(token(red)), json={"action": "offer_draw", "version": 3})
+    assert second.status_code == 200
+    stale = client.post(path, headers=headers(token(black)), json={"action": "accept_draw", "version": 2})
+    assert stale.status_code == 422
+    assert repo.get_chess_game(game.id).status == "playing"

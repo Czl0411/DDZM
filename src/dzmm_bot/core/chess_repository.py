@@ -240,7 +240,7 @@ class ChessRepositoryMixin:
                 self._finish_chess(session, row, f"{outcome.winner}:{outcome.reason}", now)
             return self._chess_view(session, row)
 
-    def chess_action(self, game_id: UUID, platform_id: str, action: str, now: datetime) -> ChessGameView:
+    def chess_action(self, game_id: UUID, platform_id: str, action: str, now: datetime, expected_version: int) -> ChessGameView:
         valid = {"offer_undo", "accept_undo", "decline_undo", "offer_draw", "accept_draw", "decline_draw", "resign"}
         if action not in valid:
             raise ValueError("未知的象棋操作")
@@ -250,6 +250,8 @@ class ChessRepositoryMixin:
                 raise ValueError("棋局未在进行")
             if self._timeout_chess(session, row, now):
                 return self._chess_view(session, row)
+            if row.version != expected_version:
+                raise ValueError("棋局版本已变化")
             user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
             if user is None or user.id not in {row.red_user_id, row.black_user_id}:
                 raise ValueError("只有棋手能执行此操作")
@@ -291,26 +293,31 @@ class ChessRepositoryMixin:
                     session.delete(last)
             return self._chess_view(session, row)
 
+    def _advance_chess_row(self, session, row: ChessGameRecord, now: datetime) -> bool:
+        if row.status == "waiting" and now >= row.claim_deadline:
+            row.status = "cancelled"
+            row.version += 1
+            sent = session.scalar(select(OutboundRecord.id).where(
+                OutboundRecord.inbound_message_id == row.inbound_message_id,
+                OutboundRecord.status == "sent",
+            ).limit(1))
+            if sent is not None:
+                self._chess_notice(session, row, f"象棋对局 {row.id} 等候超时，已取消。")
+            return True
+        return self._timeout_chess(session, row, now)
+
+    def settle_chess_deadline(self, game_id: UUID, now: datetime) -> None:
+        with self._session() as session:
+            row = session.scalar(select(ChessGameRecord).where(ChessGameRecord.id == game_id).with_for_update())
+            if row is not None:
+                self._advance_chess_row(session, row, now)
+
     def advance_chess_deadlines(self, now: datetime) -> int:
-        count = 0
         with self._session() as session:
             rows = session.scalars(
                 select(ChessGameRecord).where(ChessGameRecord.status.in_(("waiting", "playing"))).with_for_update()
             ).all()
-            for row in rows:
-                if row.status == "waiting" and now >= row.claim_deadline:
-                    row.status = "cancelled"
-                    row.version += 1
-                    sent = session.scalar(select(OutboundRecord.id).where(
-                        OutboundRecord.inbound_message_id == row.inbound_message_id,
-                        OutboundRecord.status == "sent",
-                    ).limit(1))
-                    if sent is not None:
-                        self._chess_notice(session, row, f"象棋对局 {row.id} 等候超时，已取消。")
-                    count += 1
-                elif self._timeout_chess(session, row, now):
-                    count += 1
-        return count
+            return sum(self._advance_chess_row(session, row, now) for row in rows)
 
     def chess_messages(self, game_id: UUID) -> list[dict]:
         with self._session() as session:

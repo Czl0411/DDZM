@@ -35,12 +35,18 @@
 ```sh
 .venv/bin/python -m pytest tests/core/test_doudizhu*.py tests/core/test_chess*.py tests/deploy/test_doudizhu*.py tests/deploy/test_chess_migration.py tests/runtime/test_settings.py -q
 node --test gamefy/doudizhu/tests/*.test.mjs
-.venv/bin/python -m pytest gamefy/doudizhu/tests/test_sandbox.py -q
+.venv/bin/python -m pytest gamefy/doudizhu/tests/test_doudizhu_sandbox.py -q
 ```
 
 真实 PostgreSQL 并发测试使用独立测试库，通过 `DOUDIZHU_TEST_DATABASE_URL` 指定，禁止填生产库。测试创建并删除自己的随机 schema。未设置时该测试跳过，不能声称已验证数据库锁。
 
 本次全项目回归（排除需额外数据库配置的 `scripts/test_estrus_rank.py`）有 57 项既有迁移测试失败；在改动前 `b067c82` 的独立代码副本重跑 `tests/deploy`，同样 57 项失败且清单一致。不能将全项目报告成全绿，也不顺带修改旧迁移。
+
+本地审查后验证：144 项 Python 测试通过（含象棋回归、真实 PostgreSQL 抢座/准备/手动操作与超时竞态、320/390/1280px 沙箱及跨房间导航），另 6 项 Node 测试通过。审查发现的旧账号残留、象棋帮助异常、旧导航覆盖新房间、续局空位无法补人均补了失败回归并修复。
+
+续局仅限原三人；准备阶段任何人退出都会结束房间，按钮明确显示“退出并结束房间”。换人请重新 `/斗地主`。
+
+暂缓的轻微问题：上一轮准备阶段聊天可能在续局准备页重新出现；滑选只验证了单指，多指重叠触碰可能重复切换选牌。出牌仍需要显式点击按钮，服务端仍校验牌型与归属。
 
 ## 回滚
 

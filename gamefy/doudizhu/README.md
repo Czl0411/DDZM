@@ -6,4 +6,4 @@
 
 身份为用户明确选择的 UID 信任模式，不防止伪造 UID 冒充；不涉及摸鱼币。手牌按请求 UID 投影，观众没有私有牌。
 
-测试：`node --test gamefy/doudizhu/tests/*.test.mjs` 与 `.venv/bin/python -m pytest gamefy/doudizhu/tests/test_sandbox.py -q`。浏览器测试使用本机 Chrome 的实际 iframe 沙箱，不依赖表单提交。
+测试：`node --test gamefy/doudizhu/tests/*.test.mjs` 与 `.venv/bin/python -m pytest gamefy/doudizhu/tests/test_doudizhu_sandbox.py -q`。浏览器测试使用本机 Chrome 的实际 iframe 沙箱，不依赖表单提交。

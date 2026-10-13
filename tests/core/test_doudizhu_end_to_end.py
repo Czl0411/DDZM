@@ -76,4 +76,3 @@ def test_group_to_complete_game_and_rematch_without_currency(ddz):
         state = action(uid, 'ready')
     assert state['phase'] == 'bidding' and state['round_id'] != first_round
     assert view('viewer')['hand'] == []
-

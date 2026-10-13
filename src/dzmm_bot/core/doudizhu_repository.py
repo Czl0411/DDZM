@@ -78,6 +78,7 @@ class DoudizhuRepositoryMixin:
             .order_by(Message.created_at.desc(), Message.id.desc()).limit(100)).all()
         return {'id': str(room.id), 'short_id': room.short_id, 'round_id': str(room.round_id) if room.round_id else None,
             'version': room.version, 'phase': room.phase, 'seat': seat, 'players': players,
+            'rematch_waiting': room.phase == 'waiting' and room.round_number > 0,
             'deadline': room.deadline.isoformat() if room.deadline else None, 'server_time': now.isoformat(),
             'hand': list(state['hands'][seat]) if state and seat is not None else [],
             'bottom': list(state['bottom']) if state and state['landlord'] is not None else [],
@@ -175,8 +176,10 @@ class DoudizhuRepositoryMixin:
                 elif action in ('ready', 'unready'):
                     ready[seat] = action == 'ready'
                 elif action == 'leave':
-                    if user.id == room.creator_id:
+                    if user.id == room.creator_id or room.round_number > 0:
                         room.phase, room.deadline = 'cancelled', None
+                        if room.round_number > 0:
+                            self._ddz_notice(session, room, f'斗地主房间 {room.short_id} 有玩家退出续局，已结束；换人请发送 /斗地主 重新开局。')
                     else:
                         seats[seat], ready[seat] = None, False
                         room.presence = {k: v for k, v in room.presence.items() if k != str(seat)}
@@ -195,7 +198,7 @@ class DoudizhuRepositoryMixin:
                 if action == 'rematch' and row.state['phase'] == 'finished':
                     room.round_id, room.phase, room.ready = None, 'waiting', [False] * 3
                     room.redeals = 0
-                    room.code = f'{randbelow(10000):04d}'
+                    room.code = ''
                     room.deadline = now + timedelta(minutes=10)
                 else:
                     row.state = apply_action(row.state, seat, 'takeover' if action == 'leave' else action, payload, now)

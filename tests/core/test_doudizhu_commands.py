@@ -84,3 +84,16 @@ def test_finish_notice_once_without_currency(ddz):
         assert '胜利' in notices[0].text and '落败' in notices[0].text
         assert room['id'] not in notices[0].text and 'landlord' not in notices[0].text
         assert [(u.id, u.balance) for u in s.scalars(select(UserRecord)).all()] == before
+
+
+def test_chess_and_doudizhu_have_independent_help_topics(ddz):
+    repo, factory, _ = ddz
+    svc = service(repo)
+    for index, topic in enumerate(('象棋', '斗地主')):
+        svc.receive_inbound(InboundMessage(f'help-{index}', 'host', f'/帮助 {topic}', NOW,
+            source_type='group', chatroom_id='test-ddz'))
+    with factory() as s:
+        messages = s.scalars(select(OutboundRecord).order_by(OutboundRecord.created_at)).all()
+        assert len(messages) == 2
+        assert '【象棋】' in messages[0].text and '/斗地主' not in messages[0].text
+        assert '【斗地主】' in messages[1].text

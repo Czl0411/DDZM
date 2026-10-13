@@ -33,3 +33,13 @@ test('action retries preserve supplied id and do not auto-retry mutations',async
   await client.action('room',envelope);
   assert.deepEqual(bodies[0],bodies[1]);
 });
+
+test('failed identity refresh clears old UID and blocks old-identity requests',async()=>{
+  let available=true,stopped=false,requests=0;
+  const client=new DoudizhuClient({sdk:{user:{info:async()=>{if(!available)throw new Error('SDK unavailable');return {id:'alice'};}}},apiBase:'https://example.com',fetchImpl:async()=>{requests++;return {ok:true,json:async()=>({hand:[0]})};}});
+  await client.identity();client.state={hand:[0]};client.stop=()=>{stopped=true;};available=false;
+  await assert.rejects(client.identity(true),/SDK unavailable/);
+  assert.equal(client.uid,null);assert.equal(client.state,null);assert.equal(stopped,true);
+  await assert.rejects(client.snapshot('room'),/SDK unavailable/);
+  assert.equal(requests,0);
+});

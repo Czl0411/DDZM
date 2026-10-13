@@ -75,6 +75,32 @@ def test_sse_reconnect_is_recipient_scoped(ddz):
         assert len(data['hand']) == (17 if uid == 'host' else 0)
 
 
+def test_sse_stops_when_viewer_removed_or_disconnected(ddz):
+    from sqlalchemy import delete
+    from dzmm_bot.core.doudizhu_api import room_events
+    from dzmm_bot.core.schema import UserRecord
+    repo, factory, _ = ddz
+    room = dealt(ddz)
+    class Request:
+        disconnected = False
+        async def is_disconnected(self):
+            return self.disconnected
+    async def check():
+        request = Request()
+        stream = room_events(repo, UUID(room['id']), 'viewer', lambda: NOW, request)
+        assert 'event: snapshot' in await anext(stream)
+        with factory.begin() as s:
+            s.execute(delete(UserRecord).where(UserRecord.platform_id == 'viewer'))
+        assert 'event: unavailable' in await anext(stream)
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+        request.disconnected = True
+        stream = room_events(repo, UUID(room['id']), 'host', lambda: NOW, request)
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+    asyncio.run(check())
+
+
 def test_action_validation_and_suggestions(ddz):
     repo = ddz[0]
     room = dealt(ddz)

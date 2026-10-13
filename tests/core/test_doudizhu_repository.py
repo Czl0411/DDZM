@@ -146,3 +146,19 @@ def test_waiting_expiry_and_leave(ddz):
         act(repo, room, 'alice', 'claim', {'code': code}, now=NOW + timedelta(minutes=10))
     repo.advance_doudizhu_deadlines(NOW + timedelta(minutes=10))
     assert repo.doudizhu_view(UUID(room['id']), 'host', NOW)['phase'] == 'cancelled'
+
+
+def test_leaving_same_players_rematch_cancels_instead_of_stranding_a_seat(ddz):
+    from dzmm_bot.core.schema import DoudizhuRoundRecord
+    repo, factory, _ = ddz
+    room = dealt(ddz)
+    with factory.begin() as s:
+        row = s.get(DoudizhuRoundRecord, UUID(room['round_id']))
+        row.state = {**row.state, 'phase': 'finished', 'result': {'winner': 'farmers', 'winners': [1, 2], 'spring': None}}
+    room = act(repo, room, 'host', 'rematch')
+    room = act(repo, room, 'alice', 'leave')
+    assert room['phase'] == 'cancelled' and room['deadline'] is None
+    assert all(p is not None for p in room['players'])
+    with factory() as s:
+        notices = s.scalars(select(OutboundRecord).where(OutboundRecord.inbound_message_id.is_(None))).all()
+        assert len(notices) == 1 and '/斗地主' in notices[0].text

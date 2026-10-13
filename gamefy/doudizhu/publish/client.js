@@ -1,6 +1,7 @@
 export class DoudizhuClient {
   constructor({sdk,fetchImpl=fetch,apiBase}){this.sdk=sdk;this.fetchImpl=fetchImpl.bind(globalThis);this.root=apiBase.replace(/\/$/,'')+'/api/doudizhu';this.uid=null;this.pending=null;this.state=null;this.stop=null;}
   async identity(refresh=false){
+    if(refresh){this.stop?.();this.uid=null;this.state=null;}
     if(this.uid&&!refresh)return this.uid;
     if(!this.pending)this.pending=(async()=>{
       const info=await this.sdk.user.info();

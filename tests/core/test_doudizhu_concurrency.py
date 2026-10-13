@@ -61,6 +61,21 @@ def test_concurrent_claim_and_timeout():
             counts = list(pool.map(lambda _: repo.advance_doudizhu_deadlines(now + timedelta(seconds=15)), range(2)))
         assert sum(counts) == 1
         assert repo.doudizhu_view(room_id, 'host', now)['bid'] == 0
+        room = repo.doudizhu_view(room_id, 'host', now)
+        next_uid = ['host', 'a', winner][room['turn']]
+        def move_or_timeout(kind):
+            if kind == 'timeout':
+                return bool(repo.advance_doudizhu_deadlines(now + timedelta(seconds=30)))
+            try:
+                repo.doudizhu_action(room_id, next_uid, UUID(room['round_id']), room['version'],
+                    uuid4(), 'bid', {'score': 3}, now + timedelta(seconds=29))
+                return True
+            except ValueError:
+                return False
+        with ThreadPoolExecutor(2) as pool:
+            results = list(pool.map(move_or_timeout, ('move', 'timeout')))
+        assert sum(results) == 1
+        assert repo.doudizhu_view(room_id, 'host', now)['version'] == room['version'] + 1
     finally:
         engine.dispose()
         with admin.begin() as c:

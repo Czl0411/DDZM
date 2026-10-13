@@ -5,6 +5,7 @@ const $=id=>document.getElementById(id);
 const kinds={single:'单张',pair:'对子',triple:'三张',triple_single:'三带一',triple_pair:'三带一对',straight:'顺子',pair_straight:'连对',airplane:'飞机',airplane_single:'飞机带单',airplane_pair:'飞机带对',four_single:'四带二',four_pair:'四带两对',bomb:'炸弹',rocket:'王炸'};
 const phases={waiting:'等待三人入座准备',bidding:'叫分定地主',playing:'正在对局',finished:'本局结束',cancelled:'房间已取消'};
 let client,state,roomId=null,stop=null,selected=new Set(),busy=false,handKey='',controlsKey='',hintIndex=0,lastVersion=null,clockOffset=0;
+let navigation=0,savedRoomWrites=Promise.resolve();
 const text=(id,value)=>{$(id).textContent=value;};
 function feedback(value,animate=false){const el=$('feedback');el.classList.remove('celebrate');text('feedback',value);if(animate){void el.offsetWidth;el.classList.add('celebrate');}}
 function button(label,action,payload={}){const b=document.createElement('button');b.textContent=label;b.dataset.action=action;if(action==='bid')b.dataset.score=payload.score;b.onclick=()=>perform(action,payload);return b;}
@@ -42,7 +43,7 @@ function render(next,error){
   if(key!==controlsKey){
     controlsKey=key;hintIndex=0;$('actions').replaceChildren();
     $('claim-panel').hidden=state.phase!=='waiting'||self!==null||!state.players.includes(null);
-    if(self!==null&&state.phase==='waiting')$('actions').append(button(state.players[self].ready?'取消准备':'准备',state.players[self].ready?'unready':'ready'),button('离开席位','leave'));
+    if(self!==null&&state.phase==='waiting')$('actions').append(button(state.players[self].ready?'取消准备':'准备',state.players[self].ready?'unready':'ready'),button(state.rematch_waiting?'退出并结束房间':'离开席位','leave'));
     if(self!==null&&state.phase==='bidding'&&state.turn===self){for(const score of [0,1,2,3])if(!score||score>state.bid)$('actions').append(button(score?`${score} 分`:'不叫','bid',{score}));}
     if(self!==null&&['bidding','playing'].includes(state.phase))$('actions').append(button(state.players[self].trustee?'取消托管':'托管',state.players[self].trustee?'resume':'takeover'));
     if(self!==null&&state.phase==='finished')$('actions').append(button('再来一局','rematch'));
@@ -65,18 +66,23 @@ async function perform(action,payload={}){
   finally{busy=false;}
 }
 async function enter(id){
+  const generation=++navigation;
   stop?.();roomId=id;state=null;selected.clear();controlsKey=handKey='';lastVersion=null;
-  const next=await client.snapshot(id);render(next);feedback('');
-  try{await client.sdk.kv.put(`doudizhu:last-room:${client.uid}`,id);await client.sdk.kv.flush?.();}catch{}
+  const next=await client.snapshot(id);if(generation!==navigation)return;render(next);feedback('');
   location.hash=`room=${id}`;stop=client.follow(id,render);
+  const uid=client.uid;
+  savedRoomWrites=savedRoomWrites.then(async()=>{if(generation!==navigation||uid!==client.uid)return;await client.sdk.kv.put(`doudizhu:last-room:${uid}`,id);await client.sdk.kv.flush?.();}).catch(()=>{});
 }
 async function lobby(restore=false){
+  const generation=++navigation;
   stop?.();roomId=null;state=null;selected.clear();$('table').hidden=true;$('lobby').hidden=false;
-  await client.identity(true);const rooms=await client.rooms();
+  $('rooms').replaceChildren();
+  await client.identity(true);if(generation!==navigation)return;const rooms=await client.rooms();if(generation!==navigation)return;
   if(restore&&location.hash!=='#lobby'){
     const requested=/^#room=([a-f0-9-]{36})$/i.exec(location.hash)?.[1];
     let saved=requested;
     if(!saved)try{saved=(await client.sdk.kv.get(`doudizhu:last-room:${client.uid}`))?.value;}catch{}
+    if(generation!==navigation)return;
     if(typeof saved==='string'&&/^[a-f0-9-]{36}$/i.test(saved))try{await enter(saved);return;}catch{roomId=null;state=null;}
   }
   $('rooms').replaceChildren(...rooms.map(r=>{const b=document.createElement('button');b.textContent=`${r.short_id} · ${phases[r.phase]} · ${r.occupied}/3 人`;b.onclick=()=>enter(r.id).catch(e=>feedback(e.message));return b;}));

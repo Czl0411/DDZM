@@ -97,3 +97,47 @@ def test_table_in_sandbox(width):
         expect(frame.locator('#hand .card')).to_have_count(19)
         frame.locator('#back').click();expect(frame.locator('#lobby')).to_be_visible()
         browser.close()
+
+
+def test_slow_previous_room_does_not_override_new_navigation():
+    publish = Path(__file__).resolve().parents[1] / 'publish'
+    a, b = '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'
+    saved, held, streams = {}, [], []
+    now = datetime.now(timezone.utc)
+    def snapshot(rid):
+        return dict(id=rid, short_id='A' if rid==a else 'B', round_id=None, version=0,
+            phase='waiting', seat=None, players=[None]*3, hand=[], bottom=[], turn=None,
+            landlord=None, bid=0, multiplier=1, previous=None, table=[None]*3,
+            result=None, events=[], messages=[], server_time=now.isoformat(),
+            deadline=(now+timedelta(minutes=10)).isoformat())
+    with sync_playwright() as p:
+        browser=p.chromium.launch(channel='chrome',headless=True)
+        page=browser.new_page()
+        page.expose_function('saveRoom',lambda k,v:saved.update({k:v}))
+        page.add_init_script("window.dzmm={user:{info:async()=>({id:'viewer'})},kv:{get:async()=>({}),put:async(k,v)=>saveRoom(k,v)}};")
+        def route(r):
+            url=r.request.url
+            if url.endswith('/config.js'):
+                r.fulfill(body="window.DOUDIZHU_CONFIG={apiBase:'https://ddz.test'};",content_type='text/javascript');return
+            if url.endswith('/rooms'):
+                r.fulfill(json=[dict(id=rid,short_id=label,phase='waiting',occupied=1) for rid,label in ((a,'A'),(b,'B'))]);return
+            if url.endswith('/events'):
+                streams.append(url);r.fulfill(body='',content_type='text/event-stream');return
+            if '/api/doudizhu/rooms/' in url:
+                rid=url.rsplit('/',1)[-1]
+                if rid==a and not held:held.append(r);return
+                r.fulfill(json=snapshot(rid));return
+            r.fulfill(path=str(publish / url.rsplit('/',1)[-1]))
+        page.route('**/*',route)
+        page.goto('https://ddz.test/index.html')
+        page.locator('#rooms button').nth(0).click()
+        page.locator('#rooms button').nth(1).click()
+        expect(page.locator('#room-label')).to_have_text('房间 B')
+        with page.expect_response(lambda r:r.url.endswith('/'+a)):
+            held[0].fulfill(json=snapshot(a))
+        # Let the completed fetch and its JSON continuation finish before checking side effects.
+        page.evaluate('()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+        expect(page).to_have_url('https://ddz.test/index.html#room='+b)
+        assert saved['doudizhu:last-room:viewer']==b
+        assert streams and all('/'+b+'/events' in url for url in streams)
+        browser.close()

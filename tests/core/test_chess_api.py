@@ -22,6 +22,20 @@ def test_chess_jwks_uses_active_gamefy_host():
     assert JWKS_URL == "https://www.aikda.com/api/gamefy/.well-known/jwks.json"
 
 
+def test_jwks_request_identifies_application():
+    from dzmm_bot.core.chess_auth import jwks_client
+    assert jwks_client.headers["User-Agent"] == "dzmm-chess/1.0"
+    assert jwks_client.headers["Accept"] == "application/json"
+
+
+def test_jwks_connection_failure_is_not_reported_as_expired_login(monkeypatch):
+    def unavailable(token):
+        raise jwt.PyJWKClientConnectionError("HTTP Error 403")
+    monkeypatch.setattr("dzmm_bot.core.chess_auth.jwks_client.get_signing_key_from_jwt", unavailable)
+    with pytest.raises(ValueError, match="平台身份验证服务暂时不可用"):
+        verify_gamefy_token("unused", "test-game")
+
+
 @pytest.fixture
 def keys(monkeypatch):
     private = rsa.generate_private_key(public_exponent=65537, key_size=2048)

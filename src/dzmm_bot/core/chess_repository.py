@@ -325,6 +325,19 @@ class ChessRepositoryMixin:
                 for item in records
             ]
 
+    def chess_moves(self, game_id: UUID) -> list[dict]:
+        with self._session() as session:
+            records = session.scalars(
+                select(ChessMoveRecord)
+                .where(ChessMoveRecord.game_id == game_id)
+                .order_by(ChessMoveRecord.ply)
+            ).all()
+            return [
+                {"ply": item.ply, "from_xy": [item.from_x, item.from_y],
+                 "to_xy": [item.to_x, item.to_y]}
+                for item in records
+            ]
+
     def chess_chat(self, game_id: UUID, platform_id: str, text: str, now: datetime) -> dict:
         content = text.strip()
         if not content or len(content) > 300 or any(ord(char) < 32 and char not in "\n\t" for char in content):

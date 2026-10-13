@@ -1,0 +1,28 @@
+:root { font-family: system-ui, sans-serif; color: #2d2418; background: #f5f0e5; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1100px; margin: auto; padding: 14px; }
+h1 { margin: 0; font-size: 1.4rem; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+#status { margin: 0; color: #685b4d; }
+.layout { display: grid; grid-template-columns: minmax(0, 610px) minmax(230px, 1fr); gap: 16px; }
+.table, aside { background: #fffaf0; border: 1px solid #dac8a6; border-radius: 12px; padding: 14px; }
+#players { font-weight: 700; text-align: center; }
+.clocks { display: flex; justify-content: space-around; font-variant-numeric: tabular-nums; margin: 10px 0; }
+#board { display: grid; grid-template-columns: repeat(9, 1fr); aspect-ratio: 9 / 10; border: 3px solid #876341; background: #e9d1a0; margin: auto; max-width: 520px; }
+.cell { min-width: 0; padding: 0; border: 1px solid #aa8156; background: transparent; cursor: pointer; display: grid; place-items: center; }
+.cell.river { border-bottom-width: 3px; }
+.cell.selected { background: #f1db67; }
+.piece { display: grid; place-items: center; width: 80%; aspect-ratio: 1; border-radius: 50%; border: 2px solid currentColor; background: #fff8e7; font-weight: 800; font-size: clamp(12px, 2.4vw, 24px); box-shadow: 0 2px 3px #7d654a66; }
+.piece.red { color: #ad302c; }
+.piece.black { color: #27231f; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+#claim-panel, #actions, #respond, #chat-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+[hidden] { display: none !important; }
+#claim-code { width: 5em; }
+#chat-list { min-height: 300px; max-height: 62vh; overflow-y: auto; border: 1px solid #e7d9be; padding: 8px; background: white; }
+#chat-list p { margin: 0 0 8px; overflow-wrap: anywhere; }
+#moves-list { max-height: 120px; overflow-y: auto; font-variant-numeric: tabular-nums; }
+#chat-input { flex: 1; min-width: 130px; }
+@media (max-width: 760px) { header { display: block; } .layout { grid-template-columns: 1fr; } #chat-list { min-height: 150px; max-height: 30vh; } }

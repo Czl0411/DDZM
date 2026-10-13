@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>群聊象棋</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./config.js"></script>
+  <script type="module" src="./game.js"></script>
+</head>
+<body>
+  <main>
+    <header><h1>♟ 群聊象棋</h1><p id="status">正在连接棋局…</p></header>
+    <section class="layout">
+      <div class="table">
+        <div id="players">红方 · 黑方</div>
+        <div class="clocks"><span>🔴 <b id="red-clock">15:00</b></span><span>⚫ <b id="black-clock">15:00</b></span></div>
+        <div id="board" aria-label="中国象棋棋盘"></div>
+        <form id="claim-panel" hidden><label>四位入座码 <input id="claim-code" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required></label><button>抢第二席</button></form>
+        <div id="actions" hidden><button data-action="offer_undo">请求悔棋</button><button data-action="offer_draw">求和</button><button data-action="resign">认输</button></div>
+        <div id="respond" hidden><span id="offer-label"></span><button data-action="accept_undo">同意悔棋</button><button data-action="decline_undo">拒绝悔棋</button><button data-action="accept_draw">同意和棋</button><button data-action="decline_draw">拒绝和棋</button></div>
+      </div>
+      <aside><h2>着法</h2><div id="moves-list"></div><h2>本局聊天</h2><div id="chat-list" aria-live="polite"></div><form id="chat-form"><input id="chat-input" maxlength="300" placeholder="棋手和观众都可以发言"><button id="chat-send">发送</button></form></aside>
+    </section>
+  </main>
+</body>
+</html>

@@ -4,8 +4,11 @@ import asyncio
 from dataclasses import asdict
 from datetime import datetime
 import json
+import time
 from typing import Callable
 from uuid import UUID
+
+import jwt
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -70,7 +73,11 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
             data[f"{key}_name"] = repository.find_user(player).display_name if player else None
         for key in ("creator", "opponent", "red", "black", "offer"):
             data.pop(f"{key}_platform_id", None)
-        return jsonable_encoder({"game": data, "role": role, "messages": repository.chess_messages(room_id)})
+        return jsonable_encoder({
+            "game": data, "role": role, "offer_mine": game.offer_platform_id == platform_id,
+            "messages": repository.chess_messages(room_id),
+            "moves": repository.chess_moves(room_id), "server_time": clock(),
+        })
 
     @router.get("/{room_id}")
     def get_game(room_id: UUID, authorization: str | None = Header(default=None)) -> dict:
@@ -116,11 +123,12 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
     async def events(room_id: UUID, request: Request, authorization: str | None = Header(default=None)):
         pid = employee(authorization)
         initial = snapshot(room_id, pid)
+        expires_at = jwt.decode(authorization[7:], options={"verify_signature": False})["exp"]
 
         async def stream():
             previous = None
             current = initial
-            while not await request.is_disconnected():
+            while time.time() < expires_at and not await request.is_disconnected():
                 encoded = json.dumps(current, ensure_ascii=False, separators=(",", ":"))
                 if encoded != previous:
                     yield f"event: snapshot\ndata: {encoded}\n\n"

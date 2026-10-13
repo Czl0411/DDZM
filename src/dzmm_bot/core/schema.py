@@ -2613,6 +2613,56 @@ class UserRecord(Base):
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class ChessGameRecord(Base):
+    __tablename__ = "chess_games"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    inbound_message_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), nullable=False)
+    creator_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    opponent_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    red_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    black_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    code: Mapped[str] = mapped_column(String(4), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    claim_deadline: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    position: Mapped[dict | None] = mapped_column(JSON)
+    red_remaining_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=900000)
+    black_remaining_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=900000)
+    turn_started_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    result: Mapped[str | None] = mapped_column(String(64))
+    pending_offer: Mapped[str | None] = mapped_column(String(16))
+    offer_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class ChessMoveRecord(Base):
+    __tablename__ = "chess_moves"
+    __table_args__ = (UniqueConstraint("game_id", "ply"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(ForeignKey("chess_games.id"), nullable=False)
+    ply: Mapped[int] = mapped_column(Integer, nullable=False)
+    from_x: Mapped[int] = mapped_column(Integer, nullable=False)
+    from_y: Mapped[int] = mapped_column(Integer, nullable=False)
+    to_x: Mapped[int] = mapped_column(Integer, nullable=False)
+    to_y: Mapped[int] = mapped_column(Integer, nullable=False)
+    position_before: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class ChessMessageRecord(Base):
+    __tablename__ = "chess_messages"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(ForeignKey("chess_games.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    content: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class BlackHistoryEntryRecord(Base):
     __tablename__ = "black_history_entries"
     __table_args__ = (

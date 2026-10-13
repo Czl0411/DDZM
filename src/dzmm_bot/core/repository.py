@@ -111,6 +111,7 @@ from .dark_market import (
     render_listing_summary,
 )
 from .group_games import GROUP_GAME_TYPES, normalized_group_game_types
+from .chess_repository import ChessRepositoryMixin
 from .performance import (
     PERFORMANCE_ACTIVE_STATES,
     PerformanceActionResult,
@@ -3008,7 +3009,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository(ShopManagementMixin, HonorsMixin):
+class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],

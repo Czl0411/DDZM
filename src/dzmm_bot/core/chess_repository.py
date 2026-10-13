@@ -215,7 +215,27 @@ class ChessRepositoryMixin:
         row.offer_user_id = None
         row.version += 1
         session.execute(delete(ChessMessageRecord).where(ChessMessageRecord.game_id == row.id))
-        self._chess_notice(session, row, f"象棋对局已结束：{result}。对局编号 {row.id}")
+        names = {
+            "red": session.get(UserRecord, row.red_user_id).display_name,
+            "black": session.get(UserRecord, row.black_user_id).display_name,
+        }
+        winner, reason = result.split(":", 1)
+        sides = {"red": "红方", "black": "黑方"}
+        if winner == "draw":
+            text = f"♟ 象棋对局结束 · 双方和棋\n红方：{names['red']}\n黑方：{names['black']}\n原因：双方同意和棋"
+        else:
+            loser = "black" if winner == "red" else "red"
+            reasons = {
+                "checkmate": f"{sides[winner]}绝杀，{sides[loser]}被将死",
+                "stalemate": f"{sides[loser]}困毙，无合法着法",
+                "step_timeout": f"{sides[loser]}单步超时",
+                "total_timeout": f"{sides[loser]}总用时耗尽",
+                "resign": f"{sides[loser]}认输",
+                "long_check": f"{sides[loser]}长将判负",
+                "long_chase": f"{sides[loser]}长捉判负",
+            }
+            text = f"♟ 象棋对局结束\n🏆 胜利：{names[winner]}（{sides[winner]}）\n落败：{names[loser]}（{sides[loser]}）\n原因：{reasons.get(reason, '对局结束')}"
+        self._chess_notice(session, row, text)
 
     @staticmethod
     def _elapsed_ms(row: ChessGameRecord, now: datetime) -> int:

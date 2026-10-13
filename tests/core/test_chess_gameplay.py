@@ -58,11 +58,16 @@ def test_step_deadline_and_terminal_notice_are_once(active):
     with factory() as session:
         notices = session.scalars(select(OutboundRecord).where(OutboundRecord.inbound_message_id.is_(None))).all()
     assert len(notices) == 1
+    assert f"胜利：{game.black_platform_id}（黑方）" in notices[0].text
+    assert f"落败：{game.red_platform_id}（红方）" in notices[0].text
+    assert "原因：红方单步超时" in notices[0].text
+    assert "step_timeout" not in notices[0].text
+    assert str(game.id) not in notices[0].text
     assert [event["kind"] for event in repo.get_chess_game(game.id).events] == ["finish"]
 
 
 def test_undo_draw_and_resignation(active):
-    repo, _, game = active
+    repo, factory, game = active
     red, black = game.red_platform_id, game.black_platform_id
     moved = repo.play_chess(game.id, red, (0, 6), (0, 5), 1, NOW + timedelta(seconds=10))
     offered = repo.chess_action(game.id, red, "offer_undo", NOW + timedelta(seconds=11), moved.version)
@@ -81,6 +86,12 @@ def test_undo_draw_and_resignation(active):
     assert [event["kind"] for event in events] == ["move", "offer_undo", "accept_undo", "offer_draw", "accept_draw", "finish"]
     assert events[2]["undone_seq"] == events[0]["seq"]
     assert events[-1]["result"] == "draw:agreement"
+    with factory() as session:
+        notice = session.scalar(select(OutboundRecord).where(OutboundRecord.inbound_message_id.is_(None)))
+        assert "双方和棋" in notice.text
+        assert f"红方：{red}" in notice.text and f"黑方：{black}" in notice.text
+        assert "双方同意和棋" in notice.text
+        assert "agreement" not in notice.text
 
 
 def test_waiting_game_expires_once(tmp_path):
@@ -125,6 +136,27 @@ def test_resignation_needs_no_opponent_approval(active):
     repo, _, game = active
     resigned = repo.chess_action(game.id, game.red_platform_id, "resign", NOW + timedelta(seconds=1), game.version)
     assert resigned.result == "black:resign"
+
+
+@pytest.mark.parametrize("reason,description", [
+    ("checkmate", "红方绝杀，黑方被将死"), ("stalemate", "黑方困毙，无合法着法"),
+    ("step_timeout", "黑方单步超时"), ("total_timeout", "黑方总用时耗尽"),
+    ("resign", "黑方认输"), ("long_check", "黑方长将判负"), ("long_chase", "黑方长捉判负"),
+])
+def test_chess_notice_uses_display_names_and_chinese_reasons(active, reason, description):
+    from dzmm_bot.core.schema import ChessGameRecord, UserRecord
+    repo, factory, game = active
+    with factory.begin() as session:
+        row = session.get(ChessGameRecord, game.id)
+        session.get(UserRecord, row.red_user_id).display_name = "小红"
+        session.get(UserRecord, row.black_user_id).display_name = "小黑"
+        repo._finish_chess(session, row, f"red:{reason}", NOW)
+    with factory() as session:
+        notice = session.scalar(select(OutboundRecord).where(OutboundRecord.inbound_message_id.is_(None)))
+        assert "胜利：小红（红方）" in notice.text
+        assert "落败：小黑（黑方）" in notice.text
+        assert f"原因：{description}" in notice.text
+        assert reason not in notice.text and str(game.id) not in notice.text
 
 
 def test_old_offer_response_cannot_apply_to_a_later_offer(active):

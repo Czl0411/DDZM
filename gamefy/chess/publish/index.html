@@ -15,6 +15,7 @@
       <div class="table">
         <div id="players">红方 · 黑方</div>
         <div class="clocks"><span>🔴 <b id="red-clock">15:00</b></span><span>⚫ <b id="black-clock">15:00</b></span></div>
+        <div class="step-clock">本步剩余 <b id="move-clock">60</b> 秒</div>
         <div id="board" aria-label="中国象棋棋盘"></div>
         <form id="claim-panel" hidden><label>四位入座码 <input id="claim-code" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required></label><button>抢第二席</button></form>
         <div id="actions" hidden><button data-action="offer_undo">请求悔棋</button><button data-action="offer_draw">求和</button><button data-action="resign">认输</button></div>

@@ -9,6 +9,7 @@ header { display: flex; justify-content: space-between; align-items: center; gap
 .table, aside { background: #fffaf0; border: 1px solid #dac8a6; border-radius: 12px; padding: 14px; }
 #players { font-weight: 700; text-align: center; }
 .clocks { display: flex; justify-content: space-around; font-variant-numeric: tabular-nums; margin: 10px 0; }
+.step-clock { text-align: center; font-variant-numeric: tabular-nums; margin-bottom: 10px; }
 #board { display: grid; grid-template-columns: repeat(9, 1fr); aspect-ratio: 9 / 10; border: 3px solid #876341; background: #e9d1a0; margin: auto; max-width: 520px; }
 .cell { min-width: 0; padding: 0; border: 1px solid #aa8156; background: transparent; cursor: pointer; display: grid; place-items: center; }
 .cell.river { border-bottom-width: 3px; }

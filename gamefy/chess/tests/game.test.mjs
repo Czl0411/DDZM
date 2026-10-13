@@ -26,6 +26,18 @@ test('a renewed platform token retries a request after 401', async () => {
   assert.deepEqual(headers, ['Bearer token-1', 'Bearer token-2']);
 });
 
+test('browser fetch keeps the global receiver', async () => {
+  const client = new ChessClient({
+    sdk: { user: { info: async () => ({ token: 'token' }) } },
+    apiBase: 'https://chess.example.com', roomId: A,
+    fetchImpl: function () {
+      assert.equal(this, globalThis);
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ game: {} }) });
+    },
+  });
+  await client.snapshot();
+});
+
 test('different room clients never redirect each other and stale moves reload', async () => {
   const paths = [];
   const sdk = { user: { info: async () => ({ token: 'token' }) } };

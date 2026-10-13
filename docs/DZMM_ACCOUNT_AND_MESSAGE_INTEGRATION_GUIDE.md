@@ -550,3 +550,18 @@ curl -fsS http://127.0.0.1:18120/healthz
 | `tests/browser/` | 修改平台连接层前，先看和补充测试时 |
 
 旧的消息通道交接资料见 [BOT_MESSAGE_TRANSPORT_HANDOFF.md](BOT_MESSAGE_TRANSPORT_HANDOFF.md)。若两份文字描述不一致，以当前代码与本文“Socket 主通道、Core 队列、官方 Bot 优先群消息”的说明为准，并在修改实现后同步更新文档。
+
+## 17. Gamefy 群聊象棋（待真实平台验收）
+
+`/象棋` 由已入职员工在已监听群发起。Bot 回该盘 Gamefy 卡片链接和 10 分钟有效的四位入座码；第二位不同的已入职用户在 H5 输码，先提交成功者获得席位；其他已入职用户可观战和在本局聊天。棋局、走法、时钟和终局由 Core 保存，H5 只是界面。棋局可与群内其他小游戏并行，且同群、同人可开多盘。
+
+上线前必须完成以下配置，缺一项时 `/象棋` 不创建对局：
+
+1. 在 Gamefy 将 `gamefy/chess/publish/` 作为游戏卡内容发布，取得真实游戏 ID 和卡片 URL。`config.js` 中 `CHESS_API_BASE` 填公网 HTTPS API 源站，不要填任何密钥。须用真实玩家页面验证 Bot 生成的 `gp={"roomId":"…"}` 能被 `dzmm.getLaunchParams()` 读到；Workbench 预览不能代替。
+2. Core 环境填 `DZMM_CHESS_GAME_ID`、`DZMM_CHESS_GAME_URL`、`DZMM_CHESS_PUBLIC_API_URL`。`GAME_ID` 必须与 Gamefy JWT 的 `aud` 相同；`GAME_URL` 是群里可点开的卡片链接；`PUBLIC_API_URL` 应与 `config.js` 的 API 源站一致。三项均不应含凭据。
+3. 用 [Nginx 示例](../deploy/nginx/dzmm-chess.conf.example) 给 Core 的 `/api/chess/` 配 HTTPS 反向代理。不要把 `/internal/` 或管理页面放到这个公网域名；Core 自身仍监听 `127.0.0.1:18120`。
+4. 备份数据库后按标准发布流程安装新依赖、运行 Alembic 迁移、重启 Core/Worker，并检查迁移单一 head、`/healthz`、群消息出站和棋局 API。失败时停止新入口、恢复上一个服务版本；数据库回滚必须依据实际迁移状态单独评估，不能盲目降级。
+
+安全边界：H5 的 `dzmm.user.info()` token 只经 Bearer 头发给棋局 API；服务端用平台 JWKS 验 RS256、`iss`、`aud` 和有效期，并用签名后的 `sub` 查本地 `users.platform_id`。四位码不是登录凭据。不得把 token 放进链接、聊天、KV 或日志。正式启用前要在真实已入职账号上确认 token `sub` 与本地 `platform_id` 匹配。
+
+本地检查：`.venv/bin/python -m pytest tests/core/test_chess_*.py tests/deploy/test_chess_migration.py -q` 和 `node --test gamefy/chess/tests/game.test.mjs`。这些测试不能证明真实 Gamefy 卡片、HTTPS/CORS、浏览器沙箱及 Bot 群链接已验收。复杂重复棋例的 2020 规则裁决尚需专项复核，未完成前不要向玩家开放正式对局。

@@ -20,7 +20,7 @@ export function canChat(state) { return !!state && state.game.status === 'playin
 export class ChessClient {
   constructor({ sdk, fetchImpl, apiBase, roomId }) {
     this.sdk = sdk;
-    this.fetchImpl = fetchImpl;
+    this.fetchImpl = fetchImpl.bind(globalThis);
     this.base = `${apiBase.replace(/\/$/, '')}/api/chess/${roomId}`;
     this.token = null;
     this.state = null;
@@ -121,6 +121,9 @@ async function boot() {
   function clocks() {
     document.querySelector('#red-clock').textContent = clockText('red');
     document.querySelector('#black-clock').textContent = clockText('black');
+    const game = state?.game;
+    const elapsed = game?.status === 'playing' ? Math.max(0, Date.now() - serverOffset - Date.parse(game.turn_started_at)) : 0;
+    document.querySelector('#move-clock').textContent = String(Math.max(0, Math.ceil((60000 - elapsed) / 1000)));
   }
   function renderBoard() {
     board.replaceChildren();
@@ -148,7 +151,7 @@ async function boot() {
         const from = selected;
         selected = null;
         try { render(await client.move(from, [x, y], state.game.version)); }
-        catch (error) { status.textContent = error.message; render(client.state); }
+        catch (error) { render(client.state); status.textContent = error.message; }
       });
       board.append(cell);
     }
@@ -200,7 +203,7 @@ async function boot() {
     const action = button.dataset.action;
     if (action === 'resign' && !confirm('确定认输吗？')) return;
     try { render(await client.action(action)); }
-    catch (error) { status.textContent = error.message; render(client.state); }
+    catch (error) { render(client.state); status.textContent = error.message; }
   });
   setInterval(clocks, 250);
   await client.follow(render, controller.signal);

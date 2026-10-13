@@ -47,6 +47,24 @@ def test_gamefy_token_signature_claims_and_expiry(keys):
         verify_gamefy_token(keys(exp=datetime.now(timezone.utc) - timedelta(minutes=1)), "test-game")
 
 
+def test_signature_and_rotated_jwks_are_enforced(monkeypatch):
+    keys = {kid: rsa.generate_private_key(public_exponent=65537, key_size=2048) for kid in ("old", "new")}
+
+    class RotatingClient:
+        def get_signing_key_from_jwt(self, token):
+            kid = jwt.get_unverified_header(token)["kid"]
+            return type("Key", (), {"key": keys[kid].public_key()})()
+
+    monkeypatch.setattr("dzmm_bot.core.chess_auth.jwks_client", RotatingClient())
+    claims = {"sub": "creator", "aud": "game", "iss": "dzmm-gamefy", "iat": datetime.now(timezone.utc), "exp": datetime.now(timezone.utc) + timedelta(minutes=30)}
+    for kid in keys:
+        token = jwt.encode(claims, keys[kid], algorithm="RS256", headers={"kid": kid})
+        assert verify_gamefy_token(token, "game") == "creator"
+    forged = jwt.encode(claims, keys["old"], algorithm="RS256", headers={"kid": "new"})
+    with pytest.raises(ValueError):
+        verify_gamefy_token(forged, "game")
+
+
 @pytest.fixture
 def api(tmp_path, keys):
     engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'api.db'}", connect_args={"check_same_thread": False})
@@ -79,6 +97,9 @@ def test_api_requires_joined_identity_and_protects_code(api):
     assert "code" not in res.json()["game"]
     assert res.json()["role"] == "spectator"
     assert client.post(path + "/moves", headers=headers(token("spectator")), json={"from_xy": [0, 6], "to_xy": [0, 5], "version": 1}).status_code == 422
+    preflight = client.options(path, headers={"Origin": "null", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization"})
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "*"
 
 
 def test_claim_chat_rate_limit_and_invalid_input(api):

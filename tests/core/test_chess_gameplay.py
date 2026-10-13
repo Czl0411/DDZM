@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from dzmm_bot.core.chess_rules import IllegalChessMove
+from dzmm_bot.core.chess_rules import ChessMove, ChessPosition
 from dzmm_bot.core.repository import CoreRepository
 from dzmm_bot.core.schema import Base, InboundRecord, OutboundRecord, PRIMARY_GROUP_CHAT_ID
 
@@ -119,3 +120,27 @@ def test_resignation_needs_no_opponent_approval(active):
     repo, _, game = active
     resigned = repo.chess_action(game.id, game.red_platform_id, "resign", NOW + timedelta(seconds=1))
     assert resigned.result == "black:resign"
+
+
+def test_obvious_perpetual_check_is_adjudicated(active):
+    repo, factory, game = active
+    from dzmm_bot.core.schema import ChessGameRecord
+
+    rows = [["."] * 9 for _ in range(10)]
+    for x, y, piece in ((4, 9, "K"), (4, 0, "k"), (4, 5, "P"), (3, 3, "R")):
+        rows[y][x] = piece
+    start = ChessPosition(tuple("".join(row) for row in rows), "red")
+    with factory.begin() as session:
+        session.get(ChessGameRecord, game.id).position = repo._position_data(start)
+    cycle = (
+        ChessMove(3, 3, 4, 3), ChessMove(4, 0, 3, 0),
+        ChessMove(4, 3, 3, 3), ChessMove(3, 0, 4, 0),
+    )
+    current = game
+    for index, move in enumerate(cycle * 2, 1):
+        mover = game.red_platform_id if index % 2 else game.black_platform_id
+        current = repo.play_chess(
+            game.id, mover, (move.from_x, move.from_y), (move.to_x, move.to_y),
+            current.version, NOW + timedelta(seconds=index),
+        )
+    assert current.status == "finished" and current.result == "black:long_check"

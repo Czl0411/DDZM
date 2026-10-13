@@ -255,6 +255,7 @@ from .shop_management import ShopChangesConfirmRequest, ShopChangesPreviewReques
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
 from .chess_api import chess_router
+from .doudizhu_api import doudizhu_router
 
 
 def create_server(repository: CoreRepository, settings: Settings) -> Server:
@@ -345,14 +346,25 @@ def create_app(
     chess_game_url: str | None = None,
     chess_public_api_url: str | None = None,
     chess_test_chatroom_id: str | None = None,
+    doudizhu_game_id: str | None = None,
 ) -> FastAPI:
     app = FastAPI()
-    if chess_game_id:
+    if chess_game_id or doudizhu_game_id:
         app.add_middleware(
             CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"],
             allow_headers=["Authorization", "Content-Type"],
         )
+    if chess_game_id:
         app.include_router(chess_router(repository, chess_token_audience or chess_game_id, clock, allow_uid=chess_allow_uid))
+    if doudizhu_game_id:
+        app.include_router(doudizhu_router(repository, clock))
+
+        @app.middleware('http')
+        async def doudizhu_no_cache(request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith('/api/doudizhu/'):
+                response.headers['Cache-Control'] = 'no-store'
+            return response
     if cover_image_validator is None:
         cover_image_validator = HttpCoverImageValidator(httpx.Client(timeout=5))
     service = CoreService(

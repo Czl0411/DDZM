@@ -13,6 +13,10 @@ from .schema import (DoudizhuRoomRecord as Room, DoudizhuRoundRecord as Round,
                      GroupChatRecord, InboundRecord, OutboundRecord, UserRecord)
 
 
+class DoudizhuRateLimitError(ValueError):
+    pass
+
+
 class DoudizhuRepositoryMixin:
     @staticmethod
     def _ddz_employee(session, platform_id):
@@ -210,3 +214,27 @@ class DoudizhuRepositoryMixin:
                     self._ddz_sync(session, room, row, deadline)
                 room.version += 1
             return len(rooms)
+
+    def doudizhu_chat(self, room_id, platform_id, round_id, request_id, text, now):
+        content = text.strip()
+        if not 1 <= len(content) <= 300:
+            raise ValueError('消息需要 1～300 字')
+        with self._session() as session:
+            user = self._ddz_employee(session, platform_id)
+            room = self._ddz_room(session, room_id)
+            old = session.scalar(select(Message).where(Message.room_id == room_id, Message.user_id == user.id, Message.request_id == request_id))
+            if old:
+                if old.content != content or old.round_id != round_id:
+                    raise ValueError('重复请求内容不同')
+                return {'id': str(old.id), 'name': user.display_name, 'text': old.content}
+            if room.round_id != round_id or room.phase not in ('waiting', 'bidding', 'playing'):
+                raise ValueError('本局当前不能发言')
+            previous = session.scalar(select(Message.created_at).where(Message.room_id == room_id, Message.user_id == user.id)
+                .order_by(Message.created_at.desc()).limit(1))
+            if previous and (now - previous).total_seconds() < 2:
+                raise DoudizhuRateLimitError('请间隔两秒再发言')
+            message = Message(room_id=room_id, round_id=round_id, user_id=user.id, request_id=request_id,
+                              content=content, created_at=now)
+            session.add(message)
+            session.flush()
+            return {'id': str(message.id), 'name': user.display_name, 'text': message.content}

@@ -28,6 +28,10 @@ class Settings:
     chess_game_url: str | None = None
     chess_public_api_url: str | None = None
     chess_test_chatroom_id: str | None = None
+    doudizhu_game_id: str | None = None
+    doudizhu_game_url: str | None = None
+    doudizhu_public_api_url: str | None = None
+    doudizhu_chatroom_id: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -68,6 +72,10 @@ class Settings:
             chess_game_url=_optional("DZMM_CHESS_GAME_URL", empty_as_none=True),
             chess_public_api_url=_optional("DZMM_CHESS_PUBLIC_API_URL", empty_as_none=True),
             chess_test_chatroom_id=_optional("DZMM_CHESS_TEST_CHATROOM_ID", empty_as_none=True),
+            doudizhu_game_id=_optional("DZMM_DOUDIZHU_GAME_ID", empty_as_none=True),
+            doudizhu_game_url=_optional("DZMM_DOUDIZHU_GAME_URL", empty_as_none=True),
+            doudizhu_public_api_url=_optional("DZMM_DOUDIZHU_PUBLIC_API_URL", empty_as_none=True),
+            doudizhu_chatroom_id=_optional("DZMM_DOUDIZHU_CHATROOM_ID", empty_as_none=True),
         )
 
 

@@ -269,6 +269,10 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
             chess_game_url=settings.chess_game_url,
             chess_public_api_url=settings.chess_public_api_url,
             chess_test_chatroom_id=settings.chess_test_chatroom_id,
+            doudizhu_game_id=settings.doudizhu_game_id,
+            doudizhu_game_url=settings.doudizhu_game_url,
+            doudizhu_public_api_url=settings.doudizhu_public_api_url,
+            doudizhu_chatroom_id=settings.doudizhu_chatroom_id,
         ),
         host="127.0.0.1",
         port=settings.core_api_port,
@@ -301,6 +305,10 @@ def create_app_from_environment() -> FastAPI:
         chess_game_url=settings.chess_game_url,
         chess_public_api_url=settings.chess_public_api_url,
         chess_test_chatroom_id=settings.chess_test_chatroom_id,
+        doudizhu_game_id=settings.doudizhu_game_id,
+        doudizhu_game_url=settings.doudizhu_game_url,
+        doudizhu_public_api_url=settings.doudizhu_public_api_url,
+        doudizhu_chatroom_id=settings.doudizhu_chatroom_id,
     )
 
 
@@ -347,6 +355,9 @@ def create_app(
     chess_public_api_url: str | None = None,
     chess_test_chatroom_id: str | None = None,
     doudizhu_game_id: str | None = None,
+    doudizhu_game_url: str | None = None,
+    doudizhu_public_api_url: str | None = None,
+    doudizhu_chatroom_id: str | None = None,
 ) -> FastAPI:
     app = FastAPI()
     if chess_game_id or doudizhu_game_id:
@@ -373,6 +384,8 @@ def create_app(
             repository, chess_game_id=chess_game_id,
             chess_game_url=chess_game_url, chess_public_api_url=chess_public_api_url,
             chess_test_chatroom_id=chess_test_chatroom_id,
+            doudizhu_game_id=doudizhu_game_id, doudizhu_game_url=doudizhu_game_url,
+            doudizhu_public_api_url=doudizhu_public_api_url, doudizhu_chatroom_id=doudizhu_chatroom_id,
         ),
         cover_image_validator=cover_image_validator,
     )
@@ -4052,6 +4065,8 @@ def create_app(
     ) -> AcceptedResponse:
         repository.run_daily_jobs(request.now)
         repository.advance_chess_deadlines(request.now)
+        if doudizhu_game_id:
+            repository.advance_doudizhu_deadlines(request.now)
         return AcceptedResponse(accepted=True)
 
     @app.get(

@@ -66,6 +66,7 @@ _COMMANDS = {
 }
 _COMMANDS.add("/随机事件时间表")
 _COMMANDS.add("/象棋")
+_COMMANDS.add("/斗地主")
 _COMMANDS.add("/q")
 _COMMANDS.update({"/黑历史", "/删除黑历史", "/下一页"})
 _COMMANDS.update({"/ban", "/是"})
@@ -114,12 +115,18 @@ class GroupCommandHandler:
         self, repository: CoreRepository, *, chess_game_id: str | None = None,
         chess_game_url: str | None = None, chess_public_api_url: str | None = None,
         chess_test_chatroom_id: str | None = None,
+        doudizhu_game_id: str | None = None, doudizhu_game_url: str | None = None,
+        doudizhu_public_api_url: str | None = None, doudizhu_chatroom_id: str | None = None,
     ) -> None:
         self._repository = repository
         self._chess_game_id = chess_game_id
         self._chess_game_url = chess_game_url
         self._chess_public_api_url = chess_public_api_url
         self._chess_test_chatroom_id = chess_test_chatroom_id
+        self._doudizhu_game_id = doudizhu_game_id
+        self._doudizhu_game_url = doudizhu_game_url
+        self._doudizhu_public_api_url = doudizhu_public_api_url
+        self._doudizhu_chatroom_id = doudizhu_chatroom_id
 
     def handle(self, message: InboundMessage) -> str | list[str] | None:
         content = message.content.strip()
@@ -178,6 +185,22 @@ class GroupCommandHandler:
             else None
         )
         group_chat_id = None if group is None else group.id
+        if command == "/斗地主":
+            if group_chat_id is None:
+                return "请在已监听的群聊发送 /斗地主。"
+            if not self._doudizhu_chatroom_id or message.chatroom_id != self._doudizhu_chatroom_id:
+                return "斗地主暂未在本群开放。"
+            if self._repository.find_user(message.sender_platform_id) is None:
+                return "请先用 /入职 名称 加入摸鱼公司。"
+            if not self._doudizhu_game_id or not all(url and urlsplit(url).scheme == 'https' for url in (self._doudizhu_game_url, self._doudizhu_public_api_url)):
+                return "斗地主入口尚未配置完成。"
+            inbound_id = self._repository.chess_inbound_id(group_chat_id, message.platform_message_id)
+            if inbound_id is None:
+                raise RuntimeError("斗地主发起消息尚未入站")
+            room = self._repository.create_doudizhu_room(message.sender_platform_id, group_chat_id, inbound_id, received_at)
+            return [CommandReply(self._doudizhu_game_id, content_type='character'), CommandReply(
+                f"🃏 斗地主房间已创建 · {room['short_id']}\n入座码：{room['code']}（10 分钟有效）\n"
+                "打开上方游戏卡片，选择对应房间。另两位已入职群友输入入座码，先到先得；三人准备后开局，其余群友可观战。")]
         if command == "/象棋":
             if group_chat_id is None:
                 return "请在已监听的群聊发送 /象棋。"
@@ -5523,6 +5546,7 @@ class GroupCommandHandler:
             "象棋": (
                 "【象棋】",
                 (("/象棋", "/象棋：在群里创建可并行的 H5 对局；第二位棋手凭 4 位码抢座，其他人可观战"),),
+                (("/斗地主", "/斗地主：创建三人 H5 牌局；凭 4 位码入座，三人准备后开局，可观战"),),
             ),
             "大话骰子": (
                 "【大话骰子】",

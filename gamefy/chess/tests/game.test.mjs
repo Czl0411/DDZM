@@ -5,6 +5,26 @@ import { resolveRoomId, ChessClient, canMove, canChat } from '../publish/game.js
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
 
+test('signed-in player without a token sees service failure and retries are cooled down', async () => {
+  let calls = 0;
+  const client = new ChessClient({
+    sdk: { user: { info: async () => { calls++; return { id: 'player', token: null }; } } },
+    fetchImpl: async () => { throw Error('must not request backend without token'); },
+    apiBase: 'https://chess.example.com',
+  });
+  await assert.rejects(client.rooms(), /平台暂未签发登录凭证/);
+  await assert.rejects(client.rooms(), /稍后再试/);
+  assert.equal(calls, 1);
+});
+
+test('anonymous player still sees login instruction', async () => {
+  const client = new ChessClient({
+    sdk: { user: { info: async () => ({ id: null, token: null }) } },
+    fetchImpl: async () => {}, apiBase: 'https://chess.example.com',
+  });
+  await assert.rejects(client.rooms(), /请先登录 DZMM/);
+});
+
 test('card entry lists rooms then selects a room without launch params', async () => {
   const paths = [];
   const client = new ChessClient({

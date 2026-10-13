@@ -3,9 +3,13 @@ from datetime import datetime, timedelta
 from secrets import randbelow
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
-from .schema import ChessGameRecord, GroupChatRecord, InboundRecord, OutboundRecord, UserRecord
+from .chess_rules import (
+    ChessMove, ChessPosition, ChessViolation, IllegalChessMove, adjudicate_repetition,
+    basic_outcome, initial_position, play_move,
+)
+from .schema import ChessGameRecord, ChessMessageRecord, ChessMoveRecord, GroupChatRecord, InboundRecord, OutboundRecord, UserRecord
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,14 @@ class ChessClaimResult:
 
 
 class ChessRepositoryMixin:
+    @staticmethod
+    def _position_data(position: ChessPosition) -> dict:
+        return {"board": list(position.board), "turn": position.turn}
+
+    @staticmethod
+    def _position(value: dict) -> ChessPosition:
+        return ChessPosition(tuple(value["board"]), value["turn"])
+
     def _chess_view(self, session, row: ChessGameRecord) -> ChessGameView:
         def pid(user_id):
             return session.get(UserRecord, user_id).platform_id if user_id else None
@@ -115,6 +127,7 @@ class ChessRepositoryMixin:
                 "red_user_id": row.creator_user_id if creator_red else user.id,
                 "black_user_id": user.id if creator_red else row.creator_user_id,
                 "status": "playing", "turn_started_at": now, "version": 1,
+                "position": self._position_data(initial_position()),
                 "code": "",  # Used code is never usable again.
             }
             result = session.execute(
@@ -126,3 +139,160 @@ class ChessRepositoryMixin:
             session.expire_all()
             row = session.get(ChessGameRecord, game_id)
             return ChessClaimResult("claimed" if result.rowcount == 1 else "occupied", self._chess_view(session, row))
+
+    @staticmethod
+    def _chess_notice(session, row: ChessGameRecord, text: str) -> None:
+        group = session.get(GroupChatRecord, row.group_chat_id)
+        if group is None or group.chatroom_id is None:
+            return
+        session.add(OutboundRecord(
+            group_chat_id=row.group_chat_id, destination_chatroom_id=group.chatroom_id,
+            delivery_key=group.chatroom_id, delivery_kind="group", text=text,
+        ))
+
+    def _finish_chess(self, session, row: ChessGameRecord, result: str, now: datetime) -> None:
+        if row.status != "playing":
+            return
+        row.status = "finished"
+        row.result = result
+        row.finished_at = now
+        row.turn_started_at = None
+        row.pending_offer = None
+        row.offer_user_id = None
+        row.version += 1
+        session.execute(delete(ChessMessageRecord).where(ChessMessageRecord.game_id == row.id))
+        self._chess_notice(session, row, f"象棋对局已结束：{result}。对局编号 {row.id}")
+
+    @staticmethod
+    def _elapsed_ms(row: ChessGameRecord, now: datetime) -> int:
+        return max(0, int((now - row.turn_started_at).total_seconds() * 1000))
+
+    def _timeout_chess(self, session, row: ChessGameRecord, now: datetime) -> bool:
+        if row.status != "playing" or row.turn_started_at is None:
+            return False
+        color = row.position["turn"]
+        remaining = row.red_remaining_ms if color == "red" else row.black_remaining_ms
+        elapsed = self._elapsed_ms(row, now)
+        if elapsed < min(remaining, 60000):
+            return False
+        winner = "black" if color == "red" else "red"
+        reason = "total_timeout" if remaining <= 60000 else "step_timeout"
+        self._finish_chess(session, row, f"{winner}:{reason}", now)
+        return True
+
+    def play_chess(
+        self, game_id: UUID, platform_id: str, from_xy: tuple[int, int],
+        to_xy: tuple[int, int], expected_version: int, now: datetime,
+    ) -> ChessGameView:
+        with self._session() as session:
+            row = session.scalar(select(ChessGameRecord).where(ChessGameRecord.id == game_id).with_for_update())
+            if row is None or row.status != "playing":
+                raise ValueError("棋局未在进行")
+            if self._timeout_chess(session, row, now):
+                return self._chess_view(session, row)
+            if row.version != expected_version:
+                raise ValueError("棋局版本已变化")
+            position = self._position(row.position)
+            user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
+            current_user_id = row.red_user_id if position.turn == "red" else row.black_user_id
+            if user is None or user.id != current_user_id:
+                raise ValueError("现在不是你的回合")
+            move = ChessMove(*from_xy, *to_xy)
+            next_position = play_move(position, move)
+            records = session.scalars(select(ChessMoveRecord).where(ChessMoveRecord.game_id == game_id).order_by(ChessMoveRecord.ply)).all()
+            history = tuple(self._position(record.position_before) for record in records) + (position, next_position)
+            moves = tuple(ChessMove(record.from_x, record.from_y, record.to_x, record.to_y) for record in records) + (move,)
+            violation = adjudicate_repetition(history, moves)
+            if isinstance(violation, ChessViolation) and violation.side == position.turn:
+                raise IllegalChessMove("长将／长捉须变着")
+            elapsed = self._elapsed_ms(row, now)
+            if position.turn == "red":
+                row.red_remaining_ms -= elapsed
+            else:
+                row.black_remaining_ms -= elapsed
+            row.position = self._position_data(next_position)
+            row.turn_started_at = now
+            row.version += 1
+            row.pending_offer = None
+            row.offer_user_id = None
+            session.add(ChessMoveRecord(
+                game_id=game_id, ply=len(records) + 1,
+                from_x=move.from_x, from_y=move.from_y, to_x=move.to_x, to_y=move.to_y,
+                position_before=self._position_data(position), created_at=now,
+            ))
+            outcome = basic_outcome(next_position)
+            if outcome is not None:
+                self._finish_chess(session, row, f"{outcome.winner}:{outcome.reason}", now)
+            return self._chess_view(session, row)
+
+    def chess_action(self, game_id: UUID, platform_id: str, action: str, now: datetime) -> ChessGameView:
+        valid = {"offer_undo", "accept_undo", "decline_undo", "offer_draw", "accept_draw", "decline_draw", "resign"}
+        if action not in valid:
+            raise ValueError("未知的象棋操作")
+        with self._session() as session:
+            row = session.scalar(select(ChessGameRecord).where(ChessGameRecord.id == game_id).with_for_update())
+            if row is None or row.status != "playing":
+                raise ValueError("棋局未在进行")
+            if self._timeout_chess(session, row, now):
+                return self._chess_view(session, row)
+            user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
+            if user is None or user.id not in {row.red_user_id, row.black_user_id}:
+                raise ValueError("只有棋手能执行此操作")
+            color = "red" if user.id == row.red_user_id else "black"
+            if action == "resign":
+                self._finish_chess(session, row, f"{'black' if color == 'red' else 'red'}:resign", now)
+            elif action.startswith("offer_"):
+                if row.pending_offer is not None:
+                    raise ValueError("已有待处理请求")
+                if action == "offer_undo" and session.scalar(select(ChessMoveRecord.id).where(ChessMoveRecord.game_id == game_id).limit(1)) is None:
+                    raise ValueError("还没有可悔的棋")
+                row.pending_offer = action.removeprefix("offer_")
+                row.offer_user_id = user.id
+                row.version += 1
+            else:
+                kind = action.split("_", 1)[1]
+                if row.pending_offer != kind or row.offer_user_id == user.id:
+                    raise ValueError("没有对手的待处理请求")
+                if action.startswith("decline_"):
+                    row.pending_offer = None
+                    row.offer_user_id = None
+                    row.version += 1
+                elif kind == "draw":
+                    self._finish_chess(session, row, "draw:agreement", now)
+                else:
+                    last = session.scalar(select(ChessMoveRecord).where(ChessMoveRecord.game_id == game_id).order_by(ChessMoveRecord.ply.desc()).limit(1))
+                    if last is None:
+                        raise ValueError("还没有可悔的棋")
+                    elapsed = self._elapsed_ms(row, now)
+                    if row.position["turn"] == "red":
+                        row.red_remaining_ms -= elapsed
+                    else:
+                        row.black_remaining_ms -= elapsed
+                    row.position = last.position_before
+                    row.turn_started_at = now
+                    row.pending_offer = None
+                    row.offer_user_id = None
+                    row.version += 1
+                    session.delete(last)
+            return self._chess_view(session, row)
+
+    def advance_chess_deadlines(self, now: datetime) -> int:
+        count = 0
+        with self._session() as session:
+            rows = session.scalars(
+                select(ChessGameRecord).where(ChessGameRecord.status.in_(("waiting", "playing"))).with_for_update()
+            ).all()
+            for row in rows:
+                if row.status == "waiting" and now >= row.claim_deadline:
+                    row.status = "cancelled"
+                    row.version += 1
+                    sent = session.scalar(select(OutboundRecord.id).where(
+                        OutboundRecord.inbound_message_id == row.inbound_message_id,
+                        OutboundRecord.status == "sent",
+                    ).limit(1))
+                    if sent is not None:
+                        self._chess_notice(session, row, f"象棋对局 {row.id} 等候超时，已取消。")
+                    count += 1
+                elif self._timeout_chess(session, row, now):
+                    count += 1
+        return count

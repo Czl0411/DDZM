@@ -1,5 +1,6 @@
 """Browser regression checks using the platform's actual iframe restrictions."""
 import json
+import re
 from pathlib import Path
 import pytest
 
@@ -92,6 +93,25 @@ def test_claim_chat_and_reopen_in_platform_sandbox(width, role):
         page.reload()
         expect(frame.locator("#players")).to_be_visible()
         expect(frame.locator("#lobby")).to_be_hidden()
+        state["game"]["events"] = [{"seq": 1, "kind": "move", "color": "red", "ply": 1, "piece": "R", "captured": "p", "check": True, "from_xy": [3, 3], "to_xy": [4, 3]}]
+        state["game"]["check_square"] = [4, 0]
+        frame.locator("#chat-input").fill("hello")
+        frame.locator("#chat-send").click()
+        expect(frame.locator("#move-notice")).to_have_text("吃 · 将军")
+        expect(frame.locator('[aria-label="4,0將"]')).to_have_class(re.compile("in-check"))
+        expect(frame.locator("#move-notice")).to_be_hidden(timeout=4000)
+        page.reload()
+        expect(frame.locator("#moves-list")).to_contain_text("将军")
+        expect(frame.locator("#move-notice")).to_be_hidden()
+        state["game"]["events"].extend([{"seq": 2, "kind": "offer_undo", "color": "red"}, {"seq": 3, "kind": "accept_undo", "color": "black", "undone_seq": 1}])
+        frame.locator("#chat-input").fill("hello")
+        frame.locator("#chat-send").click()
+        expect(frame.locator("#moves-list .revoked")).to_contain_text("已撤回")
+        state["game"]["status"] = "finished"
+        state["game"]["result"] = "red:checkmate"
+        expect(frame.locator("#result-title")).to_have_text("胜利" if role == "red" else "落败")
+        expect(frame.locator("#result-reason")).to_contain_text("绝杀")
+        page.screenshot(path=f"/tmp/chess-result-{width}.png", full_page=True)
         frame.locator("#back-to-rooms").click()
         expect(frame.locator("#lobby")).to_be_visible()
         saved["chess:last-room:player"] = "22222222-2222-4222-8222-222222222222"

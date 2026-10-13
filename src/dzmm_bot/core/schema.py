@@ -2690,6 +2690,7 @@ class ChessGameRecord(Base):
     pending_offer: Mapped[str | None] = mapped_column(String(16))
     offer_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
     finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    events: Mapped[list] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
 
 
 class ChessMoveRecord(Base):

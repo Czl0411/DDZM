@@ -102,6 +102,34 @@ export class ChessClient {
 
 const PIECE = { R: '車', H: '馬', E: '相', A: '仕', K: '帥', C: '炮', P: '兵', r: '車', h: '馬', e: '象', a: '士', k: '將', c: '砲', p: '卒' };
 
+export function resultNotice(result, role) {
+  const [winner, reason] = (result || '').split(':');
+  const reasons = { checkmate: '绝杀 · 将死', stalemate: '困毙 · 无合法着法', step_timeout: '单步超时', total_timeout: '总用时耗尽', resign: '认输', agreement: '双方同意和棋', long_check: '长将判负', long_chase: '长捉判负' };
+  const title = winner === 'draw' ? '和棋' : role === 'spectator' || role === 'creator' ? `${winner === 'red' ? '红方' : '黑方'}胜` : role === winner ? '胜利' : '落败';
+  return { title, reason: reasons[reason] || '对局结束' };
+}
+
+export function eventText(event) {
+  const side = event.color === 'red' ? '红方' : event.color === 'black' ? '黑方' : '';
+  if (event.kind === 'move') {
+    return `第 ${event.ply} 手 · ${side} ${PIECE[event.piece] || ''} ${event.from_xy.map(n => n + 1).join(',')} → ${event.to_xy.map(n => n + 1).join(',')}${event.captured && event.captured !== '.' ? ` · 吃${PIECE[event.captured]}` : ''}${event.check ? ' · 将军' : ''}`;
+  }
+  if (event.kind === 'finish') {
+    const result = resultNotice(event.result, 'spectator');
+    return `${result.title} · ${result.reason}`;
+  }
+  const labels = { offer_draw: '请求和棋', accept_draw: '同意和棋', decline_draw: '拒绝和棋', offer_undo: '请求悔棋', accept_undo: '同意悔棋', decline_undo: '拒绝悔棋', resign: '认输' };
+  return `${side} · ${labels[event.kind] || event.kind}`;
+}
+
+export function moveNotice(previousSeq, events) {
+  if (previousSeq === null) return '';
+  const fresh = events.filter(event => event.seq > previousSeq);
+  if (fresh.some(event => event.kind === 'finish')) return '';
+  const move = fresh.at(-1);
+  return move?.kind === 'move' ? [move.captured && move.captured !== '.' ? '吃' : '', move.check ? '将军' : ''].filter(Boolean).join(' · ') : '';
+}
+
 async function boot() {
   const status = document.querySelector('#status');
   const loading = window.dzmm.loading;
@@ -168,6 +196,8 @@ async function boot() {
   let state = null;
   let selected = null;
   let serverOffset = 0;
+  let lastEventSeq = null;
+  let noticeTimer;
   const board = document.querySelector('#board');
 
   function clockText(color) {
@@ -200,6 +230,7 @@ async function boot() {
       cell.className = `cell${row === 4 ? ' river' : ''}${selected?.[0] === x && selected?.[1] === y ? ' selected' : ''}`;
       cell.setAttribute('aria-label', `${x},${y}${PIECE[piece] || ''}`);
       cell.setAttribute('aria-pressed', String(selected?.[0] === x && selected?.[1] === y));
+      if (state.game.check_square?.[0] === x && state.game.check_square?.[1] === y) cell.classList.add('in-check');
       if (piece !== '.') {
         const disk = document.createElement('span');
         disk.className = `piece ${piece === piece.toUpperCase() ? 'red' : 'black'}`;
@@ -224,6 +255,24 @@ async function boot() {
     state = next;
     serverOffset = Date.now() - Date.parse(next.server_time || new Date().toISOString());
     const game = next.game;
+    const events = game.events || [];
+    const notice = document.querySelector('#move-notice');
+    const message = moveNotice(lastEventSeq, events);
+    lastEventSeq = Math.max(lastEventSeq || 0, ...events.map(event => event.seq));
+    if (message) {
+      clearTimeout(noticeTimer);
+      notice.textContent = message;
+      notice.hidden = false;
+      noticeTimer = setTimeout(() => { notice.hidden = true; }, 1800);
+    }
+    const result = document.querySelector('#result');
+    result.hidden = game.status !== 'finished';
+    if (!result.hidden) {
+      const outcome = resultNotice(game.result, next.role);
+      document.querySelector('#result-title').textContent = outcome.title;
+      document.querySelector('#result-reason').textContent = outcome.reason;
+      notice.hidden = true;
+    }
     document.querySelector('#players').textContent = `红方 ${game.red_name || '待定'} · 黑方 ${game.black_name || '待定'}`;
     for (const color of ['red', 'black']) {
       const player = document.querySelector(`#${color}-player`);
@@ -233,7 +282,7 @@ async function boot() {
     }
     board.before(document.querySelector(next.role === 'black' ? '#red-player' : '#black-player'));
     board.after(document.querySelector(next.role === 'black' ? '#black-player' : '#red-player'));
-    status.textContent = error ? '正在重新连接…' : game.status === 'waiting' ? '等待第二位棋手入座' : game.status === 'cancelled' ? '棋局已取消' : game.status === 'finished' ? `已结束：${game.result}` : `进行中 · 你是${next.role === 'spectator' ? '观众' : next.role === 'red' ? '红方' : '黑方'}`;
+    status.textContent = error ? '正在重新连接…' : game.status === 'waiting' ? '等待第二位棋手入座' : game.status === 'cancelled' ? '棋局已取消' : game.status === 'finished' ? resultNotice(game.result, next.role).title : `${game.check_square ? '将军！' : '进行中'} · 你是${next.role === 'spectator' ? '观众' : next.role === 'red' ? '红方' : '黑方'}`;
     document.querySelector('#claim-panel').hidden = game.status !== 'waiting' || next.role !== 'spectator';
     document.querySelector('#actions').hidden = !['red', 'black'].includes(next.role) || game.status !== 'playing';
     document.querySelector('#respond').hidden = !game.pending_offer || next.offer_mine || !['red', 'black'].includes(next.role);
@@ -253,9 +302,12 @@ async function boot() {
     }
     const moves = document.querySelector('#moves-list');
     moves.replaceChildren();
-    for (const move of next.moves || []) {
-      const item = document.createElement('span');
-      item.textContent = `${move.ply}. ${move.from_xy.join(',')}→${move.to_xy.join(',')}  `;
+    const undone = new Set(events.filter(event => event.kind === 'accept_undo').map(event => event.undone_seq));
+    for (const event of events.length ? events : (next.moves || []).map(move => ({ ...move, kind: 'move' }))) {
+      const item = document.createElement('p');
+      const revoked = undone.has(event.seq);
+      item.className = revoked ? 'revoked' : event.kind === 'move' ? 'move-entry' : 'action-entry';
+      item.textContent = `${eventText(event)}${revoked ? ' · 已撤回' : ''}`;
       moves.append(item);
     }
     clocks(); renderBoard(); showReady();

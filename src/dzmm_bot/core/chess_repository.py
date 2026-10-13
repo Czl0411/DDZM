@@ -7,7 +7,7 @@ from sqlalchemy import delete, select, update
 
 from .chess_rules import (
     ChessMove, ChessPosition, ChessViolation, IllegalChessMove, adjudicate_repetition,
-    basic_outcome, initial_position, play_move,
+    basic_outcome, checked_king, initial_position, play_move,
 )
 from .schema import ChessGameRecord, ChessMessageRecord, ChessMoveRecord, GroupChatRecord, InboundRecord, OutboundRecord, UserRecord
 
@@ -34,6 +34,8 @@ class ChessGameView:
     pending_offer: str | None
     offer_platform_id: str | None
     finished_at: datetime | None
+    events: list
+    check_square: list[int] | None
 
 
 @dataclass(frozen=True)
@@ -76,7 +78,26 @@ class ChessRepositoryMixin:
             black_remaining_ms=row.black_remaining_ms, turn_started_at=row.turn_started_at,
             version=row.version, result=row.result, pending_offer=row.pending_offer,
             offer_platform_id=pid(row.offer_user_id), finished_at=row.finished_at,
+            events=row.events or [],
+            check_square=checked_king(self._position(row.position)) if row.position else None,
         )
+
+    @staticmethod
+    def _chess_event(row, kind, now, **data):
+        events = row.events or []
+        row.events = events + [{"seq": len(events) + 1, "kind": kind, "at": now.isoformat(), **data}]
+
+    def _seed_chess_events(self, session, row):
+        if row.events:
+            return
+        records = session.scalars(select(ChessMoveRecord).where(ChessMoveRecord.game_id == row.id).order_by(ChessMoveRecord.ply)).all()
+        for record in records:
+            before = self._position(record.position_before)
+            after = play_move(before, ChessMove(record.from_x, record.from_y, record.to_x, record.to_y))
+            self._chess_event(row, "move", record.created_at, move_id=str(record.id), ply=record.ply,
+                              color=before.turn, from_xy=[record.from_x, record.from_y], to_xy=[record.to_x, record.to_y],
+                              piece=before.board[record.from_y][record.from_x], captured=before.board[record.to_y][record.to_x],
+                              check=checked_king(after) is not None)
 
     def create_chess_game(
         self, creator_platform_id: str, group_chat_id: UUID, inbound_id: UUID, now: datetime
@@ -184,6 +205,8 @@ class ChessRepositoryMixin:
     def _finish_chess(self, session, row: ChessGameRecord, result: str, now: datetime) -> None:
         if row.status != "playing":
             return
+        self._seed_chess_events(session, row)
+        self._chess_event(row, "finish", now, result=result)
         row.status = "finished"
         row.result = result
         row.finished_at = now
@@ -230,6 +253,7 @@ class ChessRepositoryMixin:
                 raise ValueError("现在不是你的回合")
             move = ChessMove(*from_xy, *to_xy)
             next_position = play_move(position, move)
+            self._seed_chess_events(session, row)
             records = session.scalars(select(ChessMoveRecord).where(ChessMoveRecord.game_id == game_id).order_by(ChessMoveRecord.ply)).all()
             history = tuple(self._position(record.position_before) for record in records) + (position, next_position)
             moves = tuple(ChessMove(record.from_x, record.from_y, record.to_x, record.to_y) for record in records) + (move,)
@@ -250,11 +274,17 @@ class ChessRepositoryMixin:
             row.version += 1
             row.pending_offer = None
             row.offer_user_id = None
-            session.add(ChessMoveRecord(
+            move_record = ChessMoveRecord(
                 game_id=game_id, ply=len(records) + 1,
                 from_x=move.from_x, from_y=move.from_y, to_x=move.to_x, to_y=move.to_y,
                 position_before=self._position_data(position), created_at=now,
-            ))
+            )
+            session.add(move_record)
+            session.flush()
+            self._chess_event(row, "move", now, move_id=str(move_record.id), ply=len(records) + 1,
+                              color=position.turn, from_xy=list(from_xy), to_xy=list(to_xy),
+                              piece=position.board[move.from_y][move.from_x], captured=position.board[move.to_y][move.to_x],
+                              check=checked_king(next_position) is not None)
             outcome = basic_outcome(next_position)
             if isinstance(violation, ChessViolation) and violation.reason == "long_check":
                 winner = "black" if violation.side == "red" else "red"
@@ -282,7 +312,9 @@ class ChessRepositoryMixin:
             if user is None or user.id not in {row.red_user_id, row.black_user_id}:
                 raise ValueError("只有棋手能执行此操作")
             color = "red" if user.id == row.red_user_id else "black"
+            self._seed_chess_events(session, row)
             if action == "resign":
+                self._chess_event(row, action, now, color=color)
                 self._finish_chess(session, row, f"{'black' if color == 'red' else 'red'}:resign", now)
             elif action.startswith("offer_"):
                 if row.pending_offer is not None:
@@ -292,6 +324,7 @@ class ChessRepositoryMixin:
                 row.pending_offer = action.removeprefix("offer_")
                 row.offer_user_id = user.id
                 row.version += 1
+                self._chess_event(row, action, now, color=color)
             else:
                 kind = action.split("_", 1)[1]
                 if row.pending_offer != kind or row.offer_user_id == user.id:
@@ -300,7 +333,9 @@ class ChessRepositoryMixin:
                     row.pending_offer = None
                     row.offer_user_id = None
                     row.version += 1
+                    self._chess_event(row, action, now, color=color)
                 elif kind == "draw":
+                    self._chess_event(row, action, now, color=color)
                     self._finish_chess(session, row, "draw:agreement", now)
                 else:
                     last = session.scalar(select(ChessMoveRecord).where(ChessMoveRecord.game_id == game_id).order_by(ChessMoveRecord.ply.desc()).limit(1))
@@ -316,6 +351,8 @@ class ChessRepositoryMixin:
                     row.pending_offer = None
                     row.offer_user_id = None
                     row.version += 1
+                    undone_seq = next(event["seq"] for event in row.events if event.get("move_id") == str(last.id))
+                    self._chess_event(row, action, now, color=color, undone_seq=undone_seq)
                     session.delete(last)
             return self._chess_view(session, row)
 

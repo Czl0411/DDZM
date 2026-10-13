@@ -58,6 +58,7 @@ def test_step_deadline_and_terminal_notice_are_once(active):
     with factory() as session:
         notices = session.scalars(select(OutboundRecord).where(OutboundRecord.inbound_message_id.is_(None))).all()
     assert len(notices) == 1
+    assert [event["kind"] for event in repo.get_chess_game(game.id).events] == ["finish"]
 
 
 def test_undo_draw_and_resignation(active):
@@ -76,6 +77,10 @@ def test_undo_draw_and_resignation(active):
     draw_offer = repo.chess_action(game.id, black, "offer_draw", NOW + timedelta(seconds=16), undone.version)
     drawn = repo.chess_action(game.id, red, "accept_draw", NOW + timedelta(seconds=17), draw_offer.version)
     assert drawn.status == "finished" and drawn.result == "draw:agreement"
+    events = repo.get_chess_game(game.id).events
+    assert [event["kind"] for event in events] == ["move", "offer_undo", "accept_undo", "offer_draw", "accept_draw", "finish"]
+    assert events[2]["undone_seq"] == events[0]["seq"]
+    assert events[-1]["result"] == "draw:agreement"
 
 
 def test_waiting_game_expires_once(tmp_path):
@@ -132,8 +137,51 @@ def test_old_offer_response_cannot_apply_to_a_later_offer(active):
         repo.chess_action(game.id, black, "accept_draw", NOW, first.version)
     unchanged = repo.get_chess_game(game.id)
     assert unchanged.status == "playing" and unchanged.version == second.version
+    assert [event["kind"] for event in unchanged.events] == ["offer_draw", "decline_draw", "offer_draw"]
     accepted = repo.chess_action(game.id, black, "accept_draw", NOW, second.version)
     assert accepted.result == "draw:agreement"
+
+
+def test_capture_and_check_are_recorded_authoritatively(active):
+    from dzmm_bot.core.schema import ChessGameRecord
+    repo, factory, game = active
+    rows = [["."] * 9 for _ in range(10)]
+    for x, y, piece in ((4, 9, "K"), (4, 0, "k"), (4, 5, "P"), (3, 3, "R"), (4, 3, "p")):
+        rows[y][x] = piece
+    with factory.begin() as session:
+        session.get(ChessGameRecord, game.id).position = {"board": ["".join(row) for row in rows], "turn": "red"}
+    moved = repo.play_chess(game.id, game.red_platform_id, (3, 3), (4, 3), 1, NOW)
+    event = moved.events[-1]
+    assert event["captured"] == "p" and event["check"] is True
+    assert moved.check_square == [4, 0]
+    escaped = repo.play_chess(game.id, game.black_platform_id, (4, 0), (3, 0), moved.version, NOW)
+    assert escaped.check_square is None
+
+
+def test_legacy_move_is_retained_when_undone(active):
+    from dzmm_bot.core.schema import ChessGameRecord
+    repo, factory, game = active
+    moved = repo.play_chess(game.id, game.red_platform_id, (0, 6), (0, 5), 1, NOW)
+    with factory.begin() as session:
+        session.get(ChessGameRecord, game.id).events = []
+    offered = repo.chess_action(game.id, game.red_platform_id, "offer_undo", NOW, moved.version)
+    undone = repo.chess_action(game.id, game.black_platform_id, "accept_undo", NOW, offered.version)
+    assert [event["kind"] for event in undone.events] == ["move", "offer_undo", "accept_undo"]
+    assert undone.events[-1]["undone_seq"] == 1
+
+
+def test_mate_records_move_then_finish(active):
+    from dzmm_bot.core.schema import ChessGameRecord
+    repo, factory, game = active
+    rows = [["."] * 9 for _ in range(10)]
+    for x, y, piece in ((4, 9, "K"), (4, 0, "k"), (3, 1, "R"), (5, 1, "R"), (4, 3, "R")):
+        rows[y][x] = piece
+    with factory.begin() as session:
+        session.get(ChessGameRecord, game.id).position = {"board": ["".join(row) for row in rows], "turn": "red"}
+    ended = repo.play_chess(game.id, game.red_platform_id, (4, 3), (4, 2), 1, NOW)
+    assert ended.result == "red:checkmate"
+    assert [event["kind"] for event in ended.events] == ["move", "finish"]
+    assert ended.events[-1]["result"] == "red:checkmate"
 
 
 def test_obvious_perpetual_check_is_adjudicated(active):

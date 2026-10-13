@@ -134,6 +134,13 @@ def _moved(board: tuple[str, ...], move: ChessMove) -> tuple[str, ...]:
     return tuple("".join(row) for row in rows)
 
 
+def checked_king(position: ChessPosition) -> list[int] | None:
+    if not _in_check(position.board, position.turn):
+        return None
+    king = "K" if position.turn == "red" else "k"
+    return next(([x, y] for y, row in enumerate(position.board) for x, piece in enumerate(row) if piece == king), None)
+
+
 def _in_check(board: tuple[str, ...], color: str) -> bool:
     king = "K" if color == "red" else "k"
     try:

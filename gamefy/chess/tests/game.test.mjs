@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveRoomId, ChessClient, canMove, canChat } from '../publish/game.js';
+import { resolveRoomId, ChessClient, canMove, canChat, eventText, resultNotice, moveNotice } from '../publish/game.js';
+
+test('chess feedback distinguishes capture, check, mate and other results', () => {
+  const move = { seq: 2, kind: 'move', color: 'red', ply: 1, piece: 'R', captured: 'p', check: true, from_xy: [0, 0], to_xy: [0, 1] };
+  assert.match(eventText(move), /吃卒.*将军/);
+  assert.equal(moveNotice(null, [move]), '');
+  assert.equal(moveNotice(2, [move]), '');
+  assert.equal(moveNotice(1, [move]), '吃 · 将军');
+  assert.equal(moveNotice(1, [move, { seq: 3, kind: 'accept_undo' }]), '');
+  assert.match(resultNotice('red:checkmate', 'red').title, /胜利/);
+  assert.match(resultNotice('red:checkmate', 'black').title, /落败/);
+  assert.match(resultNotice('red:checkmate', 'spectator').title, /红方胜/);
+  assert.match(resultNotice('red:checkmate', 'red').reason, /绝杀/);
+  assert.doesNotMatch(resultNotice('red:stalemate', 'red').reason, /绝杀/);
+  assert.match(resultNotice('draw:agreement', 'black').title, /和棋/);
+  assert.match(eventText({ kind: 'decline_undo', color: 'black' }), /黑方.*拒绝悔棋/);
+});
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';

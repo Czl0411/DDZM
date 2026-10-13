@@ -71,6 +71,245 @@ def _latest_reply(factory):
         )
 
 
+def test_group_ban_confirmation_is_one_shot():
+    from dzmm_bot.core.schema import WorkerCommandRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    reference = MessageReference("target-message", "outsider", "text", text="一条需要处理的消息")
+    service.receive_inbound(InboundMessage("ban-1", "operator", "/ban 违规发言", now, chatroom_id="group-main", reference=reference))
+    assert "是否移除 UID outsider" in _latest_reply(factory)
+    with factory() as session:
+        assert session.query(WorkerCommandRecord).filter(WorkerCommandRecord.command.like("ban:%")).count() == 0
+
+    service.receive_inbound(InboundMessage("yes-1", "operator", "/是", now + timedelta(seconds=1), chatroom_id="group-main"))
+    assert "正在移除" in _latest_reply(factory)
+    service.receive_inbound(InboundMessage("yes-2", "operator", "/是", now + timedelta(seconds=2), chatroom_id="group-main"))
+    assert "待确认" in _latest_reply(factory)
+    with factory() as session:
+        assert session.query(WorkerCommandRecord).filter(WorkerCommandRecord.command.like("ban:%")).count() == 1
+
+
+def test_group_ban_rejections():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.create_user("employee", "员工", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    cases = [
+        ("stranger", "/ban 理由", MessageReference("m1", "outsider", "text", text="正文"), "权限"),
+        ("operator", "/ban", MessageReference("m2", "outsider", "text", text="正文"), "原因"),
+        ("operator", "/ban 理由", None, "回复"),
+        ("operator", "/ban 理由", MessageReference("m3", "operator", "text", text="正文"), "自己"),
+        ("operator", "/ban 理由", MessageReference("m4", "employee", "text", text="正文"), "已入职"),
+    ]
+    for index, (sender, content, reference, expected) in enumerate(cases):
+        service.receive_inbound(InboundMessage(f"bad-{index}", sender, content, now, chatroom_id="group-main", reference=reference))
+        assert expected in _latest_reply(factory)
+
+
+def test_group_ban_expiry_and_preview():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    reference = MessageReference("m1", "outsider", "text", text="第一行\n/bad " + "x" * 150)
+    service.receive_inbound(InboundMessage("ban-1", "operator", "/ban 理由", now, chatroom_id="group-main", reference=reference))
+    reply = _latest_reply(factory)
+    assert "\n/bad" not in reply
+    assert len(reply) < 260
+    service.receive_inbound(InboundMessage("yes-1", "operator", "/是", now + timedelta(seconds=60), chatroom_id="group-main"))
+    assert "过期" in _latest_reply(factory)
+
+
+def test_group_ban_replacement_cross_actor_and_target_onboarding():
+    from dzmm_bot.core.schema import GroupBanRequestRecord, WorkerCommandRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    first = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_group_chat("第二群", "https://www.aikda.com/chat?c=group-2", True, True, True, True, now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.create_user("other", "另一个操作员", now, 0)
+    repository.update_group_chat(first.id, ban_operator_platform_ids=["operator", "other"], now=now)
+    for number, target in enumerate(("outsider-1", "outsider-2"), start=1):
+        service.receive_inbound(InboundMessage(
+            f"ban-{number}", "operator", "/ban 理由", now,
+            chatroom_id="group-main",
+            reference=MessageReference(f"target-{number}", target, "image"),
+        ))
+    assert "[图片]" in _latest_reply(factory)
+    service.receive_inbound(InboundMessage("other-yes", "other", "/是", now, chatroom_id="group-main"))
+    assert "待确认" in _latest_reply(factory)
+    service.receive_inbound(InboundMessage("other-group-yes", "operator", "/是", now, chatroom_id="group-2"))
+    assert "待确认" in _latest_reply(factory)
+    repository.create_user("outsider-2", "新员工", now, 0)
+    service.receive_inbound(InboundMessage("owner-yes", "operator", "/是", now, chatroom_id="group-main"))
+    assert "已入职" in _latest_reply(factory)
+    with factory() as session:
+        statuses = session.scalars(select(GroupBanRequestRecord.status).order_by(GroupBanRequestRecord.created_at, GroupBanRequestRecord.id)).all()
+        assert sorted(statuses) == ["replaced", "target_joined"]
+        assert session.query(WorkerCommandRecord).filter(WorkerCommandRecord.command.like("ban:%")).count() == 0
+
+
+def test_group_ban_bypasses_gameplay_gates(monkeypatch):
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    def gameplay_should_not_run(*args, **kwargs):
+        raise AssertionError("management command entered gameplay")
+    monkeypatch.setattr(repository, "active_performance_state", gameplay_should_not_run)
+    monkeypatch.setattr(repository, "record_random_event_round", gameplay_should_not_run)
+    service.receive_inbound(InboundMessage(
+        "ban-1", "operator", "/ban 理由", now, chatroom_id="group-main",
+        reference=MessageReference("target-message", "outsider", "text", text="正文"),
+    ))
+    assert "是否移除" in _latest_reply(factory)
+    service.receive_inbound(InboundMessage("yes-1", "operator", "/是", now, chatroom_id="group-main"))
+    assert "正在移除" in _latest_reply(factory)
+
+
+def _queued_group_ban():
+    from dzmm_bot.core.schema import GroupBanRequestRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    service.receive_inbound(InboundMessage(
+        "ban-1", "operator", "/ban 理由", now, chatroom_id="group-main",
+        reference=MessageReference("target-message", "outsider", "text", text="正文"),
+    ))
+    service.receive_inbound(InboundMessage("yes-1", "operator", "/是", now, chatroom_id="group-main"))
+    with factory() as session:
+        request_id = session.scalar(select(GroupBanRequestRecord.id))
+    return repository, factory, group, request_id, now
+
+
+def test_group_ban_execution_rechecks_target_and_operator():
+    repository, factory, group, request_id, now = _queued_group_ban()
+    repository.create_user("outsider", "新员工", now, 0)
+    assert repository.claim_group_ban_execution(request_id, now) is None
+    assert "已入职" in _latest_reply(factory)
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    repository.update_group_chat(group.id, ban_operator_platform_ids=[], now=now)
+    assert repository.claim_group_ban_execution(request_id, now) is None
+    assert "授权" in _latest_reply(factory)
+
+
+def test_group_ban_completion_reports_once():
+    from dzmm_bot.core.schema import OutboundRecord
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    execution = repository.claim_group_ban_execution(request_id, now)
+    assert execution.chatroom_id == "group-main"
+    assert execution.target_platform_id == "outsider"
+    assert repository.complete_group_ban_execution(request_id, "succeeded", None, now)
+    assert "已移出" in _latest_reply(factory)
+    with factory() as session:
+        count = session.query(OutboundRecord).count()
+    assert not repository.complete_group_ban_execution(request_id, "succeeded", None, now)
+    with factory() as session:
+        assert session.query(OutboundRecord).count() == count
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    assert repository.claim_group_ban_execution(request_id, now) is not None
+    assert repository.complete_group_ban_execution(request_id, "failed", "platform rejected", now)
+    assert "移除失败" in _latest_reply(factory)
+    assert "已移出" not in _latest_reply(factory)
+
+
+def test_group_ban_uncertain_attempt_is_not_repeated():
+    repository, factory, group, request_id, now = _queued_group_ban()
+    assert repository.claim_group_ban_execution(request_id, now) is not None
+    assert repository.claim_group_ban_execution(request_id, now + timedelta(seconds=30)) is None
+    assert "结果不明" in _latest_reply(factory)
+    assert not repository.complete_group_ban_execution(request_id, "succeeded", None, now)
+
+
+def test_group_ban_room_change_never_redirects_removal():
+    from dzmm_bot.core.schema import GroupBanRequestRecord
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    repository.update_group_chat(
+        group.id, chat_url="https://www.aikda.com/chat?c=other-room", now=now
+    )
+    assert repository.claim_group_ban_execution(request_id, now) is None
+    with factory() as session:
+        assert session.get(GroupBanRequestRecord, request_id).status == "unauthorized"
+
+
+def test_group_ban_revoked_pending_request_stays_invalid_after_regrant():
+    from dzmm_bot.core.schema import GroupBanRequestRecord, WorkerCommandRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    service.receive_inbound(InboundMessage(
+        "ban-1", "operator", "/ban 理由", now, chatroom_id="group-main",
+        reference=MessageReference("target-message", "outsider", "text", text="正文"),
+    ))
+    repository.update_group_chat(group.id, ban_operator_platform_ids=[], now=now)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=now)
+    service.receive_inbound(InboundMessage(
+        "yes-1", "operator", "/是", now + timedelta(seconds=1), chatroom_id="group-main"
+    ))
+    assert "待确认" in _latest_reply(factory)
+    with factory() as session:
+        assert session.scalar(select(GroupBanRequestRecord.status)) == "unauthorized"
+        assert session.query(WorkerCommandRecord).filter(WorkerCommandRecord.command.like("ban:%")).count() == 0
+
+
+def test_group_ban_completion_and_outbox_rollback_together(monkeypatch):
+    from dzmm_bot.core.schema import GroupBanRequestRecord, OutboundRecord
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    assert repository.claim_group_ban_execution(request_id, now) is not None
+    with factory() as session:
+        original_count = session.query(OutboundRecord).count()
+    original_enqueue = repository.enqueue_outbound
+
+    def fail_after_enqueue(*args, **kwargs):
+        original_enqueue(*args, **kwargs)
+        raise RuntimeError("injected failure after enqueue")
+
+    monkeypatch.setattr(repository, "enqueue_outbound", fail_after_enqueue)
+    with pytest.raises(RuntimeError, match="injected failure"):
+        repository.complete_group_ban_execution(request_id, "succeeded", None, now)
+    with factory() as session:
+        assert session.get(GroupBanRequestRecord, request_id).status == "executing"
+        assert session.query(OutboundRecord).count() == original_count
+
+
+def test_group_ban_execution_reserves_target_until_result():
+    from dzmm_bot.core.repository import GroupBanInProgressError
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    assert repository.claim_group_ban_execution(request_id, now) is not None
+    with pytest.raises(GroupBanInProgressError):
+        repository.create_user("outsider", "新员工", now, 0)
+    assert repository.complete_group_ban_execution(request_id, "failed", None, now)
+    _, created = repository.create_user("outsider", "新员工", now, 0)
+    assert created
+
+    repository, factory, group, request_id, now = _queued_group_ban()
+    assert repository.claim_group_ban_execution(request_id, now) is not None
+    assert repository.claim_group_ban_execution(request_id, now + timedelta(seconds=30)) is None
+    with pytest.raises(GroupBanInProgressError):
+        repository.create_user("outsider", "新员工", now, 0)
+
+
 def _mark_random_event_signup_notice_sent(repository):
     from dzmm_bot.core.schema import OutboundRecord, RandomEventRecord
 
@@ -496,6 +735,111 @@ def _group_receive(service, message_id, sender, content, now, chatroom_id):
             chatroom_id=chatroom_id,
         )
     )
+
+
+def test_custom_command_replies_with_four_types_in_monitored_groups():
+    from dzmm_bot.core.schema import OutboundRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 12, 12, 0, tzinfo=BEIJING)
+    first = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    second = repository.create_group_chat(
+        "第二群", "https://www.aikda.com/chat?c=group-two",
+        True, True, True, True, now,
+    )
+    repository.create_custom_command("/公告", "公告", "text", "今天开会", None, True)
+    repository.create_custom_command(
+        "/群入口", "群入口", "group_invite",
+        "https://www.ivorune.xyz/invite/group-code", None, True,
+    )
+    repository.create_custom_command(
+        "/小说", "小说", "novel",
+        "https://www.ivorune.xyz/novel/66408bb3-60a0-40e1-a434-ee40efee4d27", None, True,
+    )
+    task = repository.create_custom_command_image_upload(
+        "/tmp/custom.png", "custom.png", "image/png", now,
+    )
+    claim = repository.claim_custom_command_image_upload("worker", now, 30)
+    repository.complete_custom_command_image_upload(
+        task.id, "worker", claim.lease_token, "https://cdn.example.com/custom.png", now,
+    )
+    repository.create_custom_command("/图片", "图片", "image", None, task.id, True)
+    expected = [
+        ("/公告", "text", "今天开会", None),
+        ("/群入口", "group_invite", "group-code", None),
+        ("/小说", "novel", "66408bb3-60a0-40e1-a434-ee40efee4d27", None),
+        ("/图片", "image", "", "https://cdn.example.com/custom.png"),
+    ]
+    for index, (command, kind, text, image_url) in enumerate(expected):
+        group = first if index % 2 == 0 else second
+        result = _group_receive(
+            service, f"custom-{index}", "outsider", command, now, group.chatroom_id,
+        )
+        with factory() as session:
+            [reply] = session.scalars(select(OutboundRecord).where(
+                OutboundRecord.inbound_message_id == result.message_id
+            )).all()
+        assert (reply.content_type, reply.text, reply.image_url) == (kind, text, image_url)
+        assert reply.destination_chatroom_id == group.chatroom_id
+
+
+def test_custom_command_ignores_direct_unmonitored_disabled_and_arguments():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 12, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_custom_command("/公告", "公告", "text", "今天开会", None, True)
+    direct = service.receive_inbound(InboundMessage(
+        "custom-direct", "outsider", "/公告", now,
+        source_type="direct", chatroom_id="direct-a",
+    ))
+    unknown = _group_receive(service, "custom-other", "outsider", "/公告", now, "unknown-group")
+    extra = _group_receive(service, "custom-extra", "outsider", "/公告 now", now, group.chatroom_id)
+    assert _replies_for(factory, direct.message_id) == []
+    assert _replies_for(factory, unknown.message_id) == []
+    assert _replies_for(factory, extra.message_id) == []
+    repository.set_command_enabled("/公告", False)
+    disabled = _group_receive(service, "custom-disabled", "outsider", "/公告", now, group.chatroom_id)
+    assert _replies_for(factory, disabled.message_id) == []
+    repository.delete_custom_command("/公告")
+    removed = _group_receive(service, "custom-removed", "outsider", "/公告", now, group.chatroom_id)
+    assert _replies_for(factory, removed.message_id) == []
+
+
+def test_help_lists_only_enabled_custom_commands():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 12, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_custom_command("/公告", "今日公告", "text", "今天开会", None, True)
+
+    index = _group_receive(service, "custom-help-index", "viewer", "/帮助", now, group.chatroom_id)
+    detail = _group_receive(service, "custom-help-detail", "viewer", "/帮助 自定义", now, group.chatroom_id)
+    assert "/帮助 自定义" in "\n".join(_replies_for(factory, index.message_id))
+    assert "/公告：今日公告" in "\n".join(_replies_for(factory, detail.message_id))
+
+    repository.set_command_enabled("/公告", False)
+    disabled = _group_receive(service, "custom-help-disabled", "viewer", "/帮助 自定义", now, group.chatroom_id)
+    assert "/公告" not in "\n".join(_replies_for(factory, disabled.message_id))
+    repository.delete_custom_command("/公告")
+    removed = _group_receive(service, "custom-help-removed", "viewer", "/帮助 自定义", now, group.chatroom_id)
+    assert "/公告" not in "\n".join(_replies_for(factory, removed.message_id))
+
+
+def test_custom_command_does_not_bypass_random_event_gate():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 12, 10, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group("https://www.aikda.com/chat?c=group-main", now)
+    repository.create_custom_command("/公告", "公告", "text", "今天开会", None, True)
+    repository.create_random_event_scene(
+        "茶水间", "咖啡机响了。", ["开始。"], 4, 1, [("员工", 2)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "可选身份：{可选身份}", 15, 5,
+        blocked_message="活动进行中，监事暂不处理。",
+    )
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+    result = _group_receive(service, "custom-event", "outsider", "/公告", now, group.chatroom_id)
+    assert _replies_for(factory, result.message_id) == ["活动进行中，监事暂不处理。"]
 
 
 def test_q_records_the_replied_employee_message() -> None:
@@ -2986,6 +3330,33 @@ def test_department_headcount_command_honors_template_disable_and_help():
     assert _replies_for(factory, disabled.message_id) == []
 
 
+def test_department_change_cooldown_blocks_for_24h():
+    from dzmm_bot.core.schema import RankRecord, UserRecord
+
+    service, _, factory = _service()
+    now = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+    _receive(service, "join-1", "board", "/入职 董事", now)
+    with factory.begin() as session:
+        board_rank = session.scalar(
+            select(RankRecord).where(RankRecord.is_board.is_(True))
+        )
+        session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "board")
+        ).rank_id = board_rank.id
+
+    _receive(service, "join-2", "board", "/加入部门 核心技术部", now)
+    assert _latest_reply(factory) == "董事已直接加入核心技术部。"
+
+    # 24 小时内再次更换被拒，并提示剩余时间
+    _receive(service, "sw-1", "board", "/切换部门 学院", now + timedelta(hours=2))
+    assert "24 小时后才能再次更换" in _latest_reply(factory)
+    assert "还剩约" in _latest_reply(factory)
+
+    # 满 24 小时后可再次更换
+    _receive(service, "sw-2", "board", "/切换部门 学院", now + timedelta(hours=25))
+    assert _latest_reply(factory) == "董事已直接切换至学院。"
+
+
 def test_board_members_can_directly_change_departments_and_review_all_requests():
     from dzmm_bot.core.schema import RankRecord, UserRecord
 
@@ -3002,7 +3373,9 @@ def test_board_members_can_directly_change_departments_and_review_all_requests()
 
     _receive(service, "board-change", "board", "/加入部门 核心技术部", now)
     assert _latest_reply(factory) == "董事已直接加入核心技术部。"
-    _receive(service, "board-switch", "board", "/切换部门 学院", now)
+    _receive(
+        service, "board-switch", "board", "/切换部门 学院", now + timedelta(hours=25)
+    )
     assert _latest_reply(factory) == "董事已直接切换至学院。"
     _receive(service, "apply", "u1", "/加入部门 核心技术部", now)
     _receive(service, "list", "board", "/部门申请列表", now)

@@ -96,11 +96,17 @@ const PIECE = { R: '車', H: '馬', E: '相', A: '仕', K: '帥', C: '炮', P: '
 
 async function boot() {
   const status = document.querySelector('#status');
+  const loading = window.dzmm.loading;
+  loading?.progress({ phase: 'start', message: '正在进入棋局' });
+  let ready = false;
+  const showReady = () => {
+    if (!ready) { ready = true; loading?.ready(); }
+  };
   const launch = await window.dzmm.getLaunchParams();
   const roomId = resolveRoomId(launch?.gp, location.hash);
-  if (!roomId) { status.textContent = '没有有效棋局，请从群内链接进入。'; return; }
+  if (!roomId) { status.textContent = '没有有效棋局，请从群内链接进入。'; showReady(); return; }
   location.hash = `room=${roomId}`;
-  if (!/^https:\/\//.test(window.CHESS_API_BASE || '')) { status.textContent = '棋局 API 尚未配置 HTTPS 地址。'; return; }
+  if (!/^https:\/\//.test(window.CHESS_API_BASE || '')) { status.textContent = '棋局 API 尚未配置 HTTPS 地址。'; showReady(); return; }
   const client = new ChessClient({ sdk: window.dzmm, fetchImpl: fetch, apiBase: window.CHESS_API_BASE, roomId });
   const controller = new AbortController();
   let state = null;
@@ -157,7 +163,7 @@ async function boot() {
     }
   }
   function render(next, error) {
-    if (!next) { status.textContent = error?.message || '连接中…'; return; }
+    if (!next) { status.textContent = error?.message || '连接中…'; showReady(); return; }
     state = next;
     serverOffset = Date.now() - Date.parse(next.server_time || new Date().toISOString());
     const game = next.game;
@@ -186,7 +192,7 @@ async function boot() {
       item.textContent = `${move.ply}. ${move.from_xy.join(',')}→${move.to_xy.join(',')}  `;
       moves.append(item);
     }
-    clocks(); renderBoard();
+    clocks(); renderBoard(); showReady();
   }
   document.querySelector('#claim-panel').addEventListener('submit', async event => {
     event.preventDefault();
@@ -211,4 +217,5 @@ async function boot() {
 
 if (typeof document !== 'undefined') boot().catch(error => {
   document.querySelector('#status').textContent = error.message;
+  window.dzmm.loading?.error('CHESS_BOOT_FAILED', error.message);
 });

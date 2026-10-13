@@ -50,6 +50,10 @@ class AikdaMessageRejectedError(RuntimeError):
     pass
 
 
+class AikdaMemberRemovalRejectedError(RuntimeError):
+    pass
+
+
 class AikdaAuthenticationError(RuntimeError):
     pass
 
@@ -370,6 +374,21 @@ class AikdaSocketGateway:
             "chatroom.addBot",
             {"chatroomId": chatroom_id, "botId": bot_id},
         )
+
+    def remove_member(self, chatroom_id: str, member_id: str) -> None:
+        if not chatroom_id or not member_id or member_id == self._bot_id or member_id in self._ignored_sender_ids:
+            raise ValueError("member cannot be removed")
+        try:
+            result = self._request(
+                "groupChat.removeMember",
+                {"chatroomId": chatroom_id, "memberId": member_id},
+            )
+        except AikdaTransportError as error:
+            if re.search(r"status=4(?:00|04|09|22)\b", str(error)):
+                raise AikdaMemberRemovalRejectedError(str(error)) from error
+            raise
+        if result is False or (isinstance(result, dict) and result.get("success") is False):
+            raise AikdaMemberRemovalRejectedError("platform rejected member removal")
 
     def lookup_platform_nickname(
         self, chatroom_id: str, platform_user_id: str

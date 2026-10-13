@@ -324,11 +324,9 @@ def test_fine_cooldown():
     assert _replied(factory, "已成功扣款")
 
 
-def test_fine_rejects_unauthorized_self_and_same_department():
+def test_fine_rejects_unauthorized_and_self():
     service, repository, factory = _service()
     _setup(service, repository, factory, NOW)
-    fine_department = _department_id(factory, "风纪监察部")
-
     _receive(service, "f1", "user-1", "/罚款 员工0 摸鱼", NOW)
     assert _replied(
         factory, exact="只有风纪执法部门（部门津贴=风纪执法）的成员可以执行罚款。"
@@ -337,9 +335,20 @@ def test_fine_rejects_unauthorized_self_and_same_department():
     _receive(service, "f2", "user-0", "/罚款 员工0 摸鱼", NOW)
     assert _replied(factory, exact="不能罚款自己。")
 
+
+def test_fine_can_deduct_from_another_member_of_enforcement_department():
+    service, repository, factory = _service()
+    _setup(service, repository, factory, NOW)
+    fine_department = _department_id(factory, "风纪监察部")
     _assign_department(factory, "user-2", fine_department)
-    _receive(service, "f3", "user-0", "/罚款 员工2 摸鱼", NOW)
-    assert _replied(factory, exact="不能罚款执法部门内部成员。")
+
+    _receive(service, "f1", "user-0", "/罚款 员工2 摸鱼", NOW)
+
+    assert _replied(factory, "对 员工2 处以 5 摸鱼币罚款")
+    assert _balance(factory, "user-2") == 95
+    records, total = repository.list_discipline_fine_records(page=1, page_size=10)
+    assert total == 1
+    assert records[0].target_display_name == "员工2"
 
 
 def test_fine_target_daily_limit():

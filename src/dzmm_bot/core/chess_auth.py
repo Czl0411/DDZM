@@ -3,7 +3,7 @@
 import jwt
 
 
-JWKS_URL = "https://www.dzmm.ai/api/gamefy/.well-known/jwks.json"
+JWKS_URL = "https://www.aikda.com/api/gamefy/.well-known/jwks.json"
 jwks_client = jwt.PyJWKClient(JWKS_URL, cache_jwk_set=True, lifespan=300)
 
 

@@ -10,12 +10,16 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from dzmm_bot.core.app import create_app
-from dzmm_bot.core.chess_auth import verify_gamefy_token
+from dzmm_bot.core.chess_auth import JWKS_URL, verify_gamefy_token
 from dzmm_bot.core.repository import CoreRepository
 from dzmm_bot.core.schema import Base, InboundRecord, OutboundRecord, PRIMARY_GROUP_CHAT_ID
 
 
 NOW = datetime(2026, 10, 13, 12, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+
+def test_chess_jwks_uses_active_gamefy_host():
+    assert JWKS_URL == "https://www.aikda.com/api/gamefy/.well-known/jwks.json"
 
 
 @pytest.fixture

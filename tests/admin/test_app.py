@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 import json
 from pathlib import Path
+import shutil
+import subprocess
 
 import httpx
 import pytest
@@ -95,6 +97,8 @@ class FakeCore:
     personal_profile_images: dict[str, str | None] = field(default_factory=dict)
     profile_uploads: dict[str, dict] = field(default_factory=dict)
     last_profile_upload: dict | None = None
+    custom_command_uploads: dict[str, dict] = field(default_factory=dict)
+    last_custom_command_upload: dict | None = None
     activity_settings: dict = field(
         default_factory=lambda: {
             "rules": [
@@ -596,6 +600,31 @@ class FakeCore:
     def list_game_commands(self):
         return self.command_definitions
 
+    def create_custom_command(self, payload):
+        record = {
+            "command": payload["command"], "description": payload["description"],
+            "enabled": payload["enabled"], "is_custom": True,
+            "reply_type": payload["reply_type"], "reply_value": payload["content"],
+            "templates": [],
+        }
+        self.command_definitions.append(record)
+        return record
+
+    def update_custom_command(self, payload):
+        record = next(item for item in self.command_definitions if item["command"] == payload["old_command"])
+        record.update(
+            command=payload["command"], description=payload["description"],
+            enabled=payload["enabled"], reply_type=payload["reply_type"],
+            reply_value=payload["content"],
+        )
+        return record
+
+    def delete_custom_command(self, old_command):
+        self.command_definitions = [
+            item for item in self.command_definitions if item["command"] != old_command
+        ]
+        return {"deleted": True}
+
     def set_game_command_enabled(self, command, enabled):
         record = next(item for item in self.command_definitions if item["command"] == command)
         record["enabled"] = enabled
@@ -705,6 +734,31 @@ class FakeCore:
     def set_board_membership(self, platform_id, member):
         return {"platform_id": platform_id, "member": member}
 
+    def get_birthday_settings(self):
+        return {
+            "enabled": False,
+            "greet_times": ["09:00", "12:00", "17:00"],
+            "preview_enabled": True,
+            "preview_time": "18:00",
+            "gift_amount": 66,
+            "same_day_backfill": True,
+            "edit_limit_per_year": 1,
+            "checkin_multiplier": 2,
+            "shop_discount_percent": 90,
+            "lottery_free_tickets": 1,
+            "event_reward_bonus_percent": 10,
+            "tips_enabled": True,
+            "tip_max_amount": 100,
+            "tip_window_minutes": 30,
+            "anniversary_enabled": True,
+            "greet_template": "t1",
+            "preview_template": "t2",
+            "tips_summary_template": "t3",
+        }
+
+    def set_birthday_settings(self, settings):
+        return settings
+
     def get_game_settings(self):
         return self.game_settings
 
@@ -761,6 +815,16 @@ class FakeCore:
 
     def get_profile_image_upload(self, task_id):
         return self.profile_uploads[task_id]
+
+    def create_custom_command_image_upload(self, upload):
+        self.last_custom_command_upload = upload
+        task = {"id": "custom-upload-1", "status": "pending", "result_url": None,
+                "failure_summary": None}
+        self.custom_command_uploads[task["id"]] = task
+        return task
+
+    def get_custom_command_image_upload(self, task_id):
+        return self.custom_command_uploads[task_id]
 
     def clear_profile_image(self, platform_id):
         self.personal_profile_images[platform_id] = None
@@ -1465,6 +1529,122 @@ def test_admin_page_contains_multi_group_controls(client):
     assert 'data-employee-group-messages' in script
 
 
+def test_admin_group_ban_operator_selector(client, headers):
+    page = client.get("/").text
+    script = client.get("/static/admin.js").text
+    assert 'id="group-chat-ban-operators"' in page
+    assert 'id="group-chat-selected-admins"' in page
+    assert "本群管理员" in page
+    assert "当前仅授权 /ban" in page
+    assert 'ban_operator_platform_ids' in script
+    assert 'employee.display_name' in script
+    assert 'employee.platform_nickname' in script
+    assert 'employee.employee_number' in script
+
+
+def test_group_admin_selection_stays_visible_while_searching():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is needed for the group admin UI regression test")
+    script_path = Path(__file__).resolve().parents[2] / "src/dzmm_bot/admin/static/admin.js"
+    scenario = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const start = source.indexOf('let groupBanEmployees =');
+const end = source.indexOf('\nfunction openGroupChatModal', start);
+const eventStart = source.indexOf('document.querySelector("#group-chat-ban-operator-search").addEventListener("input",');
+const eventEnd = source.indexOf('\ngroupChatModal.addEventListener', eventStart);
+assert.ok(start >= 0 && end > start && eventStart >= 0 && eventEnd > eventStart);
+const nodes = new Map();
+function node(selector) {
+  if (!nodes.has(selector)) nodes.set(selector, {
+    value: '', innerHTML: '', listeners: {},
+    addEventListener(event, callback) { this.listeners[event] = callback; },
+  });
+  return nodes.get(selector);
+}
+const context = vm.createContext({
+  document: {querySelector: node},
+  escapeHtml: (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
+  formatEmployeeNumber: (value) => `#${String(value).padStart(4, '0')}`,
+});
+vm.runInContext(source.slice(start, end), context);
+vm.runInContext(source.slice(eventStart, eventEnd), context);
+vm.runInContext(`groupBanEmployees = [
+  {platform_id: 'one', display_name: '阿甲', platform_nickname: '甲', employee_number: 1},
+  {platform_id: 'two', display_name: '阿乙', platform_nickname: '乙', employee_number: 2},
+]; groupBanSelectedIds = new Set(['one']); renderGroupBanOperators();`, context);
+assert.ok(node('#group-chat-selected-admins').innerHTML.includes('阿甲'));
+assert.ok(node('#group-chat-ban-operators').innerHTML.includes('type="checkbox"'));
+node('#group-chat-ban-operators').listeners.change({target: {
+  type: 'checkbox', value: 'two', checked: true, matches: () => true,
+}});
+assert.equal(vm.runInContext('groupBanSelectedIds.size', context), 2);
+node('#group-chat-ban-operator-search').value = '乙';
+node('#group-chat-ban-operator-search').listeners.input();
+assert.ok(node('#group-chat-selected-admins').innerHTML.includes('阿甲'));
+assert.ok(node('#group-chat-selected-admins').innerHTML.includes('阿乙'));
+node('#group-chat-selected-admins').listeners.click({target: {
+  closest: () => ({dataset: {removeGroupAdmin: 'one'}}),
+}});
+assert.equal(vm.runInContext('groupBanSelectedIds.has("one")', context), false);
+assert.equal(vm.runInContext('groupBanSelectedIds.has("two")', context), true);
+"""
+    result = subprocess.run(
+        [node, "-e", scenario, str(script_path)], capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_group_admin_save_uses_current_checked_ids():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is needed for the group admin UI regression test")
+    script_path = Path(__file__).resolve().parents[2] / "src/dzmm_bot/admin/static/admin.js"
+    scenario = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const start = source.indexOf('document.querySelector("#save-group-chat").addEventListener("click",');
+const end = source.indexOf('\ndocument.querySelector("#group-chat-list").addEventListener', start);
+assert.ok(start >= 0 && end > start);
+const nodes = new Map();
+function node(selector) {
+  if (!nodes.has(selector)) nodes.set(selector, {
+    value: '', checked: false, listeners: {},
+    addEventListener(event, callback) { this.listeners[event] = callback; },
+  });
+  return nodes.get(selector);
+}
+let saved;
+const context = vm.createContext({
+  document: {querySelector: node},
+  groupChatModal: {dataset: {groupId: 'group-1'}},
+  groupGameOptions: [],
+  groupBanSelectedIds: new Set(['two']),
+  configurationHeaders: () => ({}),
+  runMutation: async (button, label, callback) => callback(),
+  requestGame: async (path, options) => {
+    saved = {path, body: JSON.parse(options.body)};
+    return {version: 2};
+  },
+  closeGroupChatModal() {}, loadGroupChats: async () => {}, setResult() {},
+});
+vm.runInContext(source.slice(start, end), context);
+node('#save-group-chat').listeners.click({currentTarget: node('#save-group-chat')}).then(() => {
+  assert.equal(saved.path, '/api/group-chats/group-1');
+  assert.equal(JSON.stringify(saved.body.ban_operator_platform_ids), '["two"]');
+}).catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        [node, "-e", scenario, str(script_path)], capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_admin_page_contains_performance_management(client):
     page = client.get("/").text
     script = client.get("/static/admin.js").text
@@ -1863,6 +2043,148 @@ def test_admin_dashboard_exposes_game_navigation_and_proxies_game_data(
     assert item.status_code == 201
 
 
+def test_admin_custom_command_api_versions_and_reloads(client, headers, core):
+    payload = {
+        "command": "/公告", "description": "公告", "enabled": True,
+        "reply_type": "text", "content": "今天开会", "upload_task_id": None,
+    }
+    created = client.post("/api/game/custom-commands", headers=headers, json=payload)
+    assert created.status_code == 201
+    assert created.json()["reply_value"] == "今天开会"
+    assert created.json()["version"] == 1
+    assert client.post(
+        "/api/game/custom-commands", headers=headers, json=payload
+    ).json() == created.json()
+    assert len(core.command_definitions) == 2
+    listed = client.get("/api/game/commands", headers=headers).json()
+    assert next(row for row in listed if row["command"] == "/公告")["version"] == 1
+    assert next(row for row in listed if row["command"] == "/打卡")["templates"]
+    updated = client.put(
+        "/api/game/custom-commands",
+        headers={**headers, "If-Match": "1", "Idempotency-Key": "update-command"},
+        json={**payload, "old_command": "/公告", "command": "/通知", "content": "明天开会"},
+    )
+    assert updated.status_code == 200
+    assert (updated.json()["command"], updated.json()["version"]) == ("/通知", 2)
+    removed = client.request(
+        "DELETE", "/api/game/custom-commands",
+        headers={**headers, "If-Match": "2", "Idempotency-Key": "delete-command"},
+        json={"old_command": "/通知"},
+    )
+    assert removed.status_code == 200
+    assert removed.json() == {"deleted": True, "version": 3}
+    assert [row["command"] for row in client.get("/api/game/commands", headers=headers).json()] == ["/打卡"]
+
+
+def test_admin_custom_command_api_rejects_stale_version(client, headers):
+    payload = {
+        "command": "/公告", "description": "公告", "enabled": True,
+        "reply_type": "text", "content": "今天开会",
+    }
+    first = client.post("/api/game/custom-commands", headers=headers, json=payload)
+    assert first.status_code == 201
+    stale = client.post(
+        "/api/game/custom-commands",
+        headers={**headers, "Idempotency-Key": "another-request"},
+        json={**payload, "command": "/第二条"},
+    )
+    assert stale.status_code == 409
+
+
+def test_admin_custom_command_image_upload_and_rejects_invalid_file(
+    tmp_path, core, console, websocket_connection, admin_repository, headers,
+):
+    from dzmm_bot.admin.app import create_app
+
+    client = TestClient(create_app(
+        "admin-secret", core, repository=admin_repository,
+        console_client=console, websocket_connector=websocket_connection.connect,
+        profile_upload_dir=tmp_path,
+    ))
+    valid = client.post(
+        "/api/game/custom-command-images", headers=headers,
+        files={"file": ("custom.png", b"\x89PNG\r\n\x1a\nimage-data", "image/png")},
+    )
+    assert valid.status_code == 202
+    assert client.get(
+        "/api/game/custom-command-images/custom-upload-1", headers=headers,
+    ).json()["status"] == "pending"
+    saved = Path(core.last_custom_command_upload["temp_path"])
+    assert saved.read_bytes().startswith(b"\x89PNG")
+    for data, mime in ((b"not-png", "image/png"),
+                       (b"\x89PNG\r\n\x1a\n" + b"x" * (10 * 1024 * 1024), "image/png")):
+        response = client.post(
+            "/api/game/custom-command-images", headers=headers,
+            files={"file": ("bad.png", data, mime)},
+        )
+        assert response.status_code == 422
+    assert list(tmp_path.iterdir()) == [saved]
+
+
+def test_custom_command_ui_has_editor_and_four_reply_types(client, headers):
+    page = client.get("/", headers=headers).text
+    script = client.get("/static/admin.js", headers=headers).text
+    assert 'id="add-custom-command"' in page
+    assert 'id="custom-command-modal"' in page
+    assert 'id="custom-command-image-file"' in page
+    for reply_type in ("text", "image", "group_invite", "novel"):
+        assert f'value="{reply_type}"' in page
+    assert 'data-custom-command-action="edit"' in script
+    assert 'data-custom-command-action="delete"' in script
+    assert '"/api/game/custom-commands"' in script
+    assert '"/api/game/custom-command-images"' in script
+
+
+def test_custom_command_upload_does_not_overwrite_reopened_editor():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is needed for the async UI regression test")
+    script_path = Path(__file__).resolve().parents[2] / "src/dzmm_bot/admin/static/admin.js"
+    scenario = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const start = source.indexOf('async function uploadCustomCommandImage(file) {');
+const end = source.indexOf('\nasync function requestGame(', start);
+const functionSource = source.slice(start, end);
+let releaseStatus;
+let notifyStatus;
+const statusStarted = new Promise(resolve => { notifyStatus = resolve; });
+const context = {
+  customCommandUploadGeneration: 0,
+  customCommandModal: {dataset: {uploading: 'false'}},
+  customCommandImageStatus: {textContent: ''},
+  customCommandImagePreview: {src: '', hidden: true},
+  customCommandImageTaskId: null,
+  customCommandImageUrl: null,
+  updateCustomCommandFields() {},
+  FormData: class { append() {} },
+  requestGame(path) {
+    if (path === '/api/game/custom-command-images') return Promise.resolve({id: 'old-task'});
+    notifyStatus();
+    return new Promise(resolve => { releaseStatus = resolve; });
+  },
+};
+(async () => {
+  const upload = vm.runInNewContext(functionSource + '; uploadCustomCommandImage({})', context);
+  await statusStarted;
+  context.customCommandUploadGeneration += 1;
+  context.customCommandModal.dataset.uploading = 'false';
+  context.customCommandImageUrl = 'https://cdn.example.com/new.png';
+  context.customCommandImagePreview.src = context.customCommandImageUrl;
+  releaseStatus({status: 'completed', result_url: 'https://cdn.example.com/old.png'});
+  await upload;
+  assert.equal(context.customCommandImageUrl, 'https://cdn.example.com/new.png');
+  assert.equal(context.customCommandImageTaskId, null);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        [node, "-e", scenario, str(script_path)], capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_admin_proxies_paginated_employee_and_item_pages(client, headers, core):
     core.employees = [
         {
@@ -2251,6 +2573,47 @@ def test_admin_estrus_panel_exposes_deductions_linking_and_target_limit(client):
     assert "data-estrus-quota" in script
     assert "chopper_rank_quotas: rankQuotas" in script
     assert ".disabled = targetFixed || chopperFixed" in script
+
+
+def test_admin_proxies_birthday_settings_and_rejects_missing_greet_times(client, headers):
+    initial = client.get("/api/game/birthday/settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()["greet_times"] == ["09:00", "12:00", "17:00"]
+
+    payload = {
+        "enabled": True,
+        "greet_times": ["09:00", "12:00", "17:00"],
+        "preview_enabled": False,
+        "preview_time": "18:00",
+        "gift_amount": 66,
+        "same_day_backfill": True,
+        "edit_limit_per_year": 1,
+        "checkin_multiplier": 2,
+        "shop_discount_percent": 90,
+        "lottery_free_tickets": 1,
+        "event_reward_bonus_percent": 10,
+        "tips_enabled": True,
+        "tip_max_amount": 100,
+        "tip_window_minutes": 30,
+        "anniversary_enabled": True,
+        "greet_template": "t1",
+        "preview_template": "t2",
+        "tips_summary_template": "t3",
+    }
+    saved = client.patch(
+        "/api/game/birthday/settings",
+        headers={**headers, "Idempotency-Key": "birthday-settings-1"},
+        json=payload,
+    )
+    assert saved.status_code == 200
+    assert saved.json()["greet_times"] == ["09:00", "12:00", "17:00"]
+    assert saved.json()["enabled"] is True
+
+    # 回归：greet_times 改版后 required 清单必须同步（曾漏改导致线上保存 422）
+    stale = {**payload, "greet_time": "09:00"}
+    del stale["greet_times"]
+    rejected = client.patch("/api/game/birthday/settings", headers=headers, json=stale)
+    assert rejected.status_code == 422
 
 
 def test_admin_proxies_game_settings(client, headers, core):

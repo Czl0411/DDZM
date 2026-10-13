@@ -32,6 +32,7 @@ _DIRECT_COMMANDS = {
     # 投票是全公司对"下一场演什么"的表决，私聊也要给一句「回群里投」
     "/事件投票", "/事件投票情况",
     "/删除黑历史",
+    "/ban", "/是",
     "/下一页",
     "/看骰", "/我的罚款",
     "/设置性别", "/修改性别",
@@ -131,6 +132,12 @@ class CoreService:
                     _LOGGER.exception("referral attribution failed")
                 return ReceiveResult(stored.id, True)
             command = command_parts[0] if command_parts else ""
+            if command in {"/ban", "/是"} and message.source_type == "group":
+                management_reply = self._command_handler.handle(message)
+                self._enqueue_replies(
+                    stored.id, management_reply, group_context=group_context
+                )
+                return ReceiveResult(stored.id, True)
             if command in SUBMISSION_COMMANDS:
                 self._repository.ensure_command_definitions()
                 if not self._repository.is_command_enabled(command):

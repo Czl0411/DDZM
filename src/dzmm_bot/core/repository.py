@@ -217,6 +217,7 @@ from .schema import (
     BlameIncidentCardRecord,
     CommandDefinitionRecord,
     CommandReplyTemplateRecord,
+    CustomCommandImageUploadRecord,
     CompanyLotteryBetRecord,
     CompanyLotteryDraftRecord,
     CompanyLotteryPoolLedgerRecord,
@@ -371,6 +372,7 @@ from .schema import (
     WeeklyAttendanceSettlementRecord,
     WorkerCommandRecord,
     WorkerInstanceRecord,
+    GroupBanRequestRecord,
 )
 
 
@@ -390,6 +392,7 @@ class GroupChatConfig:
     listening_enabled: bool
     games_enabled: bool
     enabled_game_types: tuple[str, ...]
+    ban_operator_platform_ids: tuple[str, ...]
     random_events_enabled: bool
     announcements_enabled: bool
     adult_shop_enabled: bool
@@ -414,6 +417,20 @@ class GroupChatRuntimeState:
 
 class GroupChatConflict(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class GroupBanResult:
+    status: str
+    target_platform_id: str | None = None
+    reason: str | None = None
+    message_excerpt: str | None = None
+
+
+@dataclass(frozen=True)
+class GroupBanExecution:
+    chatroom_id: str
+    target_platform_id: str
 
 
 @dataclass(frozen=True)
@@ -531,6 +548,7 @@ def _group_chat_config(record: GroupChatRecord) -> GroupChatConfig:
         listening_enabled=record.listening_enabled,
         games_enabled=record.games_enabled,
         enabled_game_types=tuple(record.enabled_game_types),
+        ban_operator_platform_ids=tuple(record.ban_operator_platform_ids),
         random_events_enabled=record.random_events_enabled,
         announcements_enabled=record.announcements_enabled,
         adult_shop_enabled=record.adult_shop_enabled,
@@ -681,9 +699,7 @@ _DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE = (
     "请使用 /加入 身份 报名，报名将在 {报名截止分钟} 分钟后截止。"
 )
 _COMPANY_STORY_NOVEL_URL_PATTERN = re.compile(
-    r"https?://(?:www\.)?ivorune\.xyz/novel/"
-    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
-    r"(?:[?#]\S*)?",
+    r"/novel/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
 )
 _UNSET = object()
@@ -705,7 +721,18 @@ def _normalize_company_story_novel_url(value: str | None | object) -> str | None
 def company_story_novel_resource_id(value: str | None) -> str | None:
     if not isinstance(value, str):
         return None
-    match = _COMPANY_STORY_NOVEL_URL_PATTERN.fullmatch(value.strip())
+    try:
+        parsed = urlsplit(value.strip())
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if (
+        parsed.scheme not in {"http", "https"} or not hostname
+        or any(character.isspace() for character in hostname)
+        or parsed.username is not None or parsed.password is not None
+    ):
+        return None
+    match = _COMPANY_STORY_NOVEL_URL_PATTERN.fullmatch(parsed.path)
     return None if match is None else match.group(1).lower()
 _RANDOM_EVENT_AD_SLOT_DRAFT_TIMEOUT_MINUTES = 15
 _DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS = ("/加入", "/退出", "/事件投票", "/事件投票情况")
@@ -1513,6 +1540,28 @@ def _classify_chop_target(name: str) -> str | None:
 def _is_boss_word(name: str) -> bool:
     lowered = name.lower()
     return any(word in lowered for word in _CHOP_BOSS_WORDS)
+
+
+# 部门变更冷却：加入/切换部门成功后 24 小时内不能再次更换
+DEPARTMENT_CHANGE_COOLDOWN = timedelta(hours=24)
+
+
+def _department_change_cooldown_left(
+    last_changed_at: datetime | None, now: datetime
+) -> int | None:
+    """距部门变更冷却结束的剩余秒数；不在冷却期返回 None。"""
+    if last_changed_at is None:
+        return None
+    last_changed = (
+        last_changed_at.astimezone(BEIJING)
+        if last_changed_at.tzinfo is not None
+        else last_changed_at.replace(tzinfo=BEIJING)
+    )
+    now = now.astimezone(BEIJING)
+    remaining = DEPARTMENT_CHANGE_COOLDOWN - (now - last_changed)
+    if remaining <= timedelta(0):
+        return None
+    return int(remaining.total_seconds())
 
 
 @dataclass(frozen=True)
@@ -2548,12 +2597,14 @@ class PromotionDecisionResult:
 class DepartmentChangeResult:
     status: str
     department: DepartmentRecord | None = None
+    cooldown_remaining_seconds: int = 0
 
 
 @dataclass(frozen=True)
 class DepartmentRequestResult:
     status: str
     request: DepartmentRequestRecord | None = None
+    cooldown_remaining_seconds: int = 0
 
     @property
     def number(self) -> int:
@@ -2641,6 +2692,10 @@ class EmployeeNameTakenError(ValueError):
     pass
 
 
+class GroupBanInProgressError(RuntimeError):
+    pass
+
+
 _COMMAND_DEFINITIONS = (
     ("/我的称号", "/我的称号", "查看当前可佩戴称号和历史获得次数"),
     ("/佩戴称号", "/佩戴称号 序号", "选择佩戴称号（/装备称号、/编辑称号 等效），序号 0 取消佩戴"),
@@ -2678,6 +2733,8 @@ _COMMAND_DEFINITIONS = (
     ("/随机事件时间表", "/随机事件时间表", "查看全公司今天全部随机事件场次与状态"),
     ("/象棋", "/象棋", "创建 H5 象棋对局，已入职群友可凭四位码先到先得入座"),
     ("/q", "回复消息 /q", "花 1 摸鱼币将一条群聊消息记入对应员工的黑历史册"),
+    ("/ban", "回复消息 /ban 原因", "由本群授权员工移除未入职成员（需二次确认）"),
+    ("/是", "/是", "确认本群待处理的成员移除请求"),
     ("/黑历史", "回复消息 /黑历史", "免费随机翻出被回复员工的一条黑历史"),
     ("/删除黑历史", "/删除黑历史 [编号]（仅私聊）", "查看或删除自己的黑历史"),
     ("/下一页", "/下一页（仅私聊）", "继续当前私聊分页操作"),
@@ -2748,8 +2805,8 @@ _COMMAND_DEFINITIONS = (
     ("/凿", "/凿 名字 [附言]", "凿一下别人：目标发情值随机上涨并获得随机摸鱼币，可引用回复目标消息"),
     ("/允许被凿", "/允许被凿", "允许别人凿自己（默认开启）"),
     ("/拒绝被凿", "/拒绝被凿", "拒绝被凿：之后被 /凿 时对方会吃一杵子"),
-    ("/我的凿", "/我的凿", "查看自己的发情值、被凿/凿人与高潮次数"),
-    ("/人气榜", "/人气榜", "查看今日被凿人气前 5 名（按今日被凿次数）"),
+    ("/我的凿", "/我的凿", "查看自己的发情值、被凿/凿人与高潮次数（所有群合并统计）"),
+    ("/人气榜", "/人气榜", "查看今日被凿人气前 5 名（所有群合并统计）"),
     ("/设置性别", "/设置性别 男|女", "设置自己的性别（/修改性别 等效），影响高潮文字文风"),
     ("/蹦蹦数字炸弹", "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛", "创建普通报名局，或创建固定8人、12轮积分赛"),
     ("/报数", "/报数 数字（仅私聊）", "提交蹦蹦数字炸弹本轮 1–100 整数"),
@@ -3159,9 +3216,11 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
         adult_shop_enabled: bool = False,
         performances_enabled: bool = False,
         birthdays_enabled: bool = True,
+        ban_operator_platform_ids: Sequence[str] = (),
     ) -> GroupChatConfig:
         normalized_name = self._validate_group_chat_name(name)
         with self._session() as session:
+            operators = self._validate_group_ban_operators(session, ban_operator_platform_ids)
             allowed_origin = self._primary_group_origin(session)
             normalized_url, chatroom_id = normalize_group_chat_url(
                 chat_url, allowed_origin
@@ -3182,6 +3241,7 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                         else enabled_game_types
                     )
                 ),
+                ban_operator_platform_ids=operators,
                 random_events_enabled=random_events_enabled,
                 announcements_enabled=announcements_enabled,
                 adult_shop_enabled=adult_shop_enabled,
@@ -3217,6 +3277,7 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
         adult_shop_enabled: bool | None = None,
         performances_enabled: bool | None = None,
         birthdays_enabled: bool | None = None,
+        ban_operator_platform_ids: Sequence[str] | None = None,
         now: datetime,
     ) -> GroupChatConfig:
         with self._session() as session:
@@ -3288,6 +3349,22 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 record.performances_enabled = performances_enabled
             if birthdays_enabled is not None:
                 record.birthdays_enabled = birthdays_enabled
+            removed_ban_operators: set[str] = set()
+            if ban_operator_platform_ids is not None:
+                next_ban_operators = self._validate_group_ban_operators(
+                    session, ban_operator_platform_ids
+                )
+                removed_ban_operators = set(record.ban_operator_platform_ids) - set(next_ban_operators)
+                record.ban_operator_platform_ids = next_ban_operators
+            if next_chatroom_id != before.chatroom_id or removed_ban_operators:
+                pending_bans = session.scalars(select(GroupBanRequestRecord).where(
+                    GroupBanRequestRecord.group_chat_id == group_id,
+                    GroupBanRequestRecord.status == "pending",
+                ).with_for_update()).all()
+                for pending_ban in pending_bans:
+                    if next_chatroom_id != before.chatroom_id or pending_ban.actor_platform_id in removed_ban_operators:
+                        pending_ban.status = "unauthorized"
+                        pending_ban.completed_at = now
             record.updated_at = now
             runtime = session.get(GroupChatRuntimeStateRecord, group_id)
             if runtime is not None:
@@ -3300,6 +3377,193 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
             )
             session.flush()
             return _group_chat_config(record)
+
+    def _validate_group_ban_operators(
+        self, session: Session, platform_ids: Sequence[str]
+    ) -> list[str]:
+        values = list(platform_ids)
+        if len(values) != len(set(values)) or any(not value for value in values):
+            raise ValueError("invalid ban operators")
+        if values:
+            found = set(session.scalars(select(UserRecord.platform_id).where(
+                UserRecord.platform_id.in_(values)
+            )))
+            if found != set(values):
+                raise ValueError("ban operator is not an employee")
+        return values
+
+    def request_group_ban(
+        self, message: InboundMessage, group_chat_id: UUID
+    ) -> GroupBanResult:
+        with self._session() as session:
+            group = session.get(GroupChatRecord, group_chat_id, with_for_update=True)
+            if (
+                message.source_type != "group"
+                or group is None
+                or group.deleted_at is not None
+                or message.sender_platform_id not in group.ban_operator_platform_ids
+                or session.scalar(select(UserRecord.id).where(
+                    UserRecord.platform_id == message.sender_platform_id
+                )) is None
+            ):
+                return GroupBanResult("unauthorized")
+            reason = message.content.removeprefix("/ban").strip()
+            if not reason:
+                return GroupBanResult("missing_reason")
+            reference = message.reference
+            if reference is None or not reference.message_id or not reference.sender_platform_id:
+                return GroupBanResult("invalid_reply")
+            target = reference.sender_platform_id
+            if target == message.sender_platform_id:
+                return GroupBanResult("self_target")
+            if session.scalar(select(UserRecord.id).where(UserRecord.platform_id == target)) is not None:
+                return GroupBanResult("target_joined")
+            inbound = session.scalar(select(InboundRecord).where(
+                InboundRecord.group_chat_id == group_chat_id,
+                InboundRecord.platform_message_id == message.platform_message_id,
+            ))
+            if inbound is None:
+                return GroupBanResult("invalid_reply")
+            excerpt = (
+                "[图片]" if reference.content_type == "image"
+                else re.sub(r"\s+", " ", reference.text or "").strip()[:120] or "[无文字]"
+            )
+            pending = session.scalars(select(GroupBanRequestRecord).where(
+                GroupBanRequestRecord.group_chat_id == group_chat_id,
+                GroupBanRequestRecord.actor_platform_id == message.sender_platform_id,
+                GroupBanRequestRecord.status == "pending",
+            ).with_for_update()).all()
+            for previous in pending:
+                previous.status = "replaced"
+                previous.completed_at = message.received_at
+            session.add(GroupBanRequestRecord(
+                group_chat_id=group_chat_id,
+                actor_platform_id=message.sender_platform_id,
+                target_platform_id=target,
+                target_message_id=reference.message_id,
+                source_inbound_message_id=inbound.id,
+                reason=reason,
+                message_excerpt=excerpt,
+                status="pending",
+                created_at=message.received_at,
+                expires_at=message.received_at + timedelta(seconds=60),
+            ))
+            return GroupBanResult("pending", target, reason, excerpt)
+
+    def confirm_group_ban(
+        self, message: InboundMessage, group_chat_id: UUID
+    ) -> GroupBanResult:
+        if message.content.strip() != "/是" or message.source_type != "group":
+            return GroupBanResult("no_pending")
+        with self._session() as session:
+            group = session.get(GroupChatRecord, group_chat_id, with_for_update=True)
+            pending = session.scalar(select(GroupBanRequestRecord).where(
+                GroupBanRequestRecord.group_chat_id == group_chat_id,
+                GroupBanRequestRecord.actor_platform_id == message.sender_platform_id,
+                GroupBanRequestRecord.status == "pending",
+            ).order_by(GroupBanRequestRecord.created_at.desc()).with_for_update())
+            if pending is None:
+                return GroupBanResult("no_pending")
+            if message.received_at >= pending.expires_at:
+                pending.status = "expired"
+                pending.completed_at = message.received_at
+                return GroupBanResult("expired")
+            if (
+                group is None
+                or group.deleted_at is not None
+                or message.sender_platform_id not in group.ban_operator_platform_ids
+                or session.scalar(select(UserRecord.id).where(
+                    UserRecord.platform_id == message.sender_platform_id
+                )) is None
+                or session.get(InboundRecord, pending.source_inbound_message_id).chatroom_id != group.chatroom_id
+            ):
+                pending.status = "unauthorized"
+                pending.completed_at = message.received_at
+                return GroupBanResult("unauthorized")
+            if session.scalar(select(UserRecord.id).where(
+                UserRecord.platform_id == pending.target_platform_id
+            )) is not None:
+                pending.status = "target_joined"
+                pending.completed_at = message.received_at
+                return GroupBanResult("target_joined")
+            inbound = session.scalar(select(InboundRecord).where(
+                InboundRecord.group_chat_id == group_chat_id,
+                InboundRecord.platform_message_id == message.platform_message_id,
+            ))
+            if inbound is None:
+                return GroupBanResult("no_pending")
+            pending.status = "queued"
+            pending.confirmed_at = message.received_at
+            pending.confirmation_inbound_message_id = inbound.id
+            session.add(WorkerCommandRecord(command=f"ban:{pending.id}", created_at=message.received_at))
+            return GroupBanResult(
+                "queued", pending.target_platform_id, pending.reason, pending.message_excerpt
+            )
+
+    def claim_group_ban_execution(
+        self, request_id: UUID, now: datetime
+    ) -> GroupBanExecution | None:
+        with self.transaction(), self._session() as session:
+            request = session.get(GroupBanRequestRecord, request_id, with_for_update=True)
+            if request is None:
+                return None
+            if request.status == "executing":
+                self._finish_group_ban(session, request, "uncertain", now)
+                return None
+            if request.status != "queued":
+                return None
+            group = session.get(GroupChatRecord, request.group_chat_id, with_for_update=True)
+            source = session.get(InboundRecord, request.source_inbound_message_id)
+            if (
+                group is None or group.deleted_at is not None
+                or not group.listening_enabled or not group.chatroom_id
+                or source is None or source.chatroom_id != group.chatroom_id
+                or request.actor_platform_id not in group.ban_operator_platform_ids
+                or session.scalar(select(UserRecord.id).where(
+                    UserRecord.platform_id == request.actor_platform_id
+                )) is None
+            ):
+                self._finish_group_ban(session, request, "unauthorized", now)
+                return None
+            self._lock_employee_identity_gate(session)
+            if session.scalar(select(UserRecord.id).where(
+                UserRecord.platform_id == request.target_platform_id
+            )) is not None:
+                self._finish_group_ban(session, request, "target_joined", now)
+                return None
+            request.status = "executing"
+            return GroupBanExecution(source.chatroom_id, request.target_platform_id)
+
+    def complete_group_ban_execution(
+        self, request_id: UUID, outcome: str, detail: str | None, now: datetime
+    ) -> bool:
+        if outcome not in {"succeeded", "failed", "uncertain"}:
+            raise ValueError("invalid group ban outcome")
+        with self.transaction(), self._session() as session:
+            request = session.get(GroupBanRequestRecord, request_id, with_for_update=True)
+            if request is None or request.status != "executing":
+                return False
+            self._finish_group_ban(session, request, outcome, now, detail)
+            return True
+
+    def _finish_group_ban(
+        self, session: Session, request: GroupBanRequestRecord,
+        outcome: str, now: datetime, detail: str | None = None,
+    ) -> None:
+        request.status = outcome
+        request.completed_at = now
+        request.detail = detail[:500] if detail else None
+        reply = {
+            "succeeded": f"已移出 UID {request.target_platform_id}。",
+            "failed": f"移除失败：UID {request.target_platform_id}，平台未确认成功。",
+            "uncertain": f"移除 UID {request.target_platform_id} 结果不明，请人工核查；不会自动重试。",
+            "unauthorized": "移除失败：本群授权已失效。",
+            "target_joined": "移除失败：该成员已入职，不能移除。",
+        }[outcome]
+        self.enqueue_outbound(
+            request.confirmation_inbound_message_id or request.source_inbound_message_id,
+            reply, group_chat_id=request.group_chat_id,
+        )
 
     def soft_delete_group_chat(
         self, group_id: UUID, now: datetime
@@ -3587,6 +3851,7 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 "listening_enabled": config.listening_enabled,
                 "games_enabled": config.games_enabled,
                 "enabled_game_types": list(config.enabled_game_types),
+                "ban_operator_platform_ids": list(config.ban_operator_platform_ids),
                 "random_events_enabled": config.random_events_enabled,
                 "announcements_enabled": config.announcements_enabled,
                 "adult_shop_enabled": config.adult_shop_enabled,
@@ -3846,6 +4111,264 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
             if record is None:
                 return False
             record.enabled = enabled
+            session.flush()
+            return True
+
+    @staticmethod
+    def _custom_command_name(command: str) -> str:
+        if (
+            not isinstance(command, str)
+            or not command.startswith("/")
+            or len(command) < 2
+            or len(command) > 32
+            or any(character.isspace() for character in command)
+        ):
+            raise ValueError("指令名称必须以 / 开头，不能包含空白，且不超过 32 字符")
+        return command
+
+    @staticmethod
+    def _custom_reply_value(
+        session: Session,
+        reply_type: str,
+        content: str | None,
+        upload_task_id: UUID | None,
+        previous: CommandDefinitionRecord | None = None,
+    ) -> str:
+        if reply_type == "image":
+            if content is not None:
+                raise ValueError("图片回复不能包含文本内容")
+            if upload_task_id is None:
+                if previous is not None and previous.reply_type == "image" and previous.reply_value:
+                    return previous.reply_value
+                raise ValueError("请先上传图片")
+            task = session.get(CustomCommandImageUploadRecord, UUID(str(upload_task_id)))
+            if task is None or task.status != "completed" or not task.result_url:
+                raise ValueError("图片尚未上传成功")
+            return task.result_url
+        if upload_task_id is not None or not isinstance(content, str):
+            raise ValueError("回复内容与类型不匹配")
+        if reply_type == "text":
+            if not content.strip() or len(content) > 2000:
+                raise ValueError("文本回复不能为空且不超过 2000 字符")
+            return content
+        if reply_type == "novel":
+            resource_id = company_story_novel_resource_id(content)
+            if resource_id is None:
+                raise ValueError("小说链接格式不正确")
+            return resource_id
+        if reply_type == "group_invite":
+            try:
+                parsed = urlsplit(content.strip())
+                hostname = parsed.hostname
+            except ValueError:
+                raise ValueError("群聊邀请链接格式不正确") from None
+            match = re.fullmatch(r"/invite/([A-Za-z0-9_-]+)", parsed.path)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not hostname or any(character.isspace() for character in hostname)
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or match is None
+            ):
+                raise ValueError("群聊邀请链接格式不正确")
+            return match.group(1)
+        raise ValueError("不支持的回复类型")
+
+    def create_custom_command(
+        self, command: str, description: str, reply_type: str,
+        content: str | None, upload_task_id: UUID | None, enabled: bool,
+    ) -> CommandDefinitionRecord:
+        self.ensure_command_definitions()
+        command = self._custom_command_name(command)
+        with self._session() as session:
+            if session.get(CommandDefinitionRecord, command) is not None:
+                raise ValueError("指令名称已被占用")
+            value = self._custom_reply_value(session, reply_type, content, upload_task_id)
+            record = CommandDefinitionRecord(
+                command=command, syntax=command, description=description.strip(),
+                enabled=enabled, is_custom=True, reply_type=reply_type,
+                reply_value=value, created_at=beijing_now(),
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def update_custom_command(
+        self, old_command: str, command: str, description: str, reply_type: str,
+        content: str | None, upload_task_id: UUID | None, enabled: bool,
+    ) -> CommandDefinitionRecord:
+        command = self._custom_command_name(command)
+        with self._session() as session:
+            record = session.get(CommandDefinitionRecord, old_command)
+            if record is None or not record.is_custom:
+                raise ValueError("只能编辑自定义指令")
+            if command != old_command and session.get(CommandDefinitionRecord, command) is not None:
+                raise ValueError("指令名称已被占用")
+            value = self._custom_reply_value(
+                session, reply_type, content, upload_task_id, record
+            )
+            record.command = command
+            record.syntax = command
+            record.description = description.strip()
+            record.reply_type = reply_type
+            record.reply_value = value
+            record.enabled = enabled
+            session.flush()
+            return record
+
+    def delete_custom_command(self, command: str) -> bool:
+        with self._session() as session:
+            record = session.get(CommandDefinitionRecord, command)
+            if record is None or not record.is_custom:
+                return False
+            session.delete(record)
+            session.flush()
+            return True
+
+    def get_enabled_custom_command(self, command: str) -> CommandDefinitionRecord | None:
+        with self._session() as session:
+            return session.scalar(select(CommandDefinitionRecord).where(
+                CommandDefinitionRecord.command == command,
+                CommandDefinitionRecord.is_custom.is_(True),
+                CommandDefinitionRecord.enabled.is_(True),
+            ))
+
+    def create_custom_command_image_upload(
+        self, temp_path: str, original_filename: str, mime_type: str, now: datetime,
+    ) -> CustomCommandImageUploadRecord:
+        with self._session() as session:
+            record = CustomCommandImageUploadRecord(
+                temp_path=temp_path, original_filename=original_filename,
+                mime_type=mime_type, status="pending", attempt_count=0,
+                created_at=now, updated_at=now,
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def get_custom_command_image_upload(
+        self, task_id: UUID | str,
+    ) -> CustomCommandImageUploadRecord | None:
+        with self._session() as session:
+            return session.get(CustomCommandImageUploadRecord, UUID(str(task_id)))
+
+    def claim_custom_command_image_upload(
+        self, worker_id: str, now: datetime, lease_seconds: int,
+    ) -> CustomCommandImageUploadRecord | None:
+        with self._session() as session:
+            record = session.scalar(
+                select(CustomCommandImageUploadRecord)
+                .where(
+                    CustomCommandImageUploadRecord.status.in_(("pending", "processing")),
+                    or_(
+                        CustomCommandImageUploadRecord.lease_expires_at.is_(None),
+                        CustomCommandImageUploadRecord.lease_expires_at <= now,
+                    ),
+                )
+                .order_by(CustomCommandImageUploadRecord.created_at, CustomCommandImageUploadRecord.id)
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            if record is None:
+                return None
+            record.status = "processing"
+            record.lease_worker_id = worker_id
+            record.lease_token = uuid4()
+            record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            record.attempt_count += 1
+            record.updated_at = now
+            session.flush()
+            return record
+
+    def _finish_custom_command_image_upload(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        status: str, value: str, now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(
+                select(CustomCommandImageUploadRecord).where(
+                    CustomCommandImageUploadRecord.id == UUID(str(task_id)),
+                    CustomCommandImageUploadRecord.status == "processing",
+                    CustomCommandImageUploadRecord.lease_worker_id == worker_id,
+                    CustomCommandImageUploadRecord.lease_token == UUID(str(lease_token)),
+                    CustomCommandImageUploadRecord.lease_expires_at > now,
+                ).with_for_update()
+            )
+            if record is None:
+                return False
+            record.status = status
+            if status == "completed":
+                record.result_url = value.strip()
+            else:
+                record.failure_summary = value[:128]
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            record.updated_at = now
+            record.completed_at = now
+            session.flush()
+            return True
+
+    def complete_custom_command_image_upload(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        result_url: str, now: datetime,
+    ) -> bool:
+        return self._finish_custom_command_image_upload(
+            task_id, worker_id, lease_token, "completed", result_url, now
+        )
+
+    def fail_custom_command_image_upload(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        failure_summary: str, now: datetime,
+    ) -> bool:
+        return self._finish_custom_command_image_upload(
+            task_id, worker_id, lease_token, "failed", failure_summary, now
+        )
+
+    def claim_custom_command_image_cleanup(
+        self, worker_id: str, now: datetime, lease_seconds: int,
+    ) -> CustomCommandImageUploadRecord | None:
+        with self._session() as session:
+            record = session.scalar(
+                select(CustomCommandImageUploadRecord).where(
+                    CustomCommandImageUploadRecord.status.in_(("completed", "failed")),
+                    CustomCommandImageUploadRecord.temp_path != "",
+                    or_(
+                        CustomCommandImageUploadRecord.lease_expires_at.is_(None),
+                        CustomCommandImageUploadRecord.lease_expires_at <= now,
+                    ),
+                ).order_by(
+                    CustomCommandImageUploadRecord.completed_at,
+                    CustomCommandImageUploadRecord.id,
+                ).with_for_update(skip_locked=True).limit(1)
+            )
+            if record is None:
+                return None
+            record.lease_worker_id = worker_id
+            record.lease_token = uuid4()
+            record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            record.updated_at = now
+            session.flush()
+            return record
+
+    def complete_custom_command_image_cleanup(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(select(CustomCommandImageUploadRecord).where(
+                CustomCommandImageUploadRecord.id == UUID(str(task_id)),
+                CustomCommandImageUploadRecord.status.in_(("completed", "failed")),
+                CustomCommandImageUploadRecord.lease_worker_id == worker_id,
+                CustomCommandImageUploadRecord.lease_token == UUID(str(lease_token)),
+                CustomCommandImageUploadRecord.lease_expires_at > now,
+            ).with_for_update())
+            if record is None:
+                return False
+            record.temp_path = ""
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            record.updated_at = now
             session.flush()
             return True
 
@@ -14665,18 +15188,60 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
         return row
 
     def _estrus_state_row(
-        self, session: Session, group_chat_id: UUID, user_id: UUID
+        self,
+        session: Session,
+        group_chat_id: UUID,
+        user_id: UUID,
+        *,
+        active_date: date | None = None,
     ) -> EstrusStateRecord:
-        row = session.scalar(
-            select(EstrusStateRecord).where(
-                EstrusStateRecord.group_chat_id == group_chat_id,
-                EstrusStateRecord.user_id == user_id,
+        rows = list(
+            session.scalars(
+                select(EstrusStateRecord)
+                .where(EstrusStateRecord.user_id == user_id)
+                .order_by(EstrusStateRecord.created_at, EstrusStateRecord.id)
             )
         )
-        if row is None:
+        if not rows:
             row = EstrusStateRecord(group_chat_id=group_chat_id, user_id=user_id)
             session.add(row)
             session.flush()
+            return row
+
+        # 旧版本按群保存状态。首次访问时将同一用户的历史状态合并，
+        # 之后只保留一行；group_chat_id 仅保留为历史来源字段，不再参与隔离。
+        row = next(
+            (candidate for candidate in rows if candidate.group_chat_id == group_chat_id),
+            rows[0],
+        )
+        if len(rows) == 1:
+            return row
+
+        reference_date = active_date or max(
+            (
+                candidate.last_active_date
+                for candidate in rows
+                if candidate.last_active_date is not None
+            ),
+            default=None,
+        )
+        row.heat = sum(int(candidate.heat) for candidate in rows)
+        row.chopped_count = sum(int(candidate.chopped_count) for candidate in rows)
+        row.total_climaxes = sum(int(candidate.total_climaxes) for candidate in rows)
+        row.today_climaxes = sum(
+            int(candidate.today_climaxes)
+            for candidate in rows
+            if reference_date is not None
+            and candidate.last_active_date == reference_date
+        )
+        row.last_active_date = reference_date
+        row.opted_out = any(bool(candidate.opted_out) for candidate in rows)
+        row.created_at = min(candidate.created_at for candidate in rows)
+        row.updated_at = max(candidate.updated_at for candidate in rows)
+        for duplicate in rows:
+            if duplicate is not row:
+                session.delete(duplicate)
+        session.flush()
         return row
 
     @staticmethod
@@ -14904,7 +15469,7 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
     def set_estrus_opt_out(
         self, platform_id: str, group_chat_id: UUID, opted_out: bool
     ) -> str | None:
-        """切换自己是否允许被凿；未入职返回 None。"""
+        """切换自己是否允许被凿；状态对所有群生效。"""
         with self.transaction():
             with self._session() as session:
                 user = session.scalar(
@@ -14914,9 +15479,7 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 )
                 if user is None:
                     return None
-                state = self._estrus_state_row(
-                    session, group_chat_id, user.id
-                )
+                state = self._estrus_state_row(session, group_chat_id, user.id)
                 state.opted_out = opted_out
                 state.updated_at = datetime.now(BEIJING)
                 return user.display_name
@@ -14932,25 +15495,19 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 threshold = int(
                     self._estrus_settings_row(session).climax_threshold
                 )
-                row = session.execute(
-                    select(UserRecord, EstrusStateRecord)
-                    .outerjoin(
-                        EstrusStateRecord,
-                        (EstrusStateRecord.user_id == UserRecord.id)
-                        & (EstrusStateRecord.group_chat_id == group_chat_id),
-                    )
-                    .where(UserRecord.platform_id == platform_id)
-                ).first()
-                if row is None:
+                user = session.scalar(
+                    select(UserRecord).where(UserRecord.platform_id == platform_id)
+                )
+                if user is None:
                     return None
-                user, state = row
-                if state is not None:
-                    self._estrus_daily_reset(state, today)
+                state = self._estrus_state_row(
+                    session, group_chat_id, user.id, active_date=today
+                )
+                self._estrus_daily_reset(state, today)
                 today_chopped = int(
                     session.scalar(
                         select(func.count()).select_from(EstrusChopRecord).where(
                             EstrusChopRecord.target_user_id == user.id,
-                            EstrusChopRecord.group_chat_id == group_chat_id,
                             EstrusChopRecord.created_at >= day_start,
                             EstrusChopRecord.created_at < day_start + timedelta(days=1),
                         )
@@ -14961,7 +15518,6 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                     session.scalar(
                         select(func.count()).select_from(EstrusChopRecord).where(
                             EstrusChopRecord.chopper_user_id == user.id,
-                            EstrusChopRecord.group_chat_id == group_chat_id,
                             EstrusChopRecord.created_at >= day_start,
                             EstrusChopRecord.created_at < day_start + timedelta(days=1),
                         )
@@ -14972,7 +15528,6 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                     session.scalar(
                         select(func.count()).select_from(EstrusChopRecord).where(
                             EstrusChopRecord.chopper_user_id == user.id,
-                            EstrusChopRecord.group_chat_id == group_chat_id,
                         )
                     )
                     or 0
@@ -14981,7 +15536,15 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                     "display_name": user.display_name,
                     "heat": state.heat if state is not None else 0,
                     "threshold": threshold,
-                    "chopped_count": state.chopped_count if state is not None else 0,
+                    # 累计被凿跨群合并：直接数全部成功记录，不用按群的状态字段
+                    "chopped_count": int(
+                        session.scalar(
+                            select(func.count()).select_from(EstrusChopRecord).where(
+                                EstrusChopRecord.target_user_id == user.id,
+                            )
+                        )
+                        or 0
+                    ),
                     "today_chopped": today_chopped,
                     "today_chops_given": today_chops_given,
                     "total_chops_given": total_chops_given,
@@ -14998,19 +15561,18 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
     def estrus_popularity_rankings(
         self, group_chat_id: UUID, now: datetime
     ) -> list[dict]:
-        """人气榜（前 5）：按当日被凿次数，从 estrus_chops 按天统计。"""
+        """每日人气榜（前 5）：所有群合并排名，附跨群累计被凿总数。"""
         day_start = now.astimezone(BEIJING).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         with self._session() as session:
             rows = session.execute(
-                select(UserRecord.display_name, func.count())
+                select(UserRecord.id, UserRecord.display_name, func.count())
                 .join(
                     EstrusChopRecord,
                     EstrusChopRecord.target_user_id == UserRecord.id,
                 )
                 .where(
-                    EstrusChopRecord.group_chat_id == group_chat_id,
                     EstrusChopRecord.created_at >= day_start,
                     EstrusChopRecord.created_at < day_start + timedelta(days=1),
                 )
@@ -15018,9 +15580,26 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 .order_by(func.count().desc(), UserRecord.id)
                 .limit(5)
             ).all()
+            totals: dict[UUID, int] = {}
+            if rows:
+                user_ids = [row[0] for row in rows]
+                total_rows = session.execute(
+                    select(
+                        EstrusChopRecord.target_user_id, func.count()
+                    )
+                    .where(EstrusChopRecord.target_user_id.in_(user_ids))
+                    .group_by(EstrusChopRecord.target_user_id)
+                ).all()
+                totals = {
+                    user_id: int(count) for user_id, count in total_rows
+                }
         return [
-            {"display_name": name, "today_chopped": int(count)}
-            for name, count in rows
+            {
+                "display_name": name,
+                "today_chopped": int(count),
+                "total_chopped": totals.get(user_id, 0),
+            }
+            for user_id, name, count in rows
         ]
 
     def _estrus_climax_text(
@@ -15248,7 +15827,6 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                     last_created = session.scalar(
                         select(func.max(EstrusChopRecord.created_at)).where(
                             EstrusChopRecord.chopper_user_id == chopper.id,
-                            EstrusChopRecord.group_chat_id == group_chat_id,
                         )
                     )
                     if last_created is not None:
@@ -15273,13 +15851,13 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                     day_start = now.replace(
                         hour=0, minute=0, second=0, microsecond=0
                     )
+                    # 凿人次数跨群合并统计：所有群的今日凿数共享同一配额
                     given_today = int(
                         session.scalar(
                             select(func.count())
                             .select_from(EstrusChopRecord)
                             .where(
                                 EstrusChopRecord.chopper_user_id == chopper.id,
-                                EstrusChopRecord.group_chat_id == group_chat_id,
                                 EstrusChopRecord.created_at >= day_start,
                                 EstrusChopRecord.created_at
                                 < day_start + timedelta(days=1),
@@ -15312,13 +15890,13 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                     day_start = now.replace(
                         hour=0, minute=0, second=0, microsecond=0
                     )
+                    # 被凿每日上限跨群合并：所有群的今日被凿共享同一上限
                     received_today = int(
                         session.scalar(
                             select(func.count())
                             .select_from(EstrusChopRecord)
                             .where(
                                 EstrusChopRecord.target_user_id == target.id,
-                                EstrusChopRecord.group_chat_id == group_chat_id,
                                 EstrusChopRecord.created_at >= day_start,
                                 EstrusChopRecord.created_at
                                 < day_start + timedelta(days=1),
@@ -29657,8 +30235,6 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                     return DisciplineFineResult("target_not_joined")
                 if target.id == issuer.id:
                     return DisciplineFineResult("self")
-                if target.department_id in enforcement_ids:
-                    return DisciplineFineResult("same_department")
                 if settings_record.target_daily_limit > 0:
                     fined_today = int(
                         session.scalar(
@@ -31264,6 +31840,11 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 if existing is not None:
                     return existing, False
                 employee_number = self._take_employee_number(session)
+                if session.scalar(select(GroupBanRequestRecord.id).where(
+                    GroupBanRequestRecord.target_platform_id == platform_id,
+                    GroupBanRequestRecord.status.in_(("executing", "uncertain")),
+                )) is not None:
+                    raise GroupBanInProgressError("group removal is in progress")
                 if session.scalar(
                     select(UserRecord.id).where(
                         UserRecord.display_name == normalized_name
@@ -31673,6 +32254,7 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
     def join_department(
         self, platform_id: str, department_name: str
     ) -> DepartmentChangeResult:
+        now = datetime.now(BEIJING)
         with self.transaction():
             with self._session() as session:
                 _, default_department = self._ensure_organization_defaults(session)
@@ -31683,6 +32265,14 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 )
                 if employee is None:
                     return DepartmentChangeResult("not_joined")
+                cooldown_left = _department_change_cooldown_left(
+                    employee.last_department_changed_at, now
+                )
+                if cooldown_left is not None:
+                    return DepartmentChangeResult(
+                        "cooldown",
+                        cooldown_remaining_seconds=cooldown_left,
+                    )
                 department = session.scalar(
                     select(DepartmentRecord).where(DepartmentRecord.name == department_name)
                 )
@@ -31691,12 +32281,14 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 if employee.department_id != default_department.id:
                     return DepartmentChangeResult("already_assigned")
                 employee.department_id = department.id
+                employee.last_department_changed_at = now
                 session.flush()
                 return DepartmentChangeResult("joined", department)
 
     def switch_department(
         self, platform_id: str, department_name: str
     ) -> DepartmentChangeResult:
+        now = datetime.now(BEIJING)
         with self.transaction():
             with self._session() as session:
                 self._ensure_organization_defaults(session)
@@ -31707,6 +32299,14 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 )
                 if employee is None:
                     return DepartmentChangeResult("not_joined")
+                cooldown_left = _department_change_cooldown_left(
+                    employee.last_department_changed_at, now
+                )
+                if cooldown_left is not None:
+                    return DepartmentChangeResult(
+                        "cooldown",
+                        cooldown_remaining_seconds=cooldown_left,
+                    )
                 department = session.scalar(
                     select(DepartmentRecord).where(DepartmentRecord.name == department_name)
                 )
@@ -31715,6 +32315,7 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 if employee.department_id == department.id:
                     return DepartmentChangeResult("already_in_department", department)
                 employee.department_id = department.id
+                employee.last_department_changed_at = now
                 session.flush()
                 return DepartmentChangeResult("switched", department)
 
@@ -31732,6 +32333,14 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                 )
                 if employee is None:
                     return DepartmentRequestResult("not_joined")
+                cooldown_left = _department_change_cooldown_left(
+                    employee.last_department_changed_at, requested_at
+                )
+                if cooldown_left is not None:
+                    return DepartmentRequestResult(
+                        "cooldown",
+                        cooldown_remaining_seconds=cooldown_left,
+                    )
                 source_department = session.get(DepartmentRecord, employee.department_id)
                 employee_rank = session.get(RankRecord, employee.rank_id)
                 if source_department is None:
@@ -31764,6 +32373,7 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                         existing.state = "cancelled"
                         existing.decided_at = requested_at
                     employee.department_id = target_department.id
+                    employee.last_department_changed_at = requested_at
                     session.flush()
                     return DepartmentRequestResult(
                         "joined" if source_department.id == default_department.id else "switched"
@@ -31813,6 +32423,7 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                     if applicant is None:
                         continue
                     applicant.department_id = request.target_department_id
+                    applicant.last_department_changed_at = now
                     request.state = "approved"
                     request.decided_at = now
                 session.flush()
@@ -31891,6 +32502,7 @@ class CoreRepository(ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
                     request.decided_at = decided_at
                     if decision == "approved":
                         applicant.department_id = request.target_department_id
+                        applicant.last_department_changed_at = decided_at
                     session.add(
                         DepartmentApprovalRecord(
                             request_id=request.id,

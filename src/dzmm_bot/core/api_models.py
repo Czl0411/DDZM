@@ -91,6 +91,7 @@ class GroupChatResponse(ApiModel):
     listening_enabled: bool
     games_enabled: bool
     enabled_game_types: list[GroupGameType]
+    ban_operator_platform_ids: list[str]
     random_events_enabled: bool
     announcements_enabled: bool
     adult_shop_enabled: bool
@@ -110,6 +111,7 @@ class CreateGroupChatRequest(ApiModel):
     enabled_game_types: list[GroupGameType] = Field(
         default_factory=lambda: list(GROUP_GAME_TYPES)
     )
+    ban_operator_platform_ids: list[str] = Field(default_factory=list)
     random_events_enabled: bool = True
     announcements_enabled: bool = True
     adult_shop_enabled: bool = False
@@ -124,11 +126,27 @@ class UpdateGroupChatRequest(ApiModel):
     listening_enabled: bool | None = None
     games_enabled: bool | None = None
     enabled_game_types: list[GroupGameType] | None = None
+    ban_operator_platform_ids: list[str] | None = None
     random_events_enabled: bool | None = None
     announcements_enabled: bool | None = None
     adult_shop_enabled: bool | None = None
     performances_enabled: bool | None = None
     birthdays_enabled: bool | None = None
+    now: AwareDatetime
+
+
+class GroupBanBeginRequest(ApiModel):
+    now: AwareDatetime
+
+
+class GroupBanExecutionResponse(ApiModel):
+    chatroom_id: str
+    target_platform_id: str
+
+
+class GroupBanCompleteRequest(ApiModel):
+    outcome: Literal["succeeded", "failed", "uncertain"]
+    detail: str | None = None
     now: AwareDatetime
 
 
@@ -270,7 +288,7 @@ class OutboundClaimResponse(ApiModel):
     inbound_message_id: UUID | None
     group_chat_id: UUID | None
     text: str
-    content_type: Literal["text", "image", "novel", "history_card", "history_image"]
+    content_type: Literal["text", "image", "novel", "group_invite", "history_card", "history_image"]
     image_url: str | None
     image_alt: str | None
     lease_token: UUID
@@ -379,6 +397,26 @@ class CommandDefinitionResponse(ApiModel):
     description: str
     enabled: bool
     templates: list[CommandTemplateResponse]
+    is_custom: bool = False
+    reply_type: str | None = None
+    reply_value: str | None = None
+
+
+class CustomCommandRequest(ApiModel):
+    command: str = Field(min_length=2, max_length=32)
+    description: str = Field(min_length=1, max_length=200)
+    enabled: bool = True
+    reply_type: Literal["text", "image", "group_invite", "novel"]
+    content: str | None = None
+    upload_task_id: UUID | None = None
+
+
+class UpdateCustomCommandRequest(CustomCommandRequest):
+    old_command: str = Field(min_length=2, max_length=32)
+
+
+class DeleteCustomCommandRequest(ApiModel):
+    old_command: str = Field(min_length=2, max_length=32)
 
 
 class SetCommandEnabledRequest(ApiModel):
@@ -771,6 +809,22 @@ class ProfileImageUploadStatusResponse(ApiModel):
     result_url: str | None
     failure_summary: str | None
     expected_profile_version: int = Field(ge=0)
+
+
+class CustomCommandImageUploadClaimResponse(ApiModel):
+    id: UUID
+    temp_path: str
+    original_filename: str
+    mime_type: str
+    lease_token: UUID
+    attempt_count: int = Field(ge=1)
+
+
+class CustomCommandImageUploadStatusResponse(ApiModel):
+    id: UUID
+    status: Literal["pending", "processing", "completed", "failed"]
+    result_url: str | None
+    failure_summary: str | None
 
 
 class AIRankQuotaResponse(ApiModel):

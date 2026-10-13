@@ -65,6 +65,29 @@ def test_core_client_syncs_group_targets_and_runtime():
     }
 
 
+def test_core_client_group_ban_execution_round_trip():
+    from uuid import UUID
+    from dzmm_bot.browser.core_client import CoreClient
+
+    requests = []
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.url.path, json.loads(request.content)))
+        if request.url.path.endswith("begin-execution"):
+            return httpx.Response(200, json={"chatroom_id": "group-a", "target_platform_id": "outsider"})
+        return httpx.Response(200, json={"accepted": True})
+    client = CoreClient("http://core.test", "token", client=httpx.Client(
+        base_url="http://core.test", transport=httpx.MockTransport(handler)
+    ))
+    request_id = UUID(int=44)
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+    assert client.begin_group_ban_execution(request_id, now) == ("group-a", "outsider")
+    assert client.complete_group_ban_execution(request_id, "succeeded", None, now)
+    assert requests == [
+        (f"/internal/group-bans/{request_id}/begin-execution", {"now": now.isoformat()}),
+        (f"/internal/group-bans/{request_id}/complete", {"outcome": "succeeded", "detail": None, "now": now.isoformat()}),
+    ]
+
+
 def test_core_client_heartbeat_reports_actual_and_returns_desired_listener_state():
     from dzmm_bot.browser.core_client import CoreClient
 
@@ -482,6 +505,37 @@ def test_core_client_claims_and_completes_profile_image_upload():
             "now": now.isoformat(),
         },
     )
+
+
+def test_core_client_claims_and_completes_custom_command_image_upload():
+    from dzmm_bot.browser.core_client import CoreClient
+
+    observed = []
+    task_id = "00000000-0000-0000-0000-000000000013"
+    lease_token = "00000000-0000-0000-0000-000000000014"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append((request.url.path, json.loads(request.content)))
+        if request.url.path.endswith("/claim"):
+            return httpx.Response(200, json={
+                "id": task_id, "temp_path": "/tmp/custom.png",
+                "original_filename": "custom.png", "mime_type": "image/png",
+                "lease_token": lease_token, "attempt_count": 1,
+            })
+        return httpx.Response(200, json={"accepted": True})
+
+    client = CoreClient(
+        "http://core.test", "token",
+        client=httpx.Client(base_url="http://core.test", transport=httpx.MockTransport(handler)),
+    )
+    now = datetime(2026, 8, 13, tzinfo=UTC)
+    claim = client.claim_custom_command_image_upload("worker-a", now, 30)
+    assert claim.temp_path == "/tmp/custom.png"
+    assert client.complete_custom_command_image_upload(
+        claim.id, "worker-a", claim.lease_token,
+        "https://cdn.example.com/custom.png", now,
+    )
+    assert observed[1][0] == f"/internal/custom-command-images/{task_id}/completed"
 
 
 def test_core_client_claims_and_completes_profile_image_cleanup():

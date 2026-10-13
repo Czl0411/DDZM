@@ -1,8 +1,8 @@
 import pytest
 
 from dzmm_bot.core.chess_rules import (
-    ChessMove, ChessPosition, IllegalChessMove, basic_outcome, initial_position,
-    legal_moves, play_move,
+    ChessMove, ChessPosition, ChessViolation, IllegalChessMove, adjudicate_repetition,
+    basic_outcome, initial_position, legal_moves, play_move,
 )
 
 
@@ -72,6 +72,43 @@ def test_checkmate_or_stalemate_loses_for_side_to_move():
     p = position([(4, 9, "K"), (4, 0, "k"), (3, 1, "R"), (5, 1, "R"), (4, 2, "R")], "black")
     outcome = basic_outcome(p)
     assert outcome is not None and outcome.winner == "red"
+
+
+def cycle(start, sequence, rounds=2):
+    history = [start]
+    moves = []
+    for _ in range(rounds):
+        for move in sequence:
+            history.append(play_move(history[-1], move))
+            moves.append(move)
+    return tuple(history), tuple(moves)
+
+
+def test_threefold_quiet_repetition_is_not_automatic_draw():
+    start = position([(4, 9, "K"), (4, 0, "k"), (4, 5, "P"), (0, 9, "R"), (8, 0, "r")])
+    sequence = (ChessMove(0, 9, 0, 8), ChessMove(8, 0, 8, 1), ChessMove(0, 8, 0, 9), ChessMove(8, 1, 8, 0))
+    history, moves = cycle(start, sequence)
+    assert history[0] == history[4] == history[8]
+    assert adjudicate_repetition(history[:5], moves[:4]) is None
+    assert adjudicate_repetition(history, moves) is None
+
+
+def test_single_side_perpetual_check_must_change():
+    start = position([(4, 9, "K"), (4, 0, "k"), (4, 5, "P"), (3, 3, "R")])
+    sequence = (ChessMove(3, 3, 4, 3), ChessMove(4, 0, 3, 0), ChessMove(4, 3, 3, 3), ChessMove(3, 0, 4, 0))
+    history, moves = cycle(start, sequence)
+    ruling = adjudicate_repetition(history, moves)
+    assert isinstance(ruling, ChessViolation)
+    assert ruling.side == "red" and ruling.reason == "long_check"
+
+
+def test_single_side_perpetual_chase_must_change():
+    start = position([(4, 9, "K"), (4, 0, "k"), (4, 5, "P"), (2, 6, "R"), (1, 3, "h")])
+    sequence = (ChessMove(2, 6, 1, 6), ChessMove(1, 3, 2, 5), ChessMove(1, 6, 2, 6), ChessMove(2, 5, 1, 3))
+    history, moves = cycle(start, sequence)
+    ruling = adjudicate_repetition(history, moves)
+    assert isinstance(ruling, ChessViolation)
+    assert ruling.side == "red" and ruling.reason == "long_chase"
     p = position([(4, 9, "K"), (4, 0, "k"), (3, 1, "R"), (5, 1, "R"), (4, 5, "P")], "black")
     outcome = basic_outcome(p)
     assert outcome is not None and outcome.winner == "red"

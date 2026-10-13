@@ -33,6 +33,12 @@ class ChessOutcome:
     reason: str
 
 
+@dataclass(frozen=True)
+class ChessViolation:
+    side: str
+    reason: str
+
+
 def initial_position() -> ChessPosition:
     return ChessPosition((
         "rheakaehr", ".........", ".c.....c.", "p.p.p.p.p", ".........",
@@ -174,3 +180,66 @@ def basic_outcome(position: ChessPosition) -> ChessOutcome | None:
     if legal_moves(position):
         return None
     return ChessOutcome("black" if position.turn == "red" else "red", "checkmate" if _in_check(position.board, position.turn) else "stalemate")
+
+
+def _unprotected_target(board: tuple[str, ...], x: int, y: int, attacker: str) -> bool:
+    """Whether the threatened piece can be immediately recaptured if taken."""
+    victim = board[y][x]
+    if victim == "." or victim.upper() == "K":
+        return False
+    if victim.upper() == "P" and (y >= 5 if victim.isupper() else y <= 4):
+        return False
+    rows = [list(row) for row in board]
+    rows[y][x] = "R" if attacker == "red" else "r"
+    hypothetical = tuple("".join(row) for row in rows)
+    for sy, row in enumerate(board):
+        for sx, defender in enumerate(row):
+            if (sx, sy) != (x, y) and _color(defender) == _color(victim):
+                if (x, y) in _piece_targets(hypothetical, sx, sy):
+                    return False
+    return True
+
+
+def _repetition_attack(before: ChessPosition, after: ChessPosition, move: ChessMove) -> str | None:
+    if _in_check(after.board, after.turn):
+        return "check"
+    piece = after.board[move.to_y][move.to_x]
+    if piece.upper() in {"K", "P"}:
+        return None
+    for x, y in _piece_targets(after.board, move.to_x, move.to_y):
+        if _unprotected_target(after.board, x, y, before.turn):
+            return "chase"
+    return None
+
+
+def adjudicate_repetition(
+    history: tuple[ChessPosition, ...], moves: tuple[ChessMove, ...]
+) -> ChessOutcome | ChessViolation | None:
+    """Flag clear single-sided long check/chase; quiet repetitions never auto-draw.
+
+    Complex 2020-rule exchanges and simultaneous threats require a human ruling;
+    this function deliberately returns ``None`` instead of inventing one.
+    """
+    if len(history) != len(moves) + 1 or len(history) < 7:
+        return None
+    current = history[-1]
+    occurrences = [i for i, position in enumerate(history) if position == current]
+    if len(occurrences) < 3:
+        return None
+    first, second, third = occurrences[-3:]
+    cycle_len = third - second
+    if cycle_len == 0 or second - first != cycle_len:
+        return None
+    if history[first:second + 1] != history[second:third + 1]:
+        return None
+    attacks = {"red": [], "black": []}
+    for index in range(second, third):
+        attacks[history[index].turn].append(_repetition_attack(history[index], history[index + 1], moves[index]))
+    offenders = {
+        side: kinds for side, kinds in attacks.items()
+        if kinds and all(kind is not None for kind in kinds)
+    }
+    if len(offenders) == 1:
+        side, kinds = next(iter(offenders.items()))
+        return ChessViolation(side, "long_check" if all(kind == "check" for kind in kinds) else "long_chase")
+    return None

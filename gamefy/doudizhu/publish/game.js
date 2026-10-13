@@ -71,7 +71,7 @@ async function enter(id){
   const next=await client.snapshot(id);if(generation!==navigation)return;render(next);feedback('');
   location.hash=`room=${id}`;stop=client.follow(id,render);
   const uid=client.uid;
-  savedRoomWrites=savedRoomWrites.then(async()=>{if(generation!==navigation||uid!==client.uid)return;await client.sdk.kv.put(`doudizhu:last-room:${uid}`,id);await client.sdk.kv.flush?.();}).catch(()=>{});
+  savedRoomWrites=savedRoomWrites.then(async()=>{if(generation!==navigation||uid!==client.uid)return;await client.sdk.kv.put(`doudizhu:last-room:${uid}`,id,{flush:true});}).catch(()=>{});
 }
 async function lobby(restore=false){
   const generation=++navigation;

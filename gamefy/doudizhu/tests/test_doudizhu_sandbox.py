@@ -114,7 +114,7 @@ def test_slow_previous_room_does_not_override_new_navigation():
         browser=p.chromium.launch(channel='chrome',headless=True)
         page=browser.new_page()
         page.expose_function('saveRoom',lambda k,v:saved.update({k:v}))
-        page.add_init_script("window.dzmm={user:{info:async()=>({id:'viewer'})},kv:{get:async()=>({}),put:async(k,v)=>saveRoom(k,v)}};")
+        page.add_init_script("window.dzmm={user:{info:async()=>({id:'viewer'})},kv:{get:async()=>({}),put:async(k,v,options)=>{if(options?.flush)return saveRoom(k,v);}}};")
         def route(r):
             url=r.request.url
             if url.endswith('/config.js'):

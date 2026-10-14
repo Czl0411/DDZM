@@ -19,3 +19,7 @@ def test_king_game_group_game_contract() -> None:
     assert GROUP_GAME_LABELS["king_game"] == "国王游戏"
     assert GROUP_GAME_COMMANDS["/国王游戏"] == "king_game"
     assert GROUP_GAME_COMMANDS["/公开"] == "king_game"
+
+
+def test_liar_dice_jump_open_group_game_contract() -> None:
+    assert GROUP_GAME_COMMANDS["/跳开"] == "liar_dice"

@@ -2791,6 +2791,7 @@ _COMMAND_DEFINITIONS = (
     ("/大话骰子", "/大话骰子", "创建大话骰子报名局"),
     ("/牌局", "/牌局", "查看大话骰子当前战况"),
     ("/开骰", "/开骰", "大话骰子中质疑当前叫数并开牌"),
+    ("/跳开", "/跳开", "大话骰子中未轮到自己时抢先开骰，失败接受双重惩罚"),
     ("/看骰", "/看骰（仅私聊）", "私聊查看自己的大话骰子骰子"),
     ("/大话骰子数据", "/大话骰子数据", "查看当前大话骰子局实时统计"),
     ("/真心换真心", "/真心换真心", "创建真心换真心报名局"),
@@ -12503,7 +12504,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     dice_commands = ("/继续", "/牌局", "/退出", "/结束游戏")
                 else:
                     dice_role = "participant"
-                    dice_commands = ("N个X", "/开骰", "/牌局", "/退出", "/结束游戏")
+                    dice_commands = ("N个X", "/开骰", "/跳开", "/牌局", "/退出", "/结束游戏")
                 active.append(
                     ActiveGameplaySummary(
                         "liar_dice",
@@ -14334,10 +14335,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         now: datetime,
         start_seat: int = 1,
     ) -> None:
-        """重摇骰子并私聊发新骰（dealing 状态，发齐后进 calling）。
-
-        座位保持稳定：不清位、不重排，本轮首叫从 start_seat 开始（连续轮转）。
-        """
+        """按本轮座位重摇并私聊发骰，发齐后从 start_seat 开始叫骰。"""
         players = self._liar_dice_players(session, game.id, ("active",))
         wild = roll_wild(self._liar_dice_random)
         round_number = game.round_number + 1
@@ -14371,7 +14369,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 raise RuntimeError("大话骰子私聊会话在发牌阶段消失")
             outbound = self.enqueue_system_outbound(
                 f"【大话骰子】你的骰子（第 {round_number} 轮）："
-                f"{dice_str(player.dice or [])}。私聊发送 /看骰 可再次查看。",
+                f"{dice_str(player.dice or [])}。\n"
+                f"本轮万能点：{dice_str([wild])}（可顶任何点数；叫过该点后失效，只算自身）。\n"
+                "私聊发送 /看骰 可再次查看。",
                 destination_chatroom_id=room,
                 delivery_kind="liar_dice_hand",
             )
@@ -14427,7 +14427,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         )
         lines.append(
             f"由 {game.current_seat}号 {first} 首叫：最少 {len(players)} 个，直接发送“N个X”；"
-            "质疑则发 /开骰。超时将自动跳过。"
+            "轮到自己质疑则发 /开骰，其他参与者可 /跳开 抢先质疑。超时将自动跳过。"
         )
         self.enqueue_system_outbound(
             "\n".join(lines),
@@ -14740,6 +14740,8 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         platform_id: str,
         now: datetime,
         group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+        *,
+        jump: bool = False,
     ) -> LiarDiceResult:
         now = now.astimezone(BEIJING)
         with self.transaction():
@@ -14754,15 +14756,22 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 if game.state != "calling":
                     return self._liar_dice_result_locked(session, game, "wrong_state")
                 players = self._liar_dice_players(session, game.id, ("active",))
+                if not any(player.user_id == actor.id for player, _ in players):
+                    return self._liar_dice_result_locked(session, game, "not_participant")
                 current = next(
                     (p for p, _ in players if p.seat_number == game.current_seat), None
                 )
-                if current is None or current.user_id != actor.id:
+                if not jump and (current is None or current.user_id != actor.id):
                     return self._liar_dice_result_locked(session, game, "not_your_turn")
                 if game.current_call is None or game.last_caller_user_id is None:
                     return self._liar_dice_result_locked(session, game, "no_call")
                 if game.last_caller_user_id == actor.id:
                     return self._liar_dice_result_locked(session, game, "own_call")
+                if jump:
+                    if current is not None and current.user_id == actor.id:
+                        return self._liar_dice_result_locked(session, game, "use_normal_open")
+                    if current is None or current.user_id == game.last_caller_user_id:
+                        return self._liar_dice_result_locked(session, game, "no_jump_target")
                 round_record = self._liar_dice_current_round(session, game.id)
                 if round_record is None:
                     raise RuntimeError("大话骰子回合不存在")
@@ -14796,7 +14805,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 round_record.resolved_at = now
                 game.state = "round_end"
                 game.turn_deadline = None
-                lines = ["🎲 开牌！全场骰子："]
+                lines = ["🎲 跳开！全场骰子：" if jump else "🎲 开牌！全场骰子："]
                 lines.extend(
                     f"{player.seat_number}号 {user.display_name}：{dice_str(player.dice or [])}"
                     for player, user in players
@@ -14809,11 +14818,20 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                         else f"（万能点 🎲{round_record.wild_face} 已失效）"
                     )
                 )
-                lines.append(
-                    f"🎉 {winner.display_name} 赢！{loser.display_name} 输了，"
-                    f"接受惩罚——{winner.display_name} 获得发令权（可像国王游戏一样"
-                    f"给 {loser.display_name} 布置一个惩罚任务）。"
-                )
+                if jump and caller_win:
+                    next_user = next(user for player, user in players if player == current)
+                    lines.append(
+                        f"{actor.display_name} 跳开失败！接受双重惩罚——"
+                        f"叫骰者 {caller.display_name} 和原本下一个叫骰者 {next_user.display_name} "
+                        f"各获得一次发令权，各给 {actor.display_name} 布置一个惩罚任务。"
+                    )
+                else:
+                    lines.append(
+                        (f"{actor.display_name} 跳开成功！" if jump else "")
+                        + f"🎉 {winner.display_name} 赢！{loser.display_name} 输了，"
+                        f"接受惩罚——{winner.display_name} 获得发令权（可像国王游戏一样"
+                        f"给 {loser.display_name} 布置一个惩罚任务）。"
+                    )
                 lines.append(
                     "发 /继续 开下一轮，发起者或任意参与者可 /结束游戏 查看总战绩。"
                 )
@@ -14851,14 +14869,14 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                         session, game, "completed", "not_enough_players", now
                     )
                     return self._liar_dice_result_locked(session, game, "completed")
-                # 连续轮转：从开牌者（current_seat）的下一位开始新一轮
-                start_seat = self._liar_dice_next_active_seat(
-                    players, game.current_seat
-                )
-                if start_seat is None:
-                    start_seat = 1
+                for player, _ in players:
+                    player.seat_number = None
+                session.flush()
+                self._liar_dice_random.shuffle(players)
+                for seat, (player, _) in enumerate(players, start=1):
+                    player.seat_number = seat
                 game.timeout_streak = 0
-                self._liar_dice_deal_round(session, game, now, start_seat)
+                self._liar_dice_deal_round(session, game, now, start_seat=1)
                 return self._liar_dice_result_locked(session, game, "dealing")
 
     def liar_dice_end(

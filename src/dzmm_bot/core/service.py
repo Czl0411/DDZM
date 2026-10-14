@@ -34,7 +34,7 @@ _DIRECT_COMMANDS = {
     "/删除黑历史",
     "/ban", "/是",
     "/下一页",
-    "/看骰", "/我的罚款",
+    "/看骰", "/跳开", "/我的罚款",
     "/设置性别", "/修改性别",
 }
 _RANDOM_EVENT_INDEPENDENT_COMMANDS = {

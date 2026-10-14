@@ -75,6 +75,7 @@ GROUP_GAME_COMMANDS: dict[str, GroupGameType] = {
     "/国王游戏数据": "king_game",
     "/公开": "king_game",
     "/大话骰子": "liar_dice",
+    "/跳开": "liar_dice",
     "/真心换真心": "truth_trade",
     "/真心换真心数据": "truth_trade",
     "/问题": "truth_trade",

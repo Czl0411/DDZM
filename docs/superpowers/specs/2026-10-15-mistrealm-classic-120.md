@@ -179,3 +179,14 @@
 ## 发布与兼容
 
 不直接改现有线上进行中的16卡规则房间。新引擎开发隔离于经典目录；旧规则仍可完成旧房间，或在经验证的维护窗口切换，不能将旧state解释为新state。发布前备份、迁移演练、两真实平台身份和手机人工验收。只完成规则或只有占位图不得宣称120卡完整版已完成。
+
+## 开发核验记录（2026-10-15）
+
+卡池数据与10套预组已落地，程序测试不代表原作边界已经全部核实。Prima 完整版指南的技能页支持间谍抽牌、医师链、召集和天气；领袖页明确双方弃牌洗回与天气减半，但未给出舍入。其阵营策略页对第三局返场的「回手/上场」「英雄」存在与其他资料不一致的表述，不能作为已验证结论。
+
+- 数字版技能参考：https://primagames.com/eguides/the-witcher-3-wild-hunt-the-complete-edition-eguide/gwent/card-unit-and-ability-types
+- 领袖参考：https://primagames.com/eguides/the-witcher-3-wild-hunt-the-complete-edition-eguide/gwent/skellige-clans-deck/skellige-clans-deck-leader-cards-2
+- 对照中发现歧义的策略页：https://primagames.com/eguides/the-witcher-3-wild-hunt-the-complete-edition-eguide/gwent/deck-building-and-factions-advanced-tactics
+- 2026实体版手册明确有独立修订，不能反向当作《巫师3》证据。
+
+待实机或数字版实现交叉验证：天气减半舍入、第三局返场英雄资格/技能触发、怪兽留场英雄资格、同阵营先手选择冲突、平局下一局先手、变身离场是否恢复原形。它们保留为发布验收门槛；不得把本地规则测试通过称为「已完全复刻原作」。

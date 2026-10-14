@@ -58,6 +58,33 @@ class Action(RequestBody):
     payload: dict = Field(default_factory=dict)
 
 
+class ClassicDeck(Body):
+    id: UUID | None = None
+    name: str = Field(min_length=1,max_length=40)
+    faction: str
+    leader: str
+    counts: dict[str, StrictInt]
+
+
+class ClassicCreate(RequestBody):
+    deck_id: UUID
+
+
+class ClassicJoin(ClassicCreate):
+    code: str = Field(pattern=r"^[0-9]{6}$")
+
+
+class ClassicQueue(Body):
+    deck_id: UUID
+
+
+class ClassicAction(RequestBody):
+    match_id: UUID | None = None
+    version: StrictInt = Field(ge=0)
+    action: Literal['select_deck','lock','unlock','first','mulligan','play','choose','leader','pass','concede','leave','rematch']
+    payload: dict = Field(default_factory=dict)
+
+
 def mistrealm_router(repository, clock):
     router = APIRouter(prefix="/api/mistrealm")
 
@@ -105,6 +132,7 @@ def mistrealm_router(repository, clock):
     def match_cancel(body: MatchTicket, authorization: str | None = Header(None)):
         return call(repository.mistrealm_matchmaking, identity(authorization), "cancel", body.ticket, clock())
 
+    @router.get("/classic/rooms/{room_id}")
     @router.get("/rooms/{room_id}")
     def view(room_id: UUID, authorization: str | None = Header(None)):
         return call(repository.mistrealm_view, room_id, identity(authorization), clock())
@@ -116,6 +144,7 @@ def mistrealm_router(repository, clock):
         return call(repository.mistrealm_action, room_id, identity(authorization), body.match_id,
                     body.version, body.request_id, body.action, body.payload, clock())
 
+    @router.get("/classic/rooms/{room_id}/events")
     @router.get("/rooms/{room_id}/events")
     async def events(room_id: UUID, request: Request, authorization: str | None = Header(None)):
         uid = identity(authorization)
@@ -142,4 +171,46 @@ def mistrealm_router(repository, clock):
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+    @router.get('/classic/decks')
+    def decks(authorization: str | None = Header(None)):
+        return call(repository.mistrealm_decks,identity(authorization),clock())
+
+    @router.post('/classic/decks')
+    def save_deck(body: ClassicDeck,authorization: str | None = Header(None)):
+        return call(repository.mistrealm_save_deck,identity(authorization),body.id,body.name,body.faction,body.leader,body.counts,clock())
+
+    @router.post('/classic/decks/{deck_id}/delete')
+    def delete_deck(deck_id: UUID,authorization: str | None = Header(None)):
+        return call(repository.mistrealm_delete_deck,identity(authorization),deck_id,clock())
+
+    @router.post('/classic/rooms')
+    def classic_create(body: ClassicCreate,authorization: str | None = Header(None)):
+        return call(repository.mistrealm_create,identity(authorization),body.request_id,clock(),body.deck_id)
+
+    @router.post('/classic/rooms/join')
+    def classic_join(body: ClassicJoin,authorization: str | None = Header(None)):
+        return call(repository.mistrealm_join,identity(authorization),body.code,body.request_id,clock(),body.deck_id)
+
+    @router.post('/classic/matchmaking')
+    def classic_match(body: ClassicQueue,authorization: str | None = Header(None)):
+        return call(repository.mistrealm_matchmaking,identity(authorization),'start',None,clock(),2,body.deck_id)
+
+    @router.post('/classic/matchmaking/heartbeat')
+    def classic_heartbeat(body: MatchTicket,authorization: str | None = Header(None)):
+        return call(repository.mistrealm_matchmaking,identity(authorization),'heartbeat',body.ticket,clock(),2)
+
+    @router.post('/classic/matchmaking/cancel')
+    def classic_cancel(body: MatchTicket,authorization: str | None = Header(None)):
+        return call(repository.mistrealm_matchmaking,identity(authorization),'cancel',body.ticket,clock(),2)
+
+    @router.post('/classic/rooms/{room_id}/actions')
+    def classic_action(room_id: UUID,body: ClassicAction,authorization: str | None = Header(None)):
+        from .mistrealm_classic_state import FIELDS as CLASSIC_FIELDS
+        expected={'deck_id'} if body.action=='select_deck' else CLASSIC_FIELDS.get(body.action)
+        if expected is None or set(body.payload)!=expected: raise HTTPException(422,'操作参数不正确')
+        if body.action=='select_deck':
+            try: UUID(body.payload['deck_id'])
+            except (ValueError,TypeError,AttributeError): raise HTTPException(422,'牌组编号不正确')
+        return call(repository.mistrealm_action,room_id,identity(authorization),body.match_id,body.version,body.request_id,body.action,body.payload,clock())
+
     return router

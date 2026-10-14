@@ -4439,6 +4439,20 @@ class MistrealmPlayerRecord(Base):
     queue_ticket: Mapped[UUID | None] = mapped_column(Uuid)
     queued_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     queue_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+    queue_rules_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    queue_snapshot: Mapped[dict | None] = mapped_column(JSON)
+
+
+class MistrealmDeckRecord(Base):
+    __tablename__ = "mistrealm_decks"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    player_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    faction: Mapped[str] = mapped_column(String(20), nullable=False)
+    leader: Mapped[str] = mapped_column(String(4), nullable=False)
+    counts: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
 
 
 

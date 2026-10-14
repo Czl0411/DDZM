@@ -1,17 +1,20 @@
 """Independent players and serialized room transactions for Mistrealm."""
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from secrets import SystemRandom, randbelow
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
-from .mistrealm_state import new_state, apply_action, advance, project
+from . import mistrealm_state as legacy
+from . import mistrealm_classic_state as classic
+from .mistrealm_classic_cards import validate_deck
 from .schema import (
     MistrealmPlayerRecord as Player, MistrealmRoomRecord as Room,
-    MistrealmSeatRecord as Seat, MistrealmRequestRecord as Receipt,
+    MistrealmSeatRecord as Seat, MistrealmRequestRecord as Receipt, MistrealmDeckRecord as Deck,
 )
 
 
@@ -25,6 +28,10 @@ def ms(now):
     if now.tzinfo is None:
         raise ValueError("时间必须包含时区")
     return int(now.timestamp()*1000)
+
+
+def _engine(state):
+    return classic if state.get('rules_version', 1) == 2 else legacy
 
 
 class MistrealmRepositoryMixin:
@@ -67,7 +74,7 @@ class MistrealmRepositoryMixin:
             session.execute(delete(Seat).where(Seat.room_id == room.id))
 
     def _mr_advance(self, session, room, now):
-        state = advance(room.state, ms(now), SystemRandom())
+        state = _engine(room.state).advance(room.state, ms(now), SystemRandom())
         if state != room.state:
             self._mr_sync(session, room, state)
 
@@ -84,7 +91,7 @@ class MistrealmRepositoryMixin:
         seat = session.scalar(select(Seat).where(Seat.room_id == room.id, Seat.player_id == p.id))
         if seat is None:
             raise MistrealmError("你不在这个房间", 403)
-        state = project(room.state, seat.seat_index)
+        state = _engine(room.state).project(room.state, seat.seat_index)
         # Seat table is authoritative for active membership.
         for entry in session.scalars(select(Seat).where(Seat.room_id == room.id)):
             profile = session.get(Player, entry.player_id)
@@ -131,26 +138,26 @@ class MistrealmRepositoryMixin:
                             digest=digest, result=result, created_at=now))
         return result
 
-    def mistrealm_create(self, uid, request_id, now):
+    def mistrealm_create(self, uid, request_id, now, deck_id=None):
         self._mr_rate(uid, "create", 5, now)
         with self._session() as session:
             p = self._mr_player(session, uid)
-            digest = self._mr_digest({"action": "create"})
+            digest = self._mr_digest({"action": "create", "deck_id": deck_id})
             old = self._mr_replay(session, p, request_id, digest)
             if old is not None:
                 return old
             self._mr_clear_queue(p)
             room = self._mr_active(session, p, now)
             if room is None:
-                room = self._mr_new_room(session, p, now)
+                room = self._mr_new_room(session, p, now, self._mr_deck_snapshot(session,p,deck_id) if deck_id else None)
             result = self._mr_view(session, room, p)
             return self._mr_save(session, p, request_id, digest, result, room, now)
 
-    def mistrealm_join(self, uid, code, request_id, now):
+    def mistrealm_join(self, uid, code, request_id, now, deck_id=None):
         self._mr_rate(uid, "join", 20, now)
         with self._session() as session:
             p = self._mr_player(session, uid)
-            digest = self._mr_digest({"action": "join", "code": code})
+            digest = self._mr_digest({"action": "join", "code": code, "deck_id": deck_id})
             old = self._mr_replay(session, p, request_id, digest)
             if old is not None:
                 return old
@@ -165,7 +172,11 @@ class MistrealmRepositoryMixin:
                     raise MistrealmError("房间码已失效", 404)
                 if session.get(Seat, (room.id, 1)):
                     raise MistrealmError("房间已满")
-                state = apply_action(room.state, 1, "join", {"uid": uid}, ms(now), SystemRandom())
+                if room.state.get('rules_version',1) != (2 if deck_id else 1):
+                    raise MistrealmError('房间规则版本不同，请使用对应入口')
+                payload={'uid':uid}
+                if deck_id: payload['deck']=self._mr_deck_snapshot(session,p,deck_id)
+                state = _engine(room.state).apply_action(room.state, 1, "join", payload, ms(now), SystemRandom())
                 self._mr_sync(session, room, state)
                 session.add(Seat(room_id=room.id, seat_index=1, player_id=p.id))
                 session.flush()
@@ -183,7 +194,9 @@ class MistrealmRepositoryMixin:
                 return {"room_id": str(room.id), "code": None,
                         "match_id": str(room.match_id) if room.match_id else None,
                         "state": {"phase": "closed", "version": room.state["version"]}}
-            return self._mr_view(session, room, p)
+            result=self._mr_view(session, room, p)
+            if room.state.get('rules_version')==2: result['state']['server_time_ms']=ms(now)
+            return result
 
     def mistrealm_action(self, room_id, uid, match_id, version, request_id, action, payload, now):
         self._mr_rate(uid, "action", 120, now)
@@ -209,8 +222,10 @@ class MistrealmRepositoryMixin:
             if room.match_id != match_id or room.state["version"] != version:
                 raise MistrealmError("房间状态已更新，请刷新")
             seat = view["state"]["seat"]
-            state = apply_action(room.state, seat, action, payload, ms(now), SystemRandom())
-            if action == "start":
+            if room.state.get('rules_version')==2 and action=='select_deck':
+                payload={'deck':self._mr_deck_snapshot(session,p,UUID(payload['deck_id']))}
+            state = _engine(room.state).apply_action(room.state, seat, action, payload, ms(now), SystemRandom())
+            if action == "start" or (room.state.get("rules_version")==2 and room.state["phase"]=="waiting" and state["phase"]!="waiting"):
                 room.match_id = uuid4()
             elif state["phase"] == "waiting":
                 room.match_id = None
@@ -234,20 +249,26 @@ class MistrealmRepositoryMixin:
     @staticmethod
     def _mr_clear_queue(p):
         p.queue_ticket = p.queued_at = p.queue_expires_at = None
+        p.queue_snapshot = None
+        p.queue_rules_version = 1
 
     @staticmethod
     def _mr_queue_status(p, now):
         if not p.queue_ticket or p.queue_expires_at <= now:
             return {"status": "idle"}
-        return {"status": "waiting", "ticket": str(p.queue_ticket),
+        result = {"status": "waiting", "ticket": str(p.queue_ticket),
                 "queued_at_ms": ms(p.queued_at), "expires_at_ms": ms(p.queue_expires_at),
                 "elapsed_ms": max(0, ms(now)-ms(p.queued_at))}
+        if p.queue_rules_version == 2:
+            snapshot = p.queue_snapshot
+            result.update(rules_version=2, deck=dict(id=snapshot['deck_id'],name=snapshot.get('name','已锁定军团'),faction=snapshot['faction'],leader=snapshot['leader']))
+        return result
 
-    def _mr_new_room(self, session, host, now):
+    def _mr_new_room(self, session, host, now, deck_snapshot=None):
         for _ in range(100):
             try:
                 with session.begin_nested():
-                    state = new_state(host.platform_uid, ms(now))
+                    state = classic.new_state(host.platform_uid, deck_snapshot, ms(now)) if deck_snapshot else legacy.new_state(host.platform_uid, ms(now))
                     room = Room(host_id=host.id, active_code=f"{randbelow(1000000):06d}",
                                 phase="waiting", state=state, created_at=now,
                                 deadline=now+timedelta(minutes=30))
@@ -262,7 +283,7 @@ class MistrealmRepositoryMixin:
         session.flush()
         return room
 
-    def mistrealm_matchmaking(self, uid, operation, ticket, now):
+    def mistrealm_matchmaking(self, uid, operation, ticket, now, rules_version=1, deck_id=None):
         if operation not in ("start", "heartbeat", "cancel"):
             raise MistrealmError("匹配操作不正确", 422)
         if operation == "start":
@@ -274,6 +295,11 @@ class MistrealmRepositoryMixin:
                 self._mr_clear_queue(p)
                 return {"status": "matched", "room": self._mr_view(session, room, p)}
             current = self._mr_queue_status(p, now)
+            if current['status']=='waiting' and p.queue_rules_version!=rules_version:
+                if operation=='start': raise MistrealmError('请先取消另一规则的匹配')
+                return {'status':'idle'}
+            if operation=='start' and rules_version==2 and current['status']=='waiting' and str(deck_id)!=p.queue_snapshot['deck_id']:
+                raise MistrealmError('请先取消匹配再更换牌组')
             if operation == "cancel":
                 if str(p.queue_ticket) == str(ticket):
                     self._mr_clear_queue(p)
@@ -283,6 +309,8 @@ class MistrealmRepositoryMixin:
                     return {"status": "idle"}
             elif current["status"] != "waiting":
                 p.queue_ticket, p.queued_at = uuid4(), now
+                p.queue_rules_version = rules_version
+                p.queue_snapshot = self._mr_deck_snapshot(session,p,deck_id) if rules_version==2 else None
             p.queue_expires_at = now+timedelta(seconds=20)
             session.flush()
             # Lock the caller first; SKIP LOCKED avoids reciprocal candidate deadlocks.
@@ -290,17 +318,68 @@ class MistrealmRepositoryMixin:
             candidate = session.scalar(
                 select(Player).where(
                     Player.id != p.id, Player.queue_ticket.is_not(None),
-                    Player.queue_expires_at > now,
+                    Player.queue_expires_at > now, Player.queue_rules_version == rules_version,
                     ~select(Seat.player_id).where(Seat.player_id == Player.id).exists(),
                 ).order_by(Player.queued_at, Player.id).with_for_update(skip_locked=True).limit(1)
             )
             if candidate is None:
                 return self._mr_queue_status(p, now)
-            room = self._mr_new_room(session, candidate, now)
-            state = apply_action(room.state, 1, "join", {"uid": uid}, ms(now), SystemRandom())
+            room = self._mr_new_room(session, candidate, now, candidate.queue_snapshot if rules_version==2 else None)
+            join_payload={'uid':uid}
+            if rules_version==2: join_payload['deck']=deepcopy(p.queue_snapshot)
+            state = _engine(room.state).apply_action(room.state, 1, "join", join_payload, ms(now), SystemRandom())
+            if rules_version==2:
+                state=classic.apply_action(state,0,'lock',{},ms(now),SystemRandom())
+                state=classic.apply_action(state,1,'lock',{},ms(now),SystemRandom())
+                room.match_id=uuid4()
             self._mr_sync(session, room, state)
             session.add(Seat(room_id=room.id, seat_index=1, player_id=p.id))
             self._mr_clear_queue(candidate)
             self._mr_clear_queue(p)
             session.flush()
             return {"status": "matched", "room": self._mr_view(session, room, p)}
+
+    @staticmethod
+    def _mr_deck(session, player, deck_id):
+        deck=session.scalar(select(Deck).where(Deck.id==deck_id,Deck.player_id==player.id).with_for_update())
+        if deck is None: raise MistrealmError('牌组不存在',404)
+        return deck
+
+    def _mr_deck_snapshot(self, session, player, deck_id):
+        deck=self._mr_deck(session,player,deck_id)
+        return dict(deck_id=str(deck.id),name=deck.name,**validate_deck(deck.faction,deck.leader,deck.counts))
+
+    @staticmethod
+    def _mr_deck_view(deck):
+        return dict(id=str(deck.id),name=deck.name,faction=deck.faction,leader=deck.leader,counts=deepcopy(deck.counts))
+
+    def mistrealm_decks(self, uid, now):
+        with self._session() as session:
+            player=self._mr_player(session,uid)
+            return {'decks':[self._mr_deck_view(d) for d in session.scalars(select(Deck).where(Deck.player_id==player.id).order_by(Deck.updated_at,Deck.id))]}
+
+    def mistrealm_save_deck(self, uid, deck_id, name, faction, leader, counts, now):
+        self._mr_rate(uid,'deck',60,now)
+        snapshot=validate_deck(faction,leader,counts)
+        if not isinstance(name,str) or not name.strip() or len(name)>40: raise ValueError('牌组名称需要1至40字')
+        with self._session() as session:
+            player=self._mr_player(session,uid)
+            deck=self._mr_deck(session,player,deck_id) if deck_id else Deck(player_id=player.id)
+            deck.name=name.strip();deck.updated_at=now
+            deck.faction,deck.leader,deck.counts=snapshot['faction'],snapshot['leader'],snapshot['counts']
+            session.add(deck);session.flush()
+            return self._mr_deck_view(deck)
+
+    def mistrealm_delete_deck(self, uid, deck_id, now):
+        with self._session() as session:
+            player=self._mr_player(session,uid)
+            deck=self._mr_deck(session,player,deck_id)
+            if self._mr_queue_status(player,now)['status']=='waiting' and player.queue_snapshot and player.queue_snapshot.get('deck_id')==str(deck_id):
+                raise MistrealmError('匹配中的牌组不能删除')
+            room=self._mr_active(session,player,now)
+            if room and room.state.get('rules_version')==2:
+                for p in room.state['players']:
+                    if p and p['uid']==uid and p['locked'] and p['selection'].get('deck_id')==str(deck_id):
+                        raise MistrealmError('对局中的牌组不能删除')
+            session.delete(deck)
+            return {'deleted':True}

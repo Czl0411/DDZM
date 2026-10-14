@@ -36,6 +36,13 @@ const player=new URLSearchParams(location.search).get('player')||'local-a';
 window.dzmm={user:{info:async()=>({id:player,name:player==='local-a'?'雾中旅人':'王城来客'})},loading:{progress(){},ready(){},error(){}}};
 </script>"""
             return (root/'index.html').read_text().replace('<script type="module"',stub+'<script type="module"')
+        @app.get('/classic/',response_class=HTMLResponse)
+        def classic_index():
+            stub="""<script>
+const player=new URLSearchParams(location.search).get('player')||'classic-local-a';
+window.dzmm={user:{info:async()=>({id:player,name:player==='classic-local-a'?'雾中旅人':'王城来客'})},loading:{progress(){},ready(){},error(){}}};
+</script>"""
+            return (root/'classic/index.html').read_text().replace('<script type="module"',stub+'<script type="module"')
         @app.get('/sandbox',response_class=HTMLResponse)
         def sandbox():
             return '<!doctype html><iframe title="Mistrealm sandbox" sandbox="allow-scripts" src="/?player=sandbox-local" style="border:0;width:100vw;height:100vh"></iframe>'

@@ -75,3 +75,11 @@ body[data-screen="playing"] main{display:grid;grid-template-columns:170px minmax
 
 .life-gems{display:inline-flex;gap:7px;vertical-align:middle;font-size:18px;line-height:1.2}.life-gems .lit{color:#e96e5d;text-shadow:0 0 9px #dd493466}.life-gems .spent{color:#51463f;text-shadow:none}.result-lives{display:flex;justify-content:center;gap:24px;flex-wrap:wrap}.result-lives p{display:flex;align-items:center;gap:10px}
 @media(max-width:700px){.statbox .life-gems{font-size:13px;gap:5px}}
+
+/* Platform identities stay distinct from faction leader illustrations. */
+.player-identity{display:flex;align-items:center;gap:10px;min-width:0;margin:10px 0 14px;text-align:left}
+.player-avatar{position:relative;display:grid;place-items:center;flex:0 0 52px;width:52px;height:52px;border:1px solid var(--gold);border-radius:50%;overflow:hidden;background:#24363b;color:#ead5ad;font:24px serif}
+.player-avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.player-identity-text{min-width:0;flex:1}.player-side{display:block;color:var(--gold);font-size:10px;letter-spacing:2px;margin-bottom:4px}.player-nickname{display:block;overflow-wrap:anywhere;font:22px/1.4 "Songti SC",serif;color:#f1e8d4}
+.statbox .player-identity{gap:7px;margin:8px 0}.statbox .player-avatar{flex-basis:36px;width:36px;height:36px;font-size:18px}.statbox .player-nickname{font-size:13px}.statbox .player-side{font-size:9px}
+@media(max-width:700px){.player-info .player-avatar{flex-basis:40px;width:40px;height:40px}.player-info .player-nickname{font-size:18px}.statbox .player-identity{flex-direction:column;text-align:center;gap:4px}.statbox .player-avatar{flex-basis:30px;width:30px;height:30px}.statbox .player-nickname{font-size:11px}}

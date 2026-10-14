@@ -21,7 +21,7 @@ export class MistrealmClient {
     const info=await Promise.race([this.sdk.user.info(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('读取平台身份超时，请重试')),10000);})]).finally(()=>clearTimeout(timer));
     if(typeof info?.id!=='string'||!info.id.trim())throw new Error('无法读取玩家身份');
     this.uid=info.id;
-    const avatar=info.avatar||info.avatar_url;
+    const avatar=info.avatarUrl||info.avatar||info.avatar_url;
     await this.request('/players/me',{method:'POST',body:JSON.stringify({name:String(info.name||info.nickname||'旅人').slice(0,40),avatar:typeof avatar==='string'&&avatar.startsWith('https://')?avatar:null})});
     return this.request('/players/me');
   }

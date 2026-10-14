@@ -69,3 +69,12 @@ test('matchmaking start, heartbeat and cancellation use separate queue endpoints
  assert.deepEqual(JSON.parse(calls[1].options.body),{ticket:'ticket'});
  assert.deepEqual(JSON.parse(calls[2].options.body),{ticket:'ticket'});
 });
+test('reads the platform SDK avatarUrl field',async()=>{
+ let profile;
+ const client=new MistrealmClient({sdk:{user:{info:async()=>({id:'avatar-user',name:'旅人',avatarUrl:'https://example.com/avatar.png'})}},apiBase:'',fetchImpl:async(url,options)=>{
+  if(options.method==='POST')profile=JSON.parse(options.body);
+  return {ok:true,json:async()=>({})};
+ }});
+ await client.boot();
+ assert.equal(profile.avatar,'https://example.com/avatar.png');
+});

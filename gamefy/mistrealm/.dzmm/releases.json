@@ -10,5 +10,17 @@
     "deployedAt": "2026-10-14T18:32:08.604Z",
     "label": "mistrealm-1.0.1-clock",
     "gitHead": "4686507"
+  },
+  {
+    "revision": "1792003214358",
+    "deployedAt": "2026-10-14T18:39:21.551Z",
+    "label": "mistrealm-1.0.2-player-profile",
+    "gitHead": "4a8a0f2"
+  },
+  {
+    "revision": "1792003353845",
+    "deployedAt": "2026-10-14T18:41:40.715Z",
+    "label": "mistrealm-1.0.3-sdk-avatar",
+    "gitHead": "4a8a0f2"
   }
 ]

@@ -200,6 +200,9 @@ def test_game_fills_viewport_and_scrolls_only_inside_content(room_count, should_
               contentOverflow: getComputedStyle(content).overflowY,
               contentClientHeight: content.clientHeight,
               contentScrollHeight: content.scrollHeight,
+              contentBottom: content.getBoundingClientRect().bottom,
+              lobbyBottom: document.querySelector('#lobby').getBoundingClientRect().bottom,
+              roomButtonHeight: document.querySelector('.room-button').getBoundingClientRect().height,
             };
           }
         """)
@@ -209,6 +212,9 @@ def test_game_fills_viewport_and_scrolls_only_inside_content(room_count, should_
         assert layout["bodyOverflow"] == "hidden"
         assert layout["contentOverflow"] == "auto"
         assert (layout["contentScrollHeight"] > layout["contentClientHeight"]) is should_scroll
+        if not should_scroll:
+            assert abs(layout["lobbyBottom"] - layout["contentBottom"]) < 2
+            assert layout["roomButtonHeight"] < 120
         page.screenshot(path=f"/tmp/drawguess-viewport-{'long' if should_scroll else 'short'}.png")
         if should_scroll:
             page.locator(".content-scroll").evaluate("e=>{e.scrollTop=e.scrollHeight}")

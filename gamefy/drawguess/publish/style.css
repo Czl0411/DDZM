@@ -94,9 +94,16 @@ h3 {
 .content-scroll {
   flex: 1;
   min-height: 0;
-  padding: 0 0 48px;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.lobby {
+  min-height: 100%;
+}
+
+.room-view {
+  padding-bottom: 48px;
 }
 
 .brand-bar {
@@ -722,7 +729,7 @@ canvas {
     padding: 12px 0 0;
   }
 
-  .content-scroll {
+  .room-view {
     padding-bottom: 28px;
   }
 

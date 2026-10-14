@@ -169,16 +169,31 @@ def test_recipient_projection_and_chat_never_leak_answer(game):
         "画手也能聊天", NOW + timedelta(seconds=2),
     )
     assert drawer_chat["text"] == "画手也能聊天"
+    hidden_drawer_answer = repo.drawguess_chat(
+        UUID(room["room_id"]), "host", room["state"]["turn_id"], uuid4(),
+        chosen["answer"], NOW + timedelta(seconds=3),
+    )
+    assert hidden_drawer_answer["text"] == "答案已隐藏"
     spectator_chat = repo.drawguess_chat(
         UUID(room["room_id"]), "viewer", room["state"]["turn_id"], uuid4(),
         "围观聊天", NOW + timedelta(seconds=2),
     )
     assert spectator_chat["text"] == "围观聊天"
+    hidden_spectator_answer = repo.drawguess_chat(
+        UUID(room["room_id"]), "viewer", room["state"]["turn_id"], uuid4(),
+        chosen["answer"], NOW + timedelta(seconds=3),
+    )
+    assert hidden_spectator_answer["text"] == "答案已隐藏"
     correct = repo.drawguess_chat(UUID(room["room_id"]), "p2", room["state"]["turn_id"], uuid4(), chosen["answer"], NOW + timedelta(seconds=2))
     assert correct["text"].startswith("已猜中 +")
+    hidden_repeat_answer = repo.drawguess_chat(
+        UUID(room["room_id"]), "p2", room["state"]["turn_id"], uuid4(),
+        chosen["answer"], NOW + timedelta(seconds=3),
+    )
+    assert hidden_repeat_answer["text"] == "答案已隐藏"
     after_guess = repo.drawguess_chat(
         UUID(room["room_id"]), "p2", room["state"]["turn_id"], uuid4(),
-        "猜中后继续聊天", NOW + timedelta(seconds=3),
+        "猜中后继续聊天", NOW + timedelta(seconds=4),
     )
     assert after_guess["text"] == "猜中后继续聊天"
     public = repo.drawguess_view(UUID(room["room_id"]), "p1", NOW + timedelta(seconds=2))

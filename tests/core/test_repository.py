@@ -166,6 +166,29 @@ def test_custom_command_repository_uses_one_simplified_command_identity(reposito
         )
 
 
+def test_custom_command_repository_keeps_legacy_traditional_rows_accessible(repository):
+    from dzmm_bot.core.schema import CommandDefinitionRecord
+
+    with repository._session() as session:
+        session.add(CommandDefinitionRecord(
+            command="/導航", syntax="/導航", description="旧入口", enabled=True,
+            is_custom=True, reply_type="text", reply_value="旧内容",
+        ))
+        session.flush()
+
+    assert repository.get_enabled_custom_command("/导航").reply_value == "旧内容"
+    with pytest.raises(ValueError, match="指令名称已被占用"):
+        repository.create_custom_command(
+            "/导航", "重复入口", "text", "另一条内容", None, True
+        )
+    updated = repository.update_custom_command(
+        "/导航", "/新导航", "新入口", "text", "新内容", None, True
+    )
+    assert updated.command == "/新导航"
+    assert repository.get_enabled_custom_command("/新導航").reply_value == "新内容"
+    assert repository.delete_custom_command("/新導航")
+
+
 @pytest.mark.parametrize(
     "command,reply_type,content",
     [

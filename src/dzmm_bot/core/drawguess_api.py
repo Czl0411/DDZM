@@ -39,6 +39,7 @@ class ChatPayload(BaseModel):
 async def room_events(repository, room_id, uid, after, clock, request):
     cursor = after
     last_version = None
+    last_chat_version = None
     heartbeat_at = monotonic()
     first = True
     while not await request.is_disconnected():
@@ -48,14 +49,20 @@ async def room_events(repository, room_id, uid, after, clock, request):
             yield "event: unavailable\ndata: {}\n\n"
             return
         version = value["version"]
-        if "snapshot" not in value and (first or version != last_version):
+        chat_version = value.get("chat_version", 0)
+        if "snapshot" not in value and (
+            first or version != last_version or chat_version != last_chat_version
+        ):
             snapshot = await asyncio.to_thread(repository.drawguess_view, room_id, uid, clock())
             value = {
                 **value, "cursor": snapshot["cursor"], "reset": True,
                 "events": [], "snapshot": snapshot,
             }
             version = snapshot["state"]["version"]
-        if first or value["events"] or value["cursor"] != cursor or version != last_version:
+        if (
+            first or value["events"] or value["cursor"] != cursor
+            or version != last_version or chat_version != last_chat_version
+        ):
             yield "event: update\ndata: " + json.dumps(value, ensure_ascii=False) + "\n\n"
             heartbeat_at = monotonic()
             first = False
@@ -64,6 +71,7 @@ async def room_events(repository, room_id, uid, after, clock, request):
             heartbeat_at = monotonic()
         cursor = value["cursor"]
         last_version = version
+        last_chat_version = chat_version
         await asyncio.sleep(0.2)
 
 

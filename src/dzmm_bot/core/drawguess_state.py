@@ -19,6 +19,7 @@ def new_state(host: str, now_ms: int) -> dict:
         "scores": {host: 0}, "match_id": 0, "turn_id": 0, "turn_index": 0,
         "candidates": [], "word_id": None, "answer": None, "guessed": [],
         "used_words": [], "deadline_ms": int(now_ms) + 600_000, "version": 0,
+        "chat_version": 0,
         "ranking": [], "turn_points": {},
     }
 

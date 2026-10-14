@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, select
 
 from .drawguess_state import advance, apply_action, new_state
-from .drawguess_words import WORDS
+from .drawguess_words import WORDS, word_matches
 from .schema import (
     DrawguessEventRecord as Event,
     DrawguessMessageRecord as Message,
@@ -394,7 +394,7 @@ class DrawguessRepositoryMixin:
                 return {"id": str(old.id), "name": user.display_name, "text": old.content}
             if old:
                 raise ValueError("重复请求记录不完整")
-            state = room.state
+            state = deepcopy(room.state)
             user_id = str(user.id)
             if state["phase"] == "closed":
                 raise ValueError("房间已经关闭")
@@ -421,7 +421,10 @@ class DrawguessRepositoryMixin:
                     after = state["scores"].get(user_id, 0)
                     if after > before:
                         content = f"已猜中 +{after - before}分"
-                    self._dg_sync_room(room, state)
+                elif word_matches(state["word_id"], content):
+                    content = "答案已隐藏"
+            state["chat_version"] = int(state.get("chat_version", 0)) + 1
+            self._dg_sync_room(room, state)
             message = Message(
                 room_id=room_id, turn_id=turn_id, user_id=user.id,
                 request_id=request_id, content=content, created_at=now,
@@ -453,6 +456,7 @@ class DrawguessRepositoryMixin:
         result = {
             "cursor": room.cursor, "reset": reset, "events": events,
             "version": room.state["version"],
+            "chat_version": int(room.state.get("chat_version", 0)),
         }
         if reset:
             result["snapshot"] = self._dg_view(session, room, user, now)

@@ -86,6 +86,37 @@ def test_sse_snapshot_is_recipient_scoped_and_disconnects(game):
     assert "candidates" not in viewer["snapshot"]["state"]
 
 
+def test_sse_pushes_room_chat_without_a_game_state_change(game):
+    from dzmm_bot.core.drawguess_api import room_events
+
+    repo = game[0]
+    room = started(game)
+
+    class Request:
+        disconnected = False
+
+        async def is_disconnected(self):
+            return self.disconnected
+
+    async def receive_chat():
+        request = Request()
+        stream = room_events(
+            repo, UUID(room["room_id"]), "p1", 0, lambda: NOW, request
+        )
+        await anext(stream)
+        repo.drawguess_chat(
+            UUID(room["room_id"]), "viewer", room["state"]["turn_id"], uuid4(),
+            "实时聊天", NOW + timedelta(seconds=1),
+        )
+        update = await asyncio.wait_for(anext(stream), timeout=1)
+        request.disconnected = True
+        await stream.aclose()
+        return json.loads(update.split("data: ", 1)[1])
+
+    update = asyncio.run(receive_chat())
+    assert update["snapshot"]["messages"][-1]["text"] == "实时聊天"
+
+
 def test_chat_rate_limit_maps_to_429(game):
     repo = game[0]
     room = started(game)

@@ -2719,6 +2719,56 @@ class DoudizhuMessageRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class DrawguessRoomRecord(Base):
+    __tablename__ = "drawguess_rooms"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    inbound_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), unique=True, nullable=False)
+    creator_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    short_id: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)
+    active_code: Mapped[str | None] = mapped_column(String(4), unique=True)
+    state: Mapped[dict] = mapped_column(JSON, nullable=False)
+    cursor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    phase: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+
+
+class DrawguessEventRecord(Base):
+    __tablename__ = "drawguess_events"
+    __table_args__ = (UniqueConstraint("room_id", "seq"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("drawguess_rooms.id"), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    turn_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    operation: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class DrawguessRequestRecord(Base):
+    __tablename__ = "drawguess_requests"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("drawguess_rooms.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    turn_id: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class DrawguessMessageRecord(Base):
+    __tablename__ = "drawguess_messages"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("drawguess_rooms.id"), nullable=False)
+    turn_id: Mapped[int | None] = mapped_column(Integer)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    content: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class ChessGameRecord(Base):
     __tablename__ = "chess_games"
 

@@ -177,6 +177,7 @@ def test_stroke_order_limits_clear_and_incremental_events(game):
     request_id = uuid4()
     result = repo.drawguess_strokes(UUID(room["room_id"]), "host", room["state"]["turn_id"], request_id, [operation], NOW)
     assert result["cursor"] == 1
+    assert set(result) == {"cursor"}
     repeated = repo.drawguess_strokes(UUID(room["room_id"]), "host", room["state"]["turn_id"], request_id, [operation], NOW)
     assert repeated["cursor"] == 1
     with pytest.raises(ValueError, match="画手"):
@@ -188,8 +189,12 @@ def test_stroke_order_limits_clear_and_incremental_events(game):
     with pytest.raises(ValueError, match="256"):
         repo.drawguess_strokes(UUID(room["room_id"]), "host", room["state"]["turn_id"], uuid4(), [too_many], NOW)
     clear = repo.drawguess_strokes(UUID(room["room_id"]), "host", room["state"]["turn_id"], uuid4(), [{"op": "clear"}], NOW)
-    assert clear["snapshot"]["canvas"] == []
+    assert set(clear) == {"cursor"}
+    assert repo.drawguess_view(UUID(room["room_id"]), "host", NOW)["canvas"] == []
     events = repo.drawguess_events(UUID(room["room_id"]), "p1", 0, NOW)
     assert events["reset"] is True
     assert events["cursor"] == 2
     assert events["snapshot"]["canvas"] == []
+    incremental = repo.drawguess_events(UUID(room["room_id"]), "p1", 1, NOW)
+    assert incremental["reset"] is False
+    assert "snapshot" not in incremental

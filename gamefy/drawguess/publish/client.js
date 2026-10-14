@@ -71,7 +71,7 @@ export class DrawguessClient{
                 const packet=buffer.slice(0,split);buffer=buffer.slice(split+2);
                 if(packet.includes('event: unavailable'))throw new Error('房间或身份已不可用');
                 const line=packet.split('\n').find(item=>item.startsWith('data: '));
-                if(line&&!signal.aborted&&uid===this.uid){const data=JSON.parse(line.slice(6));after=data.cursor;this.state=data.snapshot;onUpdate(data);}
+                if(line&&!signal.aborted&&uid===this.uid){const data=JSON.parse(line.slice(6));after=data.cursor;if(data.snapshot)this.state=data.snapshot;onUpdate(data);}
               }
             }
           }finally{this.activeReader=null;await reader.cancel().catch(()=>{});}

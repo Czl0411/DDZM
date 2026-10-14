@@ -69,6 +69,11 @@ class DrawguessRepositoryMixin:
             room.active_code = None
 
     @staticmethod
+    def _dg_prune_turn(session, room_id, turn_id):
+        for model in (Event, Message, Receipt):
+            session.execute(delete(model).where(model.room_id == room_id, model.turn_id != turn_id))
+
+    @staticmethod
     def _dg_candidates(state):
         available = [word.id for word in WORDS if word.id not in set(state.get("used_words", []))]
         if len(available) < 3:
@@ -117,7 +122,7 @@ class DrawguessRepositoryMixin:
                 break
             state = changed
             if state.get("turn_id") != old_turn:
-                session.execute(delete(Event).where(Event.room_id == room.id, Event.turn_id != state["turn_id"]))
+                self._dg_prune_turn(session, room.id, state["turn_id"])
         else:
             raise ValueError("房间状态推进过多，请稍后重试")
         if state != room.state:
@@ -260,6 +265,7 @@ class DrawguessRepositoryMixin:
                     )
                     session.execute(delete(Event).where(Event.room_id == room.id))
                     session.execute(delete(Message).where(Message.room_id == room.id))
+                    session.execute(delete(Receipt).where(Receipt.room_id == room.id))
                     room.active_code = self._dg_code(session)
                     self._dg_sync_room(room, fresh)
                 else:
@@ -272,6 +278,8 @@ class DrawguessRepositoryMixin:
                         raise ValueError("游戏进行中，仅可观战")
                     candidates = self._dg_candidates(state) if action == "start" else list(state.get("candidates", []))
                     changed = apply_action(state, user_id, action, payload, self._dg_ms(now), candidates)
+                    if changed.get("turn_id") != state.get("turn_id"):
+                        self._dg_prune_turn(session, room.id, changed["turn_id"])
                     self._dg_sync_room(room, changed)
                 session.add(Receipt(
                     room_id=room_id, user_id=user.id, request_id=request_id,
@@ -337,7 +345,7 @@ class DrawguessRepositoryMixin:
             if receipt:
                 if receipt.digest != digest:
                     raise ValueError("重复请求内容不同")
-                return self._dg_events_result(session, room, user, 0, now)
+                return {"cursor": room.cursor}
             state = room.state
             drawer = state["seats"][state["turn_index"] % len(state["seats"])] if state["seats"] else None
             if state["phase"] != "drawing" or state["turn_id"] != turn_id or str(user.id) != drawer:
@@ -363,7 +371,7 @@ class DrawguessRepositoryMixin:
                 digest=digest, turn_id=turn_id, created_at=now,
             ))
             session.flush()
-            return self._dg_events_result(session, room, user, 0, now)
+            return {"cursor": room.cursor}
 
     def drawguess_chat(self, room_id, platform_id, turn_id, request_id, text, now):
         content = text.strip() if isinstance(text, str) else ""
@@ -435,10 +443,13 @@ class DrawguessRepositoryMixin:
         ).order_by(Event.seq).limit(1))
         reset = after == 0 or after > room.cursor or (first is not None and after < first - 1) or len(rows) > 200
         events = [] if reset else [{"seq": row.seq, "turn_id": row.turn_id, **row.operation} for row in rows]
-        return {
+        result = {
             "cursor": room.cursor, "reset": reset, "events": events,
-            "snapshot": self._dg_view(session, room, user, now),
+            "version": room.state["version"],
         }
+        if reset:
+            result["snapshot"] = self._dg_view(session, room, user, now)
+        return result
 
     def drawguess_events(self, room_id, platform_id, after, now):
         if type(after) is not int or after < 0:

@@ -60,7 +60,9 @@ async function enterRoom(roomId,existingToken=null){
     setRoom(value);renderRoom();feedback();const uid=await client.identity();if(token!==generation)return;
     await client.kvPut(`drawguess:last-room:${uid}`,roomId);if(token!==generation)return;
     followStop=client.follow(roomId,room.cursor,update=>{
-      if(token!==generation)return;setRoom(update.snapshot);renderRoom();
+      if(token!==generation)return;
+      if(update.snapshot){setRoom(update.snapshot);renderRoom();return;}
+      room.cursor=update.cursor;board.applyEvents(update.events||[],room.state.turn_id);
     },error=>{if(token===generation)feedback(`${error.message}，正在重连…`);});
     markReady();
   }catch(error){if(token===generation)feedback(error.message||'房间加载失败');}

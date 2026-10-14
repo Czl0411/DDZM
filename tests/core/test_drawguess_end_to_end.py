@@ -6,7 +6,9 @@ from sqlalchemy import func, select
 
 from dzmm_bot.core.app import create_app
 from dzmm_bot.core.repository import CoreRepository
-from dzmm_bot.core.schema import BalanceTransactionRecord, UserRecord
+from dzmm_bot.core.schema import (
+    BalanceTransactionRecord, DrawguessMessageRecord, DrawguessRequestRecord, UserRecord,
+)
 from tests.core.test_drawguess_repository import NOW, create_room, game
 
 
@@ -146,6 +148,10 @@ def test_three_players_six_turns_and_restart(game):
     with factory() as session:
         balances_after = dict(session.execute(select(UserRecord.platform_id, UserRecord.balance)).all())
         transactions_after = session.scalar(select(func.count()).select_from(BalanceTransactionRecord))
+        request_turns = set(session.scalars(select(DrawguessRequestRecord.turn_id)))
+        message_turns = set(session.scalars(select(DrawguessMessageRecord.turn_id)))
     assert balances_after == balances_before
     assert transactions_after == transactions_before
+    assert request_turns == {final["state"]["turn_id"]}
+    assert message_turns == {final["state"]["turn_id"]}
     client.close()

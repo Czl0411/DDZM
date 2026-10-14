@@ -47,7 +47,14 @@ async def room_events(repository, room_id, uid, after, clock, request):
         except ValueError:
             yield "event: unavailable\ndata: {}\n\n"
             return
-        version = value["snapshot"]["state"]["version"]
+        version = value["version"]
+        if "snapshot" not in value and (first or version != last_version):
+            snapshot = await asyncio.to_thread(repository.drawguess_view, room_id, uid, clock())
+            value = {
+                **value, "cursor": snapshot["cursor"], "reset": True,
+                "events": [], "snapshot": snapshot,
+            }
+            version = snapshot["state"]["version"]
         if first or value["events"] or value["cursor"] != cursor or version != last_version:
             yield "event: update\ndata: " + json.dumps(value, ensure_ascii=False) + "\n\n"
             heartbeat_at = monotonic()

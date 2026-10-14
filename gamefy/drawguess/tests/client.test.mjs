@@ -63,3 +63,18 @@ test('cancelling follow prevents later callbacks',async()=>{
   assert.equal(updates.length,1);
   client.dispose();
 });
+
+
+test('incremental follow keeps the last snapshot when only canvas events arrive',async()=>{
+  const encoder=new TextEncoder();let read=false;
+  const reader={
+    async read(){if(read)return new Promise(()=>{});read=true;return {value:encoder.encode('event: update\ndata: {"cursor":4,"reset":false,"version":2,"events":[{"seq":4,"turn_id":1,"op":"clear"}]}\n\n'),done:false};},
+    async cancel(){},
+  };
+  const client=createClient({sdk:sdk('alice'),apiBase:'https://example.com',sleepImpl:async()=>{},fetchImpl:async()=>({ok:true,body:{getReader:()=>reader}})});
+  client.state={room_id:'room',state:{turn_id:1}};
+  const update=await new Promise(resolve=>{const stop=client.follow('room',3,value=>{stop();resolve(value)},()=>{});});
+  assert.equal(update.snapshot,undefined);
+  assert.equal(client.state.room_id,'room');
+  assert.equal(update.events[0].op,'clear');
+});

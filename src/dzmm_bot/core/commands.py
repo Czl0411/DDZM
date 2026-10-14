@@ -1,4 +1,5 @@
 from collections import Counter
+from dataclasses import replace
 import json
 import re
 from urllib.parse import urlsplit
@@ -6,6 +7,11 @@ from zoneinfo import ZoneInfo
 
 from dzmm_bot.runtime.contracts import InboundMessage
 
+from .chinese_input import (
+    canonicalize_command_content,
+    canonicalize_command_name,
+    canonicalize_fixed_option,
+)
 from .group_games import GROUP_GAME_COMMANDS, GROUP_GAME_LABELS
 from .birthday import parse_visibility
 from .honors import honor_award_lines
@@ -96,6 +102,7 @@ _COMMAND_ALIASES = {
 
 
 def is_reserved_command_name(command: str) -> bool:
+    command = canonicalize_command_name(command)
     return (
         command in _COMMANDS
         or command in _COMMAND_ALIASES
@@ -136,9 +143,10 @@ class GroupCommandHandler:
         self._drawguess_chatroom_id = drawguess_chatroom_id
 
     def handle(self, message: InboundMessage) -> str | list[str] | None:
-        content = message.content.strip()
+        content = canonicalize_command_content(message.content).strip()
         if not content:
             return None
+        message = replace(message, content=content)
         command = content.split(maxsplit=1)[0]
         command = _DARK_MARKET_QUERY_ALIASES.get(command, command)
         if re.fullmatch(r"/第[1-9]\d*场", command):
@@ -355,7 +363,10 @@ class GroupCommandHandler:
                     "not_joined": "请先入职。",
                 }[result.status]
             next_page = command == "/下一页" or (
-                len(parts) == 2 and parts[1].strip() == "下一页"
+                len(parts) == 2
+                and canonicalize_fixed_option(
+                    parts[1].strip(), {"下一页"}
+                ) == "下一页"
             )
             page = self._repository.black_history_delete_page(
                 message.sender_platform_id, next_page, received_at
@@ -5416,6 +5427,16 @@ class GroupCommandHandler:
         custom_commands = [item for item in definitions if item.is_custom]
         settings = self._repository.get_game_settings()
         topic = content.split(maxsplit=1)[1].strip() if len(content.split(maxsplit=1)) == 2 else ""
+        topic = canonicalize_fixed_option(
+            topic,
+            {
+                "基础", "商店", "游戏", "随机事件", "彩票", "风纪", "部门",
+                "职位", "自定义", "摸鱼躲藏", "摸鱼躲猫猫", "躲猫猫",
+                "记忆考核", "谁是卧底", "卧底", "甩锅游戏", "蹦蹦数字炸弹",
+                "德州扑克", "我有你没有", "真心换真心", "暗网交易所",
+                "公演预约", "公演", "演出",
+            },
+        )
         topic = {
             "躲猫猫": "摸鱼躲藏",
             "摸鱼躲猫猫": "摸鱼躲藏",

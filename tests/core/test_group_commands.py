@@ -93,6 +93,30 @@ def test_group_ban_confirmation_is_one_shot():
         assert session.query(WorkerCommandRecord).filter(WorkerCommandRecord.command.like("ban:%")).count() == 1
 
 
+def test_group_ban_preserves_traditional_free_form_reason():
+    from dzmm_bot.core.schema import GroupBanRequestRecord
+
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    repository.create_user("operator", "操作员", now, 0)
+    repository.update_group_chat(
+        group.id, ban_operator_platform_ids=["operator"], now=now
+    )
+
+    service.receive_inbound(InboundMessage(
+        "ban-traditional-reason", "operator", "/ban 違規發言", now,
+        chatroom_id="group-main",
+        reference=MessageReference("target-message", "outsider", "text", text="正文"),
+    ))
+
+    assert "是否移除 UID outsider" in _latest_reply(factory)
+    with factory() as session:
+        assert session.scalar(select(GroupBanRequestRecord.reason)) == "違規發言"
+
+
 def test_group_ban_rejections():
     service, repository, factory = _service()
     now = datetime(2026, 10, 10, 12, 0, tzinfo=BEIJING)
@@ -842,6 +866,33 @@ def test_custom_command_does_not_bypass_random_event_gate():
     assert _replies_for(factory, result.message_id) == ["活动进行中，监事暂不处理。"]
 
 
+def test_traditional_independent_command_remains_available_during_random_event():
+    service, repository, factory = _service()
+    now = datetime(2026, 10, 12, 10, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", now
+    )
+    repository.create_user("employee", "员工", now, 8)
+    repository.create_random_event_scene(
+        "茶水间", "咖啡机响了。", ["开始。"], 4, 1, [("员工", 2)]
+    )
+    repository.set_random_event_settings(
+        ["10:00"], "可选身份：{可选身份}", 15, 5,
+        blocked_message="活动进行中，监事暂不处理。",
+    )
+    repository.schedule_random_events(now)
+    repository.run_random_event_jobs(now)
+
+    result = _group_receive(
+        service, "traditional-balance", "employee", "/餘額", now,
+        group.chatroom_id,
+    )
+
+    assert "当前余额：8 摸鱼币。" in "".join(
+        _replies_for(factory, result.message_id)
+    )
+
+
 def test_q_records_the_replied_employee_message() -> None:
     service, repository, factory = _service()
     now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)
@@ -941,6 +992,32 @@ def test_private_black_history_next_page_and_delete_feedback() -> None:
     )
 
     assert "剩余 5 条" in _replies_for(factory, deleted.message_id)[0]
+
+
+def test_traditional_private_black_history_command_and_fixed_next_page() -> None:
+    service, repository, factory = _service()
+    now = datetime(2026, 9, 18, 12, 0, tzinfo=BEIJING)
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=black-history-traditional", now
+    )
+    repository.create_user("owner", "本人", now, 20)
+    for index in range(6):
+        repository.record_black_history(
+            "owner", "owner", group.id, f"traditional-source-{index}", "text",
+            f"记录 {index}", None, None, now,
+        )
+
+    first = _direct_receive(
+        service, "traditional-list-1", "owner", "/刪除黑歷史", now,
+        "direct-owner",
+    )
+    second = _direct_receive(
+        service, "traditional-list-2", "owner", "/刪除黑歷史 下一頁", now,
+        "direct-owner",
+    )
+
+    assert "第 1 页" in _replies_for(factory, first.message_id)[0]
+    assert "第 2 页" in _replies_for(factory, second.message_id)[0]
 
 
 def _direct_receive(service, message_id, sender, content, now, chatroom_id):
@@ -2514,6 +2591,8 @@ def test_board_bonus_command_rejects_nonboard_and_missing_targets():
 
     _receive(service, "unauthorized-bonus", "manager", "/发奖金 目标员工 10", now)
     assert _latest_reply(factory) == "只有核心董事会成员可以发放奖金。"
+    _receive(service, "unauthorized-bonus-traditional", "manager", "/發獎金 目标员工 10", now)
+    assert _latest_reply(factory) == "只有核心董事会成员可以发放奖金。"
     _receive(service, "missing-bonus", "board", "/发奖金 不存在 10", now)
     assert _latest_reply(factory) == "未找到该员工，请检查员工名。"
     assert all(user.balance == 0 for user in repository.list_users())
@@ -4019,6 +4098,22 @@ def test_help_shows_category_entrypoints_instead_of_all_commands():
     assert "/帮助 职位" in reply
     assert "/帮助 部门" in reply
     assert "/同意部门" not in reply
+
+
+def test_traditional_help_routes_with_fixed_topic_and_keeps_original_inbound():
+    from dzmm_bot.core.schema import InboundRecord
+
+    service, _, factory = _service()
+    received_at = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
+
+    result = _receive(
+        service, "traditional-help", "platform-xiaoming", "/幫助 遊戲", received_at
+    )
+
+    reply = _latest_reply(factory)
+    assert "【游戏玩法】" in reply
+    with factory() as session:
+        assert session.get(InboundRecord, result.message_id).content == "/幫助 遊戲"
 
 
 def test_help_random_event_topic_lists_submission_entrypoints():

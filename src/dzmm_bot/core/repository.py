@@ -54,6 +54,7 @@ from .ai_knowledge import (
 )
 
 from .ai_mentions import normalize_ai_mention
+from .chinese_input import canonicalize_command_name
 from .game_statistics import (
     other_game_users, record_game_participations, resolved_game_users, truth_trade_game_users,
 )
@@ -4120,6 +4121,7 @@ class CoreRepository(DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRep
 
     @staticmethod
     def _custom_command_name(command: str) -> str:
+        command = canonicalize_command_name(command)
         if (
             not isinstance(command, str)
             or not command.startswith("/")
@@ -4200,6 +4202,7 @@ class CoreRepository(DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRep
         self, old_command: str, command: str, description: str, reply_type: str,
         content: str | None, upload_task_id: UUID | None, enabled: bool,
     ) -> CommandDefinitionRecord:
+        old_command = self._custom_command_name(old_command)
         command = self._custom_command_name(command)
         with self._session() as session:
             record = session.get(CommandDefinitionRecord, old_command)
@@ -4220,6 +4223,7 @@ class CoreRepository(DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRep
             return record
 
     def delete_custom_command(self, command: str) -> bool:
+        command = self._custom_command_name(command)
         with self._session() as session:
             record = session.get(CommandDefinitionRecord, command)
             if record is None or not record.is_custom:
@@ -4229,6 +4233,10 @@ class CoreRepository(DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRep
             return True
 
     def get_enabled_custom_command(self, command: str) -> CommandDefinitionRecord | None:
+        try:
+            command = self._custom_command_name(command)
+        except ValueError:
+            return None
         with self._session() as session:
             return session.scalar(select(CommandDefinitionRecord).where(
                 CommandDefinitionRecord.command == command,

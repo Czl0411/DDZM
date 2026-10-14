@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import logging
 from typing import Protocol
@@ -9,6 +9,7 @@ import httpx
 from dzmm_bot.runtime.contracts import InboundMessage
 
 from .ai_mentions import ai_mention_content
+from .chinese_input import canonicalize_command_content
 from .repository import CoreRepository
 from .schema import PRIMARY_GROUP_CHAT_ID
 from .random_event_submissions import (
@@ -114,7 +115,8 @@ class CoreService:
                 if group is None or group.chatroom_id is None:
                     return ReceiveResult(uuid4(), False)
                 group_context = GroupMessageContext(group.id, group.chatroom_id)
-            command_parts = message.content.strip().split(maxsplit=1)
+            dispatch_content = canonicalize_command_content(message.content)
+            command_parts = dispatch_content.strip().split(maxsplit=1)
             if command_parts and command_parts[0] == "/甩锅":
                 self._repository.lock_gameplay_order()
             stored, inserted = self._repository.accept_inbound(
@@ -132,6 +134,7 @@ class CoreService:
                 except Exception:
                     _LOGGER.exception("referral attribution failed")
                 return ReceiveResult(stored.id, True)
+            message = replace(message, content=dispatch_content)
             command = command_parts[0] if command_parts else ""
             if command in {"/ban", "/是"} and message.source_type == "group":
                 management_reply = self._command_handler.handle(message)

@@ -49,6 +49,7 @@ PYTHONPATH=src python scripts/mistrealm_dev.py --port 18741
 
 - publish/client.js：SDK 身份、HTTP、SSE、失活超时和退避；断流后顺序读取快照，避免并行同步通道。
 - publish/game.js：DOM 交互与按版本更新；错误动作不自动重放。
+- publish/layout.css：按已确认的首页、房间、战场参考图恢复主要构图，并适配手机；在基础style.css之后加载。
 - publish/cards.json：从后端权威 CARDS 导出，由测试校验；不要单独修改数值。
 - publish/assets：本次生成的独立插画、背景、卡背及矢量界面素材。
 - tests：客户端、资源一致性和本地浏览器链路检查。

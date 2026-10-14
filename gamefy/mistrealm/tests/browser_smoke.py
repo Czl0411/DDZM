@@ -21,7 +21,12 @@ with sync_playwright() as pw:
     for p in [a,b]:p.on('pageerror',lambda e:errors.append(str(e)))
     a.goto(f'{base}/?player=a-{tag}')
     a.locator('#create').wait_for()
+    a.locator('.home-leader').wait_for()
     a.screenshot(path=str(output/'home-desktop.png'),full_page=True)
+    a.set_viewport_size({'width':390,'height':844})
+    assert a.evaluate('document.documentElement.scrollWidth<=innerWidth'), 'home overflow'
+    a.screenshot(path=str(output/'home-mobile.png'),full_page=True)
+    a.set_viewport_size({'width':1366,'height':768})
     a.locator('#create').click()
     a.locator('.code').wait_for()
     code=a.locator('.code').inner_text()
@@ -36,7 +41,12 @@ with sync_playwright() as pw:
     a.locator('#ready').click()
     a.locator('#start').wait_for(state='visible')
     a.wait_for_function("!document.querySelector('#start').disabled")
+    assert a.locator('.deck-preview').count()==2
     a.screenshot(path=str(output/'room-desktop.png'),full_page=True)
+    a.set_viewport_size({'width':390,'height':844})
+    assert a.evaluate('document.documentElement.scrollWidth<=innerWidth'), 'room overflow'
+    a.screenshot(path=str(output/'room-mobile.png'),full_page=True)
+    a.set_viewport_size({'width':1366,'height':768})
     a.locator('#start').click()
     for p in [a,b]:
         p.locator('#confirm-prep').wait_for()
@@ -54,6 +64,8 @@ with sync_playwright() as pw:
     for p in [a,b]:p.locator('#pass').wait_for()
     sync()
     a.screenshot(path=str(output/'battle-desktop.png'),full_page=True)
+    sidebar=a.locator('.sidebar').bounding_box();board=a.locator('.board').bounding_box();controls=a.locator('.controls').bounding_box()
+    assert sidebar['x']+sidebar['width']<=board['x'] and board['x']+board['width']<=controls['x'], 'desktop battle columns overlap'
     # Exercise a real unit deployment (no enemy yet, so damage effects have no target).
     for p in [a,b]:
         if p.locator('#pass').is_enabled():

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
   <meta name="theme-color" content="#fff8f2">
   <title>你画我猜</title>
   <link rel="stylesheet" href="./style.css">
@@ -14,15 +14,16 @@
       <div><h1>你画我猜</h1><p>轮流画，抢先猜</p></div>
       <button id="refresh" class="icon-button" type="button" aria-label="刷新">↻</button>
     </header>
-    <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+    <div class="content-scroll">
+      <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
 
-    <section id="lobby" class="panel lobby">
-      <div class="section-heading"><div><span class="eyebrow">游戏大厅</span><h2>选择房间</h2></div><span class="rule-chip">3～8 人</span></div>
-      <p class="muted">在开放群发送 /你画我猜 创建房间，入座后全员准备即可开始。</p>
-      <div id="rooms" class="room-list"></div>
-    </section>
+      <section id="lobby" class="panel lobby">
+        <div class="section-heading"><div><span class="eyebrow">游戏大厅</span><h2>选择房间</h2></div><span class="rule-chip">3～8 人</span></div>
+        <p class="muted">在开放群发送 /你画我猜 创建房间，入座后全员准备即可开始。</p>
+        <div id="rooms" class="room-list"></div>
+      </section>
 
-    <section id="room-view" class="room-view" hidden>
+      <section id="room-view" class="room-view" hidden>
       <div class="room-toolbar">
         <button id="back" class="icon-button" type="button" aria-label="返回大厅">←</button>
         <div class="room-heading">
@@ -93,8 +94,9 @@
       </section>
 
       <section id="reveal" class="stage-card reveal" hidden></section>
-      <section id="ranking" class="stage-card ranking" hidden></section>
-    </section>
+        <section id="ranking" class="stage-card ranking" hidden></section>
+      </section>
+    </div>
   </main>
   <script type="module" src="./game.js"></script>
 </body>

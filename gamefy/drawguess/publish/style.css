@@ -22,12 +22,17 @@
 
 html {
   min-width: 320px;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
   background: var(--page);
 }
 
 body {
-  min-height: 100vh;
+  height: 100%;
+  height: 100dvh;
   margin: 0;
+  overflow: hidden;
   color: var(--ink);
   background:
     radial-gradient(circle at 8% 0%, rgb(255 226 215 / 65%), transparent 27rem),
@@ -76,9 +81,22 @@ h3 {
 }
 
 .app-shell {
+  display: flex;
   width: min(100% - 32px, 1080px);
+  height: 100vh;
+  height: 100dvh;
   margin: 0 auto;
-  padding: 22px 0 48px;
+  padding: 22px 0 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.content-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 0 0 48px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .brand-bar {
@@ -701,7 +719,11 @@ canvas {
 @media (max-width: 760px) {
   .app-shell {
     width: min(100% - 20px, 560px);
-    padding: 12px 0 28px;
+    padding: 12px 0 0;
+  }
+
+  .content-scroll {
+    padding-bottom: 28px;
   }
 
   .brand-bar {

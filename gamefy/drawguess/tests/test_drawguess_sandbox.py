@@ -28,7 +28,7 @@ def snapshot(phase="waiting", self_seat=0):
     }
 
 
-def install_routes(context, publish, state, actions, saved=None):
+def install_routes(context, publish, state, actions, saved=None, room_count=1):
     saved = saved if saved is not None else {}
 
     def route(request):
@@ -84,7 +84,20 @@ def install_routes(context, publish, state, actions, saved=None):
                 request.fulfill(body=json.dumps({"id": "m", "name": "猜猜", "text": text}, ensure_ascii=False), content_type="application/json", headers=headers)
                 return
             if path.endswith("/rooms"):
-                request.fulfill(body=json.dumps([{"room_id": ROOM, "short_id": "DRAW88", "phase": state["state"]["phase"], "occupied": 3, "capacity": 8, "mine": state["self_seat"] is not None}]), content_type="application/json", headers=headers)
+                rooms = [
+                    {
+                        "room_id": f"{index:08d}-1111-4111-8111-111111111111",
+                        "short_id": f"DRAW{index:02d}",
+                        "phase": state["state"]["phase"],
+                        "occupied": 3,
+                        "capacity": 8,
+                        "mine": state["self_seat"] is not None,
+                    }
+                    for index in range(1, room_count + 1)
+                ]
+                if room_count == 1:
+                    rooms[0].update(room_id=ROOM, short_id="DRAW88")
+                request.fulfill(body=json.dumps(rooms), content_type="application/json", headers=headers)
                 return
             request.fulfill(body=json.dumps(state, ensure_ascii=False), content_type="application/json", headers=headers)
             return
@@ -159,6 +172,48 @@ def test_waiting_room_uses_complete_seat_grid_and_secondary_room_code(width, col
             assert first and last and abs(first["y"] - last["y"]) < 2 and last["x"] > first["x"]
         assert page.locator("body").evaluate("e=>e.scrollWidth<=innerWidth")
         page.screenshot(path=f"/tmp/drawguess-waiting-{width}.png", full_page=True)
+        browser.close()
+
+
+@pytest.mark.parametrize(("room_count", "should_scroll"), [(1, False), (18, True)])
+def test_game_fills_viewport_and_scrolls_only_inside_content(room_count, should_scroll):
+    publish = Path(__file__).resolve().parents[1] / "publish"
+    state, actions = snapshot(), []
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        context = browser.new_context(viewport={"width": 390, "height": 844})
+        context.add_init_script("window.dzmm={user:{info:async()=>({id:'host'})},kv:{get:async()=>({value:null}),put:async()=>{}},loading:{progress(){},ready(){},error(){}},log:{info(){},error(){}}};")
+        install_routes(context, publish, state, actions, room_count=room_count)
+        page = context.new_page();page.goto("https://draw.test/index.html")
+
+        expect(page.locator(".content-scroll")).to_have_count(1)
+        layout = page.evaluate("""
+          () => {
+            const content = document.querySelector('.content-scroll');
+            const shell = document.querySelector('.app-shell');
+            return {
+              viewportHeight: innerHeight,
+              shellHeight: shell.getBoundingClientRect().height,
+              bodyHeight: document.body.getBoundingClientRect().height,
+              bodyScrollHeight: document.body.scrollHeight,
+              bodyOverflow: getComputedStyle(document.body).overflowY,
+              contentOverflow: getComputedStyle(content).overflowY,
+              contentClientHeight: content.clientHeight,
+              contentScrollHeight: content.scrollHeight,
+            };
+          }
+        """)
+        assert abs(layout["shellHeight"] - layout["viewportHeight"]) < 2
+        assert abs(layout["bodyHeight"] - layout["viewportHeight"]) < 2
+        assert layout["bodyScrollHeight"] <= layout["viewportHeight"]
+        assert layout["bodyOverflow"] == "hidden"
+        assert layout["contentOverflow"] == "auto"
+        assert (layout["contentScrollHeight"] > layout["contentClientHeight"]) is should_scroll
+        page.screenshot(path=f"/tmp/drawguess-viewport-{'long' if should_scroll else 'short'}.png")
+        if should_scroll:
+            page.locator(".content-scroll").evaluate("e=>{e.scrollTop=e.scrollHeight}")
+            assert page.locator(".content-scroll").evaluate("e=>e.scrollTop>0")
+            page.screenshot(path="/tmp/drawguess-viewport-long-bottom.png")
         browser.close()
 
 

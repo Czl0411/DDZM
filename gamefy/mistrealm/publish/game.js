@@ -32,6 +32,7 @@ async function run(fn){
  }finally{busy=false;render();}
 }
 function update(value){
+ if(value.state.rules_version===2){client.stop();location.replace('./classic/'+location.search+location.hash);return;}
  if(value.state.phase==='closed'){client.stop();room=null;client.state=null;client.roomId=null;resetSelection();feedback('房间已关闭或已退出');render();return;}
  if(room&&value.room_id===room.room_id&&value.state.version<room.state.version)return;
  const changed=!room||value.room_id!==room.room_id||value.state.version!==room.state.version;
@@ -96,6 +97,7 @@ function renderHome(){
 }
 function stopMatchmaking(){matchEpoch++;clearTimeout(matchTimer);matchTimer=null;}
 function showMatchmaking(value){
+ if(value.status==='waiting'&&value.rules_version===2){stopMatchmaking();location.replace('./classic/'+location.search+location.hash);return;}
  stopMatchmaking();
  if(value.status==='matched'){matchmaking=null;enter(value.room);feedback('匹配成功！选择阵营并准备开局。');return;}
  if(value.status!=='waiting'){matchmaking=null;render();feedback('已退出匹配，可以重新开始。');return;}

@@ -53,6 +53,7 @@ with TemporaryDirectory(prefix='classic-browser-e2e-') as directory:
         with sync_playwright() as pw:
             browser=pw.chromium.launch(executable_path='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless=True)
             context=browser.new_context(viewport={'width':1366,'height':900});page=context.new_page();errors=[]
+            context.route('**/*',lambda route:route.continue_() if route.request.url.startswith(f'http://127.0.0.1:{port}/') else route.abort())
             page.on('pageerror',lambda e:errors.append(str(e)))
             page.goto(f'http://127.0.0.1:{port}/classic/')
             expect(page.locator('[data-option]')).to_have_count(1)

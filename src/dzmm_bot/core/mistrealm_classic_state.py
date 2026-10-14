@@ -186,6 +186,7 @@ def apply_action(state, seat, action, payload, now_ms, rng=None):
             if opening:
                 if result['pending']: result['pending']['continuation']='opening'
                 _opening(result,rng)
+                if not result['pending']: result['deadline_ms']=now_ms+TURN_MS
             elif not result['pending']: _end_action(result,seat,now_ms,rng)
     result['version'] += 1
     result['server_time_ms'] = now_ms

@@ -2,6 +2,35 @@
 
 独立公开双人 Gamefy 卡牌游戏。平台 UID 信任模式；玩家独立于员工、群聊和公司积分。后端权威处理发牌、隐藏信息、目标、计分与超时。
 
+## Classic 120 开发预览（2026-10-15）
+
+新版入口为 `/classic/`，API 为 `/api/mistrealm/classic`。它使用独立的 `rules_version=2`，已有线上 v1 入口和房间继续使用原引擎。本节描述新版；下文固定预组、两排等内容是 v1 的历史说明。本轮没有发布到游戏卡 3769848。
+
+```sh
+PYTHONPATH=src python scripts/mistrealm_dev.py --port 18744
+```
+
+打开 http://127.0.0.1:18744/classic/?player=classic-local-a 和 http://127.0.0.1:18744/classic/?player=classic-local-b 。两个页面可通过快速匹配或房间码对战；这是临时 SQLite 和模拟身份，重启清空数据。
+
+新版提供120种卡牌（102单位、10领袖、8特殊）和2种变身形态、5阵营、10套可编辑初始牌组。至少22单位、最多10特殊，同阵营加中立；双方锁定前隐藏对方阵营与领袖，锁定后揭晓。匹配使用入队时的牌组副本，编辑保存不会改变正在匹配的牌组。
+
+采用三排、10张起手、最多换2张、跨局不自动补牌和两颗生命宝石。服务器结算间谍、医师连锁、召集、同袍、鼓舞、号角、天气、焚阵、诱饵、仪式变身及阵营能力；点击场上卡牌可查看当前战力的计算来源。玩家头像和昵称沿用平台资料，支持刷新恢复选择和对局。
+
+122张卡面已逐张检查并接入，前端资源约19.36MiB。
+
+少数原作数字版边界仍有资料冲突，见[规则核验记录](../../docs/superpowers/specs/2026-10-15-mistrealm-classic-120.md)。当前为开发预览，不宣称已完成原作逐项复核或真实平台双账号验收。
+
+```sh
+PYTHONPATH=src python -m pytest tests/core/test_mistrealm* -q
+node --test gamefy/mistrealm/tests/*test.mjs
+python3 gamefy/mistrealm/tests/test_classic_assets.py
+PYTHONPATH=src python gamefy/mistrealm/tests/classic_browser.py
+PYTHONPATH=src python gamefy/mistrealm/tests/classic_e2e.py
+PYTHONPATH=src python gamefy/mistrealm/tests/classic_recovery_browser.py
+```
+
+资源检查需要 Pillow；浏览器检查需要 Playwright 与 Chrome，`classic_browser.py` 连接上面的18744本地服务，`classic_e2e.py` 自行创建隔离服务。规则和卡表从 `src/dzmm_bot/core/mistrealm_classic_*` 导出，运行 `PYTHONPATH=src python scripts/export_mistrealm_classic.py` 更新前端目录。原创PNG、生成提示词和审核记录分别保存在 `source-art/classic` 与 `art-updates/classic-120-manifest.json`。
+
 ## 本地试玩
 
 从仓库根目录运行（使用已安装项目依赖的 Python）：

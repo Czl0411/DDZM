@@ -427,485 +427,583 @@
     },
     "c043": {
       "name": "白枝猎手",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c043.png",
       "webp": "publish/assets/classic/c043.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: white-branch hunter carrying a carved white-wood longbow, pale antlerless hood. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-9ee5fc1d-e589-4107-b22d-e55f61d3df58.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-9ee5fc1d-e589-4107-b22d-e55f61d3df58.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c044": {
       "name": "岩隙守望者",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c044.png",
       "webp": "publish/assets/classic/c044.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: solitary cliff watcher with twin short blades and folded bow, narrow icy fissure. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-2c4c49c7-3676-4732-8441-00a70e2ffbfe.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-2c4c49c7-3676-4732-8441-00a70e2ffbfe.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c045": {
       "name": "雪径伏兵·弓",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c045.png",
       "webp": "publish/assets/classic/c045.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: concealed ambusher drawing a white bow from behind a snowy fallen trunk. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-c06765c4-6ba9-4670-b83a-3d4e1ac0f343.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-c06765c4-6ba9-4670-b83a-3d4e1ac0f343.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c046": {
       "name": "雪径伏兵·刃",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c046.png",
       "webp": "publish/assets/classic/c046.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: snow-path ambusher with a hooked blade stepping from a white birch grove. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-64f3e60d-8e7b-443b-b42f-6c220e746a0e.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-64f3e60d-8e7b-443b-b42f-6c220e746a0e.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c047": {
       "name": "雪径伏兵·索",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c047.png",
       "webp": "publish/assets/classic/c047.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: ambusher casting a woven rope snare across a snow-covered road. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-f0b16819-7ded-4332-a77e-d116190a3ca0.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-f0b16819-7ded-4332-a77e-d116190a3ca0.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c048": {
       "name": "白木护卫·盾",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c048.png",
       "webp": "publish/assets/classic/c048.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: shield guardian with a rectangular white-wood shield protecting a forest shrine. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-929dcc21-230a-47ec-9144-a09989341c04.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-929dcc21-230a-47ec-9144-a09989341c04.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c049": {
       "name": "白木护卫·矛",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c049.png",
       "webp": "publish/assets/classic/c049.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: white-wood spear guardian in layered grey wool standing beside pale trunks. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-03ca28eb-1309-4133-8764-5cee828ceabc.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-03ca28eb-1309-4133-8764-5cee828ceabc.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c050": {
       "name": "白木护卫·弩",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c050.png",
       "webp": "publish/assets/classic/c050.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: crossbow guardian crouched on a white-wood watch platform, frosty breath. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-1597535c-0be9-4094-afc9-2754c38439bc.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-1597535c-0be9-4094-afc9-2754c38439bc.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c051": {
       "name": "冰湖医者",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c051.png",
       "webp": "publish/assets/classic/c051.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: elderly woman healer kneeling beside a frozen lake and tending a wounded scout. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-5ac81470-d69a-4256-8343-9dbe9da5e917.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-5ac81470-d69a-4256-8343-9dbe9da5e917.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c052": {
       "name": "风铃祭司",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c052.png",
       "webp": "publish/assets/classic/c052.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: wind-chime priest holding a branching chime staff, teal ribbons and mist. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-d253a1f1-aa1b-46c9-9eac-3fc4fc30a037.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-d253a1f1-aa1b-46c9-9eac-3fc4fc30a037.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c053": {
       "name": "霜原行者",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c053.png",
       "webp": "publish/assets/classic/c053.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: sturdy tundra walker with walking spear and weathered fur cloak, vast frozen plain. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-3901a2cb-6c9f-420b-bcb0-4c300e7911cf.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-3901a2cb-6c9f-420b-bcb0-4c300e7911cf.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c054": {
       "name": "山隘射手",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c054.png",
       "webp": "publish/assets/classic/c054.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mountain pass archer aiming through a gap between enormous icy rocks. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-bff3fe47-30fb-4a9f-ab5d-49dfeaa3c065.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-bff3fe47-30fb-4a9f-ab5d-49dfeaa3c065.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c055": {
       "name": "无声雪客",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c055.png",
       "webp": "publish/assets/classic/c055.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: silent snow wanderer in unmarked pale armor, long slender blade, dramatic full figure. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-271a203e-303f-4953-8169-7f18b9486091.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-271a203e-303f-4953-8169-7f18b9486091.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c056": {
       "name": "冬枝女侯",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c056.png",
       "webp": "publish/assets/classic/c056.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: winter branch noblewoman wearing a crown of sculpted white wood, calm severe face. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-318e4109-59ac-4c0e-a2b3-2a22c0181c85.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-318e4109-59ac-4c0e-a2b3-2a22c0181c85.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c057": {
       "name": "白石守约人",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c057.png",
       "webp": "publish/assets/classic/c057.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: white stone oathkeeper with heavy slate armor and a square stone shield. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-8ca5e530-8ebe-4163-98f5-b7c7a9537235.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-8ca5e530-8ebe-4163-98f5-b7c7a9537235.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c058": {
       "name": "北境巡狩者",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c058.png",
       "webp": "publish/assets/classic/c058.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: northern patrol leader with dark braided hair, tall ivory polearm and storm cloak. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-5a80c976-16d9-4ddc-8982-6cfea8a97de3.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-5a80c976-16d9-4ddc-8982-6cfea8a97de3.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c059": {
       "name": "霜境女王·冬藏",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c059.png",
       "webp": "publish/assets/classic/c059.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: frost queen wearing a white-wood diadem, holding a closed seed reliquary, winter hall. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-d309188e-d935-4660-9f19-96736c8c2ec7.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-d309188e-d935-4660-9f19-96736c8c2ec7.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c060": {
       "name": "逐风可汗·长风之歌",
-      "status": "generated_unreviewed",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c060.png",
       "webp": "publish/assets/classic/c060.webp",
       "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: wind khan with grey braided hair and ceremonial longbow, ridge of singing chimes. Faction visual guide: white wood, pale teal, slate grey; alpine mist, birch forests, snow-covered ruins; original human mountain confederacy, no pointy ears. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
-      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-047204c1-55b7-465f-9067-f5aa61b72975.png"
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-047204c1-55b7-465f-9067-f5aa61b72975.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c061": {
       "name": "棘狼·灰鬃",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c061.png",
       "webp": "publish/assets/classic/c061.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: grey-maned thorn wolf with bark plates, crouching in wet roots. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: grey-maned thorn wolf with bark plates, crouching in wet roots. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-bbbf8eee-8785-4a55-a04a-dfbb09ec1dbf.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c062": {
       "name": "棘狼·裂牙",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c062.png",
       "webp": "publish/assets/classic/c062.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: lean thorn wolf with fractured tusk-like teeth and thorn-covered shoulders, leaping over roots. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: lean thorn wolf with fractured tusk-like teeth and thorn-covered shoulders, leaping over roots. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-1955d5df-a673-48b0-a7e0-6ae10e676de9.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c063": {
       "name": "棘狼·赤眼",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c063.png",
       "webp": "publish/assets/classic/c063.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: red-eyed thorn wolf emerging frontally from dense fungal mist, low threatening silhouette. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: red-eyed thorn wolf emerging frontally from dense fungal mist, low threatening silhouette. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-0d12963b-1484-4049-92fe-9cd963e5f853.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c064": {
       "name": "腐巢虫·镰足",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c064.png",
       "webp": "publish/assets/classic/c064.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mantis-like brood insect with long sickle forelimbs and root-wrapped chitin. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mantis-like brood insect with long sickle forelimbs and root-wrapped chitin. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-66eab0ea-e619-4f2f-aa9e-251f60987f57.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c065": {
       "name": "腐巢虫·骨翼",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c065.png",
       "webp": "publish/assets/classic/c065.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: brood insect with translucent bone-veined wings, hovering over marsh reeds. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: brood insect with translucent bone-veined wings, hovering over marsh reeds. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-f22ca38d-8b35-4111-b447-834ad3ac20e4.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c066": {
       "name": "腐巢虫·重壳",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c066.png",
       "webp": "publish/assets/classic/c066.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: huge squat brood insect with overlapping pale carapace plates and six heavy legs. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: huge squat brood insect with overlapping pale carapace plates and six heavy legs. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-db67f808-7395-43f2-b36f-c23410aa1a33.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c067": {
       "name": "腐巢母体",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c067.png",
       "webp": "publish/assets/classic/c067.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: monumental brood mother with a domed fungal shell and many sheltering larvae, swamp ruins. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: monumental brood mother with a domed fungal shell and many sheltering larvae, swamp ruins. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-4b26ab8c-64da-4a4b-96ce-b6fe8f8de6ed.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c068": {
       "name": "古林姊妹·根",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c068.png",
       "webp": "publish/assets/classic/c068.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: ancient root sister, feminine tree-like spirit with exposed root limbs and no human clothing. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: ancient root sister, feminine tree-like spirit with exposed root limbs and no human clothing. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-0b2205fc-aa7f-4778-ba98-889df72ad78d.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c069": {
       "name": "古林姊妹·枝",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c069.png",
       "webp": "publish/assets/classic/c069.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: ancient branch sister, tall wooden spirit with branching arm canopy and hanging moss. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: ancient branch sister, tall wooden spirit with branching arm canopy and hanging moss. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-82848067-4c3f-43ef-aace-08662e4dc99e.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c070": {
       "name": "古林姊妹·叶",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c070.png",
       "webp": "publish/assets/classic/c070.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: ancient leaf sister, compact spirit wrapped in overlapping dark leaves and glowing spores. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: ancient leaf sister, compact spirit wrapped in overlapping dark leaves and glowing spores. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-23603491-8f12-478c-8a5b-51722e36fc59.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c071": {
       "name": "沼泽潜行兽",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c071.png",
       "webp": "publish/assets/classic/c071.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: marsh stalking creature with long amphibian limbs and plant-fringed back, half submerged. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: marsh stalking creature with long amphibian limbs and plant-fringed back, half submerged. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-a92dc60a-4bc8-4a22-a839-0e22ae8f3c40.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c072": {
       "name": "苔背巨兽",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c072.png",
       "webp": "publish/assets/classic/c072.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: moss-backed massive quadruped with blunt bony head and ancient saplings on its back. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: moss-backed massive quadruped with blunt bony head and ancient saplings on its back. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-436c487e-c69d-4387-86d2-9d60ed55f1a2.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c073": {
       "name": "骨翼掠食者",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c073.png",
       "webp": "publish/assets/classic/c073.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: bone-wing predator with rib-like wing struts and a long narrow head, original anatomy. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: bone-wing predator with rib-like wing struts and a long narrow head, original anatomy. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-b302aa93-e953-4be6-9084-1c7fe6b7001a.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c074": {
       "name": "荆棘投掷者",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c074.png",
       "webp": "publish/assets/classic/c074.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: rooted hulking creature hurling thorn clusters toward distant stone ruins. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: rooted hulking creature hurling thorn clusters toward distant stone ruins. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-977cdeee-30d4-47cb-af6e-1bcc4cfaae24.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c075": {
       "name": "焚巢巨蜥",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c075.png",
       "webp": "publish/assets/classic/c075.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: nest-burning giant lizard with a ridge of ember-lit thorns, smoke pouring from its mouth. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: nest-burning giant lizard with a ridge of ember-lit thorns, smoke pouring from its mouth. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-35e3ba24-6c57-4f5b-8112-c97755732f42.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c076": {
       "name": "千齿古兽",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c076.png",
       "webp": "publish/assets/classic/c076.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: ancient many-toothed beast with layered jaw plates and tiny eyes, fungal cavern. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: ancient many-toothed beast with layered jaw plates and tiny eyes, fungal cavern. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-05bf7cd4-ffcd-4647-a28f-d943da059ccf.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c077": {
       "name": "荒棘之心",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c077.png",
       "webp": "publish/assets/classic/c077.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: living heart of the thorn forest, colossal knot of roots and bone around a luminous core. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: living heart of the thorn forest, colossal knot of roots and bone around a luminous core. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-1ed62396-4c5a-4295-9939-951279b6026b.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c078": {
       "name": "无月巨蛾",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c078.png",
       "webp": "publish/assets/classic/c078.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: giant moonless moth with charcoal wings patterned like eroded stone and fungal lace. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: giant moonless moth with charcoal wings patterned like eroded stone and fungal lace. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-a55e64b1-a15f-4a0b-aa86-ea354830f8ed.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c079": {
       "name": "群巢之母·万兽齐鸣",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c079.png",
       "webp": "publish/assets/classic/c079.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: great brood mother sovereign formed from coiled roots and carapace, creatures gathering below. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: great brood mother sovereign formed from coiled roots and carapace, creatures gathering below. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-8c82f1c1-270e-4121-aa61-5c003d267631.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c080": {
       "name": "噬月兽王·荒野回声",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c080.png",
       "webp": "publish/assets/classic/c080.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: moon-eating beast king with broad asymmetrical bone crown and a starless maw, no recognizable monster. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: moon-eating beast king with broad asymmetrical bone crown and a starless maw, no recognizable monster. Faction visual guide: bone, tangled roots, fungal filaments, moss green; primeval marsh and dead forest; original biological creatures with plant symbiosis, inventive non-franchise anatomy. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-9906a662-a233-4f2d-8805-f8e49ad91dae.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c081": {
       "name": "镜湖誓卫",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c081.png",
       "webp": "publish/assets/classic/c081.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: lake oath-guard with bronze scale armor and split ceramic mask, upright short blade. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: lake oath-guard with bronze scale armor and split ceramic mask, upright short blade. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-08c50a68-7a3e-4d31-aaa0-dd7bb6239393.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c082": {
       "name": "湖岸弓队",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c082.png",
       "webp": "publish/assets/classic/c082.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: synchronized lakeshore archers with pale ceramic masks, reed-lined shallow water. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: synchronized lakeshore archers with pale ceramic masks, reed-lined shallow water. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-d11bbd4a-3cc4-4d83-b007-a68d258991f9.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c083": {
       "name": "青铜舰弩",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c083.png",
       "webp": "publish/assets/classic/c083.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: patinated bronze ship ballista resting on a half-submerged wooden deck. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: patinated bronze ship ballista resting on a half-submerged wooden deck. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-831012eb-8c91-4246-9131-018acc14ffcf.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c084": {
       "name": "面具侍者·朝",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c084.png",
       "webp": "publish/assets/classic/c084.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: dawn mask attendant with ivory half-mask, holding a small sunlit bronze mirror. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: dawn mask attendant with ivory half-mask, holding a small sunlit bronze mirror. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-b51923bf-c996-4f0b-8341-cd14c164c7bd.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c085": {
       "name": "面具侍者·暮",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c085.png",
       "webp": "publish/assets/classic/c085.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: dusk mask attendant with dark ceramic half-mask and red twilight reflection. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: dusk mask attendant with dark ceramic half-mask and red twilight reflection. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-ff8de383-4a2a-4a3b-8228-4eef85b891ec.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c086": {
       "name": "面具侍者·夜",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c086.png",
       "webp": "publish/assets/classic/c086.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: night mask attendant with fractured black mask, lantern reflected in still water. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: night mask attendant with fractured black mask, lantern reflected in still water. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-448328d6-37cc-468d-abc4-143d12cb5b78.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c087": {
       "name": "镜湖唤灵者",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c087.png",
       "webp": "publish/assets/classic/c087.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mirror-lake spirit caller raising a polished bronze disc while three faint masked forms appear. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mirror-lake spirit caller raising a polished bronze disc while three faint masked forms appear. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-efe4347a-1326-49ee-8e73-fe946ddfad6c.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c088": {
       "name": "镜血行者",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c088.png",
       "webp": "publish/assets/classic/c088.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mirror-blood wanderer with fractured ceramic arm plates and faint luminous veins, untransformed human. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mirror-blood wanderer with fractured ceramic arm plates and faint luminous veins, untransformed human. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-fe0747f7-642a-47b1-8351-2e90434a48be.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c089": {
       "name": "幼镜行者",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c089.png",
       "webp": "publish/assets/classic/c089.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: young mirror wanderer with a small ceramic half-mask, crouched over reflective water, untransformed. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: young mirror wanderer with a small ceramic half-mask, crouched over reflective water, untransformed. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-653b48f0-29c9-4c6c-93ad-f4585e85c0fc.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c090": {
       "name": "湖心仪师",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c090.png",
       "webp": "publish/assets/classic/c090.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: lakeside ritual master kneeling within a bronze ring and arranging mirrored shards. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: lakeside ritual master kneeling within a bronze ring and arranging mirrored shards. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-4ca4e0cf-9f3b-44ed-9daa-b1a3fcbeebd3.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c091": {
       "name": "雾岸仪师",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c091.png",
       "webp": "publish/assets/classic/c091.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mist-bank ritual master holding a ceramic bowl that reflects a distant invisible tower. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mist-bank ritual master holding a ceramic bowl that reflects a distant invisible tower. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-1aef0f19-e6e4-46cb-b93c-6a1f09d91fda.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c092": {
       "name": "招魂侍者",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c092.png",
       "webp": "publish/assets/classic/c092.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: pale masked spirit healer pulling a faint human silhouette upright from a shallow reflection. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: pale masked spirit healer pulling a faint human silhouette upright from a shallow reflection. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-53d37a16-7244-48d9-99a0-eb6854911fc1.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c093": {
       "name": "碎镜鼓手",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c093.png",
       "webp": "publish/assets/classic/c093.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mirror-fragment drummer striking a bronze frame drum with cracked reflective skin. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mirror-fragment drummer striking a bronze frame drum with cracked reflective skin. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-e2172c57-9da6-4bfd-82c9-9fa300e5f613.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c094": {
       "name": "沉舟守卫",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c094.png",
       "webp": "publish/assets/classic/c094.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: drowned-ship guard in water-darkened bronze armor, immense anchor-shaped shield. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: drowned-ship guard in water-darkened bronze armor, immense anchor-shaped shield. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-9dd7bbd6-a480-4c3d-a09e-7e27d0794310.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c095": {
       "name": "镜湖裁判",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c095.png",
       "webp": "publish/assets/classic/c095.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mirror-lake judge beside a bronze siege platform, raised reflective decree tablet. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mirror-lake judge beside a bronze siege platform, raised reflective decree tablet. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-afc599bc-d352-4159-ae7b-39b8a822c5b9.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c096": {
       "name": "白塔遗主",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c096.png",
       "webp": "publish/assets/classic/c096.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: white tower heir with a broken ceramic crown, clean white mantle above dark lake water. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: white tower heir with a broken ceramic crown, clean white mantle above dark lake water. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-77b260cf-b34f-4b84-b2b7-5bd54320096e.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c097": {
       "name": "无面贤者",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c097.png",
       "webp": "publish/assets/classic/c097.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: faceless sage with a smooth blank white mask and floating bronze mirror fragments. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: faceless sage with a smooth blank white mask and floating bronze mirror fragments. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-da586ddc-7517-4881-b536-0e16776350d8.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c098": {
       "name": "湖底圣像",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c098.png",
       "webp": "publish/assets/classic/c098.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: colossal lake-bottom statue rising through black water, calm ceramic face and bronze arms. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: colossal lake-bottom statue rising through black water, calm ceramic face and bronze arms. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-2e5fa146-e640-4452-91be-ada3726da86e.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c099": {
       "name": "镜湖女祭司·归流",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c099.png",
       "webp": "publish/assets/classic/c099.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mirror priestess in flowing teal robes pouring water between two bronze basins, intricate ceramic headdress. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mirror priestess in flowing teal robes pouring water between two bronze basins, intricate ceramic headdress. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-0c284478-20ae-4e58-b0a5-ad5fb288a8d9.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c100": {
       "name": "白塔执印者·薄暮",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c100.png",
       "webp": "publish/assets/classic/c100.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: white tower seal keeper with a square bronze seal, dusk mist and half-shadowed face. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: white tower seal keeper with a square bronze seal, dusk mist and half-shadowed face. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-c56c988f-96e5-4010-9fee-631fb87b52ce.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c101": {
       "name": "荒境佣兵",
@@ -936,11 +1034,13 @@
     },
     "c104": {
       "name": "旧路驮炮",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c104.png",
       "webp": "publish/assets/classic/c104.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: old road pack cannon on a rugged wheeled carriage pulled along a misty cliff road. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: old road pack cannon on a rugged wheeled carriage pulled along a misty cliff road. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-6327ecf1-a081-4ad7-b4ff-2ffc943586ce.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c105": {
       "name": "随军医师",
@@ -953,139 +1053,173 @@
     },
     "c106": {
       "name": "战地歌者",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c106.png",
       "webp": "publish/assets/classic/c106.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: travelling war singer with a weathered bronze horn and patched dark coat, troops listening. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: travelling war singer with a weathered bronze horn and patched dark coat, troops listening. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-ef5a39b6-5afd-40fe-9356-da82e6f9961e.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c107": {
       "name": "灰袍调停人",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c107.png",
       "webp": "publish/assets/classic/c107.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: grey-robed mediator standing between two distant armed groups, sheathed sword and lowered bow. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: grey-robed mediator standing between two distant armed groups, sheathed sword and lowered bow. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-641fb663-63e2-460e-a494-f3d5fdb46a43.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c108": {
       "name": "失名信使",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c108.png",
       "webp": "publish/assets/classic/c108.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: nameless messenger with a featureless pale hood and a sealed silver tube, subtle ghostly light. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: nameless messenger with a featureless pale hood and a sealed silver tube, subtle ghostly light. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-7d921c4d-324e-484f-8013-acae1d600335.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c109": {
       "name": "焚旗旅人",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c109.png",
       "webp": "publish/assets/classic/c109.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: banner-burning traveller with a long torch and worn sword, burning abandoned war flags. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: banner-burning traveller with a long torch and worn sword, burning abandoned war flags. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-59ef81e3-d77d-40d5-9dae-63f50829d6e2.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c110": {
       "name": "无名守誓者",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c110.png",
       "webp": "publish/assets/classic/c110.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: nameless oathkeeper in unusual layered iron armor, broad plain blade and a cloth-wrapped face. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: nameless oathkeeper in unusual layered iron armor, broad plain blade and a cloth-wrapped face. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-e918d1f8-6f3b-4af1-bd75-0f7be422f153.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c111": {
       "name": "渡雾剑客",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c111.png",
       "webp": "publish/assets/classic/c111.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mist-crossing swordswoman in weathered charcoal coat, single curved blade over reflective stepping stones. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: mist-crossing swordswoman in weathered charcoal coat, single curved blade over reflective stepping stones. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-2d815d2e-258d-4004-8451-2d3e70912063.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c112": {
       "name": "长夜医者",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c112.png",
       "webp": "publish/assets/classic/c112.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: long-night healer with dark braided hair and a silver medicine case, tending a dying ember-lit camp. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: long-night healer with dark braided hair and a silver medicine case, tending a dying ember-lit camp. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-2a3a51a1-e361-4a5d-8d66-1ac43f13fb95.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c113": {
       "name": "霜白降临",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c113.png",
       "webp": "publish/assets/classic/c113.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: frost spreading over a deserted medieval battlefield, razor crystalline branches, cold silver light. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: frost spreading over a deserted medieval battlefield, razor crystalline branches, cold silver light. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-57d8affe-7b59-4623-b0d6-a5ed77da114f.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c114": {
       "name": "灰幕蔽日",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c114.png",
       "webp": "publish/assets/classic/c114.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: immense low grey fog obscuring abandoned watchtowers and distant archery lines. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: immense low grey fog obscuring abandoned watchtowers and distant archery lines. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-7829c840-0775-44fd-b632-15329ecbd18f.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c115": {
       "name": "铁雨倾城",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c115.png",
       "webp": "publish/assets/classic/c115.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: violent rain striking abandoned siege engines, iron-dark clouds and angled rain streaks. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: violent rain striking abandoned siege engines, iron-dark clouds and angled rain streaks. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-4f6fa6b2-0952-4e28-9da5-220c5938c681.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c116": {
       "name": "雾散天明",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c116.png",
       "webp": "publish/assets/classic/c116.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: warm pale sun rays breaking through dissipating blue mist over a ruined battlefield. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: warm pale sun rays breaking through dissipating blue mist over a ruined battlefield. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-b911dfd4-a9dd-45dd-9fde-5e9dda4da0a9.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c117": {
       "name": "空甲替身",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c117.png",
       "webp": "publish/assets/classic/c117.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: hollow suit of weathered armor stuffed with straw on a wooden training stand, no wearer. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: hollow suit of weathered armor stuffed with straw on a wooden training stand, no wearer. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-525dff5e-a528-4b9c-92f3-8f026703805e.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c118": {
       "name": "军阵长鸣",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c118.png",
       "webp": "publish/assets/classic/c118.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: magnificent bronze war horn on a crimson cloth, ranks of distant anonymous soldiers in soft focus. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: magnificent bronze war horn on a crimson cloth, ranks of distant anonymous soldiers in soft focus. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-9ff39d5f-14d6-426f-b53c-eb367192d10c.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c119": {
       "name": "同归余烬",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c119.png",
       "webp": "publish/assets/classic/c119.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: simultaneous fire columns engulfing empty battle standards across a battlefield, dramatic orange ash. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: simultaneous fire columns engulfing empty battle standards across a battlefield, dramatic orange ash. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-c34467ab-69dd-44db-bf7a-b1bfa9892ee4.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "c120": {
       "name": "映身秘仪",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/c120.png",
       "webp": "publish/assets/classic/c120.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: bronze ritual bowl filled with mirror-bright liquid and floating ceramic shards, teal light. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: bronze ritual bowl filled with mirror-bright liquid and floating ceramic shards, teal light. Faction visual guide: weathered iron, charcoal, subdued ochre; abandoned roads and foggy frontier ruins; independent wanderers. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-78d3c964-7e3e-493d-bdb3-b80b583f9682.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "t001": {
       "name": "镜角巨灵",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/t001.png",
       "webp": "publish/assets/classic/t001.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: fully transformed mirror-antler giant: enormous original humanoid spirit of bronze muscle and fractured ceramic plates, mirrored branching horns, towering over shallow lake water. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: fully transformed mirror-antler giant: enormous original humanoid spirit of bronze muscle and fractured ceramic plates, mirrored branching horns, towering over shallow lake water. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-a63c9c90-861e-4217-a896-2a62ce1792df.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     },
     "t002": {
       "name": "幼镜巨灵",
-      "status": "pending",
+      "status": "reviewed_generated",
       "reference": null,
       "original": "source-art/classic/t002.png",
       "webp": "publish/assets/classic/t002.webp",
-      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: fully transformed young mirror giant: agile medium-sized original humanoid spirit of bronze and fractured white ceramic, smaller branching mirror horns, leaping over reflective water. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet."
+      "prompt": "Use case: stylized-concept. Asset type: one portrait 2:3 full-bleed original fantasy card illustration for Mistrealm. Subject: fully transformed young mirror giant: agile medium-sized original humanoid spirit of bronze and fractured white ceramic, smaller branching mirror horns, leaping over reflective water. Faction visual guide: patinated bronze, broken white ceramic masks, lake teal; misty reflective lakes, submerged towers; mirrored spirits and original human ritualists, no Viking motifs. Painterly cinematic dark fantasy, highly detailed realistic materials, controlled dramatic lighting, strong central silhouette readable at small card size. Original world and characters, not any existing franchise. No text, names, letters, digits, logos, watermarks, card frame or border. One distinct finished illustration; do not make a contact sheet.",
+      "generation_path": "/Users/zhijian/.codex/generated_images/01a13a70-f90b-70a1-b90b-4deff0fbe76d/exec-3b3507e6-f127-453d-94e3-578d23242f60.png",
+      "review": "Individual output reviewed: matching subject, distinct composition and original faction materials; no card text or frame."
     }
   }
 }

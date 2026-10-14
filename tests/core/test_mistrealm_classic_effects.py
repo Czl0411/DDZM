@@ -224,3 +224,31 @@ def test_half_weather_only_protects_own_units_and_cancel_disables_it():
     assert game.project(s,0)['players'][1]['score']==1
     s['players'][0]['leader_disabled']=True
     assert game.project(s,0)['players'][0]['score']==16
+
+
+@pytest.mark.parametrize('first',[0,1])
+@pytest.mark.parametrize('timeout',[False,True])
+@pytest.mark.parametrize('nested',[False,True])
+def test_opening_medic_completion_starts_full_first_turn(first,timeout,nested):
+    class OpeningRandom(random.Random):
+        def sample(self,population,k):return population[:k]
+    rng=OpeningRandom(7)
+    s=playing();s.update(round=2,phase='round_result',deadline_ms=100,first=first)
+    s['players'][0]['faction']='mirror'
+    s['players'][0]['discard']=[card('c105'),card('c003')]
+    if nested:s['players'][0]['discard'].append(card('c105','nested-medic'))
+    s['players'][0]['discard'].append(card('c007'))
+    s=game.advance(s,100,rng)
+    assert s['pending']['continuation']=='opening'
+    completed_at=60100 if timeout else 60000
+    if timeout:s=game.advance(s,completed_at,rng)
+    else:
+        while s['pending']:
+            s=game.apply_action(s,0,'choose',{'option':s['pending']['options'][0]['token']},completed_at,rng)
+            if s['pending']:assert s['deadline_ms']==60100
+    assert s['pending'] is None and s['opening']==[]
+    assert s['turn']==first
+    assert s['deadline_ms']==completed_at+game.TURN_MS
+    s=game.advance(s,completed_at+700,rng)
+    assert not any(p['passed'] for p in s['players'])
+    assert s['turn']==first

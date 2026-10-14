@@ -10,6 +10,7 @@ OUT.mkdir(parents=True,exist_ok=True)
 with sync_playwright() as p:
     browser=p.chromium.launch(executable_path='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless=True)
     context=browser.new_context(viewport={'width':1366,'height':900})
+    context.route('**/*',lambda route:route.continue_() if route.request.url.startswith('http://127.0.0.1:18744/') else route.abort())
     errors=[];pages=[context.new_page(),context.new_page()]
     for i,page in enumerate(pages):
         page.on('pageerror',lambda error:errors.append(str(error)))
@@ -18,8 +19,17 @@ with sync_playwright() as p:
         expect(page.locator('#quick-match')).to_be_visible()
     a,b=pages
     a.screenshot(path=str(OUT/'classic-home-1366.png'),full_page=True)
+    a.set_viewport_size({'width':390,'height':844})
+    a.screenshot(path=str(OUT/'classic-home-390.png'),full_page=True)
+    assert a.evaluate('document.documentElement.scrollWidth<=innerWidth')
+    a.set_viewport_size({'width':1366,'height':900})
     a.locator('#edit-deck').click()
     expect(a.locator('#builder')).to_be_visible()
+    a.screenshot(path=str(OUT/'classic-builder-1366.png'),full_page=True)
+    a.set_viewport_size({'width':390,'height':844})
+    a.screenshot(path=str(OUT/'classic-builder-390.png'),full_page=True)
+    assert a.evaluate('document.documentElement.scrollWidth<=innerWidth')
+    a.set_viewport_size({'width':1366,'height':900})
     a.locator('#deck-name').fill('赤铜测试军团')
     a.locator('[data-inspect="c001"]').click()
     expect(a.locator('#modal-content')).to_contain_text('同排每张同名单位')

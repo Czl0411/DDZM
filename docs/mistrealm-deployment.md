@@ -12,10 +12,19 @@
 2. 服务环境设置 DZMM_MISTREALM_ENABLED=true，重启现有 core 服务。
 3. 仓库 deploy/caddy/dzmm-chess-ip.Caddyfile 已增加精确 /api/mistrealm/* 代理，保持 flush_interval -1，未开放管理路径。实际加载配置前需在目标服务器验证证书、语法和进程配置。
 4. gamefy/mistrealm/publish/config.js 填写可供平台访问的 HTTPS API 根地址。默认为同源，仅供本地服务器。
-5. 用户创建新游戏卡并提供 ID 后，用该卡初始化专属 dzmm.json；不得复用其他游戏 ID。先 check（含 reload/slow）和 deploy --dry-run，确认资源预算，再经用户授权发布。
+5. 独立游戏卡 ID 为 3769848，已配置于 gamefy/mistrealm/dzmm.json；不得复用其他游戏 ID。先 check（含 reload/slow）和 deploy --dry-run，确认资源预算，再经用户授权发布。
 6. 用两个普通平台账号验证完整流程、刷新、网络切换、同阵营对战和手机竖屏；发布代码与公开上架审核是两个步骤。
 
 当前未执行生产迁移、生产部署或平台发布。
+
+### 2026-10-15 发布准备记录
+
+- 游戏卡 3769848 已保存名称「雾境：王冠与群鸦」、玩法简介、双阵营封面与横屏设置；平台回读确认 hasCover/hasIntro 为 true。
+- 已在隔离目录拉取平台初始工作区，并保留 .dzmm/lock.json 发布基线；未覆盖本地游戏素材与代码。
+- deploy --dry-run 通过：78 个文件、59.5 MiB，低于 100 MiB 总限制，版本基线一致。
+- 本轮规则、API、集成、卡组和资源测试 50 项通过，客户端测试 8 项通过。
+- 公网目标为 https://49.234.20.159；雾境接口目前返回 404。临时配置该地址运行平台弱网首开/刷新检查，因 Failed to fetch 启动失败，未发布代码或提交上架。检查后恢复同源配置，保持本地试玩可用。
+- SSH ubuntu@49.234.20.159 的现有密钥登录被拒绝；待用户建立 /tmp/dzmm-new-ssh 控制连接后继续备份、迁移、部署后端、设置公网 API 地址、复验及发布。
 
 ## 规则与恢复
 

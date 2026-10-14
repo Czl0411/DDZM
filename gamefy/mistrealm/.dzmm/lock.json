@@ -1,0 +1,17 @@
+{
+  "revision": null,
+  "source": "workspace",
+  "pulledAt": "2026-10-14T18:16:04.875Z",
+  "files": [
+    "ai-director.js",
+    "app.js",
+    "config.js",
+    "content.js",
+    "index.html",
+    "sdk-adapter.js",
+    "storage.js",
+    "style.css",
+    "view.js"
+  ],
+  "functions": []
+}

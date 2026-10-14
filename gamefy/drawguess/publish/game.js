@@ -101,7 +101,8 @@ function inputPermission(){
 
 function renderRoom(){
   show('#lobby',false);show('#room-view');const state=room.state;
-  $('#phase-label').textContent=phaseText(state.phase);$('#room-title').textContent=`房间 · ${room.short_id}`;
+  const titles={waiting:'候场房间',selecting:'选择题目',drawing:'正在作画',revealing:'答案揭晓',finished:'本局排行'};
+  $('#phase-label').textContent=phaseText(state.phase);$('#room-title').textContent=titles[state.phase]||'游戏房间';$('#room-code').textContent=room.short_id;
   $('#round-label').textContent=state.phase==='waiting'?'准备入座':state.phase==='finished'?'最终排名':`第 ${state.turn_index+1}/${state.players.length*2} 题`;
   renderPlayers();
   for(const id of ['#waiting','#choosing','#play-area','#reveal','#ranking'])show(id,false);

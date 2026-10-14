@@ -133,6 +133,35 @@ def test_full_game_mobile_and_desktop(width):
         browser.close()
 
 
+@pytest.mark.parametrize(("width", "columns"), [(390, 4), (1280, 8)])
+def test_waiting_room_uses_complete_seat_grid_and_secondary_room_code(width, columns):
+    publish = Path(__file__).resolve().parents[1] / "publish"
+    state, actions = snapshot(), []
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        context = browser.new_context(viewport={"width": width, "height": 900})
+        context.add_init_script("window.dzmm={user:{info:async()=>({id:'host'})},kv:{get:async()=>({value:null}),put:async()=>{}},loading:{progress(){},ready(){},error(){}},log:{info(){},error(){}}};")
+        install_routes(context, publish, state, actions)
+        page = context.new_page();page.goto("https://draw.test/index.html");page.locator("#rooms button").click()
+
+        expect(page.locator("#room-title")).to_have_text("候场房间")
+        expect(page.locator("#room-code")).to_have_text("DRAW88")
+        expect(page.locator(".seat")).to_have_count(8)
+        assert page.locator("#players").evaluate("e=>getComputedStyle(e).display") == "grid"
+        assert len(page.locator("#players").evaluate("e=>getComputedStyle(e).gridTemplateColumns.split(' ')")) == columns
+        assert page.locator("#players").evaluate("e=>e.scrollWidth<=e.clientWidth")
+        first = page.locator(".seat").nth(0).bounding_box()
+        if columns == 4:
+            next_row = page.locator(".seat").nth(4).bounding_box()
+            assert first and next_row and abs(first["x"] - next_row["x"]) < 2 and next_row["y"] > first["y"]
+        else:
+            last = page.locator(".seat").nth(7).bounding_box()
+            assert first and last and abs(first["y"] - last["y"]) < 2 and last["x"] > first["x"]
+        assert page.locator("body").evaluate("e=>e.scrollWidth<=innerWidth")
+        page.screenshot(path=f"/tmp/drawguess-waiting-{width}.png", full_page=True)
+        browser.close()
+
+
 def test_keyboard_touch_and_permissions():
     publish = Path(__file__).resolve().parents[1] / "publish"
     state, actions = snapshot("drawing", 1), []

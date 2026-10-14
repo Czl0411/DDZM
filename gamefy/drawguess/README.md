@@ -16,6 +16,10 @@ node --test gamefy/drawguess/tests/*.test.mjs
 
 游戏卡 ID 为 `3767285`，本目录的 `dzmm.json` 已指向该独立草稿；不复用象棋 `3761638` 或斗地主 `3763357`。
 
+卡片封面保存在 `assets/cover-v1.png`。线上简介为：
+
+> 3～8人轮流作画，系统随机出题，其他人限时抢答。猜中得分，画手也能获得协作分；两轮结束按总分排名，支持观战与断线重连。
+
 1. 先阅读新草稿生成的本地开发说明，并确认 `dzmm.json` 的发布目录仍指向 `publish`。
 2. 确认 `publish/config.js` 的 `apiBase` 指向公开 HTTPS API 根地址。
 3. 使用本机开发密钥完成 CLI 校验和草稿上传；密钥不得写入仓库。

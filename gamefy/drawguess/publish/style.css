@@ -850,6 +850,300 @@ canvas {
   }
 }
 
+/* The room is a fixed application surface. Only bounded lists scroll. */
+body.room-open .app-shell {
+  position: relative;
+  padding-top: 10px;
+}
+
+body.room-open .brand-bar {
+  display: none;
+}
+
+body.room-open .content-scroll {
+  overflow: hidden;
+}
+
+body.room-open .feedback:not(:empty) {
+  position: absolute;
+  z-index: 20;
+  top: 8px;
+  right: 8px;
+  left: 8px;
+  margin: 0;
+  box-shadow: var(--shadow);
+}
+
+.room-view {
+  height: 100%;
+  min-height: 0;
+  padding: 0 0 max(10px, env(safe-area-inset-bottom));
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.room-layout {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, .72fr);
+  gap: 14px;
+  overflow: hidden;
+}
+
+.game-column {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+}
+
+.stage-workspace {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.stage-workspace > section:not(.reveal) {
+  height: 100%;
+  min-height: 0;
+}
+
+.stage-workspace > .stage-card {
+  overflow: auto;
+}
+
+.play-layout {
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.canvas-column {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.canvas-frame {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  place-items: center;
+  container-type: size;
+}
+
+canvas {
+  width: min(100cqw, calc(100cqh * 4 / 3));
+  height: min(100cqh, calc(100cqw * 3 / 4));
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.drawing-tools {
+  margin-top: 0;
+  padding: 8px 10px;
+}
+
+.chat-column {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.messages,
+.ranking-list {
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+
+.reveal {
+  position: absolute;
+  z-index: 4;
+  inset: 12px;
+  display: grid;
+  place-content: center;
+  background: rgb(255 255 255 / 94%);
+  backdrop-filter: blur(10px);
+}
+
+.ranking {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden !important;
+}
+
+.ranking-list {
+  overflow-y: auto;
+}
+
+@media (max-width: 760px) {
+  body.room-open .app-shell {
+    padding-top: 6px;
+  }
+
+  .room-view {
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+    gap: 8px;
+  }
+
+  .room-toolbar {
+    min-height: 54px;
+    padding: 7px 8px;
+  }
+
+  .room-toolbar .eyebrow {
+    margin-bottom: 1px;
+    font-size: 10px;
+  }
+
+  .room-title-row h2 {
+    font-size: 18px;
+  }
+
+  .room-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1.62fr) minmax(160px, .72fr);
+    gap: 8px;
+  }
+
+  .game-column {
+    gap: 6px;
+  }
+
+  .round-strip {
+    min-height: 32px;
+    padding: 0 12px;
+  }
+
+  .seats-panel {
+    padding: 6px 8px 7px;
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgb(35 37 45 / 5%);
+  }
+
+  .seats-heading {
+    margin-bottom: 4px;
+  }
+
+  .seats-heading strong,
+  .seats-heading .eyebrow {
+    font-size: 10px;
+  }
+
+  .players {
+    gap: 5px 4px;
+  }
+
+  .avatar {
+    width: 32px;
+    margin-bottom: 2px;
+    border-width: 2px;
+    font-size: 13px;
+  }
+
+  .seat-name {
+    font-size: 10px;
+  }
+
+  .seat-meta {
+    font-size: 9px;
+  }
+
+  .stage-card {
+    padding: 14px;
+    border-radius: 17px;
+  }
+
+  #waiting {
+    gap: 10px;
+  }
+
+  .word-picker h3 {
+    margin-bottom: 10px;
+  }
+
+  .word-card {
+    min-height: 56px;
+  }
+
+  .drawing-tools {
+    display: grid;
+    gap: 6px;
+  }
+
+  .drawing-tools .tool-group {
+    justify-content: center;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .color {
+    width: 25px;
+    height: 25px;
+  }
+
+  .tool {
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .chat-heading {
+    min-height: 42px;
+    padding: 8px 10px;
+  }
+
+  .chat-heading .eyebrow {
+    margin-bottom: 1px;
+    font-size: 9px;
+  }
+
+  .chat-heading h3 {
+    font-size: 14px;
+  }
+
+  .messages {
+    padding: 8px 10px;
+  }
+
+  .message {
+    margin-bottom: 7px;
+    font-size: 12px;
+  }
+
+  .composer {
+    padding: 7px;
+  }
+
+  .composer input {
+    height: 44px;
+  }
+
+  .composer .primary {
+    padding: 0 14px;
+  }
+
+  .input-reason {
+    margin-bottom: 4px;
+    font-size: 10px;
+  }
+
+  .reveal {
+    inset: 6px;
+  }
+
+  .rank-row {
+    min-height: 46px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

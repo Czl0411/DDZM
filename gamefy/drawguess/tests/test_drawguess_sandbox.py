@@ -108,6 +108,106 @@ def install_routes(context, publish, state, actions, saved=None, room_count=1):
     return saved
 
 
+@pytest.mark.parametrize(
+    ("width", "height"), [(320, 700), (390, 844), (1280, 900)]
+)
+def test_room_stages_share_one_fixed_viewport_and_persistent_chat(width, height):
+    publish = Path(__file__).resolve().parents[1] / "publish"
+    state, actions = snapshot(), []
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        context = browser.new_context(viewport={"width": width, "height": height})
+        context.add_init_script(
+            "window.dzmm={user:{info:async()=>({id:'host'})},"
+            "kv:{get:async()=>({value:null}),put:async()=>{}},"
+            "loading:{progress(){},ready(){},error(){}},log:{info(){},error(){}}};"
+        )
+        install_routes(context, publish, state, actions)
+        page = context.new_page()
+        page.goto("https://draw.test/index.html")
+        page.locator("#rooms button").click()
+        page.evaluate("window.initialChatColumn=document.querySelector('.chat-column')")
+
+        phase_data = [
+            ("waiting", "#ready"),
+            ("selecting", ".word-card"),
+            ("drawing", "#clear"),
+            ("revealing", "#reveal"),
+            ("finished", "#ranking .primary"),
+        ]
+        for phase, primary in phase_data:
+            state["self_seat"] = 0
+            state["state"].update(
+                phase=phase,
+                drawer_seat=None if phase in {"waiting", "finished"} else 0,
+                deadline_ms=None if phase == "finished" else 91_000,
+                ranking=[],
+            )
+            state["state"].pop("candidates", None)
+            state["state"].pop("answer", None)
+            state["state"].pop("word_length", None)
+            if phase == "selecting":
+                state["state"]["candidates"] = [
+                    {"id": "w001", "answer": "苹果"},
+                    {"id": "w002", "answer": "熊猫"},
+                    {"id": "w003", "answer": "雨伞"},
+                ]
+            if phase in {"drawing", "revealing"}:
+                state["state"].update(answer="苹果", word_length=2)
+            if phase == "finished":
+                state["state"]["ranking"] = [
+                    {"name": f"玩家 {index}", "score": 200 - index, "rank": index}
+                    for index in range(1, 17)
+                ]
+            state["messages"] = [
+                {"id": str(index), "name": "群友", "text": f"长期聊天消息 {index}"}
+                for index in range(40)
+            ]
+
+            page.locator("#room-refresh").click()
+            expect(page.locator(".room-toolbar")).to_be_visible()
+            expect(page.locator(primary).first).to_be_visible()
+            expect(page.locator(".chat-column")).to_be_visible()
+            expect(page.locator("#chat-input")).to_be_enabled()
+            expect(page.locator("#chat-send")).to_be_visible()
+            assert page.evaluate(
+                "window.initialChatColumn===document.querySelector('.chat-column')"
+            )
+            layout = page.evaluate("""
+              () => {
+                const body = document.body;
+                const workspace = document.querySelector('.stage-workspace');
+                const chat = document.querySelector('.chat-column');
+                const messages = document.querySelector('.messages');
+                return {
+                  bodyScrollHeight: body.scrollHeight,
+                  bodyScrollWidth: body.scrollWidth,
+                  innerHeight,
+                  innerWidth,
+                  workspaceBottom: workspace.getBoundingClientRect().bottom,
+                  chatBottom: chat.getBoundingClientRect().bottom,
+                  messagesScrolls: messages.scrollHeight > messages.clientHeight,
+                };
+              }
+            """)
+            assert layout["bodyScrollHeight"] <= layout["innerHeight"]
+            assert layout["bodyScrollWidth"] <= layout["innerWidth"]
+            assert layout["workspaceBottom"] <= layout["innerHeight"] + 1
+            assert layout["chatBottom"] <= layout["innerHeight"] + 1
+            assert layout["messagesScrolls"]
+            if phase == "drawing":
+                assert page.locator("#draw-canvas").evaluate(
+                    "e=>e.getBoundingClientRect().bottom<="
+                    "document.querySelector('.stage-workspace').getBoundingClientRect().bottom+1"
+                )
+                expect(page.locator("#drawing-tools")).to_be_visible()
+            if phase == "finished":
+                assert page.locator(".ranking-list").evaluate(
+                    "e=>e.scrollHeight>e.clientHeight"
+                )
+        browser.close()
+
+
 @pytest.mark.parametrize("width", [320, 390, 1280])
 def test_full_game_mobile_and_desktop(width):
     publish = Path(__file__).resolve().parents[1] / "publish"
@@ -126,8 +226,10 @@ def test_full_game_mobile_and_desktop(width):
         expect(page.locator(".word-card")).to_have_count(3)
         page.locator(".word-card").first.click()
         expect(page.locator("#drawing-tools")).to_be_visible()
-        expect(page.locator("#input-reason")).to_have_text("你正在作画")
+        expect(page.locator("#input-reason")).to_have_text("作画中 · 可以聊天")
+        expect(page.locator("#chat-input")).to_be_enabled()
         assert page.locator("body").evaluate("e=>e.scrollWidth<=innerWidth")
+        page.screenshot(path=f"/tmp/drawguess-drawing-{width}.png")
 
         state["self_seat"] = 1;state["state"]["drawer_seat"] = 0
         state["state"].pop("answer", None);state["state"]["word_length"] = 2
@@ -243,9 +345,11 @@ def test_keyboard_touch_and_permissions():
         assert page.locator("#draw-canvas").evaluate("e=>getComputedStyle(e).touchAction") == "none"
 
         state["self_seat"] = None;page.locator("#room-refresh").click()
-        expect(page.locator("#input-reason")).to_have_text("观战中，仅可查看")
+        expect(page.locator("#input-reason")).to_have_text("观战中 · 可以聊天")
+        expect(page.locator("#chat-input")).to_be_enabled()
         state["self_seat"] = 1;state["state"]["players"][1]["guessed"] = True;page.locator("#room-refresh").click()
-        expect(page.locator("#input-reason")).to_have_text("你已猜中，等待揭晓")
+        expect(page.locator("#input-reason")).to_have_text("已猜中 · 可以聊天")
+        expect(page.locator("#chat-input")).to_be_enabled()
         browser.close()
 
 
@@ -283,7 +387,7 @@ def test_identity_refresh_clears_private_word_before_new_identity_resolves():
         install_routes(context, publish, state, actions)
         page = context.new_page();page.goto("https://draw.test/index.html");page.locator("#rooms button").click()
         expect(page.locator("#prompt")).to_have_text("请画：苹果")
-        page.evaluate("window.testUid='viewer'");page.locator("#refresh").click()
+        page.evaluate("window.testUid='viewer';document.querySelector('#refresh').click()")
         expect(page.locator("#room-view")).to_be_hidden()
         expect(page.locator("#prompt")).not_to_contain_text("苹果")
         browser.close()

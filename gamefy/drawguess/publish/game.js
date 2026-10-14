@@ -43,7 +43,7 @@ async function boot(refresh=false){
 }
 
 function renderLobby(){
-  show('#lobby');show('#room-view',false);const list=$('#rooms');list.replaceChildren();
+  document.body.classList.remove('room-open');show('#lobby');show('#room-view',false);const list=$('#rooms');list.replaceChildren();
   if(!rooms.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='暂无房间，去开放群发送 /你画我猜 创建一局吧';list.append(empty);return;}
   for(const item of rooms){
     const button=document.createElement('button');button.type='button';button.className='room-button';
@@ -88,19 +88,28 @@ function renderMessages(){
 
 function inputPermission(){
   const state=room.state,self=room.self_seat;
-  if(self===null)return ['观战中，仅可查看',false];
+  if(state.phase==='closed')return ['房间已关闭',false];
+  if(self===null)return ['观战中 · 可以聊天',true];
   if(state.phase==='drawing'){
-    if(self===state.drawer_seat)return ['你正在作画',false];
-    if(state.players[self]?.guessed)return ['你已猜中，等待揭晓',false];
+    if(self===state.drawer_seat)return ['作画中 · 可以聊天',true];
+    if(state.players[self]?.guessed)return ['已猜中 · 可以聊天',true];
     return ['',true];
   }
-  if(state.phase==='selecting'&&self===state.drawer_seat)return ['你正在选词',false];
-  if(['closed'].includes(state.phase))return ['房间已关闭',false];
-  return ['',['waiting','selecting','revealing','finished'].includes(state.phase)];
+  if(state.phase==='selecting'&&self===state.drawer_seat)return ['选词中 · 可以聊天',true];
+  return ['',true];
+}
+
+function renderChatContext(){
+  const state=room.state,self=room.self_seat,isDrawer=self===state.drawer_seat;
+  const prompt={waiting:'房间聊天',selecting:'等待画手选词',revealing:'答案揭晓',finished:'赛后聊天',closed:'房间已关闭'}[state.phase]
+    ||(isDrawer?`请画：${state.answer}`:`${state.players[state.drawer_seat]?.name||'画手'}正在作画`);
+  $('#prompt').textContent=prompt;
+  $('#word-hint').textContent=['drawing','revealing'].includes(state.phase)&&state.word_length?`${state.word_length} 个字`:'';
+  const [reason,enabled]=inputPermission();$('#input-reason').textContent=reason;$('#chat-input').disabled=!enabled;$('#chat-send').disabled=!enabled;
 }
 
 function renderRoom(){
-  show('#lobby',false);show('#room-view');const state=room.state;
+  document.body.classList.add('room-open');show('#lobby',false);show('#room-view');const state=room.state;
   const titles={waiting:'候场房间',selecting:'选择题目',drawing:'正在作画',revealing:'答案揭晓',finished:'本局排行'};
   $('#phase-label').textContent=phaseText(state.phase);$('#room-title').textContent=titles[state.phase]||'游戏房间';$('#room-code').textContent=room.short_id;
   $('#round-label').textContent=state.phase==='waiting'?'准备入座':state.phase==='finished'?'最终排名':`第 ${state.turn_index+1}/${state.players.length*2} 题`;
@@ -111,7 +120,7 @@ function renderRoom(){
   if(['drawing','revealing'].includes(state.phase))renderPlay();
   if(state.phase==='revealing')renderReveal();
   if(state.phase==='finished')renderRanking();
-  renderMessages();updateTimer();
+  renderChatContext();renderMessages();updateTimer();
 }
 
 function renderWaiting(){
@@ -129,9 +138,6 @@ function renderChoosing(){
 function renderPlay(){
   show('#play-area');const state=room.state,isDrawer=room.self_seat===state.drawer_seat&&state.phase==='drawing';
   show('#drawing-tools',isDrawer);board.setEditable(isDrawer);board.restore({turn_id:state.turn_id,canvas:room.canvas||[]});$('#draw-canvas').dataset.turnId=String(state.turn_id);
-  $('#prompt').textContent=isDrawer?`请画：${state.answer}`:state.phase==='revealing'?'答案揭晓':`${state.players[state.drawer_seat]?.name||'画手'}正在作画`;
-  $('#word-hint').textContent=state.word_length?`${state.word_length} 个字`:'';
-  const [reason,enabled]=inputPermission();$('#input-reason').textContent=reason;$('#chat-input').disabled=!enabled;$('#chat-send').disabled=!enabled;
 }
 
 function renderReveal(){

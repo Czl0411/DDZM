@@ -256,6 +256,7 @@ from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
 from .chess_api import chess_router
 from .doudizhu_api import doudizhu_router
+from .drawguess_api import drawguess_router
 
 
 def create_server(repository: CoreRepository, settings: Settings) -> Server:
@@ -273,6 +274,10 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
             doudizhu_game_url=settings.doudizhu_game_url,
             doudizhu_public_api_url=settings.doudizhu_public_api_url,
             doudizhu_chatroom_id=settings.doudizhu_chatroom_id,
+            drawguess_game_id=settings.drawguess_game_id,
+            drawguess_game_url=settings.drawguess_game_url,
+            drawguess_public_api_url=settings.drawguess_public_api_url,
+            drawguess_chatroom_id=settings.drawguess_chatroom_id,
         ),
         host="127.0.0.1",
         port=settings.core_api_port,
@@ -309,6 +314,10 @@ def create_app_from_environment() -> FastAPI:
         doudizhu_game_url=settings.doudizhu_game_url,
         doudizhu_public_api_url=settings.doudizhu_public_api_url,
         doudizhu_chatroom_id=settings.doudizhu_chatroom_id,
+        drawguess_game_id=settings.drawguess_game_id,
+        drawguess_game_url=settings.drawguess_game_url,
+        drawguess_public_api_url=settings.drawguess_public_api_url,
+        drawguess_chatroom_id=settings.drawguess_chatroom_id,
     )
 
 
@@ -358,9 +367,13 @@ def create_app(
     doudizhu_game_url: str | None = None,
     doudizhu_public_api_url: str | None = None,
     doudizhu_chatroom_id: str | None = None,
+    drawguess_game_id: str | None = None,
+    drawguess_game_url: str | None = None,
+    drawguess_public_api_url: str | None = None,
+    drawguess_chatroom_id: str | None = None,
 ) -> FastAPI:
     app = FastAPI()
-    if chess_game_id or doudizhu_game_id:
+    if chess_game_id or doudizhu_game_id or drawguess_game_id:
         app.add_middleware(
             CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"],
             allow_headers=["Authorization", "Content-Type"],
@@ -376,6 +389,15 @@ def create_app(
             if request.url.path.startswith('/api/doudizhu/'):
                 response.headers['Cache-Control'] = 'no-store'
             return response
+    if drawguess_game_id:
+        app.include_router(drawguess_router(repository, clock))
+
+        @app.middleware("http")
+        async def drawguess_no_cache(request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith("/api/drawguess/"):
+                response.headers["Cache-Control"] = "no-store"
+            return response
     if cover_image_validator is None:
         cover_image_validator = HttpCoverImageValidator(httpx.Client(timeout=5))
     service = CoreService(
@@ -386,6 +408,8 @@ def create_app(
             chess_test_chatroom_id=chess_test_chatroom_id,
             doudizhu_game_id=doudizhu_game_id, doudizhu_game_url=doudizhu_game_url,
             doudizhu_public_api_url=doudizhu_public_api_url, doudizhu_chatroom_id=doudizhu_chatroom_id,
+            drawguess_game_id=drawguess_game_id, drawguess_game_url=drawguess_game_url,
+            drawguess_public_api_url=drawguess_public_api_url, drawguess_chatroom_id=drawguess_chatroom_id,
         ),
         cover_image_validator=cover_image_validator,
     )
@@ -4067,6 +4091,8 @@ def create_app(
         repository.advance_chess_deadlines(request.now)
         if doudizhu_game_id:
             repository.advance_doudizhu_deadlines(request.now)
+        if drawguess_game_id:
+            repository.advance_drawguess_deadlines(request.now)
         return AcceptedResponse(accepted=True)
 
     @app.get(

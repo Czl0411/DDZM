@@ -32,6 +32,7 @@ class Settings:
     doudizhu_game_url: str | None = None
     doudizhu_public_api_url: str | None = None
     doudizhu_chatroom_id: str | None = None
+    mistrealm_enabled: bool = False
     drawguess_game_id: str | None = None
     drawguess_game_url: str | None = None
     drawguess_public_api_url: str | None = None
@@ -80,6 +81,7 @@ class Settings:
             doudizhu_game_url=_optional("DZMM_DOUDIZHU_GAME_URL", empty_as_none=True),
             doudizhu_public_api_url=_optional("DZMM_DOUDIZHU_PUBLIC_API_URL", empty_as_none=True),
             doudizhu_chatroom_id=_optional("DZMM_DOUDIZHU_CHATROOM_ID", empty_as_none=True),
+            mistrealm_enabled=os.environ.get("DZMM_MISTREALM_ENABLED", "false").lower() == "true",
             drawguess_game_id=_optional("DZMM_DRAWGUESS_GAME_ID", empty_as_none=True),
             drawguess_game_url=_optional("DZMM_DRAWGUESS_GAME_URL", empty_as_none=True),
             drawguess_public_api_url=_optional("DZMM_DRAWGUESS_PUBLIC_API_URL", empty_as_none=True),

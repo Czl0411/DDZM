@@ -1,0 +1,13 @@
+:root {
+  --mist-bg:#0c1217; --mist-panel:#131d24; --mist-gold:#d7bd82;
+  --mist-text:#f0e6d2; --mist-muted:#a8b2b8; --mist-raven:#73b7bc;
+  --mist-crown:#b96555; --mist-danger:#d38076;
+}
+.mist-button { min-height:48px; padding:12px 32px; border:0; color:var(--mist-text); background:transparent url('buttons/primary-normal.svg') center/100% 100% no-repeat; font:inherit; cursor:pointer; }
+.mist-button:hover { background-image:url('buttons/primary-hover.svg'); }
+.mist-button:active { background-image:url('buttons/primary-pressed.svg'); }
+.mist-button:disabled { background-image:url('buttons/primary-disabled.svg'); color:var(--mist-muted); cursor:default; }
+.mist-button:focus-visible { outline:2px solid var(--mist-raven); outline-offset:4px; }
+@keyframes mist-spin { to { transform:rotate(360deg); } }
+.mist-loading { animation:mist-spin 1.5s linear infinite; }
+@media(prefers-reduced-motion:reduce) { .mist-loading { animation:none; } }

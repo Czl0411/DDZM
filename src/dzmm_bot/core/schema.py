@@ -4425,3 +4425,43 @@ class DisciplineFineRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     revoked_by: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+
+
+class MistrealmPlayerRecord(Base):
+    __tablename__ = "mistrealm_players"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    platform_uid: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    avatar: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    rate_limits: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class MistrealmRoomRecord(Base):
+    __tablename__ = "mistrealm_rooms"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    host_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), nullable=False)
+    active_code: Mapped[str | None] = mapped_column(String(6), unique=True)
+    phase: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    match_id: Mapped[UUID | None] = mapped_column(Uuid)
+    state: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+
+
+class MistrealmSeatRecord(Base):
+    __tablename__ = "mistrealm_seats"
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_rooms.id"), primary_key=True)
+    seat_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    player_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), unique=True, nullable=False)
+
+
+class MistrealmRequestRecord(Base):
+    __tablename__ = "mistrealm_requests"
+    player_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), primary_key=True)
+    request_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_rooms.id"), nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)

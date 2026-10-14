@@ -1,0 +1,178 @@
+{
+  "neutral_mercenary": {
+    "id": "neutral_mercenary",
+    "name": "荒境佣兵",
+    "faction": "neutral",
+    "type": "unit",
+    "row": "any",
+    "power": 7,
+    "effect": "none",
+    "text": "无部署效果。",
+    "art": "assets/art/neutral-mercenary.png"
+  },
+  "neutral_guard": {
+    "id": "neutral_guard",
+    "name": "铁盾卫士",
+    "faction": "neutral",
+    "type": "unit",
+    "row": "front",
+    "power": 5,
+    "effect": "armor",
+    "text": "部署：自身获得3护甲。",
+    "art": "assets/art/neutral-guard.png"
+  },
+  "neutral_crossbow": {
+    "id": "neutral_crossbow",
+    "name": "山隘弩手",
+    "faction": "neutral",
+    "type": "unit",
+    "row": "back",
+    "power": 4,
+    "effect": "damage3",
+    "text": "部署：对一个敌人造成3伤害。",
+    "art": "assets/art/neutral-crossbow.png"
+  },
+  "neutral_medic": {
+    "id": "neutral_medic",
+    "name": "随军医师",
+    "faction": "neutral",
+    "type": "unit",
+    "row": "back",
+    "power": 4,
+    "effect": "buff3",
+    "text": "部署：使一个其他友军获得3增益。",
+    "art": "assets/art/neutral-medic.png"
+  },
+  "neutral_mobilize": {
+    "id": "neutral_mobilize",
+    "name": "战地动员",
+    "faction": "neutral",
+    "type": "tactic",
+    "row": "any",
+    "power": 0,
+    "effect": "buff3two",
+    "text": "使至多两个不同友军各获得3增益。",
+    "art": "assets/art/neutral-mobilize.png"
+  },
+  "neutral_pierce": {
+    "id": "neutral_pierce",
+    "name": "破甲弩矢",
+    "faction": "neutral",
+    "type": "tactic",
+    "row": "any",
+    "power": 0,
+    "effect": "pierce",
+    "text": "移除一个敌人全部护甲，然后造成5伤害。",
+    "art": "assets/art/neutral-pierce.png"
+  },
+  "raven_knight": {
+    "id": "raven_knight",
+    "name": "雾鸦骑士",
+    "faction": "raven",
+    "type": "unit",
+    "row": "front",
+    "power": 7,
+    "effect": "damage2",
+    "text": "部署：对一个敌人造成2伤害。",
+    "art": "assets/art/raven-knight.png"
+  },
+  "raven_hunter": {
+    "id": "raven_hunter",
+    "name": "灰羽猎手",
+    "faction": "raven",
+    "type": "unit",
+    "row": "back",
+    "power": 5,
+    "effect": "hunter",
+    "text": "部署：存在受伤敌人时，自身获得3增益。",
+    "art": "assets/art/raven-hunter.png"
+  },
+  "raven_assassin": {
+    "id": "raven_assassin",
+    "name": "断誓刺客",
+    "faction": "raven",
+    "type": "unit",
+    "row": "front",
+    "power": 4,
+    "effect": "assassin",
+    "text": "部署：对一个敌人造成2伤害；目标已受伤则改为4。",
+    "art": "assets/art/raven-assassin.png"
+  },
+  "raven_guide": {
+    "id": "raven_guide",
+    "name": "鸦群引路人",
+    "faction": "raven",
+    "type": "unit",
+    "row": "back",
+    "power": 5,
+    "effect": "guide",
+    "text": "部署：每有一个受伤敌人，自身获得1增益，上限3。",
+    "art": "assets/art/raven-guide.png"
+  },
+  "crown_infantry": {
+    "id": "crown_infantry",
+    "name": "烬冠步兵",
+    "faction": "crown",
+    "type": "unit",
+    "row": "front",
+    "power": 5,
+    "effect": "infantry",
+    "text": "部署：本列有其他友军时，自身获得3增益。",
+    "art": "assets/art/crown-infantry.png"
+  },
+  "crown_banner": {
+    "id": "crown_banner",
+    "name": "王旗执掌者",
+    "faction": "crown",
+    "type": "unit",
+    "row": "back",
+    "power": 4,
+    "effect": "buff2two",
+    "text": "部署：使至多两个其他友军各获得2增益。",
+    "art": "assets/art/crown-banner.png"
+  },
+  "crown_guard": {
+    "id": "crown_guard",
+    "name": "誓约守卫",
+    "faction": "crown",
+    "type": "unit",
+    "row": "front",
+    "power": 6,
+    "effect": "protect",
+    "text": "部署：使一个其他友军获得2增益及2护甲。",
+    "art": "assets/art/crown-guard.png"
+  },
+  "crown_commander": {
+    "id": "crown_commander",
+    "name": "灰烬统领",
+    "faction": "crown",
+    "type": "unit",
+    "row": "front",
+    "power": 5,
+    "effect": "commander",
+    "text": "部署：本列至少有两个其他友军时，使其中两个各获得2增益。",
+    "art": "assets/art/crown-commander.png"
+  },
+  "raven_king": {
+    "id": "raven_king",
+    "name": "无冠鸦王",
+    "faction": "raven",
+    "type": "leader",
+    "row": "any",
+    "power": 0,
+    "effect": "damage3",
+    "text": "整场一次：对一个敌人造成3伤害，消耗行动。",
+    "art": "assets/art/raven-king.png"
+  },
+  "crown_regent": {
+    "id": "crown_regent",
+    "name": "余烬摄政",
+    "faction": "crown",
+    "type": "leader",
+    "row": "any",
+    "power": 0,
+    "effect": "regent",
+    "text": "整场一次：使一个友军获得3增益及2护甲，消耗行动。",
+    "art": "assets/art/crown-regent.png"
+  }
+}

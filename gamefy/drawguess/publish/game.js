@@ -21,10 +21,15 @@ function setRoom(value){room=value;roomReceivedAt=Date.now();}
 function secondsLeft(){if(!room?.state.deadline_ms)return null;const now=room.server_time_ms+(Date.now()-roomReceivedAt);return Math.max(0,Math.ceil((room.state.deadline_ms-now)/1000));}
 function safeLog(kind,message,data,code){try{sdk?.log?.[kind]?.(message,data,code);}catch{}}
 function markReady(){if(!readySent){readySent=true;sdk?.loading?.ready?.();}}
+function clearPrivateRoom(){
+  room=null;rooms=[];$('#prompt').textContent='猜猜画的是什么';$('#word-hint').textContent='';
+  $('#word-cards').replaceChildren();$('#messages').replaceChildren();$('#reveal').replaceChildren();
+  board.restore({turn_id:-1,canvas:[]});renderLobby();
+}
 
 async function boot(refresh=false){
   const token=++generation;feedback('正在读取玩家身份…');sdk?.loading?.progress?.({phase:'runtime_initializing',progress:20,message:'正在进入游戏'});
-  followStop?.();followStop=null;room=null;
+  followStop?.();followStop=null;clearPrivateRoom();
   try{
     const uid=await client.identity(refresh);if(token!==generation)return;
     feedback('正在获取房间…');rooms=await client.rooms();if(token!==generation)return;

@@ -369,16 +369,24 @@ class DrawguessRepositoryMixin:
         content = text.strip() if isinstance(text, str) else ""
         if not 1 <= len(content) <= 100:
             raise ValueError("消息需要 1～100 字")
+        digest = sha256(json.dumps(["chat", turn_id, content], ensure_ascii=False).encode()).hexdigest()
         with self._session() as session:
             user = self._dg_employee(session, platform_id)
             room = self._dg_room(session, room_id)
+            receipt = session.scalar(select(Receipt).where(
+                Receipt.room_id == room_id, Receipt.user_id == user.id, Receipt.request_id == request_id,
+            ))
             old = session.scalar(select(Message).where(
                 Message.room_id == room_id, Message.user_id == user.id, Message.request_id == request_id,
             ))
-            if old:
-                if old.content != content and not old.content.startswith("已猜中 +"):
+            if receipt:
+                if receipt.digest != digest:
                     raise ValueError("重复请求内容不同")
+                if old is None:
+                    raise ValueError("重复请求记录不完整")
                 return {"id": str(old.id), "name": user.display_name, "text": old.content}
+            if old:
+                raise ValueError("重复请求记录不完整")
             state = room.state
             user_id = str(user.id)
             if user_id not in state["seats"]:
@@ -410,7 +418,10 @@ class DrawguessRepositoryMixin:
                 room_id=room_id, turn_id=turn_id, user_id=user.id,
                 request_id=request_id, content=content, created_at=now,
             )
-            session.add(message)
+            session.add_all((message, Receipt(
+                room_id=room_id, user_id=user.id, request_id=request_id,
+                digest=digest, turn_id=turn_id, created_at=now,
+            )))
             session.flush()
             return {"id": str(message.id), "name": user.display_name, "text": content}
 

@@ -176,6 +176,29 @@ def test_boot_restore_kv_failure_and_no_hash_navigation():
         browser.close()
 
 
+def test_identity_refresh_clears_private_word_before_new_identity_resolves():
+    publish = Path(__file__).resolve().parents[1] / "publish"
+    state, actions = snapshot("drawing", 0), []
+    state["state"].update(drawer_seat=0, answer="苹果", word_length=2)
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        context = browser.new_context()
+        context.add_init_script("""
+          window.testUid='host';
+          window.dzmm={
+            user:{info:()=>window.testUid==='host'?Promise.resolve({id:'host'}):new Promise(resolve=>setTimeout(()=>resolve({id:'viewer'}),200))},
+            kv:{get:async()=>({value:null}),put:async()=>{}},loading:{ready(){},error(){}},log:{info(){},error(){}}
+          };
+        """)
+        install_routes(context, publish, state, actions)
+        page = context.new_page();page.goto("https://draw.test/index.html");page.locator("#rooms button").click()
+        expect(page.locator("#prompt")).to_have_text("请画：苹果")
+        page.evaluate("window.testUid='viewer'");page.locator("#refresh").click()
+        expect(page.locator("#room-view")).to_be_hidden()
+        expect(page.locator("#prompt")).not_to_contain_text("苹果")
+        browser.close()
+
+
 def test_reconnect_clear_and_next_turn_replaces_canvas():
     publish = Path(__file__).resolve().parents[1] / "publish"
     state, actions = snapshot("drawing", 1), []

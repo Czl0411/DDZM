@@ -12,12 +12,13 @@ node --test gamefy/drawguess/tests/*.test.mjs
 
 前端只使用 Gamefy SDK 的 `user.info()`、`kv.get/put()`、`loading` 和 `log`。不使用 localStorage、sessionStorage、URL hash 或平台 token。KV 只保存当前 UID 最近进入的房间 ID；失败时仍可从大厅进入。
 
-## 创建游戏卡后
+## 游戏卡
 
-1. 创建新的 Gamefy 游戏草稿，不得复用象棋 `3761638` 或斗地主 `3763357`。
-2. 先阅读新草稿生成的本地开发说明，再按平台实际格式创建本目录下的 `dzmm.json`，发布目录指向 `publish`。
-3. 确认 `publish/config.js` 的 `apiBase` 指向公开 HTTPS API 根地址。
-4. 使用本机开发密钥完成 CLI 校验和草稿上传；密钥不得写入仓库。
-5. 先在测试群进行三人真机联调。普通群成员可用后，再单独提交审核和开放正式群。
+游戏卡 ID 为 `3767285`，本目录的 `dzmm.json` 已指向该独立草稿；不复用象棋 `3761638` 或斗地主 `3763357`。
+
+1. 先阅读新草稿生成的本地开发说明，并确认 `dzmm.json` 的发布目录仍指向 `publish`。
+2. 确认 `publish/config.js` 的 `apiBase` 指向公开 HTTPS API 根地址。
+3. 使用本机开发密钥完成 CLI 校验和草稿上传；密钥不得写入仓库。
+4. 先在测试群进行三人真机联调。普通群成员可用后，再单独提交审核和开放正式群。
 
 完整的迁移、配置、验收和回滚步骤见 `docs/drawguess-deployment.md`。

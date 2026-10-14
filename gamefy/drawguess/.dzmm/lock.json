@@ -1,0 +1,14 @@
+{
+  "revision": "1791967093382",
+  "source": "workspace",
+  "pulledAt": "2026-10-14T08:37:11.793Z",
+  "files": [
+    "canvas.js",
+    "client.js",
+    "config.js",
+    "game.js",
+    "index.html",
+    "style.css"
+  ],
+  "functions": []
+}

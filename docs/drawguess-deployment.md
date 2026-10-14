@@ -1,6 +1,6 @@
 # 你画我猜发布与回滚说明
 
-本功能当前完成本地实现和自动化验证，**尚未创建 Gamefy 游戏卡、上传草稿、部署服务器或开放群入口**。需要一张新的独立游戏卡；不得复用象棋 `3761638` 或斗地主 `3763357`。首版不接摸鱼币、津贴、管理权限或付费 AI。
+本功能已部署到服务器，并已将首版代码上传到独立 Gamefy 游戏草稿 `3767285`，当前仅配置测试群入口；**尚未提交公开审核或开放正式小游戏群**。该草稿不得替换为象棋 `3761638` 或斗地主 `3763357`。首版不接摸鱼币、津贴、管理权限或付费 AI。
 
 ## 功能边界
 
@@ -16,15 +16,15 @@
 取得新的游戏 ID 后，在服务器配置以下四项；任一缺失时 Bot 入口不会开放：
 
 ```text
-DZMM_DRAWGUESS_GAME_ID=<新的独立游戏 ID>
-DZMM_DRAWGUESS_GAME_URL=https://www.aikda.com/chat?card=<新的独立游戏 ID>
+DZMM_DRAWGUESS_GAME_ID=3767285
+DZMM_DRAWGUESS_GAME_URL=https://www.aikda.com/chat?card=3767285
 DZMM_DRAWGUESS_PUBLIC_API_URL=https://49.234.20.159
-DZMM_DRAWGUESS_CHATROOM_ID=<先用于三人联调的测试群 ID>
+DZMM_DRAWGUESS_CHATROOM_ID=c1f72c3c-409b-4c5a-be74-51370922a270
 ```
 
 `gamefy/drawguess/publish/config.js` 的 `apiBase` 必须与公开 API 根地址一致，不包含 `/api/drawguess`。它不是密钥。开发密钥只放本机环境或平台 CLI 登录态，不能写进仓库、文档、命令历史或 `dzmm.json`。
 
-新卡创建后，先阅读该项目由平台生成的说明，再按实际格式创建 `gamefy/drawguess/dzmm.json`。当前故意不提供该文件，避免误覆盖已有游戏卡。
+`gamefy/drawguess/dzmm.json` 已绑定游戏卡 `3767285`，发布目录为 `publish`。上传前必须先运行 CLI 状态检查和 dry-run，避免覆盖错误的游戏卡或线上新版本。
 
 ## 安全部署顺序
 
@@ -46,6 +46,8 @@ DZMM_DRAWGUESS_CHATROOM_ID=<先用于三人联调的测试群 ID>
 - 象棋/斗地主针对性 Python：132 通过、1 跳过；另有 2 个斗地主启动超时重试用例失败，位于本次开始前已有的未提交斗地主改动中，本功能未修改这些文件。
 - 象棋/斗地主 Node：17/17 通过。
 - 全项目 pytest 在收集 `scripts/test_estrus_rank.py` 时因缺少 `DZMM_DATABASE_URL` 中止；未猜测或连接生产数据库，不能宣称全项目全绿。
+- 生产数据库已迁移到 `20261014_110`；Caddy、core、后台和浏览器 worker 正常，AI 记忆 worker继续保持关闭。公网你画我猜、象棋和斗地主接口均以未授权 `401` 拒绝匿名请求。
+- Gamefy 弱网首开与刷新检查通过，草稿 revision 为 `1791967093382`，6 个发布文件已逐文件回读一致。首个加载进度在弱网检查中晚约 1.3～1.8 秒，属于待优化警告，不影响进入大厅。
 
 本地同步基准使用 SQLite、1 名画手和 7 名接收端，连续发送 50 批共 500 点：总耗时 461.8ms，事件读取平均 0.87ms、最大 3.55ms，最终游标 50，积压 0、丢笔 0。该结果只验证本地代码路径，不代表生产网络或 PostgreSQL 负载。
 

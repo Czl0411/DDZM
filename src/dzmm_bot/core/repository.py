@@ -113,6 +113,7 @@ from .dark_market import (
 from .group_games import GROUP_GAME_TYPES, normalized_group_game_types
 from .chess_repository import ChessRepositoryMixin
 from .doudizhu_repository import DoudizhuRepositoryMixin
+from .drawguess_repository import DrawguessRepositoryMixin
 from .performance import (
     PERFORMANCE_ACTIVE_STATES,
     PerformanceActionResult,
@@ -3069,7 +3070,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository(DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
+class CoreRepository(DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],

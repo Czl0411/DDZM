@@ -85,6 +85,10 @@ def test_claim_ready_start_host_transfer_and_rematch(game):
 
     candidate = room["state"]["candidates"][0]
     room = action(repo, room, "p1", "choose", {"word_id": candidate["id"]}, NOW + timedelta(seconds=1))
+    repo.drawguess_chat(
+        UUID(room["room_id"]), "p2", room["state"]["turn_id"], uuid4(),
+        "跨局保留", NOW + timedelta(seconds=2),
+    )
     repo.drawguess_strokes(
         UUID(room["room_id"]), "p1", room["state"]["turn_id"], uuid4(),
         [{"op": "begin", "stroke_id": "old", "points": [[0.1, 0.1]],
@@ -99,6 +103,7 @@ def test_claim_ready_start_host_transfer_and_rematch(game):
     room = repo.drawguess_view(UUID(room["room_id"]), "p1", NOW)
     room = action(repo, room, "p1", "rematch")
     assert room["state"]["phase"] == "waiting"
+    assert [message["text"] for message in room["messages"]] == ["跨局保留"]
     assert all(not player["ready"] for player in room["state"]["players"])
     assert room["code"] and room["code"].isdigit()
     for uid in ("p1", "p2", "p3", "p4", "p5", "p6", "p7"):
@@ -159,12 +164,43 @@ def test_recipient_projection_and_chat_never_leak_answer(game):
         assert "candidates" not in projected["state"]
     wrong = repo.drawguess_chat(UUID(room["room_id"]), "p1", room["state"]["turn_id"], uuid4(), "不是答案", NOW + timedelta(seconds=2))
     assert wrong["text"] == "不是答案"
+    drawer_chat = repo.drawguess_chat(
+        UUID(room["room_id"]), "host", room["state"]["turn_id"], uuid4(),
+        "画手也能聊天", NOW + timedelta(seconds=2),
+    )
+    assert drawer_chat["text"] == "画手也能聊天"
+    spectator_chat = repo.drawguess_chat(
+        UUID(room["room_id"]), "viewer", room["state"]["turn_id"], uuid4(),
+        "围观聊天", NOW + timedelta(seconds=2),
+    )
+    assert spectator_chat["text"] == "围观聊天"
     correct = repo.drawguess_chat(UUID(room["room_id"]), "p2", room["state"]["turn_id"], uuid4(), chosen["answer"], NOW + timedelta(seconds=2))
     assert correct["text"].startswith("已猜中 +")
+    after_guess = repo.drawguess_chat(
+        UUID(room["room_id"]), "p2", room["state"]["turn_id"], uuid4(),
+        "猜中后继续聊天", NOW + timedelta(seconds=3),
+    )
+    assert after_guess["text"] == "猜中后继续聊天"
     public = repo.drawguess_view(UUID(room["room_id"]), "p1", NOW + timedelta(seconds=2))
     assert chosen["answer"] not in repr(public["messages"])
-    with pytest.raises(ValueError, match="观众"):
-        repo.drawguess_chat(UUID(room["room_id"]), "viewer", room["state"]["turn_id"], uuid4(), "围观", NOW + timedelta(seconds=3))
+
+
+def test_room_chat_keeps_only_the_newest_one_hundred_messages(game):
+    repo = game[0]
+    room = create_room(game)
+
+    for index in range(101):
+        repo.drawguess_chat(
+            UUID(room["room_id"]), "viewer", room["state"]["turn_id"], uuid4(),
+            f"消息 {index}", NOW + timedelta(seconds=index + 1),
+        )
+
+    view = repo.drawguess_view(
+        UUID(room["room_id"]), "viewer", NOW + timedelta(seconds=102)
+    )
+    assert len(view["messages"]) == 100
+    assert view["messages"][0]["text"] == "消息 1"
+    assert view["messages"][-1]["text"] == "消息 100"
 
 
 def test_stroke_order_limits_clear_and_incremental_events(game):

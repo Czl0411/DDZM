@@ -1,7 +1,8 @@
 """Curated, local words and exact-match normalization for draw-and-guess."""
 
 from dataclasses import dataclass
-import unicodedata
+
+from .chinese_input import traditional_to_simplified
 
 
 @dataclass(frozen=True)
@@ -35,7 +36,7 @@ _BY_ID = {word.id: word for word in WORDS}
 def normalize_guess(text: str) -> str:
     if not isinstance(text, str):
         raise ValueError("答案必须是文字")
-    return unicodedata.normalize("NFKC", text).strip().casefold()
+    return traditional_to_simplified(text).strip().casefold()
 
 
 def word_by_id(word_id: str) -> Word:

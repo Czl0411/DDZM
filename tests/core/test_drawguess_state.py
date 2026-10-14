@@ -3,10 +3,21 @@ from copy import deepcopy
 import pytest
 
 from dzmm_bot.core.drawguess_state import advance, apply_action, guess_score, new_state
-from dzmm_bot.core.drawguess_words import WORDS
+from dzmm_bot.core.drawguess_words import WORDS, word_matches
 
 
 IDS = [word.id for word in WORDS]
+
+
+@pytest.mark.parametrize(
+    ("answer", "traditional"),
+    [("苹果", "蘋果"), ("自行车", "自行車"), ("自行车", "腳踏車")],
+)
+def test_traditional_guess_is_an_exact_answer_match(answer, traditional):
+    word = next(item for item in WORDS if item.answer == answer)
+
+    assert word_matches(word.id, traditional)
+    assert not word_matches(word.id, f"我猜是{traditional}")
 
 
 def act(state, actor, action, payload=None, now=0, candidates=None):

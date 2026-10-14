@@ -70,7 +70,7 @@ class DrawguessRepositoryMixin:
 
     @staticmethod
     def _dg_prune_turn(session, room_id, turn_id):
-        for model in (Event, Message, Receipt):
+        for model in (Event, Receipt):
             session.execute(delete(model).where(model.room_id == room_id, model.turn_id != turn_id))
 
     @staticmethod
@@ -191,7 +191,7 @@ class DrawguessRepositoryMixin:
             public["answer"] = state["answer"]
         message_rows = session.execute(select(Message, UserRecord.display_name).join(
             UserRecord, UserRecord.id == Message.user_id,
-        ).where(Message.room_id == room.id, Message.turn_id == state["turn_id"])
+        ).where(Message.room_id == room.id)
             .order_by(Message.created_at.desc(), Message.id.desc()).limit(100)).all()
         messages = [
             {"id": str(message.id), "name": name, "text": message.content}
@@ -264,7 +264,6 @@ class DrawguessRepositoryMixin:
                         version=state["version"] + 1,
                     )
                     session.execute(delete(Event).where(Event.room_id == room.id))
-                    session.execute(delete(Message).where(Message.room_id == room.id))
                     session.execute(delete(Receipt).where(Receipt.room_id == room.id))
                     room.active_code = self._dg_code(session)
                     self._dg_sync_room(room, fresh)
@@ -397,8 +396,8 @@ class DrawguessRepositoryMixin:
                 raise ValueError("重复请求记录不完整")
             state = room.state
             user_id = str(user.id)
-            if user_id not in state["seats"]:
-                raise ValueError("观众不能发言")
+            if state["phase"] == "closed":
+                raise ValueError("房间已经关闭")
             previous = session.scalar(select(Message.created_at).where(
                 Message.room_id == room_id, Message.user_id == user.id,
             ).order_by(Message.created_at.desc()).limit(1))
@@ -407,21 +406,22 @@ class DrawguessRepositoryMixin:
             if state["turn_id"] != turn_id:
                 raise ValueError("本题已更新，请刷新")
             if state["phase"] == "drawing":
-                if user_id == state["seats"][state["turn_index"] % len(state["seats"])]:
-                    raise ValueError("画手不能发言")
-                if user_id in state["guessed"]:
-                    raise ValueError("你已经猜中，等待揭晓")
-                before = state["scores"].get(user_id, 0)
-                state = apply_action(state, user_id, "guess", {"text": content}, self._dg_ms(now), state["candidates"])
-                after = state["scores"].get(user_id, 0)
-                if after > before:
-                    content = f"已猜中 +{after - before}分"
-                self._dg_sync_room(room, state)
-            elif state["phase"] == "selecting":
-                if user_id == state["seats"][state["turn_index"] % len(state["seats"])]:
-                    raise ValueError("画手正在选词")
-            elif state["phase"] not in {"waiting", "revealing", "finished"}:
-                raise ValueError("本局当前不能发言")
+                drawer = state["seats"][state["turn_index"] % len(state["seats"])]
+                can_guess = (
+                    user_id in state["seats"]
+                    and user_id != drawer
+                    and user_id not in state["guessed"]
+                )
+                if can_guess:
+                    before = state["scores"].get(user_id, 0)
+                    state = apply_action(
+                        state, user_id, "guess", {"text": content},
+                        self._dg_ms(now), state["candidates"],
+                    )
+                    after = state["scores"].get(user_id, 0)
+                    if after > before:
+                        content = f"已猜中 +{after - before}分"
+                    self._dg_sync_room(room, state)
             message = Message(
                 room_id=room_id, turn_id=turn_id, user_id=user.id,
                 request_id=request_id, content=content, created_at=now,
@@ -431,6 +431,13 @@ class DrawguessRepositoryMixin:
                 digest=digest, turn_id=turn_id, created_at=now,
             )))
             session.flush()
+            stale_ids = list(session.scalars(
+                select(Message.id).where(Message.room_id == room_id)
+                .order_by(Message.created_at.desc(), Message.id.desc())
+                .offset(100)
+            ))
+            if stale_ids:
+                session.execute(delete(Message).where(Message.id.in_(stale_ids)))
             return {"id": str(message.id), "name": user.display_name, "text": content}
 
     def _dg_events_result(self, session, room, user, after, now):

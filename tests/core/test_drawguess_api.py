@@ -50,9 +50,11 @@ def test_action_chat_and_stroke_payloads_are_strict(game):
     assert client.post(base + "/strokes", headers=headers("p1"), json={
         "turn_id": room["state"]["turn_id"], "request_id": str(uuid4()), "operations": [{"op": "clear"}],
     }).status_code == 409
-    assert client.post(base + "/chat", headers=headers("viewer"), json={
+    spectator_chat = client.post(base + "/chat", headers=headers("viewer"), json={
         "turn_id": room["state"]["turn_id"], "request_id": str(uuid4()), "text": "旁观发言",
-    }).status_code == 409
+    })
+    assert spectator_chat.status_code == 200
+    assert spectator_chat.json()["text"] == "旁观发言"
     listing = client.get("/api/drawguess/rooms", headers=headers("viewer"))
     assert listing.status_code == 200
     assert "answer" not in repr(listing.json())

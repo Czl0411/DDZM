@@ -144,6 +144,7 @@ def test_three_players_six_turns_and_restart(game):
         {"name": "host", "score": 377, "rank": 2},
         {"name": "p1", "score": 376, "rank": 3},
     ]
+    assert "这不是答案" in [message["text"] for message in final["messages"]]
 
     with factory() as session:
         balances_after = dict(session.execute(select(UserRecord.platform_id, UserRecord.balance)).all())
@@ -153,5 +154,5 @@ def test_three_players_six_turns_and_restart(game):
     assert balances_after == balances_before
     assert transactions_after == transactions_before
     assert request_turns == {final["state"]["turn_id"]}
-    assert message_turns == {final["state"]["turn_id"]}
+    assert len(message_turns) > 1
     client.close()

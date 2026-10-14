@@ -54,7 +54,7 @@ class Action(RequestBody):
     match_id: UUID | None = None
     version: StrictInt = Field(ge=0)
     action: Literal["select_faction", "ready", "unready", "start", "mulligan",
-                    "reserve", "play", "leader", "pass", "concede", "leave", "rematch"]
+                    "play", "leader", "pass", "concede", "leave", "rematch"]
     payload: dict = Field(default_factory=dict)
 
 

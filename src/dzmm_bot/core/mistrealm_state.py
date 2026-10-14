@@ -5,21 +5,21 @@ from .mistrealm_cards import CARDS, deck
 
 FIELDS = {
     "join": {"uid"}, "select_faction": {"faction"}, "ready": set(), "unready": set(),
-    "start": set(), "mulligan": {"cards"}, "reserve": {"card"},
+    "start": set(), "mulligan": {"cards"},
     "play": {"card", "row", "targets"}, "leader": {"targets"}, "pass": set(),
     "concede": set(), "leave": set(), "rematch": set(),
 }
 
 
 def player(uid):
-    return dict(uid=uid, faction="raven", ready=False, hand=[], deck=[], reserve=None,
+    return dict(uid=uid, faction="raven", ready=False, hand=[], deck=[],
                 rows=[[], []], discard=[], passed=False, leader_used=False,
-                mulligan_done=False, reserve_done=False, rematch=False, timeouts=0)
+                mulligan_done=False, rematch=False, timeouts=0)
 
 
 def new_state(host, now_ms):
     return dict(phase="waiting", version=0, players=[player(host), None],
-                deadline_ms=now_ms+1800000, round=0, scores=[0, 0], results=[],
+                deadline_ms=now_ms+1800000, round=0, lives=[2, 2], results=[],
                 turn=0, first=0, first_bonus=False, winner=None, reason=None)
 
 
@@ -43,14 +43,15 @@ def round_end(s, now):
     powers = [score(p) for p in s["players"]]
     winner = None if powers[0] == powers[1] else int(powers[1] > powers[0])
     for i in range(2):
-        s["scores"][i] += 1 if winner is None else (2 if i == winner else 0)
+        if winner is None or i != winner:
+            s["lives"][i] -= 1
     s["results"].append({"round": s["round"], "powers": powers, "winner": winner})
     for p in s["players"]:
         p["discard"].extend({"id": c["id"], "key": c["key"]} for c in units(p))
         p["rows"] = [[], []]
-    if s["round"] == 3 or abs(s["scores"][0]-s["scores"][1]) > (3-s["round"])*2:
-        result = None if s["scores"][0] == s["scores"][1] else int(s["scores"][1] > s["scores"][0])
-        finish(s, result, "score", now)
+    if 0 in s["lives"]:
+        result = None if s["lives"] == [0, 0] else int(s["lives"][1] > 0)
+        finish(s, result, "lives", now)
     else:
         s["first"] = 1-s["first"] if winner is None else winner
         s.update(phase="round_result", deadline_ms=now+5000)
@@ -73,11 +74,6 @@ def begin_round(s, now):
     s["round"] += 1
     for p in s["players"]:
         p["passed"] = False
-        if s["round"] > 1:
-            deal(p, 3)
-        if s["round"] == 3:
-            p["hand"].append(p["reserve"])
-            p["reserve"] = None
     s.update(phase="playing", turn=s["first"], deadline_ms=now+45000)
 
 
@@ -206,7 +202,7 @@ def apply_action(state, seat, action, payload, now_ms, rng):
             for i, pp in enumerate(s["players"]):
                 pp["deck"] = deck(pp["faction"], i)
                 rng.shuffle(pp["deck"])
-                deal(pp, 9)
+                deal(pp, 10)
             s.update(phase="mulligan", first=rng.randrange(2), deadline_ms=now_ms+45000, first_bonus=True)
         else:
             raise ValueError("当前阶段不能执行该操作")
@@ -223,14 +219,6 @@ def apply_action(state, seat, action, payload, now_ms, rng):
         rng.shuffle(p["deck"])
         p["mulligan_done"] = True
         if all(x["mulligan_done"] for x in s["players"]):
-            s.update(phase="reserve", deadline_ms=now_ms+30000)
-    elif phase == "reserve" and action == "reserve":
-        card = next((c for c in p["hand"] if c["id"] == payload["card"]), None)
-        if p["reserve_done"] or not card:
-            raise ValueError("请选择一张手牌")
-        p["hand"].remove(card)
-        p.update(reserve=card, reserve_done=True)
-        if all(x["reserve_done"] for x in s["players"]):
             begin_round(s, now_ms)
     elif phase == "playing":
         if s["turn"] != seat or p["passed"]:
@@ -282,7 +270,7 @@ def apply_action(state, seat, action, payload, now_ms, rng):
             s = fresh
     else:
         raise ValueError("当前阶段不能执行该操作")
-    if p is not None and action in ("mulligan", "reserve"):
+    if p is not None and action == "mulligan":
         p["timeouts"] = 0
     if s["phase"] == "waiting":
         s["deadline_ms"] = now_ms+1800000
@@ -299,25 +287,22 @@ def advance(state, now_ms, rng):
         phase = s["phase"]
         if phase in ("waiting", "finished"):
             s.update(phase="closed", deadline_ms=None, version=s["version"]+1)
-        elif phase in ("mulligan", "reserve"):
-            pending = [i for i, p in enumerate(s["players"]) if not p[phase+"_done"]]
+        elif phase == "mulligan":
+            pending = [i for i, p in enumerate(s["players"]) if not p["mulligan_done"]]
             for i in pending:
                 p = s["players"][i]
-                data = {"cards": []} if phase == "mulligan" else {"card": rng.choice(p["hand"])["id"]}
                 misses = p["timeouts"]+1
-                s = apply_action(s, i, phase, data, deadline, rng)
+                s = apply_action(s, i, "mulligan", {"cards": []}, deadline, rng)
                 s["players"][i]["timeouts"] = misses
-            expired = [i for i, p in enumerate(s["players"]) if p["timeouts"] >= 2]
-            if expired:
-                finish(s, None if len(expired) == 2 else 1-expired[0],
-                       "cancelled" if len(expired) == 2 else "timeout", deadline)
         elif phase == "playing":
             seat = s["turn"]
             misses = s["players"][seat]["timeouts"]+1
-            s = apply_action(s, seat, "pass", {}, deadline, rng)
-            s["players"][seat]["timeouts"] = misses
             if misses >= 2:
                 finish(s, 1-seat, "timeout", deadline)
+                s["version"] += 1
+            else:
+                s = apply_action(s, seat, "pass", {}, deadline, rng)
+            s["players"][seat]["timeouts"] = misses
         elif phase == "round_result":
             begin_round(s, deadline)
             s["version"] += 1
@@ -330,11 +315,9 @@ def project(state, seat):
         if p is None:
             continue
         p["hand_count"], p["deck_count"] = len(p["hand"]), len(p["deck"])
-        p["reserve_count"] = int(p["reserve"] is not None)
         p["power"] = score(p)
         del p["deck"]
         if i != seat:
             p.pop("hand")
-            p.pop("reserve")
     s["seat"] = seat
     return s

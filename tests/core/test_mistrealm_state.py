@@ -19,8 +19,6 @@ def playing():
     s = act(s, 0, 'start')
     for i in range(2):
         s = act(s, i, 'mulligan', {'cards': []})
-    for i in range(2):
-        s = act(s, i, 'reserve', {'card': s['players'][i]['hand'][0]['id']})
     return s
 
 
@@ -50,10 +48,10 @@ def test_decks_and_unique_instances():
 def test_opening_and_privacy():
     s = playing()
     assert s['phase'] == 'playing'
-    assert all(len(p['hand']) == 8 and len(p['deck']) == 11 for p in s['players'])
+    assert all(len(p['hand']) == 10 and len(p['deck']) == 10 for p in s['players'])
     v = project(s, 0)
     assert isinstance(v['players'][0]['hand'], list)
-    assert v['players'][1]['hand_count'] == 8
+    assert v['players'][1]['hand_count'] == 10
     assert 'hand' not in v['players'][1] and 'reserve' not in v['players'][1]
     assert all('deck' not in p for p in v['players'])
 
@@ -110,17 +108,57 @@ def test_full_row_wrong_row_and_bool_rejected():
     with pytest.raises(ValueError): act(s,0,'play',{'card':'x','row':0,'targets':[]})
 
 
-def test_pass_round_draw_and_reserve_return():
+def test_two_tied_rounds_remove_both_gems_and_draw_match():
     s=playing()
-    reserved=[p['reserve']['id'] for p in s['players']]
-    for round_no in [1,2,3]:
+    hands=[deepcopy(p['hand']) for p in s['players']]
+    decks=[deepcopy(p['deck']) for p in s['players']]
+    for round_no in [1,2]:
         s=act(s,s['turn'],'pass'); s=act(s,s['turn'],'pass')
-        assert s['scores']==[round_no,round_no]
-        if round_no<3:
+        assert s['lives']==[2-round_no,2-round_no]
+        if round_no==1:
             s=advance(s,s['deadline_ms'],Random(1))
-            assert s['round']==round_no+1
+            assert s['round']==2
+        assert [p['hand'] for p in s['players']]==hands
+        assert [p['deck'] for p in s['players']]==decks
     assert s['phase']=='finished' and s['winner'] is None
-    assert all(reserved[i] in [c['id'] for c in p['hand']] for i,p in enumerate(s['players']))
+
+
+def test_split_wins_reach_third_round_and_preserve_remaining_hand():
+    s=playing()
+    for winner in [0,1,0]:
+        s['players'][winner]['rows'][0]=[unit('neutral_mercenary',str(s['round']))]
+        s=act(s,s['turn'],'pass');s=act(s,s['turn'],'pass')
+        if s['round']<3:
+            assert s['phase']=='round_result'
+            s=advance(s,s['deadline_ms'],Random(1))
+            assert s['turn']==winner
+            assert all(len(p['hand'])==10 and len(p['deck'])==10 for p in s['players'])
+    assert s['phase']=='finished' and s['winner']==0 and s['lives']==[1,0]
+    s=act(s,0,'rematch');s=act(s,1,'rematch')
+    assert s['phase']=='waiting' and s['lives']==[2,2] and not s['results']
+
+
+def test_win_then_tie_still_wins_match_by_remaining_life():
+    s=playing();s['players'][0]['rows'][0]=[unit('neutral_guard')]
+    s=act(s,s['turn'],'pass');s=act(s,s['turn'],'pass')
+    assert s['lives']==[2,1]
+    s=advance(s,s['deadline_ms'],Random(1))
+    s=act(s,s['turn'],'pass');s=act(s,s['turn'],'pass')
+    assert s['phase']=='finished' and s['winner']==0 and s['lives']==[1,0]
+
+
+def test_no_reserve_phase_or_fields_and_no_draw_per_action():
+    s=playing()
+    assert s['lives']==[2,2] and 'scores' not in s
+    assert all('reserve' not in p and 'reserve_done' not in p for p in s['players'])
+    assert all('reserve_count' not in p for p in project(s,0)['players'])
+    with pytest.raises(ValueError): act(s,s['turn'],'reserve',{'card':s['players'][s['turn']]['hand'][0]['id']})
+    seat=s['turn'];s['players'][seat]['hand'][0]['key']='neutral_mercenary'
+    s=act(s,seat,'play',{'card':s['players'][seat]['hand'][0]['id'],'row':0,'targets':[]})
+    assert len(s['players'][seat]['hand'])==9 and len(s['players'][seat]['deck'])==10
+    s=act(s,s['turn'],'pass');s=act(s,s['turn'],'pass')
+    s=advance(s,s['deadline_ms'],Random(1))
+    assert len(s['players'][seat]['hand'])==9 and len(s['players'][seat]['deck'])==10
 
 
 def test_leader_consumes_turn_and_is_once_per_match():
@@ -158,21 +196,24 @@ def setup_started():
     return act(s,0,'start')
 
 
-def test_both_preparation_timeouts_cancel_match():
+def test_mulligan_timeout_starts_match_then_consecutive_timeout_loses():
     s=setup_started()
     s=advance(s,s['deadline_ms'],Random(1))
+    assert s['phase']=='playing'
     assert [p['timeouts'] for p in s['players']]==[1,1]
+    first=s['turn']
     s=advance(s,s['deadline_ms'],Random(1))
-    assert s['phase']=='finished' and s['reason']=='cancelled' and s['winner'] is None
+    assert s['phase']=='finished' and s['reason']=='timeout' and s['winner']==1-first
 
 
-def test_active_preparation_resets_timeout_counter():
+def test_active_action_resets_preparation_timeout_counter():
     s=setup_started()
     s=advance(s,s['deadline_ms'],Random(1))
-    s=act(s,0,'reserve',{'card':s['players'][0]['hand'][0]['id']})
-    assert s['players'][0]['timeouts']==0
+    first=s['turn']
+    s=act(s,first,'pass')
+    assert s['players'][first]['timeouts']==0
     s=advance(s,s['deadline_ms'],Random(1))
-    assert s['phase']=='finished' and s['winner']==0
+    assert s['phase']=='finished' and s['winner']==first
 
 
 def test_mulligan_never_redraws_removed_instances():
@@ -203,3 +244,19 @@ def test_mirror_decks_and_crown_leader():
     s=act(s,0,'leader',{'targets':['friend']})
     c=s['players'][0]['rows'][0][0]
     assert (c['power'],c['armor'])==(8,2)
+
+
+def test_second_timeout_forfeits_before_pass_can_settle_zero_gem_draw():
+    s=playing()
+    first=s['turn']
+    s=advance(s,s['deadline_ms'],Random(1))
+    s=act(s,s['turn'],'pass')
+    assert s['lives']==[1,1]
+    s=advance(s,s['deadline_ms'],Random(1))
+    s=act(s,s['turn'],'pass')
+    assert s['turn']==first
+    version=s['version']
+    s=advance(s,s['deadline_ms'],Random(1))
+    assert s['phase']=='finished' and s['reason']=='timeout' and s['winner']==1-first
+    assert s['lives']==[1,1] and len(s['results'])==1
+    assert s['version']==version+1 and s['players'][first]['timeouts']==2

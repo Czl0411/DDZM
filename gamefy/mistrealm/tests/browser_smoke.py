@@ -54,15 +54,12 @@ with sync_playwright() as pw:
         previous=int(p.locator('#main').get_attribute('data-version'))
         p.locator('#confirm-prep').click()
         await_action(p,previous)
-    for p in [a,b]:
-        p.get_by_text('留下一张预备牌',exact=True).wait_for()
-        sync()
-        previous=int(p.locator('#main').get_attribute('data-version'))
-        p.locator('.hand .card').first.click()
-        p.locator('#confirm-prep').click()
-        await_action(p,previous)
     for p in [a,b]:p.locator('#pass').wait_for()
     sync()
+    for p in [a,b]:
+        assert p.locator('.hand .card').count()==10
+        assert p.locator('.life-gems .lit').count()==4
+        assert '预备牌' not in p.locator('#main').inner_text()
     a.screenshot(path=str(output/'battle-desktop.png'),full_page=True)
     sidebar=a.locator('.sidebar').bounding_box();board=a.locator('.board').bounding_box();controls=a.locator('.controls').bounding_box()
     assert sidebar['x']+sidebar['width']<=board['x'] and board['x']+board['width']<=controls['x'], 'desktop battle columns overlap'
@@ -112,7 +109,7 @@ with sync_playwright() as pw:
     a.locator('#leave').click()
     b.locator('#create').wait_for()
     assert not errors,errors
-    print('PASS: two clients, factions, ready, mulligan, reserve, unit deployment, reload, 3 rounds, rematch; 3 viewport widths; no page errors')
+    print('PASS: two clients, factions, ready, 10-card mulligan directly into battle, life gems, unit deployment, reload, round settlement, rematch; 3 viewport widths; no page errors')
     sandbox=context.new_page()
     sandbox.goto(base+'/sandbox')
     frame=sandbox.frame_locator('iframe')

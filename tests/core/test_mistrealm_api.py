@@ -59,8 +59,10 @@ def test_actions_versions_and_hidden_cards(game):
     assert action(c,old,'a','start').status_code==409
     room=action(c,room,'a','start').json()
     assert room['match_id']
+    assert room['state']['lives']==[2,2]
+    assert action(c,room,'a','reserve',{'card':'x'}).status_code==422
     assert 'hand' not in room['state']['players'][1]
-    assert len(room['state']['players'][0]['hand'])==9
+    assert len(room['state']['players'][0]['hand'])==10
     assert c.get('/api/mistrealm/rooms/'+room['room_id'],headers=headers('b')).json()['state']['players'][0].get('hand') is None
 
 def test_duplicate_action_and_changed_payload(game):
@@ -103,5 +105,5 @@ def test_rejected_stale_action_commits_expiry(game):
         repo.mistrealm_action(UUID(room['room_id']),'a',UUID(room['match_id']),room['state']['version'],uuid4(),'mulligan',{'cards':[]},later)
     with f() as session:
         state=session.get(MistrealmRoomRecord,UUID(room['room_id'])).state
-        assert state['phase']=='reserve'
+        assert state['phase']=='playing'
         assert state['version']>room['state']['version']

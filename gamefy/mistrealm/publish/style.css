@@ -47,3 +47,6 @@ button:active:not(:disabled){transform:translateY(1px)}
 @keyframes match-pulse{50%{opacity:.35;box-shadow:0 0 25px #80c3c61a}}
 @media(max-width:700px){.match-panel{margin:5vh auto;padding:32px 18px}.match-panel h2{font-size:25px;letter-spacing:2px}}
 @media(prefers-reduced-motion:reduce){.match-seal:before{animation:none}}
+
+.revive-options{margin:16px 0;padding:16px;border:1px solid #9d8450;background:rgba(12,22,26,.92)}
+.revive-options .hand{justify-content:flex-start;margin-bottom:0}

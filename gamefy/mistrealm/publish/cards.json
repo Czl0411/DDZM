@@ -38,9 +38,9 @@
     "faction": "neutral",
     "type": "unit",
     "row": "back",
-    "power": 4,
-    "effect": "buff3",
-    "text": "部署：使一个其他友军获得3增益。",
+    "power": 2,
+    "effect": "revive",
+    "text": "部署：可复活弃牌堆中一个基础战力不超过5的非医师单位。恢复基础战力，不触发部署；任意战列单位优先进入前列。",
     "art": "assets/art/neutral-medic.png"
   },
   "neutral_mobilize": {
@@ -62,7 +62,7 @@
     "row": "any",
     "power": 0,
     "effect": "pierce",
-    "text": "移除一个敌人全部护甲，然后造成5伤害。",
+    "text": "移除一个敌人的全部护甲与高于基础战力的增益，再造成3伤害。",
     "art": "assets/art/neutral-pierce.png"
   },
   "raven_knight": {
@@ -104,9 +104,9 @@
     "faction": "raven",
     "type": "unit",
     "row": "back",
-    "power": 5,
-    "effect": "guide",
-    "text": "部署：每有一个受伤敌人，自身获得1增益，上限3。",
+    "power": 3,
+    "effect": "recall",
+    "text": "部署：可将一个其他友军收回手牌，移除其增益、伤害与护甲。再次打出时可触发部署技能。",
     "art": "assets/art/raven-guide.png"
   },
   "crown_infantry": {
@@ -125,10 +125,10 @@
     "name": "王旗执掌者",
     "faction": "crown",
     "type": "unit",
-    "row": "back",
-    "power": 4,
-    "effect": "buff2two",
-    "text": "部署：使至多两个其他友军各获得2增益。",
+    "row": "any",
+    "power": 3,
+    "effect": "banner",
+    "text": "持续：每当你从手牌向本列部署其他单位，使该单位获得1增益。复活不触发；多面王旗可叠加。",
     "art": "assets/art/crown-banner.png"
   },
   "crown_guard": {

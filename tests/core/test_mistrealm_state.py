@@ -58,7 +58,7 @@ def test_opening_and_privacy():
     assert all('deck' not in p for p in v['players'])
 
 
-@pytest.mark.parametrize('key,row,power', [('neutral_mercenary',0,7),('neutral_guard',0,5),('raven_hunter',1,8),('raven_guide',1,6),('crown_infantry',0,8)])
+@pytest.mark.parametrize('key,row,power', [('neutral_mercenary',0,7),('neutral_guard',0,5),('raven_hunter',1,8),('crown_infantry',0,8)])
 def test_deployment_conditions(key,row,power):
     _,s=play_card(key,[unit('neutral_mercenary',power=5)],[unit('neutral_guard','friend')],row=row)
     card=s['players'][0]['rows'][row][-1]
@@ -74,12 +74,12 @@ def test_damage_and_armor(key,amount):
 
 
 def test_pierce_removes_armor_and_kills():
-    _,s=play_card('neutral_pierce',[unit('neutral_guard',armor=10)],targets=['target'])
+    _,s=play_card('neutral_pierce',[unit('neutral_guard',power=3,armor=10)],targets=['target'])
     assert not s['players'][1]['rows'][0]
     assert s['players'][1]['discard'][-1]['key']=='neutral_guard'
 
 
-@pytest.mark.parametrize('key,gain,armor', [('neutral_medic',3,0),('neutral_mobilize',3,0),('crown_banner',2,0),('crown_guard',2,2)])
+@pytest.mark.parametrize('key,gain,armor', [('neutral_mobilize',3,0),('crown_guard',2,2)])
 def test_friendly_effects(key,gain,armor):
     _,s=play_card(key,friends=[unit('neutral_guard','friend')],targets=['friend'])
     assert s['players'][0]['rows'][0][0]['power']==5+gain

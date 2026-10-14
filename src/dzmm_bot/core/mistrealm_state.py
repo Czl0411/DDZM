@@ -81,11 +81,25 @@ def begin_round(s, now):
     s.update(phase="playing", turn=s["first"], deadline_ms=now+45000)
 
 
+def revive_row(p, card, deploying_row=None):
+    info = CARDS[card["key"]]
+    if info["type"] != "unit" or info["power"] > 5 or info["effect"] == "revive":
+        return None
+    rows = [0, 1] if info["row"] == "any" else [int(info["row"] == "back")]
+    return next((r for r in rows if len(p["rows"][r]) + int(r == deploying_row) < 6), None)
+
+
 def targets_for(s, seat, key, row, source_id=None):
     """Public UI hint and server validation share these exact target rules."""
     effect = CARDS[key]["effect"]
     friend = [c for c in units(s["players"][seat]) if c["id"] != source_id]
     enemy = units(s["players"][1-seat])
+    if effect == "revive":
+        p = s["players"][seat]
+        deploying_row = row if source_id is None else None
+        return [c for c in p["discard"] if revive_row(p, c, deploying_row) is not None], 0, 1
+    if effect == "recall":
+        return friend, 0, 1
     if effect in ("damage2", "damage3", "assassin", "pierce"):
         return enemy, 1, 1
     if effect in ("buff3", "protect", "regent"):
@@ -114,12 +128,25 @@ def effect(s, seat, key, row, target_ids, source=None):
     e = card["effect"]
     for t in [c for c in options if c["id"] in target_ids]:
         if e in ("damage2", "damage3", "assassin", "pierce"):
-            damage = {"damage2": 2, "damage3": 3, "assassin": 4 if injured(t) else 2, "pierce": 5}[e]
+            damage = {"damage2": 2, "damage3": 3, "assassin": 4 if injured(t) else 2, "pierce": 3}[e]
             if e == "pierce":
                 t["armor"] = 0
+                t["power"] = min(t["power"], CARDS[t["key"]]["power"])
             absorbed = min(damage, t["armor"])
             t["armor"] -= absorbed
             t["power"] -= damage-absorbed
+        elif e == "revive":
+            p = s["players"][seat]
+            destination = revive_row(p, t)
+            p["discard"].remove(t)
+            p["rows"][destination].append({**t, "power": CARDS[t["key"]]["power"], "armor": 0})
+        elif e == "recall":
+            p = s["players"][seat]
+            for cards in p["rows"]:
+                if t in cards:
+                    cards.remove(t)
+                    break
+            p["hand"].append({"id": t["id"], "key": t["key"]})
         else:
             t["power"] += 3 if e in ("buff3", "buff3two", "regent") else 2
             if e in ("protect", "regent"):
@@ -127,9 +154,9 @@ def effect(s, seat, key, row, target_ids, source=None):
     if source:
         if e == "armor":
             source["armor"] += 3
-        elif e in ("hunter", "guide"):
+        elif e == "hunter":
             count = sum(injured(c) for c in units(s["players"][1-seat]))
-            source["power"] += (3 if count else 0) if e == "hunter" else min(count, 3)
+            source["power"] += 3 if count else 0
         elif e == "infantry" and len(s["players"][seat]["rows"][row]) > 1:
             source["power"] += 3
     for p in s["players"]:
@@ -228,6 +255,10 @@ def apply_action(state, seat, action, payload, now_ms, rng):
                     raise ValueError("无法放入该战列")
                 source = {**c, "power": info["power"], "armor": 0}
                 p["rows"][row].append(source)
+            # Only units played from hand trigger existing banners, before deployment.
+            if source:
+                source["power"] += sum(CARDS[u["key"]]["effect"] == "banner"
+                                       for u in p["rows"][row] if u["id"] != source["id"])
             effect(s, seat, c["key"], row, payload["targets"], source)
             p["hand"].remove(c)
             if info["type"] == "tactic":

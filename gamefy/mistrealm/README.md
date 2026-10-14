@@ -16,6 +16,35 @@ PYTHONPATH=src python scripts/mistrealm_dev.py --port 18741
 
 流程：首页 → 快速匹配或建房/加入 → 选阵营 → 准备 → 房主开始 → 换牌 → 预备牌 → 对战 → 结算 → 双方再战。
 
+## 重制预组（2026-10-15）
+
+仍为每套20张：6种中立牌加4种阵营牌，各2张，另配1位领袖。争点、停手、抽牌与预备牌规则保持不变，沿用现有美术。这是首轮可试玩数值，尚未进行大样本胜率平衡。
+
+- 黑鸦：弩手/骑士制造伤口 → 刺客追击或猎手增益 → 引路人回收受伤单位或部署牌，择机再次使用。回收会丢失当前场上点数，不能无代价重复技能。
+- 烬冠：王旗先落阵 → 同列单位持续获得额外增益 → 守卫保护王旗，统领与动员补充阵型收益。王旗本身低战力，先出有风险，后出则少收益。
+- 中立医师提供跨局资源，但只能复活基础战力≤5的非医师单位，复活不触发部署或王旗。复活出的持续技能仍会响应之后的手牌部署。任意战列单位优先前列，满则后列；无可用位置时不可选。
+- 破甲弩矢清除增益与护甲后造成3伤害，用来反制高增益目标；不会把受伤单位恢复至基础战力。
+- 回收、复活允许不选目标直接部署；有目标的伤害或保护部署技能仍须选目标。医师/引路人不会凭空抽新牌。
+
+| 卡牌 | 基础战力 | 效果 |
+|---|---:|---|
+| 荒境佣兵 | 7 | 无部署效果。 |
+| 铁盾卫士 | 5 | 部署：自身获得3护甲。 |
+| 山隘弩手 | 4 | 部署：对一个敌人造成3伤害。 |
+| 随军医师 | 2 | 部署：可复活弃牌堆中一个基础战力不超过5的非医师单位。恢复基础战力，不触发部署；任意战列单位优先进入前列。 |
+| 战地动员 | — | 使至多两个不同友军各获得3增益。 |
+| 破甲弩矢 | — | 移除一个敌人的全部护甲与高于基础战力的增益，再造成3伤害。 |
+| 雾鸦骑士 | 7 | 部署：对一个敌人造成2伤害。 |
+| 灰羽猎手 | 5 | 部署：存在受伤敌人时，自身获得3增益。 |
+| 断誓刺客 | 4 | 部署：对一个敌人造成2伤害；目标已受伤则改为4。 |
+| 鸦群引路人 | 3 | 部署：可将一个其他友军收回手牌，移除其增益、伤害与护甲。再次打出时可触发部署技能。 |
+| 烬冠步兵 | 5 | 部署：本列有其他友军时，自身获得3增益。 |
+| 王旗执掌者 | 3 | 持续：每当你从手牌向本列部署其他单位，使该单位获得1增益。复活不触发；多面王旗可叠加。 |
+| 誓约守卫 | 6 | 部署：使一个其他友军获得2增益及2护甲。 |
+| 灰烬统领 | 5 | 部署：本列至少有两个其他友军时，使其中两个各获得2增益。 |
+| 无冠鸦王 | — | 整场一次：对一个敌人造成3伤害，消耗行动。 |
+| 余烬摄政 | — | 整场一次：使一个友军获得3增益及2护甲，消耗行动。 |
+
 ## 文件
 
 - publish/client.js：SDK 身份、HTTP、SSE、失活超时和退避；断流后顺序读取快照，避免并行同步通道。
@@ -29,7 +58,9 @@ PYTHONPATH=src python scripts/mistrealm_dev.py --port 18741
 
 ```sh
 PYTHONPATH=src python -m pytest tests/core/test_mistrealm_state.py tests/core/test_mistrealm_api.py tests/core/test_mistrealm_integration.py gamefy/mistrealm/tests/test_assets.py -q
+PYTHONPATH=src python -m pytest tests/core/test_mistrealm_deck_rework.py -q
 node --test gamefy/mistrealm/tests/client.test.mjs
+PYTHONPATH=src MISTREALM_DEV_URL=http://127.0.0.1:18741 python gamefy/mistrealm/tests/deck_rework_browser.py
 python gamefy/mistrealm/tests/browser_smoke.py
 MISTREALM_DEV_URL=http://127.0.0.1:18741 python gamefy/mistrealm/tests/matchmaking_browser.py
 ```

@@ -36,3 +36,14 @@ button:active:not(:disabled){transform:translateY(1px)}
 @media(prefers-reduced-motion:reduce){button{transition:none}}
 
 @media(max-width:700px){.player-panel.empty-seat{min-height:190px}}
+
+.match-panel{max-width:660px;margin:7vh auto 3vh;text-align:center;padding:42px 32px;background:linear-gradient(145deg,#152630ed,#0b151dee);border:1px solid #b79d6366;box-shadow:inset 0 0 0 6px #0c1517,inset 0 0 0 7px #b79d6329,0 30px 80px #0006}
+.match-panel h2{font-family:"Songti SC","STSong",serif;font-size:32px;letter-spacing:4px;margin:30px 0 18px}.match-panel .muted{line-height:2.1}
+.match-seal{display:flex;align-items:center;justify-content:center;gap:30px;margin:28px auto 0;width:220px;height:110px;position:relative}
+.match-seal:before{content:"";position:absolute;inset:-7px 48px;border:1px solid #d7bd8244;border-top-color:#d7bd82;border-bottom-color:#80c3c6;transform:rotate(45deg);animation:match-pulse 3s ease-in-out infinite}
+.match-seal img{width:42px;height:42px}.match-seal span{font-size:12px;color:var(--gold)}
+.match-elapsed{color:var(--muted);font-size:12px;letter-spacing:2px;margin:24px 0}.match-elapsed strong{font-size:24px;font-weight:400;color:var(--gold);font-variant-numeric:tabular-nums}
+.match-note{color:#85979d;font-size:11px;letter-spacing:1px;margin-top:20px}.match-panel #match-cancel{min-width:180px;border-color:#b79d6366}
+@keyframes match-pulse{50%{opacity:.35;box-shadow:0 0 25px #80c3c61a}}
+@media(max-width:700px){.match-panel{margin:5vh auto;padding:32px 18px}.match-panel h2{font-size:25px;letter-spacing:2px}}
+@media(prefers-reduced-motion:reduce){.match-seal:before{animation:none}}

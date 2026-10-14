@@ -42,6 +42,10 @@ class RequestBody(Body):
     request_id: UUID
 
 
+class MatchTicket(Body):
+    ticket: UUID
+
+
 class Join(RequestBody):
     code: str = Field(pattern=r"^[0-9]{6}$")
 
@@ -88,6 +92,18 @@ def mistrealm_router(repository, clock):
     @router.post("/rooms/join")
     def join(body: Join, authorization: str | None = Header(None)):
         return call(repository.mistrealm_join, identity(authorization), body.code, body.request_id, clock())
+
+    @router.post("/matchmaking")
+    def match_start(authorization: str | None = Header(None)):
+        return call(repository.mistrealm_matchmaking, identity(authorization), "start", None, clock())
+
+    @router.post("/matchmaking/heartbeat")
+    def match_heartbeat(body: MatchTicket, authorization: str | None = Header(None)):
+        return call(repository.mistrealm_matchmaking, identity(authorization), "heartbeat", body.ticket, clock())
+
+    @router.post("/matchmaking/cancel")
+    def match_cancel(body: MatchTicket, authorization: str | None = Header(None)):
+        return call(repository.mistrealm_matchmaking, identity(authorization), "cancel", body.ticket, clock())
 
     @router.get("/rooms/{room_id}")
     def view(room_id: UUID, authorization: str | None = Header(None)):

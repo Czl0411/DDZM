@@ -4,6 +4,7 @@ import {CONFIG} from './config.js';
 const sdk=window.dzmm,client=new MistrealmClient({sdk,apiBase:CONFIG.apiBase});
 const $=id=>document.getElementById(id),main=$('main');
 let cards={},profile=null,room=null,busy=false,selection=null,picks=[],targets=[],row=0,readySent=false;
+let matchmaking=null,matchTimer=null,matchEpoch=0;
 
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const factions={raven:'黑鸦议会',crown:'烬冠军团'};
@@ -34,7 +35,7 @@ function update(value){
  if(changed){resetSelection();feedback('已同步房间');}
  render();
 }
-function enter(value){update(value);if(!room)return;client.follow(value.room_id,update,error=>{
+function enter(value){stopMatchmaking();matchmaking=null;update(value);if(!room)return;client.follow(value.room_id,update,error=>{
  if(error.status===403||error.status===404){
   client.stop();room=null;client.state=null;client.roomId=null;resetSelection();render();
   feedback('房间已关闭或席位已释放，可以重新创建或加入。');return;
@@ -56,7 +57,9 @@ async function boot(){
    cards=await response.json();
   }
   profile=await client.boot();
-  if(profile.room_id)enter(await client.snapshot(profile.room_id));else render();
+  if(profile.room_id)enter(await client.snapshot(profile.room_id));
+  else if(profile.matchmaking?.status==='waiting')showMatchmaking(profile.matchmaking);
+  else {stopMatchmaking();matchmaking=null;render();}
   feedback('欢迎回来，'+profile.name);markReady();
  }catch(error){
   feedback(error.message,true);
@@ -67,7 +70,7 @@ async function boot(){
 function render(){
  if(!profile)return;
  document.body.classList.toggle('battle',!!room&&room.state.phase!=='waiting');
- if(!room){renderHome();return;}
+ if(!room){if(matchmaking)renderMatchmaking();else renderHome();return;}
  const s=room.state;
  main.dataset.version=String(s.version);main.dataset.phase=s.phase;
  if(s.phase==='waiting')renderRoom();
@@ -77,12 +80,44 @@ function render(){
  imageFallback();
 }
 function renderHome(){
- main.innerHTML=`<section class="hero"><div class="hero-copy"><p class="eyebrow">MISTREALM · A GAME OF CHOICES</p><h1>王冠将倾<br>群鸦将至</h1><p class="intro">两支军团，三局交锋。<br>决定胜负的，是你留下的最后一张牌。</p><div class="actions">${button('创建房间','create',busy,'primary')}${button('游戏规则','home-rules')}</div><div class="join-form" id="join-form"><input id="join-code" aria-label="六位房间码" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="输入六位房间码" required><button ${busy?'disabled':''}>加入房间</button></div><p class="muted">公开双人对战 · 固定预组 · 三局决胜</p></div></section>`;
+ main.innerHTML=`<section class="hero"><div class="hero-copy"><p class="eyebrow">MISTREALM · A GAME OF CHOICES</p><h1>王冠将倾<br>群鸦将至</h1><p class="intro">两支军团，三局交锋。<br>决定胜负的，是你留下的最后一张牌。</p><div class="actions">${button('快速匹配','match-start',busy,'primary')}${button('自定义房间','create',busy)}${button('游戏规则','home-rules')}</div><div class="join-form" id="join-form"><input id="join-code" aria-label="六位房间码" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="输入六位房间码" required><button ${busy?'disabled':''}>加入房间</button></div><p class="muted">公开双人对战 · 固定预组 · 三局决胜</p></div></section>`;
+ bind('match-start',()=>run(async()=>showMatchmaking(await client.startMatchmaking())));
  bind('create',()=>run(async()=>enter(await client.create())));
  const join=()=>{const code=$('join-code').value.trim();if(!/^[0-9]{6}$/.test(code)){feedback('请输入六位数字房间码',true);return;}run(async()=>enter(await client.join(code)));};
  $('join-form').querySelector('button').onclick=join;
  $('join-code').onkeydown=e=>{if(e.key==='Enter')join();};
  bind('home-rules',showRules);
+}
+function stopMatchmaking(){matchEpoch++;clearTimeout(matchTimer);matchTimer=null;}
+function showMatchmaking(value){
+ stopMatchmaking();
+ if(value.status==='matched'){matchmaking=null;enter(value.room);feedback('匹配成功！选择阵营并准备开局。');return;}
+ if(value.status!=='waiting'){matchmaking=null;render();feedback('已退出匹配，可以重新开始。');return;}
+ matchmaking=value;render();
+ const epoch=matchEpoch,ticket=value.ticket;
+ const poll=async()=>{
+  if(epoch!==matchEpoch)return;
+  try{
+   const result=await client.heartbeatMatchmaking(ticket);
+   if(epoch!==matchEpoch)return;
+   if(result.status!=='waiting'){showMatchmaking(result);return;}
+   matchmaking=result;feedback('正在寻找在线对手…');
+  }catch(error){if(epoch!==matchEpoch)return;feedback('匹配连接暂时中断，正在重试；也可以取消匹配。',true);}
+  if(epoch===matchEpoch)matchTimer=setTimeout(poll,2000);
+ };
+ matchTimer=setTimeout(poll,2000);
+}
+function renderMatchmaking(){
+ main.innerHTML=`<section class="match-panel"><p class="eyebrow">QUICK MATCH · 双人对战</p><div class="match-seal" aria-hidden="true"><img src="./assets/ui/icons/raven.svg" alt=""><span>◆</span><img src="./assets/ui/icons/crown.svg" alt=""></div><h2>群鸦正在寻找对手</h2><p class="muted">配对成功后，双方选择阵营并准备开局。<br>你也可以邀请朋友，通过房间码对战。</p><div class="match-elapsed">已等待 <strong id="match-elapsed">0</strong> 秒</div>${button('取消匹配','match-cancel',busy)}<p class="match-note">等待期间请保持页面在线</p></section>`;
+ bind('match-cancel',()=>{
+  const ticket=matchmaking.ticket;
+  stopMatchmaking();
+  run(async()=>{
+   try{showMatchmaking(await client.cancelMatchmaking(ticket));}
+   catch(error){showMatchmaking(matchmaking);throw error;}
+  });
+ });
+ timer();
 }
 function renderRoom(){
  const s=room.state;
@@ -164,7 +199,8 @@ $('settings-open').onclick=()=>{modal('<h2>显示设置</h2><p class="muted">设
 $('modal-close').onclick=()=>$('modal').close();
 $('refresh').onclick=()=>run(async()=>{if(room)enter(await client.snapshot());else await boot();});
 $('home-link').onclick=e=>{e.preventDefault();if(room)feedback('请通过房间内的离开或认输按钮退出');else render();};
-function timer(){if(!room)return;const s=room.state;document.querySelectorAll('[data-timer]').forEach(el=>{el.textContent=s.phase==='finished'?'':Math.max(0,Math.ceil((s.deadline_ms-Date.now())/1000))+'秒';});}
+function timer(){if(matchmaking&&$('match-elapsed'))$('match-elapsed').textContent=String(Math.max(0,Math.floor((Date.now()-matchmaking.queued_at_ms)/1000)));if(!room)return;const s=room.state;document.querySelectorAll('[data-timer]').forEach(el=>{el.textContent=s.phase==='finished'?'':Math.max(0,Math.ceil((s.deadline_ms-Date.now())/1000))+'秒';});}
 setInterval(timer,500);
-window.addEventListener('pagehide',()=>client.stop());
+window.addEventListener('pagehide',()=>{client.stop();stopMatchmaking();});
+window.addEventListener('pageshow',event=>{if(event.persisted)boot();});
 boot();

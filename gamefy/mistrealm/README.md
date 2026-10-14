@@ -12,7 +12,9 @@ PYTHONPATH=src python scripts/mistrealm_dev.py --port 18741
 
 打开 http://127.0.0.1:18741/?player=local-a 和 http://127.0.0.1:18741/?player=local-b ，创建房间并复制六位房间码给另一页面。开发服务器只监听回环地址、使用临时 SQLite、仅在开发 HTML 中注入模拟 SDK；关闭服务器即清空本次试玩数据，线上 publish 不含模拟身份。
 
-流程：首页 → 建房/加入 → 选阵营 → 准备 → 房主开始 → 换牌 → 预备牌 → 对战 → 结算 → 双方再战。
+也可在两个入口同时点击“快速匹配”，系统自动配对，仍由双方选择阵营、准备后开局。匹配不加段位或积分；等待时可取消，刷新会恢复有效队列。停止心跳20秒后会退出候选队列。
+
+流程：首页 → 快速匹配或建房/加入 → 选阵营 → 准备 → 房主开始 → 换牌 → 预备牌 → 对战 → 结算 → 双方再战。
 
 ## 文件
 
@@ -29,6 +31,7 @@ PYTHONPATH=src python scripts/mistrealm_dev.py --port 18741
 PYTHONPATH=src python -m pytest tests/core/test_mistrealm_state.py tests/core/test_mistrealm_api.py tests/core/test_mistrealm_integration.py gamefy/mistrealm/tests/test_assets.py -q
 node --test gamefy/mistrealm/tests/client.test.mjs
 python gamefy/mistrealm/tests/browser_smoke.py
+MISTREALM_DEV_URL=http://127.0.0.1:18741 python gamefy/mistrealm/tests/matchmaking_browser.py
 ```
 
 浏览器检查需要运行上述本地服务器，并安装 Playwright 与 Google Chrome。PostgreSQL 并发和迁移测试使用独立可丢弃数据库：

@@ -25,6 +25,9 @@ export class MistrealmClient {
     await this.request('/players/me',{method:'POST',body:JSON.stringify({name:String(info.name||info.nickname||'旅人').slice(0,40),avatar:typeof avatar==='string'&&avatar.startsWith('https://')?avatar:null})});
     return this.request('/players/me');
   }
+  startMatchmaking(){return this.request('/matchmaking',{method:'POST'});}
+  heartbeatMatchmaking(ticket){return this.request('/matchmaking/heartbeat',{method:'POST',body:JSON.stringify({ticket})});}
+  cancelMatchmaking(ticket){return this.request('/matchmaking/cancel',{method:'POST',body:JSON.stringify({ticket})});}
   create(id=requestId()){return this.request('/rooms',{method:'POST',body:JSON.stringify({request_id:id})});}
   join(code,id=requestId()){return this.request('/rooms/join',{method:'POST',body:JSON.stringify({code,request_id:id})});}
   snapshot(roomId=this.roomId){return this.request('/rooms/'+roomId);}

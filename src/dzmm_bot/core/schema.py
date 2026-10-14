@@ -4436,6 +4436,10 @@ class MistrealmPlayerRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     rate_limits: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    queue_ticket: Mapped[UUID | None] = mapped_column(Uuid)
+    queued_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    queue_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+
 
 
 class MistrealmRoomRecord(Base):

@@ -56,3 +56,16 @@ test('SSE watchdog recovers a half-open fetch',async(t)=>{
  assert.equal(failed,1);
  client.stop();t.mock.timers.reset();
 });
+test('matchmaking start, heartbeat and cancellation use separate queue endpoints',async()=>{
+ const calls=[];
+ const client=new MistrealmClient({sdk:{},apiBase:'',fetchImpl:async(url,options)=>{
+  calls.push({url,options});return {ok:true,json:async()=>({status:'waiting',ticket:'ticket'})};
+ }});
+ client.uid='a';
+ await client.startMatchmaking();
+ await client.heartbeatMatchmaking('ticket');
+ await client.cancelMatchmaking('ticket');
+ assert.deepEqual(calls.map(c=>c.url),['/api/mistrealm/matchmaking','/api/mistrealm/matchmaking/heartbeat','/api/mistrealm/matchmaking/cancel']);
+ assert.deepEqual(JSON.parse(calls[1].options.body),{ticket:'ticket'});
+ assert.deepEqual(JSON.parse(calls[2].options.body),{ticket:'ticket'});
+});

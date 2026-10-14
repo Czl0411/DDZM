@@ -8,7 +8,7 @@
 
 ## 待发布时的步骤
 
-1. 备份目标数据库，确认当前迁移链。测试新增迁移 20261015_111（上游20261014_110），再按项目部署流程升级。
+1. 备份目标数据库，确认当前迁移链。测试新增迁移 20261015_111（基础表）与20261015_112（匹配队列字段，上游20261015_111），再按项目部署流程升级。
 2. 服务环境设置 DZMM_MISTREALM_ENABLED=true，重启现有 core 服务。
 3. 仓库 deploy/caddy/dzmm-chess-ip.Caddyfile 已增加精确 /api/mistrealm/* 代理，保持 flush_interval -1，未开放管理路径。实际加载配置前需在目标服务器验证证书、语法和进程配置。
 4. gamefy/mistrealm/publish/config.js 填写可供平台访问的 HTTPS API 根地址。默认为同源，仅供本地服务器。
@@ -26,3 +26,10 @@
 ## 本地验收边界
 
 scripts/mistrealm_dev.py 只监听127.0.0.1，使用临时SQLite和模拟平台UID。它用于查看界面、操作和双客户端同步，不证明真实 Gamefy SDK、平台资源加载或公网网络已通过验收。真实 PostgreSQL 的并发和迁移用独立测试数据库验证，不依赖SQLite推断。
+
+
+## 快速匹配
+
+独立玩家表新增 queue_ticket、queued_at、queue_expires_at 及租期索引，无员工关联。POST /matchmaking 进入/恢复；POST /matchmaking/heartbeat 和 /matchmaking/cancel 携带 ticket。首页每2秒续租，服务端20秒过期。过期票据不被心跳复活，旧取消不清除新票据。
+
+只在有效等待玩家之间配对，不扫描自定义房间。玩家行锁、候选 SKIP LOCKED、两席唯一约束保证并发入座；双方同时进入而互相跳过时，后续心跳会完成配对。取消与配对竞争时，以先提交事务为准：已配对则返回房间，不假装已取消。

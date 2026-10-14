@@ -22,7 +22,7 @@ def test_migration_and_concurrent_seats(monkeypatch):
     monkeypatch.setenv('DZMM_DATABASE_URL',URL)
     config=Config('alembic.ini')
     command.stamp(config,'20261014_110')
-    command.upgrade(config,'20261015_111')
+    command.upgrade(config,'20261015_112')
     engine=create_engine(URL)
     repo=CoreRepository(sessionmaker(engine,expire_on_commit=False))
     for uid in ['a','b','c','d']:
@@ -46,6 +46,6 @@ def test_migration_and_concurrent_seats(monkeypatch):
     assert rooms[0]['room_id']==rooms[1]['room_id']
     command.downgrade(config,'20261014_110')
     assert not any(n.startswith('mistrealm_') for n in inspect(engine).get_table_names())
-    command.upgrade(config,'20261015_111')
+    command.upgrade(config,'20261015_112')
     assert len([n for n in inspect(engine).get_table_names() if n.startswith('mistrealm_')])==4
     command.downgrade(config,'20261014_110')

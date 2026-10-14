@@ -1,5 +1,5 @@
 """Independent players and serialized room transactions for Mistrealm."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from secrets import SystemRandom, randbelow
@@ -97,7 +97,8 @@ class MistrealmRepositoryMixin:
             p = self._mr_player(session, uid)
             room = self._mr_active(session, p, now)
             return {"uid": uid, "name": p.name, "avatar": p.avatar,
-                    "room_id": str(room.id) if room else None}
+                    "room_id": str(room.id) if room else None,
+                    "matchmaking": self._mr_queue_status(p, now)}
 
     def _mr_rate(self, uid, kind, limit, now):
         # Separate transaction: rejected attempts still count; shared by all workers.
@@ -138,25 +139,10 @@ class MistrealmRepositoryMixin:
             old = self._mr_replay(session, p, request_id, digest)
             if old is not None:
                 return old
+            self._mr_clear_queue(p)
             room = self._mr_active(session, p, now)
             if room is None:
-                for _ in range(100):
-                    code = f"{randbelow(1000000):06d}"
-                    try:
-                        with session.begin_nested():
-                            state = new_state(uid, ms(now))
-                            room = Room(host_id=p.id, active_code=code, phase="waiting",
-                                        state=state, created_at=now,
-                                        deadline=datetime.fromtimestamp(state["deadline_ms"]/1000, timezone.utc))
-                            session.add(room)
-                            session.flush()
-                        break
-                    except IntegrityError:
-                        continue
-                else:
-                    raise MistrealmError("暂时无法生成房间码")
-                session.add(Seat(room_id=room.id, seat_index=0, player_id=p.id))
-                session.flush()
+                room = self._mr_new_room(session, p, now)
             result = self._mr_view(session, room, p)
             return self._mr_save(session, p, request_id, digest, result, room, now)
 
@@ -168,6 +154,7 @@ class MistrealmRepositoryMixin:
             old = self._mr_replay(session, p, request_id, digest)
             if old is not None:
                 return old
+            self._mr_clear_queue(p)
             room = self._mr_active(session, p, now)
             if room is None:
                 room = session.scalar(select(Room).where(Room.active_code == code).with_for_update())
@@ -242,3 +229,77 @@ class MistrealmRepositoryMixin:
             rooms = session.scalars(select(Room).where(Room.deadline <= now).with_for_update(skip_locked=True))
             for room in rooms:
                 self._mr_advance(session, room, now)
+
+
+    @staticmethod
+    def _mr_clear_queue(p):
+        p.queue_ticket = p.queued_at = p.queue_expires_at = None
+
+    @staticmethod
+    def _mr_queue_status(p, now):
+        if not p.queue_ticket or p.queue_expires_at <= now:
+            return {"status": "idle"}
+        return {"status": "waiting", "ticket": str(p.queue_ticket),
+                "queued_at_ms": ms(p.queued_at), "expires_at_ms": ms(p.queue_expires_at)}
+
+    def _mr_new_room(self, session, host, now):
+        for _ in range(100):
+            try:
+                with session.begin_nested():
+                    state = new_state(host.platform_uid, ms(now))
+                    room = Room(host_id=host.id, active_code=f"{randbelow(1000000):06d}",
+                                phase="waiting", state=state, created_at=now,
+                                deadline=now+timedelta(minutes=30))
+                    session.add(room)
+                    session.flush()
+                break
+            except IntegrityError:
+                continue
+        else:
+            raise MistrealmError("暂时无法生成房间码")
+        session.add(Seat(room_id=room.id, seat_index=0, player_id=host.id))
+        session.flush()
+        return room
+
+    def mistrealm_matchmaking(self, uid, operation, ticket, now):
+        if operation not in ("start", "heartbeat", "cancel"):
+            raise MistrealmError("匹配操作不正确", 422)
+        if operation == "start":
+            self._mr_rate(uid, "matchmaking", 10, now)
+        with self._session() as session:
+            p = self._mr_player(session, uid)
+            room = self._mr_active(session, p, now)
+            if room:
+                self._mr_clear_queue(p)
+                return {"status": "matched", "room": self._mr_view(session, room, p)}
+            current = self._mr_queue_status(p, now)
+            if operation == "cancel":
+                if str(p.queue_ticket) == str(ticket):
+                    self._mr_clear_queue(p)
+                return self._mr_queue_status(p, now)
+            if operation == "heartbeat":
+                if current["status"] != "waiting" or str(p.queue_ticket) != str(ticket):
+                    return {"status": "idle"}
+            elif current["status"] != "waiting":
+                p.queue_ticket, p.queued_at = uuid4(), now
+            p.queue_expires_at = now+timedelta(seconds=20)
+            session.flush()
+            # Lock the caller first; SKIP LOCKED avoids reciprocal candidate deadlocks.
+            # Custom-room entry uses the same player lock and clears its queue lease.
+            candidate = session.scalar(
+                select(Player).where(
+                    Player.id != p.id, Player.queue_ticket.is_not(None),
+                    Player.queue_expires_at > now,
+                    ~select(Seat.player_id).where(Seat.player_id == Player.id).exists(),
+                ).order_by(Player.queued_at, Player.id).with_for_update(skip_locked=True).limit(1)
+            )
+            if candidate is None:
+                return self._mr_queue_status(p, now)
+            room = self._mr_new_room(session, candidate, now)
+            state = apply_action(room.state, 1, "join", {"uid": uid}, ms(now), SystemRandom())
+            self._mr_sync(session, room, state)
+            session.add(Seat(room_id=room.id, seat_index=1, player_id=p.id))
+            self._mr_clear_queue(candidate)
+            self._mr_clear_queue(p)
+            session.flush()
+            return {"status": "matched", "room": self._mr_view(session, room, p)}

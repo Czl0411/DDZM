@@ -17,6 +17,7 @@ with sync_playwright() as p:
         page.goto(BASE+'?player=classic-browser-'+str(uuid4()))
         expect(page.locator('#quick-match')).to_be_visible()
     a,b=pages
+    a.screenshot(path=str(OUT/'classic-home-1366.png'),full_page=True)
     a.locator('#edit-deck').click()
     expect(a.locator('#builder')).to_be_visible()
     a.locator('#deck-name').fill('赤铜测试军团')
@@ -32,6 +33,7 @@ with sync_playwright() as p:
     code=a.locator('#room-code').inner_text().strip()
     b.locator('#room-code-input').fill(code);b.locator('#join-room').click()
     expect(b.locator('[data-player="0"]')).to_contain_text('阵营待揭晓')
+    b.screenshot(path=str(OUT/'classic-room-1366.png'),full_page=True)
     a.locator('#lock-deck').click();b.locator('#lock-deck').click()
     for page in pages:
         expect(page.locator('#confirm-mulligan')).to_be_visible()
@@ -42,6 +44,25 @@ with sync_playwright() as p:
         a.set_viewport_size({'width':width,'height':height})
         assert a.evaluate('document.documentElement.scrollWidth<=innerWidth'), 'horizontal page overflow'
         a.screenshot(path=str(OUT/f'classic-battle-{width}.png'),full_page=True)
+    # Exercise the real public queue only on this disposable local server.
+    q1,q2=context.new_page(),context.new_page()
+    for page in (q1,q2):
+        page.on('pageerror',lambda error:errors.append(str(error)))
+        page.add_init_script('Date.now=()=>0;')
+        page.goto(BASE+'?player=classic-queue-'+str(uuid4()))
+        expect(page.locator('#quick-match')).to_be_visible()
+    network=context.new_cdp_session(q1)
+    network.send('Network.enable')
+    network.send('Network.emulateNetworkConditions',{'offline':False,'latency':250,'downloadThroughput':500000/8,'uploadThroughput':250000/8})
+    q1.locator('#quick-match').click()
+    q1.wait_for_function('Number(document.querySelector("#elapsed")?.textContent)>=2')
+    q1.reload();expect(q1.locator('#cancel-match')).to_be_visible()
+    q1.wait_for_function('Number(document.querySelector("#elapsed")?.textContent)>=2')
+    q1.screenshot(path=str(OUT/'classic-queue-1366.png'),full_page=True)
+    q1.locator('#cancel-match').click();expect(q1.locator('#quick-match')).to_be_visible()
+    q1.locator('#quick-match').click();expect(q1.locator('#cancel-match')).to_be_visible()
+    q2.locator('#quick-match').click()
+    for page in (q1,q2):expect(page.locator('#confirm-mulligan')).to_be_visible(timeout=20000)
     assert not errors,errors
     browser.close()
-print('Classic two-player builder, reload, lock, mulligan, 3-row and responsive smoke passed')
+print('Classic builder, hidden lobby, battle, responsive UI, slow-network queue timer/reload/cancel/pairing passed')

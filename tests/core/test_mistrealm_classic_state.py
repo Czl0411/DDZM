@@ -100,6 +100,12 @@ def test_frost_chooses_first_and_state_is_json_serializable():
     assert json.loads(json.dumps(s))==s
 
 
+def test_two_frost_factions_cancel_first_choice_and_use_coin_toss():
+    s=act(act(paired(4,5),0,'lock'),1,'lock')
+    assert s['phase']=='mulligan' and s['chooser'] is None
+    assert s['first'] in (0,1)
+
+
 def test_finished_rematch_requires_both_votes_and_resets_leader_lives_and_selections():
     s=act(playing(),0,'concede')
     s=act(s,0,'rematch')
@@ -120,3 +126,12 @@ def test_server_supplies_only_current_actor_legal_moves():
     assert {'action':'play','payload':{'card':'flex','row':1}} in moves
     assert {'action':'play','payload':{'card':'flex','row':2}} not in moves
     assert not any(m['action'] in ('play','leader','pass') for m in engine().project(s,1)['legal_moves'])
+
+
+@pytest.mark.parametrize('expired',[False,True])
+def test_closed_undealt_room_projects_without_revealing_opponent_selection(expired):
+    s=paired(0,2)
+    s=engine().advance(s,s['deadline_ms']) if expired else act(s,0,'leave')
+    view=engine().project(s,0)
+    assert view['phase']=='closed' and view['legal_moves']==[]
+    assert view['players'][1]=={'uid':'bob','locked':False}

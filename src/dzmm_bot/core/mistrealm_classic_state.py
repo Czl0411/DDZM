@@ -51,8 +51,8 @@ def _deal(state, now_ms, rng):
     choosers = [i for i, p in enumerate(state['players']) if p['faction'] == 'frost']
     state['first'] = rng.randrange(2)
     state['phase'] = 'mulligan'
-    if choosers:
-        state['chooser'] = rng.choice(choosers)
+    if len(choosers)==1:
+        state['chooser'] = choosers[0]
         state['phase'] = 'choose_first'
     state['deadline_ms'] = now_ms + TURN_MS
 
@@ -167,6 +167,9 @@ def apply_action(state, seat, action, payload, now_ms, rng=None):
                 result['version']=version
         elif action == 'concede':
             if phase in ('waiting','finished','closed'): raise ValueError('尚未开局或已经结束')
+            pending=result['pending']
+            if pending and pending.get('source'):
+                effects.discard(result['players'][pending['actor']],pending['source'])
             result.update(phase='finished',winner=1-seat,turn=None,deadline_ms=None,pending=None)
         else:
             actor=result['pending']['actor'] if result['pending'] else result['turn']
@@ -221,7 +224,7 @@ def project(state, seat):
     for index,p in enumerate(state['players']):
         if p is None: view['players'].append(None);continue
         item=dict(uid=p['uid'],locked=p['locked'])
-        if state['phase']=='waiting':
+        if 'faction' not in p:
             if index==seat: item['selection']=deepcopy(p['selection'])
         else:
             item.update({k:deepcopy(p[k]) for k in ('faction','leader','leader_used','leader_disabled','rows','supports','leader_horns','passed','mulligan_done','discard','rematch')})

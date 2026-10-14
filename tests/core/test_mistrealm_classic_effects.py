@@ -95,6 +95,16 @@ def test_decoy_keeps_physical_placeholder_and_can_reuse_nonhero_spy():
     assert game.project(s,0)['players'][0]['score']==0
 
 
+@pytest.mark.parametrize('seat',[0,1])
+def test_concede_during_decoy_choice_preserves_the_pending_physical_card(seat):
+    s=playing();s['players'][0]['rows'][0]=[card('c006')]
+    s=play(s,'c117',-1);before=physical_ids(s)
+    s=act(s,seat,'concede')
+    assert s['phase']=='finished' and s['pending'] is None
+    assert physical_ids(s)==before
+    assert card('c117') in s['players'][0]['discard']
+
+
 def test_global_scorch_removes_all_highest_nonhero_ties_on_both_sides():
     s=playing();s['players'][0]['rows'][0]=[card('c003'),card('c110')]
     s['players'][1]['rows'][1]=[card('c027')]

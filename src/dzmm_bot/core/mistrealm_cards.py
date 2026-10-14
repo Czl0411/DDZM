@@ -21,7 +21,7 @@ _ROWS = [
 CARDS = {
     key: dict(id=key, name=name, faction=key.split("_")[0], type=kind,
               row=row, power=power, effect=effect, text=text,
-              art=f"assets/art/{key.replace('_', '-')}.png")
+              art=f"assets/art/{key.replace('_', '-')}.webp")
     for key, name, kind, row, power, effect, text in _ROWS
 }
 

@@ -1,2 +1,2 @@
-// Same-origin API by default. Set the public HTTPS API origin when binding the new game card.
-export const CONFIG={apiBase:''};
+// Public HTTPS origin for the Mistrealm API.
+export const CONFIG={apiBase:'https://49.234.20.159'};

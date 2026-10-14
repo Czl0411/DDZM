@@ -1,6 +1,6 @@
 /* Restore the approved home / room / battle compositions using the supplied art. */
 :root{--frame:#b69b62;--raven:#73b7bc;--crown:#b96555}
-body{background-image:linear-gradient(90deg,#05090dd9,#05090d15 48%,#05090d66),url('./assets/backgrounds/royal-hall.png')}
+body{background-image:linear-gradient(90deg,#05090dd9,#05090d15 48%,#05090d66),url('./assets/backgrounds/royal-hall.webp')}
 header{padding:12px 3vw;background:linear-gradient(#05090dbb,transparent);border:0}
 .brand b,h1,h2,.hero-subtitle,.command-heading,.room-footer{font-family:"Songti SC","STSong",serif}
 #feedback{padding:6px 3vw;min-height:28px;background:transparent;font-size:12px;text-shadow:0 1px 5px #000}
@@ -35,7 +35,7 @@ nav button:not(.card):not(.faction-option):not(.close){padding:8px 18px}
 .player-info{width:auto;padding:0;text-shadow:0 2px 6px #000;min-width:0}.player-info h2{font-size:25px;margin:6px 0 12px;overflow-wrap:anywhere}.player-info .eyebrow{font-size:9px}.player-info .room-field-label{margin:16px 0 6px}.player-info .faction-picker{margin:0;gap:6px;max-width:none}.faction-option{padding:8px;gap:7px;min-height:42px}.faction-option>img{width:22px;height:22px}.faction-option strong{font-size:13px;letter-spacing:1px}.faction-option .faction-check{font-size:11px}.deck-description{font-size:12px;border-top:1px solid #b69b6244;padding-top:8px;margin:0}.player-info .leader-ability{font-size:10px;line-height:1.6;margin-top:12px}.opponent-faction{display:flex;align-items:center;gap:8px;font-size:15px}.opponent-faction img{width:24px}.readiness{font-size:10px;padding:5px 8px}
 .deck-preview{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.deck-preview>div{height:112px;position:relative;border:1px solid #b69b6299;overflow:hidden}.deck-preview img{width:100%;height:100%;object-fit:cover;object-position:center 25%}.deck-preview span{position:absolute;bottom:0;left:0;right:0;padding:7px 2px;background:linear-gradient(transparent,#070a0e 25%);text-align:center;font-family:serif;font-size:12px}
 .player-panel.empty-seat{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.empty-emblem{font-size:100px;color:#b69b6280}.room-actions{margin:24px 0 0;padding:0}.room-actions button{min-width:200px;min-height:58px;font-family:serif;font-size:23px}.room-footer{text-align:center;font-size:13px;color:#c8b894;letter-spacing:3px;margin-bottom:0}
-body.battle{background-image:linear-gradient(#05090c66,#05090c88),url('./assets/backgrounds/battle-table.png')}
+body.battle{background-image:linear-gradient(#05090c66,#05090c88),url('./assets/backgrounds/battle-table.webp')}
 body[data-screen="playing"] header{padding:7px 2vw}.battle .brand b{font-size:24px}.battle .brand span{font-size:9px}
 body[data-screen="playing"] main{display:grid;grid-template-columns:170px minmax(0,1fr) 210px;gap:8px 16px;padding:8px 2vw 20px;align-items:start}
 .battle-top{grid-column:1/-1;margin:0 0 4px}.battle-top .round{font:22px serif}.arena{display:contents}.sidebar{grid-column:1;grid-row:2/5;gap:16px}.board{grid-column:2;grid-row:2;gap:5px}

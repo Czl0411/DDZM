@@ -8,7 +8,7 @@
     "power": 7,
     "effect": "none",
     "text": "无部署效果。",
-    "art": "assets/art/neutral-mercenary.png"
+    "art": "assets/art/neutral-mercenary.webp"
   },
   "neutral_guard": {
     "id": "neutral_guard",
@@ -19,7 +19,7 @@
     "power": 5,
     "effect": "armor",
     "text": "部署：自身获得3护甲。",
-    "art": "assets/art/neutral-guard.png"
+    "art": "assets/art/neutral-guard.webp"
   },
   "neutral_crossbow": {
     "id": "neutral_crossbow",
@@ -30,7 +30,7 @@
     "power": 4,
     "effect": "damage3",
     "text": "部署：对一个敌人造成3伤害。",
-    "art": "assets/art/neutral-crossbow.png"
+    "art": "assets/art/neutral-crossbow.webp"
   },
   "neutral_medic": {
     "id": "neutral_medic",
@@ -41,7 +41,7 @@
     "power": 2,
     "effect": "revive",
     "text": "部署：可复活弃牌堆中一个基础战力不超过5的非医师单位。恢复基础战力，不触发部署；任意战列单位优先进入前列。",
-    "art": "assets/art/neutral-medic.png"
+    "art": "assets/art/neutral-medic.webp"
   },
   "neutral_mobilize": {
     "id": "neutral_mobilize",
@@ -52,7 +52,7 @@
     "power": 0,
     "effect": "buff3two",
     "text": "使至多两个不同友军各获得3增益。",
-    "art": "assets/art/neutral-mobilize.png"
+    "art": "assets/art/neutral-mobilize.webp"
   },
   "neutral_pierce": {
     "id": "neutral_pierce",
@@ -63,7 +63,7 @@
     "power": 0,
     "effect": "pierce",
     "text": "移除一个敌人的全部护甲与高于基础战力的增益，再造成3伤害。",
-    "art": "assets/art/neutral-pierce.png"
+    "art": "assets/art/neutral-pierce.webp"
   },
   "raven_knight": {
     "id": "raven_knight",
@@ -74,7 +74,7 @@
     "power": 7,
     "effect": "damage2",
     "text": "部署：对一个敌人造成2伤害。",
-    "art": "assets/art/raven-knight.png"
+    "art": "assets/art/raven-knight.webp"
   },
   "raven_hunter": {
     "id": "raven_hunter",
@@ -85,7 +85,7 @@
     "power": 5,
     "effect": "hunter",
     "text": "部署：存在受伤敌人时，自身获得3增益。",
-    "art": "assets/art/raven-hunter.png"
+    "art": "assets/art/raven-hunter.webp"
   },
   "raven_assassin": {
     "id": "raven_assassin",
@@ -96,7 +96,7 @@
     "power": 4,
     "effect": "assassin",
     "text": "部署：对一个敌人造成2伤害；目标已受伤则改为4。",
-    "art": "assets/art/raven-assassin.png"
+    "art": "assets/art/raven-assassin.webp"
   },
   "raven_guide": {
     "id": "raven_guide",
@@ -107,7 +107,7 @@
     "power": 3,
     "effect": "recall",
     "text": "部署：可将一个其他友军收回手牌，移除其增益、伤害与护甲。再次打出时可触发部署技能。",
-    "art": "assets/art/raven-guide.png"
+    "art": "assets/art/raven-guide.webp"
   },
   "crown_infantry": {
     "id": "crown_infantry",
@@ -118,7 +118,7 @@
     "power": 5,
     "effect": "infantry",
     "text": "部署：本列有其他友军时，自身获得3增益。",
-    "art": "assets/art/crown-infantry.png"
+    "art": "assets/art/crown-infantry.webp"
   },
   "crown_banner": {
     "id": "crown_banner",
@@ -129,7 +129,7 @@
     "power": 3,
     "effect": "banner",
     "text": "持续：每当你从手牌向本列部署其他单位，使该单位获得1增益。复活不触发；多面王旗可叠加。",
-    "art": "assets/art/crown-banner.png"
+    "art": "assets/art/crown-banner.webp"
   },
   "crown_guard": {
     "id": "crown_guard",
@@ -140,7 +140,7 @@
     "power": 6,
     "effect": "protect",
     "text": "部署：使一个其他友军获得2增益及2护甲。",
-    "art": "assets/art/crown-guard.png"
+    "art": "assets/art/crown-guard.webp"
   },
   "crown_commander": {
     "id": "crown_commander",
@@ -151,7 +151,7 @@
     "power": 5,
     "effect": "commander",
     "text": "部署：本列至少有两个其他友军时，使其中两个各获得2增益。",
-    "art": "assets/art/crown-commander.png"
+    "art": "assets/art/crown-commander.webp"
   },
   "raven_king": {
     "id": "raven_king",
@@ -162,7 +162,7 @@
     "power": 0,
     "effect": "damage3",
     "text": "整场一次：对一个敌人造成3伤害，消耗行动。",
-    "art": "assets/art/raven-king.png"
+    "art": "assets/art/raven-king.webp"
   },
   "crown_regent": {
     "id": "crown_regent",
@@ -173,6 +173,6 @@
     "power": 0,
     "effect": "regent",
     "text": "整场一次：使一个友军获得3增益及2护甲，消耗行动。",
-    "art": "assets/art/crown-regent.png"
+    "art": "assets/art/crown-regent.webp"
   }
 }

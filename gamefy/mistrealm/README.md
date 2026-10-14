@@ -80,6 +80,6 @@ MISTREALM_TEST_DATABASE_URL=postgresql+psycopg://USER@127.0.0.1:PORT/mistrealm_t
 
 ## 平台绑定
 
-新游戏卡 ID 为 3769848，已写入本目录 dzmm.json，尚未发布。发布前设置 publish/config.js 的公网 HTTPS API 根地址，再执行 gamefy check 和 gamefy deploy --dry-run。最终上传预算和弱网加载表现需要随平台 dry-run/check 一起验收。
+游戏卡 ID 为 3769848，已发布版本 1792002374478，公网 API 为 https://49.234.20.159。封面、简介及横屏设置已保存；公开上架因 VIP1 每日 2 次额度用完被拒绝，尚未公开。发布包使用同尺寸 WebP，约 9.2 MiB；PNG 原图保存在 source-art/，不上传。
 
 服务配置与迁移步骤见 ../../docs/mistrealm-deployment.md。不会使用现有三个游戏的 cardId。

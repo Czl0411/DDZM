@@ -92,3 +92,13 @@ def test_queue_restores_on_profile_and_heartbeat_keeps_order(game):
     pulse=repo.mistrealm_matchmaking('a','heartbeat',a['ticket'],NOW+timedelta(seconds=10))
     assert pulse['queued_at_ms']==a['queued_at_ms']
     assert pulse['expires_at_ms']>a['expires_at_ms']
+
+
+def test_queue_elapsed_survives_heartbeat_and_reload(game):
+    c,repo,_=game
+    queued=match(c,'a').json()
+    assert queued['elapsed_ms']==0
+    later=NOW+timedelta(seconds=8)
+    renewed=repo.mistrealm_matchmaking('a','heartbeat',queued['ticket'],later)
+    assert renewed['elapsed_ms']==8000
+    assert repo.mistrealm_me('a',later)['matchmaking']['elapsed_ms']==8000

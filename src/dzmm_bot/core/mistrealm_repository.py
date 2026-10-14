@@ -240,7 +240,8 @@ class MistrealmRepositoryMixin:
         if not p.queue_ticket or p.queue_expires_at <= now:
             return {"status": "idle"}
         return {"status": "waiting", "ticket": str(p.queue_ticket),
-                "queued_at_ms": ms(p.queued_at), "expires_at_ms": ms(p.queue_expires_at)}
+                "queued_at_ms": ms(p.queued_at), "expires_at_ms": ms(p.queue_expires_at),
+                "elapsed_ms": max(0, ms(now)-ms(p.queued_at))}
 
     def _mr_new_room(self, session, host, now):
         for _ in range(100):

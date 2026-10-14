@@ -95,7 +95,7 @@ function showMatchmaking(value){
  stopMatchmaking();
  if(value.status==='matched'){matchmaking=null;enter(value.room);feedback('匹配成功！选择阵营并准备开局。');return;}
  if(value.status!=='waiting'){matchmaking=null;render();feedback('已退出匹配，可以重新开始。');return;}
- matchmaking=value;render();
+ matchmaking={...value,received_at:performance.now()};render();
  const epoch=matchEpoch,ticket=value.ticket;
  const poll=async()=>{
   if(epoch!==matchEpoch)return;
@@ -103,7 +103,7 @@ function showMatchmaking(value){
    const result=await client.heartbeatMatchmaking(ticket);
    if(epoch!==matchEpoch)return;
    if(result.status!=='waiting'){showMatchmaking(result);return;}
-   matchmaking=result;feedback('正在寻找在线对手…');
+   matchmaking={...result,received_at:performance.now()};feedback('正在寻找在线对手…');
   }catch(error){if(epoch!==matchEpoch)return;feedback('匹配连接暂时中断，正在重试；也可以取消匹配。',true);}
   if(epoch===matchEpoch)matchTimer=setTimeout(poll,2000);
  };
@@ -217,7 +217,7 @@ $('settings-open').onclick=()=>{modal('<h2>显示设置</h2><p class="muted">设
 $('modal-close').onclick=()=>$('modal').close();
 $('refresh').onclick=()=>run(async()=>{if(room)enter(await client.snapshot());else await boot();});
 $('home-link').onclick=e=>{e.preventDefault();if(room)feedback('请通过房间内的离开或认输按钮退出');else render();};
-function timer(){if(matchmaking&&$('match-elapsed'))$('match-elapsed').textContent=String(Math.max(0,Math.floor((Date.now()-matchmaking.queued_at_ms)/1000)));if(!room)return;const s=room.state;document.querySelectorAll('[data-timer]').forEach(el=>{el.textContent=s.phase==='finished'?'':Math.max(0,Math.ceil((s.deadline_ms-Date.now())/1000))+'秒';});}
+function timer(){if(matchmaking&&$('match-elapsed'))$('match-elapsed').textContent=String(Math.max(0,Math.floor(((matchmaking.elapsed_ms??0)+performance.now()-matchmaking.received_at)/1000)));if(!room)return;const s=room.state;document.querySelectorAll('[data-timer]').forEach(el=>{el.textContent=s.phase==='finished'?'':Math.max(0,Math.ceil((s.deadline_ms-Date.now())/1000))+'秒';});}
 setInterval(timer,500);
 window.addEventListener('pagehide',()=>{client.stop();stopMatchmaking();});
 window.addEventListener('pageshow',event=>{if(event.persisted)boot();});

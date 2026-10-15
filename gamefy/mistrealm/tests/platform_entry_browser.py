@@ -92,6 +92,12 @@ with sync_playwright() as pw:
                 expect(frame.locator('#join-feedback')).to_be_in_viewport()
                 page.screenshot(path=str(ROOT.parent/'platform-join-error-390.png'),full_page=True)
             if mode=='new':
+                frame.locator('#channel-toggle').click()
+                expect(frame.locator('#channel-input')).to_be_visible()
+                frame.locator('#channel-input').fill('沙箱公屏消息')
+                frame.locator('#channel-send').click()
+                expect(frame.locator('#channel-messages')).to_contain_text('沙箱公屏消息')
+                frame.locator('#channel-close').click()
                 frame.locator('#edit-deck').click();expect(frame.locator('#builder')).to_be_visible()
                 page.screenshot(path=str(ROOT.parent/'platform-sandbox.png'),full_page=True)
         except Exception:

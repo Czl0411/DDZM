@@ -133,6 +133,7 @@ async function boot(){profile=await client.boot();if(profile.matchmaking?.status
 bind('close-modal',()=>$('modal').close());bind('home',e=>{e.preventDefault();if(!room&&!queue)home();});bind('reconnect',()=>run(async()=>{if(room)accept(await client.snapshot());else await boot();}));
 bind('channel-toggle',()=>toggleChannel(true));bind('channel-close',()=>toggleChannel(false));
 bind('channel-challenge',()=>run(async()=>publishChallenge(await client.create(selected().id))));
-$('channel-form').onsubmit=e=>{e.preventDefault();const input=$('channel-input'),text=input.value.trim();if(!text)return;run(async()=>{await client.channelPost(text);input.value='';await channelRefresh();});};
+function sendChannel(){const input=$('channel-input'),text=input.value.trim();if(!text)return;run(async()=>{await client.channelPost(text);input.value='';await channelRefresh();});}
+bind('channel-send',sendChannel);$('channel-input').onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();sendChannel();}};
 bind('rules',()=>modal(`<h2>如何赢得牌局</h2><div class="rule-text"><p>双方各有两颗生命宝石。每局双方停手后比较总战力，败者失去一颗；普通平局双方都失去一颗。黑鸦议会赢得平局，双方都是黑鸦时此优势抵消。</p><p>至少22张单位，最多10张特殊牌。起手10张，可换最多2张。没有每回合抽牌，也没有局间常规补牌，保留的手牌跨局使用。</p><p>每次行动打出一张手牌、使用一次领袖能力，或停手。单位进入卡面允许的战列；间谍进入对手战列并让你抽2张。医师与召集可以在一次行动中连续出牌。</p><p>天气影响双方同一战列。英雄不受天气、鼓舞、号角、灼烧或复活的外部影响，但自身技能正常结算。</p></div>`));
 setInterval(tick,250);run(boot);

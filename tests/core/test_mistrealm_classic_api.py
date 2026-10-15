@@ -74,6 +74,21 @@ def test_private_room_lock_and_saved_edit_do_not_change_locked_snapshot(game):
     with f() as s: assert s.get(MistrealmRoomRecord,UUID(r['room_id'])).state['players'][0]['selection']['leader']=='c019'
 
 
+def test_player_can_observe_closed_room_after_opponent_leaves(game):
+    c,_,f=game;a=save(c);b=save(c,'b',3)
+    r=room(c,'a',a).json()
+    r=request(c,'b','/rooms/join',dict(code=r['code'],deck_id=b['id'],request_id=str(uuid4()))).json()
+    with f.begin() as session:
+        record=session.get(MistrealmRoomRecord,UUID(r['room_id']))
+        state=deepcopy(record.state);state.update(phase='finished',winner=0,deadline_ms=None)
+        record.state=state;record.phase='finished'
+    r=c.get(PREFIX+'/rooms/'+r['room_id'],headers=headers('a')).json()
+    assert action(c,'a',r,'leave').json()['state']['phase']=='closed'
+    closed=c.get(PREFIX+'/rooms/'+r['room_id'],headers=headers('b'))
+    assert closed.status_code==200,closed.text
+    assert closed.json()['state']['phase']=='closed'
+
+
 def test_queues_are_versioned_and_snapshot_survives_save(game):
     c,repo,f=game;a=save(c);b=save(c,'b',3)
     first=request(c,'a','/matchmaking',{'deck_id':a['id']})

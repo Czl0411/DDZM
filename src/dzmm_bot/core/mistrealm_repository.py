@@ -120,8 +120,21 @@ class MistrealmRepositoryMixin:
     def _mr_view(session, room, p):
         seat = session.scalar(select(Seat).where(Seat.room_id == room.id, Seat.player_id == p.id))
         if seat is None:
-            raise MistrealmError("你不在这个房间", 403)
-        state = _engine(room.state).project(room.state, seat.seat_index)
+            if room.phase != "closed":
+                raise MistrealmError("你不在这个房间", 403)
+            seat_index = next(
+                (
+                    index
+                    for index, player in enumerate(room.state["players"])
+                    if player and player["uid"] == p.platform_uid
+                ),
+                None,
+            )
+            if seat_index is None:
+                raise MistrealmError("你不在这个房间", 403)
+        else:
+            seat_index = seat.seat_index
+        state = _engine(room.state).project(room.state, seat_index)
         # Seat table is authoritative for active membership.
         for entry in session.scalars(select(Seat).where(Seat.room_id == room.id)):
             profile = session.get(Player, entry.player_id)

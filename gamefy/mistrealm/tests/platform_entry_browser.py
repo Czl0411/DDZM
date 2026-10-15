@@ -40,7 +40,7 @@ SURFACE='http://127.0.0.1:'+str(server.server_port)
 threading.Thread(target=server.serve_forever,daemon=True).start()
 with sync_playwright() as pw:
     browser=pw.chromium.launch(executable_path='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless=True,args=['--disable-features=LocalNetworkAccessChecks'])
-    for mode in ('new','classic-room','legacy-room','classic-queue','legacy-queue'):
+    for mode in ('classic-join-click','classic-join-enter','new','classic-room','legacy-room','classic-queue','legacy-queue'):
         uid='platform-entry-'+str(uuid4())
         api=httpx.Client(base_url=BASE+'/api/mistrealm',headers={'Authorization':'MistrealmUid '+uid})
         api.post('/players/me',json={'name':'沙箱旅人','avatar':None}).raise_for_status()
@@ -53,7 +53,14 @@ with sync_playwright() as pw:
             api.post(prefix+'/rooms',json=body).raise_for_status()
         if mode.endswith('queue'):
             api.post(prefix+'/matchmaking',json={'deck_id':body['deck_id']} if prefix else {}).raise_for_status()
-        context=browser.new_context(viewport={'width':1366,'height':900});page=context.new_page();errors=[]
+        host=None
+        if mode.startswith('classic-join'):
+            host=httpx.Client(base_url=BASE+'/api/mistrealm',headers={'Authorization':'MistrealmUid '+'join-host-'+str(uuid4())})
+            host.post('/players/me',json={'name':'房主','avatar':None}).raise_for_status()
+            host_deck=host.post('/classic/decks',json=d);host_deck.raise_for_status()
+            host_room=host.post('/classic/rooms',json={'deck_id':host_deck.json()['id'],'request_id':str(uuid4())})
+            host_room.raise_for_status();host_room=host_room.json()
+        context=browser.new_context(viewport={'width':390,'height':844} if mode.startswith('classic-join') else {'width':1366,'height':900});page=context.new_page();errors=[]
         page.on('pageerror',lambda e:errors.append(str(e)))
         page.on('console',lambda m:print('console:',m.text) if m.type=='error' else None)
         stub=f"<base href='{SURFACE}/platform-assets/'><script>window.dzmm={{user:{{info:async()=>({{id:'{uid}',name:'沙箱旅人'}})}},loading:{{progress(){{}},ready(){{window.sdkReady=true;}},error(c,m){{throw new Error(c+':'+m)}}}}}};</script>"
@@ -63,12 +70,27 @@ with sync_playwright() as pw:
         try:
             page.goto(SURFACE+'/platform-sandbox')
             frame=page.frame_locator('iframe')
-            expected={'new':'#quick-match','classic-room':'#lock-deck','legacy-room':'#ready','classic-queue':'#cancel-match','legacy-queue':'#match-cancel'}[mode]
+            expected={'classic-join-click':'#quick-match','classic-join-enter':'#quick-match','new':'#quick-match','classic-room':'#lock-deck','legacy-room':'#ready','classic-queue':'#cancel-match','legacy-queue':'#match-cancel'}[mode]
             expect(frame.locator(expected)).to_be_visible(timeout=12000)
             assert page.frames[1].url in ('about:srcdoc',''), 'must retain injected SDK instead of navigating iframe'
             assert page.frames[1].evaluate('window.sdkReady===true')
             assert not errors,errors
             page.reload();expect(frame.locator(expected)).to_be_visible(timeout=12000)
+            if mode.startswith('classic-join'):
+                frame.locator('#room-code-input').fill(host_room['code'])
+                if mode.endswith('enter'):frame.locator('#room-code-input').press('Enter')
+                else:frame.locator('#join-room').click()
+                expect(frame.locator('#room-code')).to_have_text(host_room['code'])
+                assert api.get('/players/me').json()['room_id']==host_room['room_id']
+                frame.locator('#leave').click();expect(frame.locator('#quick-match')).to_be_visible()
+                frame.locator('#room-code-input').fill('123');frame.locator('#join-room').click()
+                expect(frame.locator('#join-feedback')).to_contain_text('6位')
+                frame.locator('#room-code-input').fill(host_room['code']);frame.locator('#join-room').click()
+                expect(frame.locator('#join-feedback')).to_have_text('房间不存在，请检查房间码')
+                expect(frame.locator('#room-code-input')).to_have_value(host_room['code'])
+                expect(frame.locator('#join-room')).to_be_enabled()
+                expect(frame.locator('#join-feedback')).to_be_in_viewport()
+                page.screenshot(path=str(ROOT.parent/'platform-join-error-390.png'),full_page=True)
             if mode=='new':
                 frame.locator('#edit-deck').click();expect(frame.locator('#builder')).to_be_visible()
                 page.screenshot(path=str(ROOT.parent/'platform-sandbox.png'),full_page=True)
@@ -82,6 +104,7 @@ with sync_playwright() as pw:
             if profile.get('matchmaking',{}).get('status')=='waiting':
                 api.post(prefix+'/matchmaking/cancel',json={'ticket':profile['matchmaking']['ticket']}).raise_for_status()
             api.close()
+            if host:host.close()
     browser.close()
 server.shutdown()
-print('Opaque iframe: SDK retained, new Classic default, v1/v2 rooms and queues restored, reload and assets passed')
+print('Opaque iframe: SDK retained, new Classic default, v1/v2 rooms and queues restored, reload, sandbox button/Enter joining, inline errors and assets passed')

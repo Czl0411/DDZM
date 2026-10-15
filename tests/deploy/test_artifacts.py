@@ -221,6 +221,7 @@ def test_systemd_units_use_environment_factories_and_isolated_ports():
     assert "dzmm_bot.admin.app:create_app_from_environment --factory" in admin
     assert "--host 0.0.0.0 --port 18090" in admin
     assert "-m dzmm_bot.browser.main" in worker
+    assert "RestartSec=5s" in worker
     assert "-m dzmm_bot.ai.main" in ai_worker
     assert "dzmm-core.service" in ai_worker
     assert "Description=DZMM DeepSeek AI Worker" in ai_worker

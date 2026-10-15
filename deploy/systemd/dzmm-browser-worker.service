@@ -8,6 +8,7 @@ WorkingDirectory=/opt/dzmm/current
 EnvironmentFile=/etc/dzmm/dzmm.env
 ExecStart=/opt/dzmm/venv/bin/python -m dzmm_bot.browser.main
 Restart=on-failure
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target

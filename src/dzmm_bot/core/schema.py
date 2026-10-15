@@ -4441,6 +4441,7 @@ class MistrealmPlayerRecord(Base):
     queue_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
     queue_rules_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     queue_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    channel_muted_until: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
 
 
 class MistrealmDeckRecord(Base):
@@ -4483,3 +4484,25 @@ class MistrealmRequestRecord(Base):
     digest: Mapped[str] = mapped_column(String(64), nullable=False)
     result: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class MistrealmStoryProgressRecord(Base):
+    __tablename__ = "mistrealm_story_progress"
+    player_id: Mapped[UUID] = mapped_column(
+        ForeignKey("mistrealm_players.id"), primary_key=True
+    )
+    completed_chapters: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class MistrealmChannelMessageRecord(Base):
+    __tablename__ = "mistrealm_channel_messages"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    player_id: Mapped[UUID] = mapped_column(
+        ForeignKey("mistrealm_players.id"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    text: Mapped[str | None] = mapped_column(String(200))
+    room_id: Mapped[UUID | None] = mapped_column(ForeignKey("mistrealm_rooms.id"))
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)

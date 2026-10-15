@@ -6,7 +6,7 @@ from time import monotonic
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
@@ -76,6 +76,18 @@ class ClassicJoin(ClassicCreate):
 
 class ClassicQueue(Body):
     deck_id: UUID
+
+
+class StoryStart(ClassicQueue):
+    chapter: StrictInt = Field(ge=1, le=5)
+
+
+class ChannelText(Body):
+    text: str = Field(min_length=1, max_length=200)
+
+
+class ChannelChallenge(Body):
+    room_id: UUID
 
 
 class ClassicAction(RequestBody):
@@ -202,6 +214,50 @@ def mistrealm_router(repository, clock):
     @router.post('/classic/matchmaking/cancel')
     def classic_cancel(body: MatchTicket,authorization: str | None = Header(None)):
         return call(repository.mistrealm_matchmaking,identity(authorization),'cancel',body.ticket,clock(),2)
+
+    @router.get('/classic/story')
+    def story_progress(authorization: str | None = Header(None)):
+        return call(repository.mistrealm_story_progress,identity(authorization),clock())
+
+    @router.post('/classic/story/start')
+    def story_start(body: StoryStart, authorization: str | None = Header(None)):
+        return call(
+            repository.mistrealm_story_start,
+            identity(authorization),
+            body.chapter,
+            body.deck_id,
+            clock(),
+        )
+
+    @router.get('/channel/messages')
+    def channel_messages(
+        limit: int = Query(default=50, ge=1, le=100),
+        authorization: str | None = Header(None),
+    ):
+        return call(
+            repository.mistrealm_channel_messages,
+            identity(authorization),
+            limit,
+            clock(),
+        )
+
+    @router.post('/channel/messages')
+    def channel_post(body: ChannelText, authorization: str | None = Header(None)):
+        return call(
+            repository.mistrealm_channel_post,
+            identity(authorization),
+            body.text,
+            clock(),
+        )
+
+    @router.post('/channel/challenges')
+    def channel_challenge(body: ChannelChallenge, authorization: str | None = Header(None)):
+        return call(
+            repository.mistrealm_channel_challenge,
+            identity(authorization),
+            body.room_id,
+            clock(),
+        )
 
     @router.post('/classic/rooms/{room_id}/actions')
     def classic_action(room_id: UUID,body: ClassicAction,authorization: str | None = Header(None)):

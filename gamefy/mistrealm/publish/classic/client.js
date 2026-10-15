@@ -13,4 +13,9 @@ export class ClassicClient extends MistrealmClient {
  startMatchmaking(deckId){return this.post('/matchmaking',{deck_id:deckId});}
  create(deckId,id=requestId()){return this.post('/rooms',{deck_id:deckId,request_id:id});}
  join(code,deckId,id=requestId()){return this.post('/rooms/join',{code,deck_id:deckId,request_id:id});}
+ story(){return this.request('/story');}
+ startStory(chapter,deckId){return this.post('/story/start',{chapter,deck_id:deckId});}
+ channelMessages(){return this.request('/channel/messages',{},this.sharedRoot);}
+ channelPost(text){return this.request('/channel/messages',{method:'POST',body:JSON.stringify({text})},this.sharedRoot);}
+ channelChallenge(roomId){return this.request('/channel/challenges',{method:'POST',body:JSON.stringify({room_id:roomId})},this.sharedRoot);}
 }

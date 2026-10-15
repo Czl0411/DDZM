@@ -11,10 +11,13 @@ from sqlalchemy.exc import IntegrityError
 
 from . import mistrealm_state as legacy
 from . import mistrealm_classic_state as classic
+from . import mistrealm_story as story
 from .mistrealm_classic_cards import validate_deck
 from .schema import (
     MistrealmPlayerRecord as Player, MistrealmRoomRecord as Room,
     MistrealmSeatRecord as Seat, MistrealmRequestRecord as Receipt, MistrealmDeckRecord as Deck,
+    MistrealmStoryProgressRecord as StoryProgress,
+    MistrealmChannelMessageRecord as ChannelMessage,
 )
 
 
@@ -73,6 +76,33 @@ class MistrealmRepositoryMixin:
             room.active_code = None
             session.execute(delete(Seat).where(Seat.room_id == room.id))
 
+    @staticmethod
+    def _mr_story_progress_record(session, player, now):
+        record = session.get(StoryProgress, player.id)
+        if record is None:
+            record = StoryProgress(player_id=player.id, completed_chapters=[], updated_at=now)
+            session.add(record)
+            session.flush()
+        return record
+
+    def _mr_story_finish(self, session, room, player, now):
+        state = room.state
+        if state.get("mode") != "story" or state["phase"] != "finished" or state["winner"] != 0:
+            return
+        progress = self._mr_story_progress_record(session, player, now)
+        chapter = state["story"]["chapter"]
+        if chapter not in progress.completed_chapters:
+            progress.completed_chapters = sorted([*progress.completed_chapters, chapter])
+            progress.updated_at = now
+
+    def _mr_story_drive(self, session, room, player, now):
+        if room.state.get("mode") != "story":
+            return
+        state = story.drive(room.state, ms(now), SystemRandom())
+        if state != room.state:
+            self._mr_sync(session, room, state)
+        self._mr_story_finish(session, room, player, now)
+
     def _mr_advance(self, session, room, now):
         state = _engine(room.state).advance(room.state, ms(now), SystemRandom())
         if state != room.state:
@@ -96,6 +126,12 @@ class MistrealmRepositoryMixin:
         for entry in session.scalars(select(Seat).where(Seat.room_id == room.id)):
             profile = session.get(Player, entry.player_id)
             state["players"][entry.seat_index].update(name=profile.name, avatar=profile.avatar)
+        if room.state.get("mode") == "story":
+            state["mode"] = "story"
+            state["story"] = deepcopy(room.state["story"])
+            state["players"][1].update(
+                name=room.state["story"]["enemy_name"], avatar=None
+            )
         return {"room_id": str(room.id), "code": room.active_code,
                 "match_id": str(room.match_id) if room.match_id else None, "state": state}
 
@@ -190,6 +226,7 @@ class MistrealmRepositoryMixin:
             # Authorize before advancing or emitting any room data.
             self._mr_view(session, room, p)
             self._mr_advance(session, room, now)
+            self._mr_story_drive(session, room, p, now)
             if room.phase == "closed":
                 return {"room_id": str(room.id), "code": None,
                         "match_id": str(room.match_id) if room.match_id else None,
@@ -225,11 +262,14 @@ class MistrealmRepositoryMixin:
             if room.state.get('rules_version')==2 and action=='select_deck':
                 payload={'deck':self._mr_deck_snapshot(session,p,UUID(payload['deck_id']))}
             state = _engine(room.state).apply_action(room.state, seat, action, payload, ms(now), SystemRandom())
+            if room.state.get("mode") == "story" and action == "rematch":
+                raise MistrealmError("剧情关卡请从章节页重新开始")
             if action == "start" or (room.state.get("rules_version")==2 and room.state["phase"]=="waiting" and state["phase"]!="waiting"):
                 room.match_id = uuid4()
             elif state["phase"] == "waiting":
                 room.match_id = None
             self._mr_sync(session, room, state)
+            self._mr_story_drive(session, room, p, now)
             if action == "leave" and state["phase"] == "waiting":
                 session.execute(delete(Seat).where(Seat.room_id == room.id, Seat.player_id == p.id))
             if state["phase"] == "closed" or (action == "leave" and state["phase"] == "waiting"):
@@ -238,6 +278,143 @@ class MistrealmRepositoryMixin:
             else:
                 result = self._mr_view(session, room, p)
             return self._mr_save(session, p, request_id, digest, result, room, now)
+
+    def mistrealm_story_progress(self, uid, now):
+        with self._session() as session:
+            player = self._mr_player(session, uid)
+            progress = self._mr_story_progress_record(session, player, now)
+            return story.public_chapters(progress.completed_chapters)
+
+    def mistrealm_story_start(self, uid, chapter, deck_id, now):
+        self._mr_rate(uid, "story", 10, now)
+        with self._session() as session:
+            player = self._mr_player(session, uid)
+            progress = self._mr_story_progress_record(session, player, now)
+            available = story.public_chapters(progress.completed_chapters)
+            if chapter > available["unlocked"]:
+                raise MistrealmError("请先完成前一章", 403)
+            current = self._mr_active(session, player, now)
+            if current is not None:
+                if current.state.get("mode") == "story":
+                    return self._mr_view(session, current, player)
+                raise MistrealmError("请先结束当前玩家对局")
+            self._mr_clear_queue(player)
+            state = story.new_story_state(
+                uid,
+                self._mr_deck_snapshot(session, player, deck_id),
+                chapter,
+                ms(now),
+                SystemRandom(),
+            )
+            room = Room(
+                host_id=player.id,
+                active_code=None,
+                phase=state["phase"],
+                match_id=uuid4(),
+                state=state,
+                created_at=now,
+                deadline=None,
+            )
+            session.add(room)
+            session.flush()
+            session.add(Seat(room_id=room.id, seat_index=0, player_id=player.id))
+            self._mr_sync(session, room, state)
+            session.flush()
+            self._mr_story_finish(session, room, player, now)
+            return self._mr_view(session, room, player)
+
+    @staticmethod
+    def _mr_channel_item(session, message):
+        player = session.get(Player, message.player_id)
+        item = {
+            "id": str(message.id),
+            "kind": message.kind,
+            "text": message.text,
+            "created_at": message.created_at.isoformat(),
+            "player": {"uid": player.platform_uid, "name": player.name, "avatar": player.avatar},
+        }
+        if message.kind == "challenge":
+            room = session.get(Room, message.room_id)
+            waiting = bool(
+                room
+                and room.phase == "waiting"
+                and room.active_code
+                and room.state.get("mode") != "story"
+                and room.state["players"][1] is None
+            )
+            item["challenge"] = {
+                "room_id": str(message.room_id),
+                "status": "waiting" if waiting else "ended",
+                "code": room.active_code if waiting else None,
+            }
+        return item
+
+    def mistrealm_channel_messages(self, uid, limit, now):
+        with self._session() as session:
+            self._mr_player(session, uid)
+            rows = list(
+                session.scalars(
+                    select(ChannelMessage)
+                    .where(ChannelMessage.deleted_at.is_(None))
+                    .order_by(ChannelMessage.created_at.desc(), ChannelMessage.id.desc())
+                    .limit(limit)
+                )
+            )
+            return {"items": [self._mr_channel_item(session, row) for row in reversed(rows)]}
+
+    def _mr_channel_guard(self, player, now):
+        if player.channel_muted_until and player.channel_muted_until > now:
+            raise MistrealmError(
+                "你已被频道禁言至" + player.channel_muted_until.isoformat(), 403
+            )
+
+    def mistrealm_channel_post(self, uid, text, now):
+        self._mr_rate(uid, "channel", 6, now)
+        content = text.strip()
+        if not content or len(content) > 200:
+            raise MistrealmError("消息需要1至200字", 422)
+        with self._session() as session:
+            player = self._mr_player(session, uid)
+            self._mr_channel_guard(player, now)
+            message = ChannelMessage(
+                player_id=player.id, kind="text", text=content, created_at=now
+            )
+            session.add(message)
+            session.flush()
+            return self._mr_channel_item(session, message)
+
+    def mistrealm_channel_challenge(self, uid, room_id, now):
+        self._mr_rate(uid, "channel", 6, now)
+        with self._session() as session:
+            player = self._mr_player(session, uid)
+            self._mr_channel_guard(player, now)
+            room = self._mr_room(session, room_id)
+            if (
+                room.host_id != player.id
+                or room.phase != "waiting"
+                or room.active_code is None
+                or room.state.get("mode") == "story"
+                or room.state["players"][1] is not None
+            ):
+                raise MistrealmError("当前房间不能发布约战")
+            old = session.scalar(
+                select(ChannelMessage).where(
+                    ChannelMessage.room_id == room.id,
+                    ChannelMessage.kind == "challenge",
+                    ChannelMessage.deleted_at.is_(None),
+                )
+            )
+            if old is not None:
+                return self._mr_channel_item(session, old)
+            message = ChannelMessage(
+                player_id=player.id,
+                kind="challenge",
+                room_id=room.id,
+                created_at=now,
+            )
+            session.add(message)
+            session.flush()
+            return self._mr_channel_item(session, message)
 
     def advance_mistrealm_deadlines(self, now):
         with self._session() as session:

@@ -5,10 +5,10 @@ export class MistrealmClient {
     this.sdk=sdk; this.root=apiBase.replace(/\/$/,'')+'/api/mistrealm';
     this.fetchImpl=fetchImpl.bind(globalThis); this.uid=null; this.state=null; this.roomId=null; this.controller=null;
   }
-  async request(path,options={}) {
+  async request(path,options={},root=this.root) {
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
     try {
-      const response=await this.fetchImpl(this.root+path,{...options,signal:controller.signal,
+      const response=await this.fetchImpl(root+path,{...options,signal:controller.signal,
         headers:{Authorization:`MistrealmUid ${this.uid}`,...(options.body?{'Content-Type':'application/json'}:{})}});
       const data=await response.json();
       if(!response.ok){const error=new Error(typeof data.detail==='string'?data.detail:'请求参数或服务器状态有误');error.status=response.status;throw error;}

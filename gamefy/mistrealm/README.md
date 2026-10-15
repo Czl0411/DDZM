@@ -4,7 +4,7 @@
 
 ## Classic 120 开发预览（2026-10-15）
 
-新版入口为 `/classic/`，API 为 `/api/mistrealm/classic`。它使用独立的 `rules_version=2`，已有线上 v1 入口和房间继续使用原引擎。本节描述新版；下文固定预组、两排等内容是 v1 的历史说明。本轮没有发布到游戏卡 3769848。
+新版入口为 `/classic/`，API 为 `/api/mistrealm/classic`。它使用独立的 `rules_version=2`，已有线上 v1 入口和房间继续使用原引擎。本节描述新版；下文固定预组、两排等内容是 v1 的历史说明。经典版已于2026-10-15更新至游戏卡3769848，版本1792031142598；尚未提交公开上架。
 
 ```sh
 PYTHONPATH=src python scripts/mistrealm_dev.py --port 18744
@@ -18,7 +18,7 @@ PYTHONPATH=src python scripts/mistrealm_dev.py --port 18744
 
 122张卡面已逐张检查并接入，前端资源约19.36MiB。
 
-少数原作数字版边界仍有资料冲突，见[规则核验记录](../../docs/superpowers/specs/2026-10-15-mistrealm-classic-120.md)。当前为开发预览，不宣称已完成原作逐项复核或真实平台双账号验收。
+少数原作数字版边界仍有资料冲突，见[规则核验记录](../../docs/superpowers/specs/2026-10-15-mistrealm-classic-120.md)。已完成单账号真实平台启动、建房和刷新验收；不宣称原作边界逐项复核或真实平台双账号完整对局已完成。
 
 ```sh
 PYTHONPATH=src python -m pytest tests/core/test_mistrealm* -q
@@ -30,6 +30,20 @@ PYTHONPATH=src python gamefy/mistrealm/tests/classic_recovery_browser.py
 ```
 
 资源检查需要 Pillow；浏览器检查需要 Playwright 与 Chrome，`classic_browser.py` 连接上面的18744本地服务，`classic_e2e.py` 自行创建隔离服务。规则和卡表从 `src/dzmm_bot/core/mistrealm_classic_*` 导出，运行 `PYTHONPATH=src python scripts/export_mistrealm_classic.py` 更新前端目录。原创PNG、生成提示词和审核记录分别保存在 `source-art/classic` 与 `art-updates/classic-120-manifest.json`。
+
+## 平台构建与更新
+
+不要把源目录 `publish/` 原样当作新版根入口上传。它保留本地 v1 入口；平台构建会加入保留 SDK 的版本选择器，新玩家默认 Classic，已有 v1/v2 房间和队列按原版本恢复。
+
+```sh
+python3 scripts/build_mistrealm_platform.py .superpowers/classic-deploy/game
+cd .superpowers/classic-deploy/game
+gamefy deploy --dry-run
+gamefy check --reload --slow
+gamefy deploy --yes --verify --label mistrealm-2.0.0-classic-120
+```
+
+生产数据库要求迁移113及兼容后端，详见部署记录。构建设置两个版本的 HTTPS API，保留 `legacy.html` 与旧版资源；源目录 `/classic/` 仍可同源本地预览。
 
 ## 本地试玩
 

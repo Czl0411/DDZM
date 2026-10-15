@@ -39,5 +39,10 @@
     "revision": "1792049915410",
     "deployedAt": "2026-10-15T07:38:02.301Z",
     "label": "mistrealm-2.1.0-story-channel"
+  },
+  {
+    "revision": "1792053930560",
+    "deployedAt": "2026-10-15T08:45:16.644Z",
+    "label": "mistrealm-2.1.1-lobby-channel-hotfix"
   }
 ]

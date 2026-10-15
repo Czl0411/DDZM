@@ -34,5 +34,10 @@
     "deployedAt": "2026-10-15T02:59:32.717Z",
     "label": "mistrealm-2.0.1-room-join",
     "gitHead": "90a833f"
+  },
+  {
+    "revision": "1792049915410",
+    "deployedAt": "2026-10-15T07:38:02.301Z",
+    "label": "mistrealm-2.1.0-story-channel"
   }
 ]

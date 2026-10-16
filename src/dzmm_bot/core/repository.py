@@ -167,6 +167,7 @@ from .shop_cards import (
 )
 from .shop_effects import default_effect_config, effect_definition, effective_config, item_effect_snapshot
 from .shop_management import ShopManagementMixin
+from .equipment import EquipmentMixin, EQUIPMENT_COMMAND_DEFINITIONS
 from .honors import HonorsMixin
 from .red_packet import RandomSource, generate_red_packet_allocation
 from .texas_holdem import (
@@ -603,6 +604,7 @@ _BALANCE_SOURCE_LABELS = {
     "dark_market_complaint_refund": "暗网投诉退款",
     "dark_market_complaint_penalty": "暗网投诉卖家罚款",
     "shop_purchase": "商店购买",
+    "equipment_purchase": "装备商城购买",
     "shop_gift": "赠送卡到账",
     "shop_scratch": "刮刮卡奖励",
     "shop_compensation": "卡片作废补偿",
@@ -1445,6 +1447,9 @@ class EstrusSettings:
     combo_chop_enabled: bool
     g_spot_percent: int
     g_spot_heat_bonus: int
+    heat_value_0: int
+    heat_value_1: int
+    heat_value_2: int
     chopper_coin_p0: int
     chopper_coin_p1: int
     chopper_coin_p2: int
@@ -2665,6 +2670,7 @@ class EmployeeNameTakenError(ValueError):
 
 
 _COMMAND_DEFINITIONS = (
+    *EQUIPMENT_COMMAND_DEFINITIONS,
     ("/我的称号", "/我的称号", "查看当前可佩戴称号和历史获得次数"),
     ("/佩戴称号", "/佩戴称号 序号", "选择佩戴称号（/装备称号、/编辑称号 等效），序号 0 取消佩戴"),
     ("/荣誉榜", "/荣誉榜", "查看当前周期的荣誉称号获得者"),
@@ -3033,7 +3039,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository(ShopManagementMixin, HonorsMixin):
+class CoreRepository(ShopManagementMixin, HonorsMixin, EquipmentMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -14809,11 +14815,11 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         """发情值按概率抽样，币额按后台选择使用随机或固定金额。"""
         heat_roll = self._estrus_random.random() * 100
         if heat_roll < settings.heat_p0:
-            heat_gain = 0
+            heat_gain = int(settings.heat_value_0)
         elif heat_roll < settings.heat_p0 + settings.heat_p1:
-            heat_gain = 1
+            heat_gain = int(settings.heat_value_1)
         else:
-            heat_gain = 2
+            heat_gain = int(settings.heat_value_2)
         if settings.target_fixed_coins is not None:
             coins = settings.target_fixed_coins
         else:
@@ -14841,6 +14847,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 combo_chop_enabled=bool(row.combo_chop_enabled),
                 g_spot_percent=int(row.g_spot_percent),
                 g_spot_heat_bonus=int(row.g_spot_heat_bonus),
+                heat_value_0=int(row.heat_value_0),
+                heat_value_1=int(row.heat_value_1),
+                heat_value_2=int(row.heat_value_2),
                 chopper_coin_p0=int(row.chopper_coin_p0),
                 chopper_coin_p1=int(row.chopper_coin_p1),
                 chopper_coin_p2=int(row.chopper_coin_p2),
@@ -14865,7 +14874,10 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         chopper_rank_quotas: dict[str, int] | None = None,
         combo_chop_enabled: bool = False,
         g_spot_percent: int = 10,
-        g_spot_heat_bonus: int = 10,
+        g_spot_heat_bonus: int = 20,
+        heat_value_0: int = 0,
+        heat_value_1: int = 5,
+        heat_value_2: int = 10,
         chopper_coin_p0: int = 50,
         chopper_coin_p1: int = 30,
         chopper_coin_p2: int = 20,
@@ -14913,6 +14925,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             ("凿者冷却秒数", chop_cooldown_seconds, 0, 86400),
             ("凿中G点概率", g_spot_percent, 0, 100),
             ("G点发情值加成", g_spot_heat_bonus, 0, 1000),
+            ("发情值 0 档数值", heat_value_0, 0, 1000),
+            ("发情值 1 档数值", heat_value_1, 0, 1000),
+            ("发情值 2 档数值", heat_value_2, 0, 1000),
             ("凿者扣币 0 档概率", chopper_coin_p0, 0, 100),
             ("凿者扣币 1 档概率", chopper_coin_p1, 0, 100),
             ("凿者扣币 2 档概率", chopper_coin_p2, 0, 100),
@@ -14937,6 +14952,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 row.combo_chop_enabled = combo_chop_enabled
                 row.g_spot_percent = g_spot_percent
                 row.g_spot_heat_bonus = g_spot_heat_bonus
+                row.heat_value_0 = heat_value_0
+                row.heat_value_1 = heat_value_1
+                row.heat_value_2 = heat_value_2
                 row.chopper_coin_p0 = chopper_coin_p0
                 row.chopper_coin_p1 = chopper_coin_p1
                 row.chopper_coin_p2 = chopper_coin_p2
@@ -34549,6 +34567,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         delivery_kind: str = "group",
         defer_for_performance: bool = False,
         content_type: str = "text",
+        reference_inbound: bool = True,
     ) -> OutboundRecord:
         if recall_after_seconds is not None and recall_after_seconds < 1:
             raise ValueError("撤回秒数必须为正整数")
@@ -34594,7 +34613,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             )
             reference = (
                 {}
-                if uses_bot_group_sender
+                if uses_bot_group_sender or not reference_inbound
                 else _outbound_reference_snapshot(inbound, destination_chatroom_id)
             )
             replies = [reply] if content_type != "text" or self._keeps_group_reply_intact(
@@ -34661,6 +34680,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         delivery_kind: str = "group",
         performance_defer_key: str | None = None,
         bypass_performance_gate: bool = False,
+        content_type: str = "text",
     ) -> OutboundRecord:
         if recall_after_seconds is not None and recall_after_seconds < 1:
             raise ValueError("撤回秒数必须为正整数")
@@ -34680,7 +34700,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     session, group_chat_id
                 )
                 if performance is not None:
-                    return self._hold_performance_outbound(
+                    held = self._hold_performance_outbound(
                         session,
                         performance,
                         text,
@@ -34688,7 +34708,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                         performance_defer_key,
                         recall_after_seconds,
                     )
-            texts = [text] if self._keeps_group_reply_intact(
+                    held.content_type = content_type
+                    return held
+            texts = [text] if content_type != "text" or self._keeps_group_reply_intact(
                 text,
                 recall_after_seconds=recall_after_seconds,
                 destination_chatroom_id=destination_chatroom_id,
@@ -34702,6 +34724,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                         group_chat_id if delivery_kind == "group" else None
                     ),
                     text=part,
+                    content_type=content_type,
                     reply_index=index,
                     recall_after_seconds=recall_after_seconds,
                     destination_chatroom_id=destination_chatroom_id,

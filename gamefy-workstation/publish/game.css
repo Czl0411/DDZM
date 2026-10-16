@@ -1,0 +1,6 @@
+html, body { height: 100%; }
+body { overflow: hidden; }
+main { height: 100dvh; overflow-y: auto; scrollbar-gutter: stable; }
+select { max-width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--paper); font: inherit; font-size: 13px; }
+select:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+select:disabled { opacity: .6; }

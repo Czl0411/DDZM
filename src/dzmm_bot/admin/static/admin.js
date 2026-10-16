@@ -2893,6 +2893,7 @@ function renderEstrusSettingsPanel(settings, ranks) {
     ruleStatusCard("玩法状态", settings.enabled ? "已启用" : "已停用", settings.combo_chop_enabled ? "允许连续凿" : "连续凿已关闭"),
     ruleStatusCard("冷却与被凿上限", `${settings.chop_cooldown_seconds} 秒冷却`, settings.target_daily_limit ? `每人每日被凿最多 ${settings.target_daily_limit} 次（按群）` : "每人每日被凿次数不限"),
     ruleStatusCard("发情值阈值", settings.climax_threshold, `G 点概率 ${settings.g_spot_percent}% · 发情值加成 ${settings.g_spot_heat_bonus}`),
+    ruleStatusCard("发情值三档数值", `${settings.heat_value_0} / ${settings.heat_value_1} / ${settings.heat_value_2}`, `三档概率 ${settings.heat_p0}% / ${settings.heat_p1}% / ${settings.heat_p2}%`),
     ruleStatusCard("被凿者获得摸鱼币", settings.target_fixed_coins != null ? `固定 ${settings.target_fixed_coins} 币` : "随机 0 / 1 / 2 币", settings.target_fixed_coins != null ? "每次获得固定金额，随机概率不参与计算" : `三档概率 ${settings.coin_p0}% / ${settings.coin_p1}% / ${settings.coin_p2}%`),
     ruleStatusCard("凿者扣除摸鱼币", settings.chopper_fixed_coins != null ? `固定 ${settings.chopper_fixed_coins} 币` : "随机 0 / 1 / 2 币", settings.chopper_fixed_coins != null ? "每次扣除固定金额，随机概率不参与计算" : settings.coins_linked && settings.target_fixed_coins == null ? `关联使用被凿者概率 ${settings.coin_p0}% / ${settings.coin_p1}% / ${settings.coin_p2}%` : `三档概率 ${settings.chopper_coin_p0}% / ${settings.chopper_coin_p1}% / ${settings.chopper_coin_p2}%`),
     ruleStatusCard("扣币与发币", settings.chopper_fixed_coins != null || settings.target_fixed_coins != null ? "固定金额优先" : settings.coins_linked ? "关联抽样" : "独立抽样", "任一方启用固定金额时，另一方按自己的配置结算"),
@@ -2913,11 +2914,14 @@ function renderEstrusSettingsPanel(settings, ranks) {
       ${birthdayNumberField("estrus-g-spot-percent", "凿中G点概率(%)", settings.g_spot_percent, 0, 100)}
       ${birthdayNumberField("estrus-g-spot-bonus", "G点发情值加成", settings.g_spot_heat_bonus, 0, 1000)}
     </div>
-    <div class="panel-heading"><div><h2>发情值增量概率（0/1/2）</h2></div></div>
+    <div class="panel-heading"><div><h2>发情值增量（三档数值与概率）</h2></div></div>
     <div class="event-input-grid">
-      ${birthdayNumberField("estrus-heat-p0", "发情值 +0 概率(%)", settings.heat_p0, 0, 100)}
-      ${birthdayNumberField("estrus-heat-p1", "发情值 +1 概率(%)", settings.heat_p1, 0, 100)}
-      ${birthdayNumberField("estrus-heat-p2", "发情值 +2 概率(%)", settings.heat_p2, 0, 100)}
+      ${birthdayNumberField("estrus-heat-v0", "发情值 0 档数值", settings.heat_value_0, 0, 1000)}
+      ${birthdayNumberField("estrus-heat-v1", "发情值 1 档数值", settings.heat_value_1, 0, 1000)}
+      ${birthdayNumberField("estrus-heat-v2", "发情值 2 档数值", settings.heat_value_2, 0, 1000)}
+      ${birthdayNumberField("estrus-heat-p0", "发情值 0 档概率(%)", settings.heat_p0, 0, 100)}
+      ${birthdayNumberField("estrus-heat-p1", "发情值 1 档概率(%)", settings.heat_p1, 0, 100)}
+      ${birthdayNumberField("estrus-heat-p2", "发情值 2 档概率(%)", settings.heat_p2, 0, 100)}
     </div>
     <div class="panel-heading"><div><h2>被凿者获得摸鱼币概率（0/1/2）</h2></div></div>
     <div class="event-input-grid">
@@ -2979,6 +2983,9 @@ async function saveEstrusSettings() {
     combo_chop_enabled: document.querySelector("#estrus-combo").checked,
     g_spot_percent: Number(document.querySelector("#estrus-g-spot-percent").value),
     g_spot_heat_bonus: Number(document.querySelector("#estrus-g-spot-bonus").value),
+    heat_value_0: Number(document.querySelector("#estrus-heat-v0").value),
+    heat_value_1: Number(document.querySelector("#estrus-heat-v1").value),
+    heat_value_2: Number(document.querySelector("#estrus-heat-v2").value),
     chopper_coin_p0: Number(document.querySelector("#estrus-chopper-coin-p0").value),
     chopper_coin_p1: Number(document.querySelector("#estrus-chopper-coin-p1").value),
     chopper_coin_p2: Number(document.querySelector("#estrus-chopper-coin-p2").value),

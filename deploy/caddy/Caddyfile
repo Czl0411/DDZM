@@ -1,0 +1,14 @@
+{
+    default_sni 43.153.194.94
+}
+
+https://43.153.194.94 {
+    tls {
+        issuer acme {
+            dir https://acme-v02.api.letsencrypt.org/directory
+            profile shortlived
+        }
+    }
+
+    reverse_proxy 127.0.0.1:18090
+}

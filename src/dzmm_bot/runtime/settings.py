@@ -22,9 +22,14 @@ class Settings:
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_base_url: str = "https://api.deepseek.com"
     integration_api_key: str | None = None
+    workstation_public_url: str | None = None
+    gamefy_game_id: str | None = None
+    workstation_game_url: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
+        from dzmm_bot.core.workstation import normalize_workstation_game_url, normalize_workstation_public_url
+
         database_url = _required("DZMM_DATABASE_URL")
         core_token = _required("DZMM_CORE_TOKEN")
         admin_token = _optional("DZMM_ADMIN_TOKEN")
@@ -56,6 +61,13 @@ class Settings:
                 "DZMM_DEEPSEEK_BASE_URL", "https://api.deepseek.com"
             ),
             integration_api_key=_optional("DZMM_INTEGRATION_API_KEY"),
+            workstation_public_url=normalize_workstation_public_url(
+                _optional("DZMM_WORKSTATION_PUBLIC_URL", empty_as_none=True)
+            ),
+            gamefy_game_id=_optional("DZMM_GAMEFY_GAME_ID", empty_as_none=True),
+            workstation_game_url=normalize_workstation_game_url(
+                _optional("DZMM_WORKSTATION_GAME_URL", empty_as_none=True)
+            ),
         )
 
 

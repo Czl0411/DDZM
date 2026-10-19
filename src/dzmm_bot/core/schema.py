@@ -3124,6 +3124,15 @@ class EstrusSettingsRecord(Base):
         Integer, default=10, server_default="10", nullable=False
     )
     g_spot_heat_bonus: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+    heat_value_0: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    heat_value_1: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
+    heat_value_2: Mapped[int] = mapped_column(
         Integer, default=10, server_default="10", nullable=False
     )
     chopper_rank_quotas: Mapped[dict | None] = mapped_column(JSON)

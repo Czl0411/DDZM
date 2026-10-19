@@ -1472,6 +1472,9 @@ class EstrusSettings:
     combo_chop_enabled: bool
     g_spot_percent: int
     g_spot_heat_bonus: int
+    heat_value_0: int
+    heat_value_1: int
+    heat_value_2: int
     chopper_coin_p0: int
     chopper_coin_p1: int
     chopper_coin_p2: int
@@ -15308,11 +15311,11 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         """发情值按概率抽样，币额按后台选择使用随机或固定金额。"""
         heat_roll = self._estrus_random.random() * 100
         if heat_roll < settings.heat_p0:
-            heat_gain = 0
+            heat_gain = int(settings.heat_value_0)
         elif heat_roll < settings.heat_p0 + settings.heat_p1:
-            heat_gain = 1
+            heat_gain = int(settings.heat_value_1)
         else:
-            heat_gain = 2
+            heat_gain = int(settings.heat_value_2)
         if settings.target_fixed_coins is not None:
             coins = settings.target_fixed_coins
         else:
@@ -15340,6 +15343,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 combo_chop_enabled=bool(row.combo_chop_enabled),
                 g_spot_percent=int(row.g_spot_percent),
                 g_spot_heat_bonus=int(row.g_spot_heat_bonus),
+                heat_value_0=int(row.heat_value_0),
+                heat_value_1=int(row.heat_value_1),
+                heat_value_2=int(row.heat_value_2),
                 chopper_coin_p0=int(row.chopper_coin_p0),
                 chopper_coin_p1=int(row.chopper_coin_p1),
                 chopper_coin_p2=int(row.chopper_coin_p2),
@@ -15364,7 +15370,10 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         chopper_rank_quotas: dict[str, int] | None = None,
         combo_chop_enabled: bool = False,
         g_spot_percent: int = 10,
-        g_spot_heat_bonus: int = 10,
+        g_spot_heat_bonus: int = 20,
+        heat_value_0: int = 0,
+        heat_value_1: int = 5,
+        heat_value_2: int = 10,
         chopper_coin_p0: int = 50,
         chopper_coin_p1: int = 30,
         chopper_coin_p2: int = 20,
@@ -15412,6 +15421,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             ("凿者冷却秒数", chop_cooldown_seconds, 0, 86400),
             ("凿中G点概率", g_spot_percent, 0, 100),
             ("G点发情值加成", g_spot_heat_bonus, 0, 1000),
+            ("发情值 0 档数值", heat_value_0, 0, 1000),
+            ("发情值 1 档数值", heat_value_1, 0, 1000),
+            ("发情值 2 档数值", heat_value_2, 0, 1000),
             ("凿者扣币 0 档概率", chopper_coin_p0, 0, 100),
             ("凿者扣币 1 档概率", chopper_coin_p1, 0, 100),
             ("凿者扣币 2 档概率", chopper_coin_p2, 0, 100),
@@ -15436,6 +15448,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 row.combo_chop_enabled = combo_chop_enabled
                 row.g_spot_percent = g_spot_percent
                 row.g_spot_heat_bonus = g_spot_heat_bonus
+                row.heat_value_0 = heat_value_0
+                row.heat_value_1 = heat_value_1
+                row.heat_value_2 = heat_value_2
                 row.chopper_coin_p0 = chopper_coin_p0
                 row.chopper_coin_p1 = chopper_coin_p1
                 row.chopper_coin_p2 = chopper_coin_p2

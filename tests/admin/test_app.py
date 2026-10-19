@@ -2454,7 +2454,10 @@ def estrus_core_settings(core, monkeypatch):
         "chopper_rank_quotas": {},
         "combo_chop_enabled": False,
         "g_spot_percent": 10,
-        "g_spot_heat_bonus": 10,
+        "g_spot_heat_bonus": 20,
+        "heat_value_0": 0,
+        "heat_value_1": 5,
+        "heat_value_2": 10,
         "chopper_coin_p0": 50,
         "chopper_coin_p1": 30,
         "chopper_coin_p2": 20,
@@ -2506,7 +2509,8 @@ def test_admin_proxies_estrus_deductions_and_limits_with_versioning(client, head
 @pytest.mark.parametrize(
     "missing_field",
     ["chopper_coin_p0", "chopper_coin_p1", "chopper_coin_p2", "coins_linked", "target_daily_limit",
-     "chopper_rank_quotas", "combo_chop_enabled", "g_spot_percent", "g_spot_heat_bonus"],
+     "chopper_rank_quotas", "combo_chop_enabled", "g_spot_percent", "g_spot_heat_bonus",
+     "heat_value_0", "heat_value_1", "heat_value_2"],
 )
 def test_admin_rejects_incomplete_estrus_settings(client, headers, estrus_core_settings, missing_field):
     payload = estrus_core_settings.copy()
@@ -2570,6 +2574,9 @@ def test_admin_estrus_panel_exposes_deductions_linking_and_target_limit(client):
     assert '"estrus-g-spot-bonus"' in script
     assert "g_spot_percent: Number" in script
     assert "g_spot_heat_bonus: Number" in script
+    for heat_value in (0, 1, 2):
+        assert f'"estrus-heat-v{heat_value}"' in script
+        assert f"heat_value_{heat_value}: Number" in script
     assert "data-estrus-quota" in script
     assert "chopper_rank_quotas: rankQuotas" in script
     assert ".disabled = targetFixed || chopperFixed" in script

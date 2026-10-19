@@ -3,6 +3,8 @@ from pathlib import Path
 from uuid import uuid4
 
 import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,3 +47,27 @@ def test_merge_migration_preserves_saved_scratch_ranges_and_ad_slot_limit(monkey
     assert (rows["scratch_b"]["scratch_reward_min"], rows["scratch_b"]["scratch_reward_max"]) == (6, 12)
     assert rows["event_ad_slot"]["category"] == "event_ad_slot"
     assert rows["event_ad_slot"]["daily_purchase_limit"] == 1
+
+
+def test_department_cooldown_migration_upgrades_from_main(tmp_path, monkeypatch):
+    database_url = f"sqlite:///{tmp_path / 'migration.db'}"
+    monkeypatch.setenv("DZMM_DATABASE_URL", database_url)
+    engine = sa.create_engine(database_url)
+    with engine.begin() as connection:
+        connection.execute(sa.text("CREATE TABLE users (id INTEGER PRIMARY KEY)"))
+
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.stamp(config, "20261009_101")
+    command.upgrade(config, "20261010_101")
+
+    assert "last_department_changed_at" in {
+        column["name"] for column in sa.inspect(engine).get_columns("users")
+    }
+
+
+def test_department_cooldown_migration_preserves_timezone(monkeypatch, capsys):
+    monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://localhost/dzmm")
+    command.upgrade(Config(str(ROOT / "alembic.ini")), "20261009_101:20261010_101", sql=True)
+
+    assert "ADD COLUMN last_department_changed_at TIMESTAMP WITH TIME ZONE" in capsys.readouterr().out

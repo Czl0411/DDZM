@@ -48,6 +48,11 @@ from .api_models import (
     CompleteProfileImageUploadRequest,
     CommandDefinitionResponse,
     CommandTemplateResponse,
+    CustomCommandRequest,
+    UpdateCustomCommandRequest,
+    DeleteCustomCommandRequest,
+    CustomCommandImageUploadClaimResponse,
+    CustomCommandImageUploadStatusResponse,
     CreateGroupChatRequest,
     CreateDepartmentRequest,
     CreateAIPlayerImpressionRequest,
@@ -62,6 +67,9 @@ from .api_models import (
     FailProfileImageUploadRequest,
     GameSettingsResponse,
     GroupChatResponse,
+    GroupBanBeginRequest,
+    GroupBanCompleteRequest,
+    GroupBanExecutionResponse,
     GroupChatRuntimeResponse,
     GroupChatTargetResponse,
     IntegrationMatchRequest,
@@ -226,7 +234,7 @@ from .api_models import (
 )
 from .database import create_session_factory
 from .honors import HonorConfigRequest, HonorSettleRequest, HonorCorrectionRequest, HonorConflict
-from .commands import GroupCommandHandler
+from .commands import GroupCommandHandler, is_reserved_command_name
 from .company_lottery import PrizeTier
 from .repository import (
     ActivityLevelRule,
@@ -415,6 +423,7 @@ def create_app(
                 request.announcements_enabled,
                 request.now,
                 enabled_game_types=request.enabled_game_types,
+                ban_operator_platform_ids=request.ban_operator_platform_ids,
                 adult_shop_enabled=request.adult_shop_enabled,
                 performances_enabled=request.performances_enabled,
                 birthdays_enabled=request.birthdays_enabled,
@@ -500,6 +509,7 @@ def create_app(
                 listening_enabled=request.listening_enabled,
                 games_enabled=request.games_enabled,
                 enabled_game_types=request.enabled_game_types,
+                ban_operator_platform_ids=request.ban_operator_platform_ids,
                 random_events_enabled=request.random_events_enabled,
                 announcements_enabled=request.announcements_enabled,
                 adult_shop_enabled=request.adult_shop_enabled,
@@ -1001,6 +1011,108 @@ def create_app(
         ))
 
     @app.post(
+        "/internal/game/custom-command-images",
+        response_model=CustomCommandImageUploadStatusResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_custom_command_image_upload(
+        request: CreateProfileImageUploadRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> CustomCommandImageUploadStatusResponse:
+        record = repository.create_custom_command_image_upload(
+            request.temp_path, request.original_filename, request.mime_type, request.now,
+        )
+        return CustomCommandImageUploadStatusResponse(
+            id=record.id, status=record.status,
+            result_url=record.result_url, failure_summary=record.failure_summary,
+        )
+
+    @app.get(
+        "/internal/custom-command-images/{task_id}",
+        response_model=CustomCommandImageUploadStatusResponse,
+    )
+    def custom_command_image_upload_status(
+        task_id: UUID, _: Annotated[None, Depends(authorize)],
+    ) -> CustomCommandImageUploadStatusResponse:
+        record = repository.get_custom_command_image_upload(task_id)
+        if record is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "upload not found")
+        return CustomCommandImageUploadStatusResponse(
+            id=record.id, status=record.status,
+            result_url=record.result_url, failure_summary=record.failure_summary,
+        )
+
+    @app.post(
+        "/internal/custom-command-images/claim",
+        response_model=CustomCommandImageUploadClaimResponse | None,
+    )
+    def claim_custom_command_image_upload(
+        request: ClaimRequest, _: Annotated[None, Depends(authorize)],
+    ) -> CustomCommandImageUploadClaimResponse | None:
+        record = repository.claim_custom_command_image_upload(
+            request.worker_id, request.now, request.lease_seconds,
+        )
+        if record is None:
+            return None
+        return CustomCommandImageUploadClaimResponse(
+            id=record.id, temp_path=record.temp_path,
+            original_filename=record.original_filename, mime_type=record.mime_type,
+            lease_token=record.lease_token, attempt_count=record.attempt_count,
+        )
+
+    @app.post(
+        "/internal/custom-command-images/{task_id}/completed",
+        response_model=AcceptedResponse,
+    )
+    def complete_custom_command_image_upload(
+        task_id: UUID, request: CompleteProfileImageUploadRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.complete_custom_command_image_upload(
+            task_id, request.worker_id, request.lease_token, request.result_url, request.now,
+        ))
+
+    @app.post(
+        "/internal/custom-command-images/{task_id}/failed",
+        response_model=AcceptedResponse,
+    )
+    def fail_custom_command_image_upload(
+        task_id: UUID, request: FailProfileImageUploadRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.fail_custom_command_image_upload(
+            task_id, request.worker_id, request.lease_token, request.failure_summary, request.now,
+        ))
+
+    @app.post(
+        "/internal/custom-command-image-cleanups/claim",
+        response_model=ProfileImageCleanupClaimResponse | None,
+    )
+    def claim_custom_command_image_cleanup(
+        request: ClaimRequest, _: Annotated[None, Depends(authorize)],
+    ) -> ProfileImageCleanupClaimResponse | None:
+        record = repository.claim_custom_command_image_cleanup(
+            request.worker_id, request.now, request.lease_seconds,
+        )
+        if record is None:
+            return None
+        return ProfileImageCleanupClaimResponse(
+            id=record.id, temp_path=record.temp_path, lease_token=record.lease_token,
+        )
+
+    @app.post(
+        "/internal/custom-command-image-cleanups/{task_id}/completed",
+        response_model=AcceptedResponse,
+    )
+    def complete_custom_command_image_cleanup(
+        task_id: UUID, request: RecalledRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.complete_custom_command_image_cleanup(
+            task_id, request.worker_id, request.lease_token, request.now,
+        ))
+
+    @app.post(
         "/internal/outbound/{message_id}/failed", response_model=AcceptedResponse
     )
     def mark_outbound_failed(
@@ -1135,6 +1247,9 @@ def create_app(
                 command=record.command,
                 description=record.description,
                 enabled=record.enabled,
+                is_custom=record.is_custom,
+                reply_type=record.reply_type,
+                reply_value=record.reply_value,
                 templates=[
                     _template_response(
                         definition,
@@ -1147,6 +1262,60 @@ def create_app(
             )
             for record in repository.list_command_definitions()
         ]
+
+    @app.post(
+        "/internal/game/custom-commands",
+        response_model=CommandDefinitionResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_custom_command(
+        request: CustomCommandRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> CommandDefinitionResponse:
+        if is_reserved_command_name(request.command):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "指令名称已被占用")
+        try:
+            record = repository.create_custom_command(**request.model_dump())
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error))
+        return CommandDefinitionResponse(
+            command=record.command, description=record.description,
+            enabled=record.enabled, templates=[], is_custom=True,
+            reply_type=record.reply_type, reply_value=record.reply_value,
+        )
+
+    @app.put(
+        "/internal/game/custom-commands", response_model=CommandDefinitionResponse
+    )
+    def update_custom_command(
+        request: UpdateCustomCommandRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> CommandDefinitionResponse:
+        if not any(
+            row.command == request.old_command and row.is_custom
+            for row in repository.list_command_definitions()
+        ):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown custom command")
+        if is_reserved_command_name(request.command):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "指令名称已被占用")
+        try:
+            record = repository.update_custom_command(**request.model_dump())
+        except ValueError as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error))
+        return CommandDefinitionResponse(
+            command=record.command, description=record.description,
+            enabled=record.enabled, templates=[], is_custom=True,
+            reply_type=record.reply_type, reply_value=record.reply_value,
+        )
+
+    @app.delete("/internal/game/custom-commands")
+    def delete_custom_command(
+        request: DeleteCustomCommandRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        if not repository.delete_custom_command(request.old_command):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown custom command")
+        return {"deleted": True}
 
     @app.patch(
         "/internal/game/commands", response_model=CommandDefinitionResponse
@@ -1166,6 +1335,9 @@ def create_app(
             command=record.command,
             description=record.description,
             enabled=record.enabled,
+            is_custom=record.is_custom,
+            reply_type=record.reply_type,
+            reply_value=record.reply_value,
             templates=[
                 _template_response(
                     definition,
@@ -3902,6 +4074,34 @@ def create_app(
         )
 
     @app.post(
+        "/internal/group-bans/{request_id}/begin-execution",
+        response_model=GroupBanExecutionResponse | None,
+    )
+    def begin_group_ban_execution(
+        request_id: UUID,
+        request: GroupBanBeginRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> GroupBanExecutionResponse | None:
+        execution = repository.claim_group_ban_execution(request_id, request.now)
+        return None if execution is None else GroupBanExecutionResponse(
+            chatroom_id=execution.chatroom_id,
+            target_platform_id=execution.target_platform_id,
+        )
+
+    @app.post(
+        "/internal/group-bans/{request_id}/complete",
+        response_model=AcceptedResponse,
+    )
+    def complete_group_ban_execution(
+        request_id: UUID,
+        request: GroupBanCompleteRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> AcceptedResponse:
+        return AcceptedResponse(accepted=repository.complete_group_ban_execution(
+            request_id, request.outcome, request.detail, request.now,
+        ))
+
+    @app.post(
         "/internal/worker-commands/claim",
         response_model=WorkerCommandResponse | None,
     )
@@ -3981,6 +4181,7 @@ def _group_chat_response(group, runtime) -> GroupChatResponse:
         listening_enabled=group.listening_enabled,
         games_enabled=group.games_enabled,
         enabled_game_types=list(group.enabled_game_types),
+        ban_operator_platform_ids=list(group.ban_operator_platform_ids),
         random_events_enabled=group.random_events_enabled,
         announcements_enabled=group.announcements_enabled,
         adult_shop_enabled=group.adult_shop_enabled,

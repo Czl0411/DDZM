@@ -10,7 +10,7 @@ from socketio.exceptions import TimeoutError as SocketTimeoutError
 
 from dzmm_bot.browser.bot_api import DzmmBotSendError
 from dzmm_bot.browser.core_client import OutboundClaim, OutboundRecallClaim, WorkerCommand
-from dzmm_bot.browser.aikda_socket import AikdaMessageRejectedError, AikdaTransportError
+from dzmm_bot.browser.aikda_socket import AikdaMessageRejectedError, AikdaTransportError, AikdaMemberRemovalRejectedError, AikdaAuthenticationError
 from dzmm_bot.browser.worker import BrowserWorker
 from dzmm_bot.runtime.contracts import (
     DirectChatRoom,
@@ -62,6 +62,8 @@ class FakeGateway:
     close_count: int = 0
     close_error: Exception | None = None
     added_bots: list[tuple[str, str]] = field(default_factory=list)
+    removed_members: list[tuple[str, str]] = field(default_factory=list)
+    remove_error: Exception | None = None
     nickname_lookups: list[tuple[str, str]] = field(default_factory=list)
     nickname: str | None = "平台昵称"
     member_directory_data: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -175,6 +177,11 @@ class FakeGateway:
     def add_bot_to_chatroom(self, chatroom_id, bot_id):
         self.added_bots.append((chatroom_id, bot_id))
 
+    def remove_member(self, chatroom_id, member_id):
+        self.removed_members.append((chatroom_id, member_id))
+        if self.remove_error is not None:
+            raise self.remove_error
+
     def lookup_platform_nickname(self, chatroom_id, platform_user_id):
         self.nickname_lookups.append((chatroom_id, platform_user_id))
         return self.nickname
@@ -267,11 +274,19 @@ class FakeCore:
     upload_cleanup_tasks: list = field(default_factory=list)
     upload_cleanups: list[tuple] = field(default_factory=list)
     upload_completion_accepted: bool = True
+    custom_upload_tasks: list = field(default_factory=list)
+    custom_upload_completions: list[tuple] = field(default_factory=list)
+    custom_upload_failures: list[tuple] = field(default_factory=list)
+    custom_upload_cleanup_tasks: list = field(default_factory=list)
+    custom_upload_cleanups: list[tuple] = field(default_factory=list)
     group_targets: tuple[GroupChatTarget, ...] = ()
     group_runtime_updates: list[tuple] = field(default_factory=list)
     confirm_error: Exception | None = None
     nickname_claims: list = field(default_factory=list)
     nickname_completions: list[tuple] = field(default_factory=list)
+    ban_executions: list[tuple[str, str] | None] = field(default_factory=list)
+    ban_completions: list[tuple] = field(default_factory=list)
+    ban_completion_error: Exception | None = None
 
     def group_chat_targets(self):
         return self.group_targets
@@ -359,6 +374,15 @@ class FakeCore:
             (command_id, worker_id, lease_token, status, now)
         )
 
+    def begin_group_ban_execution(self, request_id, now):
+        return self.ban_executions.pop(0) if self.ban_executions else None
+
+    def complete_group_ban_execution(self, request_id, outcome, detail, now):
+        if self.ban_completion_error is not None:
+            raise self.ban_completion_error
+        self.ban_completions.append((request_id, outcome, detail, now))
+        return True
+
     def record_audit(self, event_type, worker_id, recorded_at):
         self.audits.append((event_type, worker_id, recorded_at))
 
@@ -405,6 +429,34 @@ class FakeCore:
         self, task_id, worker_id, lease_token, now
     ):
         self.upload_cleanups.append((task_id, worker_id, lease_token, now))
+
+    def claim_custom_command_image_upload(self, worker_id, now, lease_seconds):
+        return self.custom_upload_tasks.pop(0) if self.custom_upload_tasks else None
+
+    def complete_custom_command_image_upload(
+        self, task_id, worker_id, lease_token, result_url, now
+    ):
+        self.custom_upload_completions.append(
+            (task_id, worker_id, lease_token, result_url, now)
+        )
+        return True
+
+    def fail_custom_command_image_upload(
+        self, task_id, worker_id, lease_token, failure_summary, now
+    ):
+        self.custom_upload_failures.append(
+            (task_id, worker_id, lease_token, failure_summary, now)
+        )
+        return True
+
+    def claim_custom_command_image_cleanup(self, worker_id, now, lease_seconds):
+        return self.custom_upload_cleanup_tasks.pop(0) if self.custom_upload_cleanup_tasks else None
+
+    def complete_custom_command_image_cleanup(
+        self, task_id, worker_id, lease_token, now
+    ):
+        self.custom_upload_cleanups.append((task_id, worker_id, lease_token, now))
+        return True
 
 
 @pytest.fixture
@@ -468,6 +520,65 @@ def test_worker_adds_the_configured_long_message_bot_to_a_group():
 
     assert gateway.added_bots == [("group-a", "long-message-bot")]
     assert core.completions[-1][3] == "completed"
+
+
+def test_worker_group_ban_only_removes_after_core_claim(context):
+    worker, gateway, _, _, core, _ = context
+    request_id = UUID(int=44)
+    core.commands = [WorkerCommand(COMMAND_ID, f"ban:{request_id}", LEASE)]
+    core.ban_executions = [None]
+    worker.run_once()
+    assert gateway.removed_members == []
+    assert core.completions[-1][3] == "completed"
+
+    core.commands = [WorkerCommand(COMMAND_ID, f"ban:{request_id}", LEASE)]
+    core.ban_executions = [("group-a", "outsider")]
+    worker.run_once()
+    assert gateway.removed_members == [("group-a", "outsider")]
+    assert core.ban_completions[-1][1] == "succeeded"
+
+
+def test_worker_group_ban_transport_error_is_uncertain(context):
+    worker, gateway, _, _, core, _ = context
+    request_id = UUID(int=45)
+    core.commands = [WorkerCommand(COMMAND_ID, f"ban:{request_id}", LEASE)]
+    core.ban_executions = [("group-a", "outsider")]
+    gateway.remove_error = AikdaTransportError("timeout")
+    worker.run_once()
+    assert core.ban_completions[-1][1] == "uncertain"
+    assert core.completions[-1][3] == "completed"
+
+
+def test_worker_group_ban_platform_rejection_reports_failure(context):
+    worker, gateway, _, _, core, _ = context
+    request_id = UUID(int=46)
+    core.commands = [WorkerCommand(COMMAND_ID, f"ban:{request_id}", LEASE)]
+    core.ban_executions = [("group-a", "outsider")]
+    gateway.remove_error = AikdaMemberRemovalRejectedError("not a member")
+    worker.run_once()
+    assert core.ban_completions[-1][1] == "failed"
+    assert core.completions[-1][3] == "completed"
+
+
+def test_worker_group_ban_auth_rejection_reports_failure(context):
+    worker, gateway, _, _, core, _ = context
+    request_id = UUID(int=47)
+    core.commands = [WorkerCommand(COMMAND_ID, f"ban:{request_id}", LEASE)]
+    core.ban_executions = [("group-a", "outsider")]
+    gateway.remove_error = AikdaAuthenticationError("status=403")
+    worker.run_once()
+    assert core.ban_completions[-1][1] == "failed"
+
+
+def test_worker_group_ban_keeps_lease_when_final_result_cannot_be_recorded(context):
+    worker, gateway, _, _, core, _ = context
+    request_id = UUID(int=48)
+    core.commands = [WorkerCommand(COMMAND_ID, f"ban:{request_id}", LEASE)]
+    core.ban_executions = [("group-a", "outsider")]
+    core.ban_completion_error = RuntimeError("core unavailable")
+    worker.run_once()
+    assert gateway.removed_members == [("group-a", "outsider")]
+    assert core.completions == []
 
 
 def test_worker_keeps_socket_transport_alive_when_daily_jobs_fail_once(context):
@@ -956,6 +1067,76 @@ def test_worker_reports_profile_image_upload_failure_and_removes_temp_file(
     assert not upload_path.exists()
 
 
+def test_worker_uploads_and_cleans_custom_command_image(context, tmp_path):
+    from dzmm_bot.browser.core_client import CustomCommandImageUploadClaim
+
+    worker, gateway, _, _, core, _ = context
+    upload_path = tmp_path / "custom.png"
+    upload_path.write_bytes(b"image")
+    task_id = UUID(int=25)
+    core.custom_upload_tasks = [CustomCommandImageUploadClaim(
+        task_id, str(upload_path), "custom.png", "image/png", LEASE, 1
+    )]
+    worker.run_once()
+    assert core.custom_upload_completions == [(
+        task_id, "worker-a", LEASE, "https://cdn.example.com/uploaded.png", NOW,
+    )]
+    assert not upload_path.exists()
+
+
+def test_worker_reports_custom_command_image_failure(context, tmp_path):
+    from dzmm_bot.browser.core_client import CustomCommandImageUploadClaim
+
+    worker, gateway, _, _, core, _ = context
+    upload_path = tmp_path / "custom.webp"
+    upload_path.write_bytes(b"image")
+    gateway.upload_error = RuntimeError("platform rejected upload")
+    task_id = UUID(int=26)
+    core.custom_upload_tasks = [CustomCommandImageUploadClaim(
+        task_id, str(upload_path), "custom.webp", "image/webp", LEASE, 1
+    )]
+    worker.run_once()
+    assert core.custom_upload_failures == [(
+        task_id, "worker-a", LEASE, "upload_failed", NOW,
+    )]
+    assert not upload_path.exists()
+
+
+def test_worker_reports_platform_image_upload_status_safely(context, tmp_path):
+    from dzmm_bot.browser.core_client import CustomCommandImageUploadClaim
+    from dzmm_bot.browser.session import ImageUploadRejectedError
+
+    worker, gateway, _, _, core, _ = context
+    upload_path = tmp_path / "custom.webp"
+    upload_path.write_bytes(b"image")
+    gateway.upload_error = ImageUploadRejectedError(415)
+    task_id = UUID(int=27)
+    core.custom_upload_tasks = [CustomCommandImageUploadClaim(
+        task_id, str(upload_path), "custom.webp", "image/webp", LEASE, 1
+    )]
+
+    worker.run_once()
+
+    assert core.custom_upload_failures == [(
+        task_id, "worker-a", LEASE, "平台上传返回 HTTP 415", NOW,
+    )]
+
+
+def test_worker_cleans_completed_custom_command_image_task(context, tmp_path):
+    from dzmm_bot.browser.core_client import ProfileImageCleanupClaim
+
+    worker, _, _, _, core, _ = context
+    upload_path = tmp_path / "old.png"
+    upload_path.write_bytes(b"image")
+    task_id = UUID(int=27)
+    core.custom_upload_cleanup_tasks = [ProfileImageCleanupClaim(
+        task_id, str(upload_path), LEASE
+    )]
+    worker.run_once()
+    assert not upload_path.exists()
+    assert core.custom_upload_cleanups == [(task_id, "worker-a", LEASE, NOW)]
+
+
 def test_worker_keeps_profile_image_temp_file_when_completion_is_rejected(
     context, tmp_path
 ):
@@ -1155,6 +1336,19 @@ def test_worker_sends_novel_outbound_as_a_share_card(context):
     assert gateway.sent_shares == [
         ("direct-a", "novel", "66408bb3-60a0-40e1-a434-ee40efee4d27")
     ]
+    assert gateway.sent_to == []
+
+
+def test_worker_sends_custom_command_group_invite_as_share_card(context):
+    worker, gateway, _, _, _, _ = context
+    outbound = OutboundClaim(
+        OUTBOUND_ID, "in-1", "group-code", LEASE,
+        content_type="group_invite", destination_chatroom_id="group-1",
+    )
+
+    worker._send_outbound(gateway, outbound)
+
+    assert gateway.sent_shares == [("group-1", "group_invite", "group-code")]
     assert gateway.sent_to == []
 
 

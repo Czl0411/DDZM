@@ -74,6 +74,9 @@ class GroupChatRecord(Base):
     enabled_game_types: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=lambda: list(GROUP_GAME_TYPES)
     )
+    ban_operator_platform_ids: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
     random_events_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     announcements_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     adult_shop_enabled: Mapped[bool] = mapped_column(
@@ -103,6 +106,29 @@ class GroupChatRuntimeStateRecord(Base):
     last_error_summary: Mapped[str | None] = mapped_column(String(512))
     worker_id: Mapped[str | None] = mapped_column(String(255))
     updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class GroupBanRequestRecord(Base):
+    __tablename__ = "group_ban_requests"
+    __table_args__ = (
+        Index("ix_group_ban_requests_pending", "group_chat_id", "actor_platform_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    actor_platform_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_platform_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_inbound_message_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), nullable=False)
+    confirmation_inbound_message_id: Mapped[UUID | None] = mapped_column(ForeignKey("inbound_messages.id"))
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    message_excerpt: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    confirmed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    completed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    detail: Mapped[str | None] = mapped_column(Text)
 
 
 class InboundRecord(Base):
@@ -161,9 +187,34 @@ class CommandDefinitionRecord(Base):
     syntax: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_custom: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reply_type: Mapped[str | None] = mapped_column(String(32))
+    reply_value: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )
+
+
+class CustomCommandImageUploadRecord(Base):
+    __tablename__ = "custom_command_image_uploads"
+    __table_args__ = (
+        Index("ix_custom_command_image_uploads_claim", "status", "lease_expires_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    temp_path: Mapped[str] = mapped_column(Text, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    lease_worker_id: Mapped[str | None] = mapped_column(String(255))
+    lease_token: Mapped[UUID | None] = mapped_column(Uuid)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    result_url: Mapped[str | None] = mapped_column(Text)
+    failure_summary: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
 
 
 class CommandReplyTemplateRecord(Base):

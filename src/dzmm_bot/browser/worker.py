@@ -11,7 +11,7 @@ import logging
 from threading import Event, Lock
 from time import monotonic as default_monotonic, sleep as default_sleep
 from typing import Protocol
-from uuid import uuid5
+from uuid import UUID, uuid5
 
 from socketio.exceptions import TimeoutError as SocketTimeoutError
 
@@ -28,8 +28,8 @@ from dzmm_bot.runtime.outbound import group_message_chunks
 from .bot_api import DzmmBotSendError
 from .black_history_card import render_black_history_card
 from .core_client import CorePort, OutboundClaim, WorkerCommand
-from .aikda_socket import AikdaAuthenticationError, AikdaMessageRejectedError
-from .session import BrowserSession, ChatGateway
+from .aikda_socket import AikdaAuthenticationError, AikdaMessageRejectedError, AikdaMemberRemovalRejectedError
+from .session import BrowserSession, ChatGateway, ImageUploadRejectedError
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -201,6 +201,8 @@ class BrowserWorker:
         self._start_outbound_if_idle(gateway)
         self._process_profile_image_cleanup()
         self._process_profile_image_upload(gateway)
+        self._process_custom_command_image_cleanup()
+        self._process_custom_command_image_upload(gateway)
         if self._listening:
             try:
                 direct_targets = self._core.direct_inbound_chatroom_ids()
@@ -346,6 +348,55 @@ class BrowserWorker:
             _LOGGER.exception("profile image temp cleanup failed: %s", claim.id)
             return
         self._core.complete_profile_image_cleanup(
+            claim.id, self._worker_id, claim.lease_token, self._clock()
+        )
+
+    def _process_custom_command_image_upload(self, gateway: ChatGateway) -> None:
+        claim = self._core.claim_custom_command_image_upload(
+            self._worker_id, self._clock(), self._lease_seconds
+        )
+        if claim is None:
+            return
+        path = Path(claim.temp_path)
+        reported = False
+        try:
+            result = gateway.upload_image(path, claim.mime_type)
+            image_url = result.get("url") if isinstance(result, dict) else None
+            if not isinstance(image_url, str) or not image_url:
+                raise ValueError("upload response missing image URL")
+            reported = self._core.complete_custom_command_image_upload(
+                claim.id, self._worker_id, claim.lease_token,
+                image_url, self._clock(),
+            )
+        except Exception as exc:
+            _LOGGER.exception("custom command image upload failed: %s", claim.id)
+            summary = (
+                f"平台上传返回 HTTP {exc.status_code}"
+                if isinstance(exc, ImageUploadRejectedError) else "upload_failed"
+            )
+            try:
+                reported = self._core.fail_custom_command_image_upload(
+                    claim.id, self._worker_id, claim.lease_token,
+                    summary, self._clock(),
+                )
+            except Exception:
+                _LOGGER.exception("custom command image upload failure report failed: %s", claim.id)
+        finally:
+            if reported:
+                path.unlink(missing_ok=True)
+
+    def _process_custom_command_image_cleanup(self) -> None:
+        claim = self._core.claim_custom_command_image_cleanup(
+            self._worker_id, self._clock(), self._lease_seconds
+        )
+        if claim is None:
+            return
+        try:
+            Path(claim.temp_path).unlink(missing_ok=True)
+        except OSError:
+            _LOGGER.exception("custom command image temp cleanup failed: %s", claim.id)
+            return
+        self._core.complete_custom_command_image_cleanup(
             claim.id, self._worker_id, claim.lease_token, self._clock()
         )
 
@@ -738,11 +789,11 @@ class BrowserWorker:
                         reference=reference,
                     )
                 )
-        if outbound.content_type == "novel":
+        if outbound.content_type in {"novel", "group_invite"}:
             if outbound.destination_chatroom_id is not None:
                 send_share = lambda: gateway.send_share_to(
                     outbound.destination_chatroom_id,
-                    "novel",
+                    outbound.content_type,
                     text,
                     message_id=platform_message_id,
                     reference=reference,
@@ -752,7 +803,7 @@ class BrowserWorker:
                 return self._send_with_main_account_tokens(send_share)
             return self._send_with_main_account_tokens(
                 lambda: gateway.send_share(
-                    "novel",
+                    outbound.content_type,
                     text,
                     message_id=platform_message_id,
                     reference=reference,
@@ -1008,10 +1059,30 @@ class BrowserWorker:
                 self._ensure_gateway().add_bot_to_chatroom(
                     chatroom_id, self._long_message_bot_id
                 )
+            elif command.command.startswith("ban:"):
+                request_id = UUID(command.command.removeprefix("ban:"))
+                execution = self._core.begin_group_ban_execution(request_id, self._clock())
+                if execution is not None:
+                    chatroom_id, member_id = execution
+                    outcome, detail = "succeeded", None
+                    try:
+                        self._ensure_gateway().remove_member(chatroom_id, member_id)
+                    except (AikdaMemberRemovalRejectedError, AikdaAuthenticationError, ValueError) as error:
+                        outcome, detail = "failed", str(error)
+                    except Exception as error:
+                        _LOGGER.exception("group member removal result uncertain: %s", request_id)
+                        outcome, detail = "uncertain", str(error)
+                    self._core.complete_group_ban_execution(
+                        request_id, outcome, detail, self._clock()
+                    )
             else:
                 raise ValueError(f"unsupported worker command: {command.command}")
         except Exception:
             _LOGGER.exception("worker command failed: %s", command.command)
+            if command.command.startswith("ban:"):
+                # Let the lease expire: Core will mark an already-started attempt
+                # uncertain on reclaim, without sending the platform mutation again.
+                return
             status = "failed"
         self._core.complete_command(
             command.id,

@@ -94,6 +94,129 @@ def test_internal_inbound_rejects_missing_core_token(client, payload):
     assert client.post("/internal/inbound", json=payload).status_code == 401
 
 
+def test_custom_command_core_api_lifecycle(client, headers):
+    body = {
+        "command": "/公告", "description": "群内公告", "enabled": True,
+        "reply_type": "text", "content": "今天开会", "upload_task_id": None,
+    }
+    assert client.post("/internal/game/custom-commands", json=body).status_code == 401
+    created = client.post("/internal/game/custom-commands", headers=headers, json=body)
+    assert created.status_code == 201
+    assert (created.json()["is_custom"], created.json()["reply_value"]) == (
+        True, "今天开会"
+    )
+    listed = client.get("/internal/game/commands", headers=headers).json()
+    assert next(row for row in listed if row["command"] == "/公告")["templates"] == []
+    assert next(row for row in listed if row["command"] == "/打卡")["is_custom"] is False
+    updated = client.put(
+        "/internal/game/custom-commands", headers=headers,
+        json={**body, "old_command": "/公告", "command": "/通知", "content": "明天开会"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["command"] == "/通知"
+    assert updated.json()["reply_value"] == "明天开会"
+    assert client.request(
+        "DELETE", "/internal/game/custom-commands", headers=headers,
+        json={"old_command": "/通知"},
+    ).status_code == 200
+    assert all(
+        row["command"] != "/通知"
+        for row in client.get("/internal/game/commands", headers=headers).json()
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["/暗网", "/me", "/第3场", "/选择", "/确认优选投稿", "/确认广告位"],
+)
+def test_custom_command_core_api_rejects_reserved_aliases(client, headers, command):
+    response = client.post(
+        "/internal/game/custom-commands", headers=headers,
+        json={
+            "command": command, "description": "冲突", "enabled": True,
+            "reply_type": "text", "content": "正文",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_custom_command_core_api_rejects_rename_to_workflow_command(client, headers):
+    original = {
+        "command": "/公告", "description": "公告", "enabled": True,
+        "reply_type": "text", "content": "今天开会",
+    }
+    assert client.post(
+        "/internal/game/custom-commands", headers=headers, json=original,
+    ).status_code == 201
+    renamed = client.put(
+        "/internal/game/custom-commands", headers=headers,
+        json={**original, "old_command": "/公告", "command": "/选择"},
+    )
+    assert renamed.status_code == 422
+    assert any(
+        row["command"] == "/公告"
+        for row in client.get("/internal/game/commands", headers=headers).json()
+    )
+
+
+def test_custom_command_core_api_rejects_bad_share_and_builtin_delete(client, headers):
+    bad_share = client.post(
+        "/internal/game/custom-commands", headers=headers,
+        json={
+            "command": "/进群", "description": "入口", "enabled": True,
+            "reply_type": "group_invite",
+            "content": "https://www.ivorune.xyz/chat?c=group-main",
+        },
+    )
+    assert bad_share.status_code == 422
+    assert client.request(
+        "DELETE", "/internal/game/custom-commands", headers=headers,
+        json={"old_command": "/打卡"},
+    ).status_code == 404
+
+
+def test_custom_command_image_internal_upload_lifecycle(client, headers, app_context):
+    created = client.post(
+        "/internal/game/custom-command-images", headers=headers,
+        json={"temp_path": "/tmp/custom.png", "original_filename": "custom.png",
+              "mime_type": "image/png", "now": NOW.isoformat()},
+    )
+    assert created.status_code == 201
+    task_id = created.json()["id"]
+    claim = client.post(
+        "/internal/custom-command-images/claim", headers=headers,
+        json={"worker_id": "worker-a", "now": NOW.isoformat(), "lease_seconds": 30},
+    ).json()
+    assert (claim["id"], claim["temp_path"]) == (task_id, "/tmp/custom.png")
+    invalid = client.post(
+        f"/internal/custom-command-images/{task_id}/completed", headers=headers,
+        json={"worker_id": "worker-a", "lease_token": str(UUID(int=99)),
+              "result_url": "https://cdn.example.com/custom.png", "now": NOW.isoformat()},
+    )
+    assert invalid.json() == {"accepted": False}
+    completed = client.post(
+        f"/internal/custom-command-images/{task_id}/completed", headers=headers,
+        json={"worker_id": "worker-a", "lease_token": claim["lease_token"],
+              "result_url": "https://cdn.example.com/custom.png", "now": NOW.isoformat()},
+    )
+    assert completed.json() == {"accepted": True}
+    assert client.get(
+        f"/internal/custom-command-images/{task_id}", headers=headers
+    ).json()["result_url"] == "https://cdn.example.com/custom.png"
+    cleanup = client.post(
+        "/internal/custom-command-image-cleanups/claim", headers=headers,
+        json={"worker_id": "worker-a", "now": (NOW + timedelta(seconds=1)).isoformat(),
+              "lease_seconds": 30},
+    ).json()
+    assert cleanup["temp_path"] == "/tmp/custom.png"
+    assert client.post(
+        f"/internal/custom-command-image-cleanups/{task_id}/completed", headers=headers,
+        json={"worker_id": "worker-a", "lease_token": cleanup["lease_token"],
+              "now": (NOW + timedelta(seconds=2)).isoformat()},
+    ).json() == {"accepted": True}
+    assert app_context.repository.get_custom_command_image_upload(task_id).temp_path == ""
+
+
 def test_internal_inbound_is_idempotent(client, headers, payload):
     first = client.post("/internal/inbound", headers=headers, json=payload)
     second = client.post("/internal/inbound", headers=headers, json=payload)
@@ -1960,7 +2083,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
 
     assert commands.status_code == 200
     assert {record["command"] for record in commands.json()} == {
-            "/事件投票", "/事件投票情况", "/随机事件时间表", "/q", "/黑历史", "/删除黑历史", "/下一页",
+            "/事件投票", "/事件投票情况", "/随机事件时间表", "/q", "/ban", "/是", "/黑历史", "/删除黑历史", "/下一页",
             "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史", "/跳开",
             "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/投稿", "/我的投稿", "/撤回投稿", "/上一步", "/取消投稿", "/确认取消投稿", "/确认投稿", "/继续添加", "/事件完成", "/修改身份", "/删除身份", "/修改事件", "/删除事件", "/设置生日", "/我的生日", "/本月生日", "/随礼", "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据", "/真心换真心", "/真心换真心数据", "/问题", "/真心", "/罚款", "/我的罚款", "/我的津贴", "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/人气榜", "/设置性别"
             }
@@ -2863,6 +2986,55 @@ def test_group_chat_crud_targets_and_runtime_api(app_context, headers):
     listed_by_id = {item["id"]: item for item in listed.json()}
     assert listed_by_id[second["id"]]["runtime"]["connection_state"] == "connected"
     assert listed_by_id[str(primary.id)]["name"] == "主群聊"
+
+
+def test_group_ban_operator_validation_api(app_context, headers):
+    app_context.repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", NOW
+    )
+    response = app_context.client.post(
+        "/internal/group-chats", headers=headers,
+        json={
+            "name": "第二群", "chat_url": "https://www.aikda.com/chat?c=group-2",
+            "ban_operator_platform_ids": ["missing"], "now": NOW.isoformat(),
+        },
+    )
+    assert response.status_code == 409
+
+
+def test_group_ban_execution_api(app_context, headers):
+    from dzmm_bot.core.schema import GroupBanRequestRecord
+    from dzmm_bot.runtime.contracts import MessageReference
+
+    repository = app_context.repository
+    group = repository.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=group-main", NOW
+    )
+    repository.create_user("operator", "操作员", NOW, 0)
+    repository.update_group_chat(group.id, ban_operator_platform_ids=["operator"], now=NOW)
+    message = InboundMessage(
+        "ban-api", "operator", "/ban 理由", NOW, chatroom_id="group-main",
+        reference=MessageReference("target-message", "outsider", "text", text="正文"),
+    )
+    repository.accept_inbound(message, group.id)
+    assert repository.request_group_ban(message, group.id).status == "pending"
+    confirmation = InboundMessage("yes-api", "operator", "/是", NOW, chatroom_id="group-main")
+    repository.accept_inbound(confirmation, group.id)
+    assert repository.confirm_group_ban(confirmation, group.id).status == "queued"
+    with app_context.session_factory() as session:
+        request_id = session.query(GroupBanRequestRecord.id).scalar()
+
+    began = app_context.client.post(
+        f"/internal/group-bans/{request_id}/begin-execution", headers=headers,
+        json={"now": NOW.isoformat()},
+    )
+    assert began.status_code == 200
+    assert began.json() == {"chatroom_id": "group-main", "target_platform_id": "outsider"}
+    completed = app_context.client.post(
+        f"/internal/group-bans/{request_id}/complete", headers=headers,
+        json={"outcome": "succeeded", "detail": None, "now": NOW.isoformat()},
+    )
+    assert completed.json() == {"accepted": True}
 
 
 def test_database_backed_identifiers_reject_more_than_255_characters(

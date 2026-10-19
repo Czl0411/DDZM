@@ -216,6 +216,7 @@ from .schema import (
     BlameIncidentCardRecord,
     CommandDefinitionRecord,
     CommandReplyTemplateRecord,
+    CustomCommandImageUploadRecord,
     CompanyLotteryBetRecord,
     CompanyLotteryDraftRecord,
     CompanyLotteryPoolLedgerRecord,
@@ -370,6 +371,7 @@ from .schema import (
     WeeklyAttendanceSettlementRecord,
     WorkerCommandRecord,
     WorkerInstanceRecord,
+    GroupBanRequestRecord,
 )
 
 
@@ -389,6 +391,7 @@ class GroupChatConfig:
     listening_enabled: bool
     games_enabled: bool
     enabled_game_types: tuple[str, ...]
+    ban_operator_platform_ids: tuple[str, ...]
     random_events_enabled: bool
     announcements_enabled: bool
     adult_shop_enabled: bool
@@ -413,6 +416,20 @@ class GroupChatRuntimeState:
 
 class GroupChatConflict(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class GroupBanResult:
+    status: str
+    target_platform_id: str | None = None
+    reason: str | None = None
+    message_excerpt: str | None = None
+
+
+@dataclass(frozen=True)
+class GroupBanExecution:
+    chatroom_id: str
+    target_platform_id: str
 
 
 @dataclass(frozen=True)
@@ -530,6 +547,7 @@ def _group_chat_config(record: GroupChatRecord) -> GroupChatConfig:
         listening_enabled=record.listening_enabled,
         games_enabled=record.games_enabled,
         enabled_game_types=tuple(record.enabled_game_types),
+        ban_operator_platform_ids=tuple(record.ban_operator_platform_ids),
         random_events_enabled=record.random_events_enabled,
         announcements_enabled=record.announcements_enabled,
         adult_shop_enabled=record.adult_shop_enabled,
@@ -680,9 +698,7 @@ _DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE = (
     "请使用 /加入 身份 报名，报名将在 {报名截止分钟} 分钟后截止。"
 )
 _COMPANY_STORY_NOVEL_URL_PATTERN = re.compile(
-    r"https?://(?:www\.)?ivorune\.xyz/novel/"
-    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
-    r"(?:[?#]\S*)?",
+    r"/novel/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
 )
 _UNSET = object()
@@ -704,7 +720,18 @@ def _normalize_company_story_novel_url(value: str | None | object) -> str | None
 def company_story_novel_resource_id(value: str | None) -> str | None:
     if not isinstance(value, str):
         return None
-    match = _COMPANY_STORY_NOVEL_URL_PATTERN.fullmatch(value.strip())
+    try:
+        parsed = urlsplit(value.strip())
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if (
+        parsed.scheme not in {"http", "https"} or not hostname
+        or any(character.isspace() for character in hostname)
+        or parsed.username is not None or parsed.password is not None
+    ):
+        return None
+    match = _COMPANY_STORY_NOVEL_URL_PATTERN.fullmatch(parsed.path)
     return None if match is None else match.group(1).lower()
 _RANDOM_EVENT_AD_SLOT_DRAFT_TIMEOUT_MINUTES = 15
 _DEFAULT_RANDOM_EVENT_SIGNUP_ALLOWED_COMMANDS = ("/加入", "/退出", "/事件投票", "/事件投票情况")
@@ -2667,6 +2694,10 @@ class EmployeeNameTakenError(ValueError):
     pass
 
 
+class GroupBanInProgressError(RuntimeError):
+    pass
+
+
 _COMMAND_DEFINITIONS = (
     ("/我的称号", "/我的称号", "查看当前可佩戴称号和历史获得次数"),
     ("/佩戴称号", "/佩戴称号 序号", "选择佩戴称号（/装备称号、/编辑称号 等效），序号 0 取消佩戴"),
@@ -2703,6 +2734,8 @@ _COMMAND_DEFINITIONS = (
     ("/事件投票情况", "/事件投票情况", "查看本期随机事件投票的当前票型"),
     ("/随机事件时间表", "/随机事件时间表", "查看全公司今天全部随机事件场次与状态"),
     ("/q", "回复消息 /q", "花 1 摸鱼币将一条群聊消息记入对应员工的黑历史册"),
+    ("/ban", "回复消息 /ban 原因", "由本群授权员工移除未入职成员（需二次确认）"),
+    ("/是", "/是", "确认本群待处理的成员移除请求"),
     ("/黑历史", "回复消息 /黑历史", "免费随机翻出被回复员工的一条黑历史"),
     ("/删除黑历史", "/删除黑历史 [编号]（仅私聊）", "查看或删除自己的黑历史"),
     ("/下一页", "/下一页（仅私聊）", "继续当前私聊分页操作"),
@@ -3185,9 +3218,11 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         adult_shop_enabled: bool = False,
         performances_enabled: bool = False,
         birthdays_enabled: bool = True,
+        ban_operator_platform_ids: Sequence[str] = (),
     ) -> GroupChatConfig:
         normalized_name = self._validate_group_chat_name(name)
         with self._session() as session:
+            operators = self._validate_group_ban_operators(session, ban_operator_platform_ids)
             allowed_origin = self._primary_group_origin(session)
             normalized_url, chatroom_id = normalize_group_chat_url(
                 chat_url, allowed_origin
@@ -3208,6 +3243,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                         else enabled_game_types
                     )
                 ),
+                ban_operator_platform_ids=operators,
                 random_events_enabled=random_events_enabled,
                 announcements_enabled=announcements_enabled,
                 adult_shop_enabled=adult_shop_enabled,
@@ -3243,6 +3279,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         adult_shop_enabled: bool | None = None,
         performances_enabled: bool | None = None,
         birthdays_enabled: bool | None = None,
+        ban_operator_platform_ids: Sequence[str] | None = None,
         now: datetime,
     ) -> GroupChatConfig:
         with self._session() as session:
@@ -3314,6 +3351,22 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 record.performances_enabled = performances_enabled
             if birthdays_enabled is not None:
                 record.birthdays_enabled = birthdays_enabled
+            removed_ban_operators: set[str] = set()
+            if ban_operator_platform_ids is not None:
+                next_ban_operators = self._validate_group_ban_operators(
+                    session, ban_operator_platform_ids
+                )
+                removed_ban_operators = set(record.ban_operator_platform_ids) - set(next_ban_operators)
+                record.ban_operator_platform_ids = next_ban_operators
+            if next_chatroom_id != before.chatroom_id or removed_ban_operators:
+                pending_bans = session.scalars(select(GroupBanRequestRecord).where(
+                    GroupBanRequestRecord.group_chat_id == group_id,
+                    GroupBanRequestRecord.status == "pending",
+                ).with_for_update()).all()
+                for pending_ban in pending_bans:
+                    if next_chatroom_id != before.chatroom_id or pending_ban.actor_platform_id in removed_ban_operators:
+                        pending_ban.status = "unauthorized"
+                        pending_ban.completed_at = now
             record.updated_at = now
             runtime = session.get(GroupChatRuntimeStateRecord, group_id)
             if runtime is not None:
@@ -3326,6 +3379,193 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             )
             session.flush()
             return _group_chat_config(record)
+
+    def _validate_group_ban_operators(
+        self, session: Session, platform_ids: Sequence[str]
+    ) -> list[str]:
+        values = list(platform_ids)
+        if len(values) != len(set(values)) or any(not value for value in values):
+            raise ValueError("invalid ban operators")
+        if values:
+            found = set(session.scalars(select(UserRecord.platform_id).where(
+                UserRecord.platform_id.in_(values)
+            )))
+            if found != set(values):
+                raise ValueError("ban operator is not an employee")
+        return values
+
+    def request_group_ban(
+        self, message: InboundMessage, group_chat_id: UUID
+    ) -> GroupBanResult:
+        with self._session() as session:
+            group = session.get(GroupChatRecord, group_chat_id, with_for_update=True)
+            if (
+                message.source_type != "group"
+                or group is None
+                or group.deleted_at is not None
+                or message.sender_platform_id not in group.ban_operator_platform_ids
+                or session.scalar(select(UserRecord.id).where(
+                    UserRecord.platform_id == message.sender_platform_id
+                )) is None
+            ):
+                return GroupBanResult("unauthorized")
+            reason = message.content.removeprefix("/ban").strip()
+            if not reason:
+                return GroupBanResult("missing_reason")
+            reference = message.reference
+            if reference is None or not reference.message_id or not reference.sender_platform_id:
+                return GroupBanResult("invalid_reply")
+            target = reference.sender_platform_id
+            if target == message.sender_platform_id:
+                return GroupBanResult("self_target")
+            if session.scalar(select(UserRecord.id).where(UserRecord.platform_id == target)) is not None:
+                return GroupBanResult("target_joined")
+            inbound = session.scalar(select(InboundRecord).where(
+                InboundRecord.group_chat_id == group_chat_id,
+                InboundRecord.platform_message_id == message.platform_message_id,
+            ))
+            if inbound is None:
+                return GroupBanResult("invalid_reply")
+            excerpt = (
+                "[图片]" if reference.content_type == "image"
+                else re.sub(r"\s+", " ", reference.text or "").strip()[:120] or "[无文字]"
+            )
+            pending = session.scalars(select(GroupBanRequestRecord).where(
+                GroupBanRequestRecord.group_chat_id == group_chat_id,
+                GroupBanRequestRecord.actor_platform_id == message.sender_platform_id,
+                GroupBanRequestRecord.status == "pending",
+            ).with_for_update()).all()
+            for previous in pending:
+                previous.status = "replaced"
+                previous.completed_at = message.received_at
+            session.add(GroupBanRequestRecord(
+                group_chat_id=group_chat_id,
+                actor_platform_id=message.sender_platform_id,
+                target_platform_id=target,
+                target_message_id=reference.message_id,
+                source_inbound_message_id=inbound.id,
+                reason=reason,
+                message_excerpt=excerpt,
+                status="pending",
+                created_at=message.received_at,
+                expires_at=message.received_at + timedelta(seconds=60),
+            ))
+            return GroupBanResult("pending", target, reason, excerpt)
+
+    def confirm_group_ban(
+        self, message: InboundMessage, group_chat_id: UUID
+    ) -> GroupBanResult:
+        if message.content.strip() != "/是" or message.source_type != "group":
+            return GroupBanResult("no_pending")
+        with self._session() as session:
+            group = session.get(GroupChatRecord, group_chat_id, with_for_update=True)
+            pending = session.scalar(select(GroupBanRequestRecord).where(
+                GroupBanRequestRecord.group_chat_id == group_chat_id,
+                GroupBanRequestRecord.actor_platform_id == message.sender_platform_id,
+                GroupBanRequestRecord.status == "pending",
+            ).order_by(GroupBanRequestRecord.created_at.desc()).with_for_update())
+            if pending is None:
+                return GroupBanResult("no_pending")
+            if message.received_at >= pending.expires_at:
+                pending.status = "expired"
+                pending.completed_at = message.received_at
+                return GroupBanResult("expired")
+            if (
+                group is None
+                or group.deleted_at is not None
+                or message.sender_platform_id not in group.ban_operator_platform_ids
+                or session.scalar(select(UserRecord.id).where(
+                    UserRecord.platform_id == message.sender_platform_id
+                )) is None
+                or session.get(InboundRecord, pending.source_inbound_message_id).chatroom_id != group.chatroom_id
+            ):
+                pending.status = "unauthorized"
+                pending.completed_at = message.received_at
+                return GroupBanResult("unauthorized")
+            if session.scalar(select(UserRecord.id).where(
+                UserRecord.platform_id == pending.target_platform_id
+            )) is not None:
+                pending.status = "target_joined"
+                pending.completed_at = message.received_at
+                return GroupBanResult("target_joined")
+            inbound = session.scalar(select(InboundRecord).where(
+                InboundRecord.group_chat_id == group_chat_id,
+                InboundRecord.platform_message_id == message.platform_message_id,
+            ))
+            if inbound is None:
+                return GroupBanResult("no_pending")
+            pending.status = "queued"
+            pending.confirmed_at = message.received_at
+            pending.confirmation_inbound_message_id = inbound.id
+            session.add(WorkerCommandRecord(command=f"ban:{pending.id}", created_at=message.received_at))
+            return GroupBanResult(
+                "queued", pending.target_platform_id, pending.reason, pending.message_excerpt
+            )
+
+    def claim_group_ban_execution(
+        self, request_id: UUID, now: datetime
+    ) -> GroupBanExecution | None:
+        with self.transaction(), self._session() as session:
+            request = session.get(GroupBanRequestRecord, request_id, with_for_update=True)
+            if request is None:
+                return None
+            if request.status == "executing":
+                self._finish_group_ban(session, request, "uncertain", now)
+                return None
+            if request.status != "queued":
+                return None
+            group = session.get(GroupChatRecord, request.group_chat_id, with_for_update=True)
+            source = session.get(InboundRecord, request.source_inbound_message_id)
+            if (
+                group is None or group.deleted_at is not None
+                or not group.listening_enabled or not group.chatroom_id
+                or source is None or source.chatroom_id != group.chatroom_id
+                or request.actor_platform_id not in group.ban_operator_platform_ids
+                or session.scalar(select(UserRecord.id).where(
+                    UserRecord.platform_id == request.actor_platform_id
+                )) is None
+            ):
+                self._finish_group_ban(session, request, "unauthorized", now)
+                return None
+            self._lock_employee_identity_gate(session)
+            if session.scalar(select(UserRecord.id).where(
+                UserRecord.platform_id == request.target_platform_id
+            )) is not None:
+                self._finish_group_ban(session, request, "target_joined", now)
+                return None
+            request.status = "executing"
+            return GroupBanExecution(source.chatroom_id, request.target_platform_id)
+
+    def complete_group_ban_execution(
+        self, request_id: UUID, outcome: str, detail: str | None, now: datetime
+    ) -> bool:
+        if outcome not in {"succeeded", "failed", "uncertain"}:
+            raise ValueError("invalid group ban outcome")
+        with self.transaction(), self._session() as session:
+            request = session.get(GroupBanRequestRecord, request_id, with_for_update=True)
+            if request is None or request.status != "executing":
+                return False
+            self._finish_group_ban(session, request, outcome, now, detail)
+            return True
+
+    def _finish_group_ban(
+        self, session: Session, request: GroupBanRequestRecord,
+        outcome: str, now: datetime, detail: str | None = None,
+    ) -> None:
+        request.status = outcome
+        request.completed_at = now
+        request.detail = detail[:500] if detail else None
+        reply = {
+            "succeeded": f"已移出 UID {request.target_platform_id}。",
+            "failed": f"移除失败：UID {request.target_platform_id}，平台未确认成功。",
+            "uncertain": f"移除 UID {request.target_platform_id} 结果不明，请人工核查；不会自动重试。",
+            "unauthorized": "移除失败：本群授权已失效。",
+            "target_joined": "移除失败：该成员已入职，不能移除。",
+        }[outcome]
+        self.enqueue_outbound(
+            request.confirmation_inbound_message_id or request.source_inbound_message_id,
+            reply, group_chat_id=request.group_chat_id,
+        )
 
     def soft_delete_group_chat(
         self, group_id: UUID, now: datetime
@@ -3613,6 +3853,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 "listening_enabled": config.listening_enabled,
                 "games_enabled": config.games_enabled,
                 "enabled_game_types": list(config.enabled_game_types),
+                "ban_operator_platform_ids": list(config.ban_operator_platform_ids),
                 "random_events_enabled": config.random_events_enabled,
                 "announcements_enabled": config.announcements_enabled,
                 "adult_shop_enabled": config.adult_shop_enabled,
@@ -3872,6 +4113,264 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             if record is None:
                 return False
             record.enabled = enabled
+            session.flush()
+            return True
+
+    @staticmethod
+    def _custom_command_name(command: str) -> str:
+        if (
+            not isinstance(command, str)
+            or not command.startswith("/")
+            or len(command) < 2
+            or len(command) > 32
+            or any(character.isspace() for character in command)
+        ):
+            raise ValueError("指令名称必须以 / 开头，不能包含空白，且不超过 32 字符")
+        return command
+
+    @staticmethod
+    def _custom_reply_value(
+        session: Session,
+        reply_type: str,
+        content: str | None,
+        upload_task_id: UUID | None,
+        previous: CommandDefinitionRecord | None = None,
+    ) -> str:
+        if reply_type == "image":
+            if content is not None:
+                raise ValueError("图片回复不能包含文本内容")
+            if upload_task_id is None:
+                if previous is not None and previous.reply_type == "image" and previous.reply_value:
+                    return previous.reply_value
+                raise ValueError("请先上传图片")
+            task = session.get(CustomCommandImageUploadRecord, UUID(str(upload_task_id)))
+            if task is None or task.status != "completed" or not task.result_url:
+                raise ValueError("图片尚未上传成功")
+            return task.result_url
+        if upload_task_id is not None or not isinstance(content, str):
+            raise ValueError("回复内容与类型不匹配")
+        if reply_type == "text":
+            if not content.strip() or len(content) > 2000:
+                raise ValueError("文本回复不能为空且不超过 2000 字符")
+            return content
+        if reply_type == "novel":
+            resource_id = company_story_novel_resource_id(content)
+            if resource_id is None:
+                raise ValueError("小说链接格式不正确")
+            return resource_id
+        if reply_type == "group_invite":
+            try:
+                parsed = urlsplit(content.strip())
+                hostname = parsed.hostname
+            except ValueError:
+                raise ValueError("群聊邀请链接格式不正确") from None
+            match = re.fullmatch(r"/invite/([A-Za-z0-9_-]+)", parsed.path)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not hostname or any(character.isspace() for character in hostname)
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or match is None
+            ):
+                raise ValueError("群聊邀请链接格式不正确")
+            return match.group(1)
+        raise ValueError("不支持的回复类型")
+
+    def create_custom_command(
+        self, command: str, description: str, reply_type: str,
+        content: str | None, upload_task_id: UUID | None, enabled: bool,
+    ) -> CommandDefinitionRecord:
+        self.ensure_command_definitions()
+        command = self._custom_command_name(command)
+        with self._session() as session:
+            if session.get(CommandDefinitionRecord, command) is not None:
+                raise ValueError("指令名称已被占用")
+            value = self._custom_reply_value(session, reply_type, content, upload_task_id)
+            record = CommandDefinitionRecord(
+                command=command, syntax=command, description=description.strip(),
+                enabled=enabled, is_custom=True, reply_type=reply_type,
+                reply_value=value, created_at=beijing_now(),
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def update_custom_command(
+        self, old_command: str, command: str, description: str, reply_type: str,
+        content: str | None, upload_task_id: UUID | None, enabled: bool,
+    ) -> CommandDefinitionRecord:
+        command = self._custom_command_name(command)
+        with self._session() as session:
+            record = session.get(CommandDefinitionRecord, old_command)
+            if record is None or not record.is_custom:
+                raise ValueError("只能编辑自定义指令")
+            if command != old_command and session.get(CommandDefinitionRecord, command) is not None:
+                raise ValueError("指令名称已被占用")
+            value = self._custom_reply_value(
+                session, reply_type, content, upload_task_id, record
+            )
+            record.command = command
+            record.syntax = command
+            record.description = description.strip()
+            record.reply_type = reply_type
+            record.reply_value = value
+            record.enabled = enabled
+            session.flush()
+            return record
+
+    def delete_custom_command(self, command: str) -> bool:
+        with self._session() as session:
+            record = session.get(CommandDefinitionRecord, command)
+            if record is None or not record.is_custom:
+                return False
+            session.delete(record)
+            session.flush()
+            return True
+
+    def get_enabled_custom_command(self, command: str) -> CommandDefinitionRecord | None:
+        with self._session() as session:
+            return session.scalar(select(CommandDefinitionRecord).where(
+                CommandDefinitionRecord.command == command,
+                CommandDefinitionRecord.is_custom.is_(True),
+                CommandDefinitionRecord.enabled.is_(True),
+            ))
+
+    def create_custom_command_image_upload(
+        self, temp_path: str, original_filename: str, mime_type: str, now: datetime,
+    ) -> CustomCommandImageUploadRecord:
+        with self._session() as session:
+            record = CustomCommandImageUploadRecord(
+                temp_path=temp_path, original_filename=original_filename,
+                mime_type=mime_type, status="pending", attempt_count=0,
+                created_at=now, updated_at=now,
+            )
+            session.add(record)
+            session.flush()
+            return record
+
+    def get_custom_command_image_upload(
+        self, task_id: UUID | str,
+    ) -> CustomCommandImageUploadRecord | None:
+        with self._session() as session:
+            return session.get(CustomCommandImageUploadRecord, UUID(str(task_id)))
+
+    def claim_custom_command_image_upload(
+        self, worker_id: str, now: datetime, lease_seconds: int,
+    ) -> CustomCommandImageUploadRecord | None:
+        with self._session() as session:
+            record = session.scalar(
+                select(CustomCommandImageUploadRecord)
+                .where(
+                    CustomCommandImageUploadRecord.status.in_(("pending", "processing")),
+                    or_(
+                        CustomCommandImageUploadRecord.lease_expires_at.is_(None),
+                        CustomCommandImageUploadRecord.lease_expires_at <= now,
+                    ),
+                )
+                .order_by(CustomCommandImageUploadRecord.created_at, CustomCommandImageUploadRecord.id)
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            if record is None:
+                return None
+            record.status = "processing"
+            record.lease_worker_id = worker_id
+            record.lease_token = uuid4()
+            record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            record.attempt_count += 1
+            record.updated_at = now
+            session.flush()
+            return record
+
+    def _finish_custom_command_image_upload(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        status: str, value: str, now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(
+                select(CustomCommandImageUploadRecord).where(
+                    CustomCommandImageUploadRecord.id == UUID(str(task_id)),
+                    CustomCommandImageUploadRecord.status == "processing",
+                    CustomCommandImageUploadRecord.lease_worker_id == worker_id,
+                    CustomCommandImageUploadRecord.lease_token == UUID(str(lease_token)),
+                    CustomCommandImageUploadRecord.lease_expires_at > now,
+                ).with_for_update()
+            )
+            if record is None:
+                return False
+            record.status = status
+            if status == "completed":
+                record.result_url = value.strip()
+            else:
+                record.failure_summary = value[:128]
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            record.updated_at = now
+            record.completed_at = now
+            session.flush()
+            return True
+
+    def complete_custom_command_image_upload(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        result_url: str, now: datetime,
+    ) -> bool:
+        return self._finish_custom_command_image_upload(
+            task_id, worker_id, lease_token, "completed", result_url, now
+        )
+
+    def fail_custom_command_image_upload(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        failure_summary: str, now: datetime,
+    ) -> bool:
+        return self._finish_custom_command_image_upload(
+            task_id, worker_id, lease_token, "failed", failure_summary, now
+        )
+
+    def claim_custom_command_image_cleanup(
+        self, worker_id: str, now: datetime, lease_seconds: int,
+    ) -> CustomCommandImageUploadRecord | None:
+        with self._session() as session:
+            record = session.scalar(
+                select(CustomCommandImageUploadRecord).where(
+                    CustomCommandImageUploadRecord.status.in_(("completed", "failed")),
+                    CustomCommandImageUploadRecord.temp_path != "",
+                    or_(
+                        CustomCommandImageUploadRecord.lease_expires_at.is_(None),
+                        CustomCommandImageUploadRecord.lease_expires_at <= now,
+                    ),
+                ).order_by(
+                    CustomCommandImageUploadRecord.completed_at,
+                    CustomCommandImageUploadRecord.id,
+                ).with_for_update(skip_locked=True).limit(1)
+            )
+            if record is None:
+                return None
+            record.lease_worker_id = worker_id
+            record.lease_token = uuid4()
+            record.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            record.updated_at = now
+            session.flush()
+            return record
+
+    def complete_custom_command_image_cleanup(
+        self, task_id: UUID | str, worker_id: str, lease_token: UUID | str,
+        now: datetime,
+    ) -> bool:
+        with self._session() as session:
+            record = session.scalar(select(CustomCommandImageUploadRecord).where(
+                CustomCommandImageUploadRecord.id == UUID(str(task_id)),
+                CustomCommandImageUploadRecord.status.in_(("completed", "failed")),
+                CustomCommandImageUploadRecord.lease_worker_id == worker_id,
+                CustomCommandImageUploadRecord.lease_token == UUID(str(lease_token)),
+                CustomCommandImageUploadRecord.lease_expires_at > now,
+            ).with_for_update())
+            if record is None:
+                return False
+            record.temp_path = ""
+            record.lease_worker_id = None
+            record.lease_token = None
+            record.lease_expires_at = None
+            record.updated_at = now
             session.flush()
             return True
 
@@ -29767,8 +30266,6 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                     return DisciplineFineResult("target_not_joined")
                 if target.id == issuer.id:
                     return DisciplineFineResult("self")
-                if target.department_id in enforcement_ids:
-                    return DisciplineFineResult("same_department")
                 if settings_record.target_daily_limit > 0:
                     fined_today = int(
                         session.scalar(
@@ -31374,6 +31871,11 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 if existing is not None:
                     return existing, False
                 employee_number = self._take_employee_number(session)
+                if session.scalar(select(GroupBanRequestRecord.id).where(
+                    GroupBanRequestRecord.target_platform_id == platform_id,
+                    GroupBanRequestRecord.status.in_(("executing", "uncertain")),
+                )) is not None:
+                    raise GroupBanInProgressError("group removal is in progress")
                 if session.scalar(
                     select(UserRecord.id).where(
                         UserRecord.display_name == normalized_name

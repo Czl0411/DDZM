@@ -38,6 +38,7 @@ from .repository import (
     _short_author_name,
     CoreRepository,
     EmployeeNameTakenError,
+    GroupBanInProgressError,
     _FINE_FEEDBACK_HINT,
     blame_settlement_template_values,
     company_story_novel_resource_id,
@@ -66,6 +67,7 @@ _COMMANDS = {
 _COMMANDS.add("/随机事件时间表")
 _COMMANDS.add("/q")
 _COMMANDS.update({"/黑历史", "/删除黑历史", "/下一页"})
+_COMMANDS.update({"/ban", "/是"})
 
 _LOTTERY_COMMANDS = {
     "/购买彩票",
@@ -81,6 +83,22 @@ _DARK_MARKET_QUERY_ALIASES = {
     "/登录暗网": "/查看暗网",
     "/暗网": "/查看暗网",
 }
+
+_COMMAND_ALIASES = {
+    "/开始摸鱼躲藏", "/躲", "/me", "/装备称号", "/编辑称号",
+    "/买彩票", "/问", "/问吧", "/回答", "/答", "/罚",
+    "/今日最受欢迎", "/发情值排名", "/最受欢迎", "/我的发情值",
+    "/选择", "/确认优选投稿", "/确认广告位",
+}
+
+
+def is_reserved_command_name(command: str) -> bool:
+    return (
+        command in _COMMANDS
+        or command in _COMMAND_ALIASES
+        or command in _DARK_MARKET_QUERY_ALIASES
+        or bool(re.fullmatch(r"/第[1-9]\d*场", command))
+    )
 
 
 def _valid_image_url(value: str | None) -> bool:
@@ -128,7 +146,19 @@ class GroupCommandHandler:
             dice_reply = self._liar_dice_call_step(message, content)
             if dice_reply is not None:
                 return dice_reply
-            return self._company_lottery_draft_step(message, content)
+            lottery_reply = self._company_lottery_draft_step(message, content)
+            if lottery_reply is not None:
+                return lottery_reply
+            if message.source_type != "group" or message.chatroom_id is None:
+                return None
+            if self._repository.resolve_enabled_group_chat(message.chatroom_id) is None:
+                return None
+            record = self._repository.get_enabled_custom_command(content)
+            if record is None:
+                return None
+            if record.reply_type == "image":
+                return CommandReply("", content_type="image", image_url=record.reply_value)
+            return CommandReply(record.reply_value, content_type=record.reply_type)
         self._repository.ensure_command_definitions()
         if not self._repository.is_command_enabled(command):
             return None
@@ -139,6 +169,31 @@ class GroupCommandHandler:
             else None
         )
         group_chat_id = None if group is None else group.id
+        if command in {"/ban", "/是"}:
+            if group_chat_id is None:
+                return "请在群内使用此指令。"
+            result = (
+                self._repository.request_group_ban(message, group_chat_id)
+                if command == "/ban"
+                else self._repository.confirm_group_ban(message, group_chat_id)
+            )
+            if result.status == "pending":
+                return (
+                    f"是否移除 UID {result.target_platform_id}？\n"
+                    f"原消息：{result.message_excerpt}\n原因：{result.reason}\n"
+                    "发起人请在 60 秒内发送 /是。"
+                )
+            if result.status == "queued":
+                return f"正在移除 UID {result.target_platform_id}，等待平台确认。"
+            return {
+                "unauthorized": "你没有本群 /ban 权限，或已不再入职。",
+                "target_joined": "该成员已入职，不能移除。",
+                "invalid_reply": "请回复目标成员的一条消息后发送 /ban 原因。",
+                "missing_reason": "请填写移除原因：/ban 原因。",
+                "self_target": "不能移除自己。",
+                "expired": "待确认请求已过期，请重新发送 /ban 原因。",
+                "no_pending": "当前没有待确认的移除请求。",
+            }[result.status]
         if command == "/q":
             if message.source_type != "group" or group_chat_id is None:
                 return "请在群内回复一条消息后发送 /q。"
@@ -2127,7 +2182,6 @@ class GroupCommandHandler:
             "quota_exhausted": "你今日的罚款次数已用完，明天再来吧。",
             "target_not_joined": "目标还未入职摸鱼公司。",
             "self": "不能罚款自己。",
-            "same_department": "不能罚款执法部门内部成员。",
             "target_limit": "该员工今日被罚款次数已达上限。",
         }
         if result.status in errors:
@@ -2472,6 +2526,8 @@ class GroupCommandHandler:
             )
         except EmployeeNameTakenError:
             return self._reply("/入职", "name_taken", received_at)
+        except GroupBanInProgressError:
+            return "该成员的群移除操作正在进行或结果待核查，请联系管理员核查后再入职。"
         if not created:
             return self._reply(
                 "/入职",
@@ -5272,9 +5328,9 @@ class GroupCommandHandler:
         )
 
     def _help(self, content: str, received_at) -> str:
-        commands = {
-            item.command for item in self._repository.list_enabled_command_definitions()
-        }
+        definitions = self._repository.list_enabled_command_definitions()
+        commands = {item.command for item in definitions}
+        custom_commands = [item for item in definitions if item.is_custom]
         settings = self._repository.get_game_settings()
         topic = content.split(maxsplit=1)[1].strip() if len(content.split(maxsplit=1)) == 2 else ""
         topic = {
@@ -5560,6 +5616,8 @@ class GroupCommandHandler:
         }
 
         def category_available(category: str) -> bool:
+            if category == "自定义":
+                return bool(custom_commands)
             if category == "游戏":
                 return any(
                     any(command in commands for command, _ in guides[name][1])
@@ -5591,6 +5649,7 @@ class GroupCommandHandler:
                 ("风纪", "/帮助 风纪：风纪罚款"),
                 ("部门", "/帮助 部门：部门申请与审批"),
                 ("职位", "/帮助 职位：职位晋升与审批"),
+                ("自定义", "/帮助 自定义：群内自定义指令"),
             )
             guide = "发送 /帮助 分类，查看详细用法：\n" + "\n".join(
                 line
@@ -5624,6 +5683,10 @@ class GroupCommandHandler:
                     "私聊 /报数 数字、/跳过 编号、/继续、/结束游戏；"
                     "发送 /蹦蹦数字炸弹 积分赛 可开启固定8人、12轮积分赛"
                 )
+        elif topic == "自定义":
+            guide = "【自定义指令】\n" + "\n".join(
+                f"{item.command}：{item.description}" for item in custom_commands
+            ) if custom_commands else "该分类暂未开放。"
         elif topic in guides:
             title, entries = guides[topic]
             lines = [line for command, line in entries if command in commands]

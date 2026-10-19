@@ -39,6 +39,16 @@ class AdminCorePort(Protocol):
 
     def set_game_command_enabled(self, command: str, enabled: bool) -> dict: ...
 
+    def create_custom_command(self, payload: dict) -> dict: ...
+
+    def update_custom_command(self, payload: dict) -> dict: ...
+
+    def delete_custom_command(self, old_command: str) -> dict: ...
+
+    def create_custom_command_image_upload(self, upload: dict) -> dict: ...
+
+    def get_custom_command_image_upload(self, task_id: str) -> dict: ...
+
     def set_game_command_template(
         self, command: str, scenario: str, template: str
     ) -> dict: ...
@@ -482,6 +492,32 @@ class CoreClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def create_custom_command(self, payload: dict) -> dict:
+        response = self._client.post("/internal/game/custom-commands", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def update_custom_command(self, payload: dict) -> dict:
+        response = self._client.put("/internal/game/custom-commands", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_custom_command(self, old_command: str) -> dict:
+        response = self._client.request(
+            "DELETE", "/internal/game/custom-commands",
+            json={"old_command": old_command},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def create_custom_command_image_upload(self, upload: dict) -> dict:
+        response = self._client.post("/internal/game/custom-command-images", json=upload)
+        response.raise_for_status()
+        return response.json()
+
+    def get_custom_command_image_upload(self, task_id: str) -> dict:
+        return self._get(f"/internal/custom-command-images/{task_id}")
 
     def set_game_command_template(
         self, command: str, scenario: str, template: str

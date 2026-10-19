@@ -53,6 +53,9 @@ let aiKnowledgeCards = [];
 let currentEmployeeMemory = null;
 let commandDefinitions = [];
 let commandPage = 1;
+let customCommandImageTaskId = null;
+let customCommandImageUrl = null;
+let customCommandUploadGeneration = 0;
 let administratorAccounts = [];
 let administratorPage = 1;
 let todayRandomEvents = [];
@@ -313,6 +316,15 @@ const templateModalContext = document.querySelector("#template-modal-context");
 const templateModalScenario = document.querySelector("#template-modal-scenario");
 const templateModalInput = document.querySelector("#template-modal-input");
 const templateModalVariables = document.querySelector("#template-modal-variables");
+const customCommandModal = document.querySelector("#custom-command-modal");
+const customCommandName = document.querySelector("#custom-command-name");
+const customCommandDescription = document.querySelector("#custom-command-description");
+const customCommandEnabled = document.querySelector("#custom-command-enabled");
+const customCommandType = document.querySelector("#custom-command-type");
+const customCommandContent = document.querySelector("#custom-command-content");
+const customCommandImageFile = document.querySelector("#custom-command-image-file");
+const customCommandImageStatus = document.querySelector("#custom-command-image-status");
+const customCommandImagePreview = document.querySelector("#custom-command-image-preview");
 const settingsModal = document.querySelector("#settings-modal");
 const profileSettingsModal = document.querySelector("#profile-settings-modal");
 const settingsCurrencyName = document.querySelector("#settings-currency-name");
@@ -1908,6 +1920,85 @@ function loadTemplateScenario() {
     .join("");
 }
 
+function updateCustomCommandFields() {
+  const image = customCommandType.value === "image";
+  document.querySelector("#custom-command-content-label").hidden = image;
+  document.querySelector("#custom-command-image-fields").hidden = !image;
+  customCommandContent.placeholder = customCommandType.value === "group_invite"
+    ? "https://www.ivorune.xyz/invite/邀请码"
+    : customCommandType.value === "novel"
+      ? "https://www.ivorune.xyz/novel/小说UUID"
+      : "固定回复内容";
+  document.querySelector("#save-custom-command").disabled =
+    customCommandModal.dataset.uploading === "true" || (image && !customCommandImageUrl);
+}
+
+function openCustomCommandModal(command = null) {
+  customCommandUploadGeneration += 1;
+  customCommandModal.dataset.oldCommand = command?.command || "";
+  customCommandModal.dataset.uploading = "false";
+  document.querySelector("#custom-command-modal-title").textContent = command ? "编辑自定义指令" : "新增自定义指令";
+  customCommandName.value = command?.command || "";
+  customCommandDescription.value = command?.description || "";
+  customCommandEnabled.checked = command?.enabled ?? true;
+  customCommandType.value = command?.reply_type || "text";
+  customCommandContent.value = command?.reply_type === "group_invite"
+    ? `https://www.ivorune.xyz/invite/${command.reply_value}`
+    : command?.reply_type === "novel"
+      ? `https://www.ivorune.xyz/novel/${command.reply_value}`
+      : command?.reply_type === "text" ? command.reply_value : "";
+  customCommandImageTaskId = null;
+  customCommandImageUrl = command?.reply_type === "image" ? command.reply_value : null;
+  customCommandImageFile.value = "";
+  customCommandImageStatus.textContent = customCommandImageUrl ? "当前图片已生效；可选择新图替换。" : "";
+  customCommandImagePreview.src = customCommandImageUrl || "";
+  customCommandImagePreview.hidden = !customCommandImageUrl;
+  updateCustomCommandFields();
+  customCommandModal.hidden = false;
+  customCommandName.focus();
+}
+
+function closeCustomCommandModal() {
+  customCommandUploadGeneration += 1;
+  customCommandModal.hidden = true;
+}
+
+async function uploadCustomCommandImage(file) {
+  const generation = ++customCommandUploadGeneration;
+  customCommandModal.dataset.uploading = "true";
+  customCommandImageStatus.textContent = "正在上传图片…";
+  updateCustomCommandFields();
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const task = await requestGame("/api/game/custom-command-images", {method: "POST", body: form});
+    if (generation !== customCommandUploadGeneration) return;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      if (generation !== customCommandUploadGeneration) return;
+      const status = await requestGame(`/api/game/custom-command-images/${encodeURIComponent(task.id)}`);
+      if (generation !== customCommandUploadGeneration) return;
+      if (status.status === "completed") {
+        customCommandImageTaskId = task.id;
+        customCommandImageUrl = status.result_url;
+        customCommandImagePreview.src = status.result_url;
+        customCommandImagePreview.hidden = false;
+        customCommandImageStatus.textContent = "图片已上传，点击保存后生效。";
+        return;
+      }
+      if (status.status === "failed") throw new Error(status.failure_summary || "图片上传失败");
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    throw new Error("图片上传超时，请重新选择图片");
+  } catch (error) {
+    if (generation === customCommandUploadGeneration) customCommandImageStatus.textContent = error.message;
+  } finally {
+    if (generation === customCommandUploadGeneration) {
+      customCommandModal.dataset.uploading = "false";
+      updateCustomCommandFields();
+    }
+  }
+}
+
 async function requestGame(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const mutationHeaders = method === "GET" || method === "HEAD"
@@ -2001,12 +2092,50 @@ async function loadGroupChats() {
   return groupChats;
 }
 
+let groupBanEmployees = [];
+let groupBanLoadVersion = 0;
+let groupBanSelectedIds = new Set();
+
+function renderGroupBanOperators() {
+  const search = document.querySelector("#group-chat-ban-operator-search").value.trim().toLowerCase();
+  document.querySelector("#group-chat-ban-operators").innerHTML = groupBanEmployees.filter((employee) => {
+    const label = `${employee.display_name} ${employee.platform_nickname || ""} ${employee.employee_number}`;
+    return label.toLowerCase().includes(search);
+  }).map((employee) => `<label class="group-admin-option"><input type="checkbox" value="${escapeHtml(employee.platform_id)}" ${groupBanSelectedIds.has(employee.platform_id) ? "checked" : ""}><span>${escapeHtml(employee.display_name)} · ${escapeHtml(employee.platform_nickname || "平台昵称未获取")} · ${formatEmployeeNumber(employee.employee_number)}</span></label>`).join("") || '<small class="muted">没有匹配的已入职员工。</small>';
+  const selected = groupBanEmployees.filter((employee) => groupBanSelectedIds.has(employee.platform_id));
+  document.querySelector("#group-chat-selected-admins").innerHTML = selected.length
+    ? selected.map((employee) => `<button class="variable-chip" data-remove-group-admin="${escapeHtml(employee.platform_id)}" type="button" aria-label="移除管理员 ${escapeHtml(employee.display_name)}">${escapeHtml(employee.display_name)} · ${formatEmployeeNumber(employee.employee_number)} ×</button>`).join("")
+    : '<small class="muted">尚未选择管理员。</small>';
+}
+
+async function loadGroupBanEmployees(version) {
+  const employees = [];
+  for (let page = 1; ; page += 1) {
+    const result = await requestGame(`/api/game/users?page=${page}&page_size=100`);
+    employees.push(...result.items);
+    if (result.items.length < 100) break;
+  }
+  if (version !== groupBanLoadVersion) return;
+  groupBanEmployees = employees;
+  renderGroupBanOperators();
+}
+
 function openGroupChatModal(group = null) {
   groupChatModal.dataset.groupId = group?.id || "";
   document.querySelector("#group-chat-modal-title").textContent = group ? `编辑群聊：${group.name}` : "新增群聊";
   document.querySelector("#group-chat-name").value = group?.name || "";
   document.querySelector("#group-chat-url").value = group?.chat_url || "";
   document.querySelector("#group-chat-room-id").value = group?.chatroom_id || "";
+  document.querySelector("#group-chat-ban-operator-search").value = "";
+  groupBanSelectedIds = new Set(group?.ban_operator_platform_ids || []);
+  groupBanEmployees = [];
+  renderGroupBanOperators();
+  const saveButton = document.querySelector("#save-group-chat");
+  saveButton.disabled = true;
+  const version = ++groupBanLoadVersion;
+  void loadGroupBanEmployees(version).then(() => {
+    if (version === groupBanLoadVersion) saveButton.disabled = false;
+  }).catch((error) => setResult(`加载员工失败（${error.message}）`, "error"));
   document.querySelector("#group-chat-listening-enabled").checked = group?.listening_enabled ?? true;
   document.querySelector("#group-chat-games-enabled").checked = group?.games_enabled ?? true;
   const enabledGameTypes = new Set(group?.enabled_game_types || groupGameOptions.map(([type]) => type));
@@ -2022,6 +2151,7 @@ function openGroupChatModal(group = null) {
 }
 
 function closeGroupChatModal() {
+  groupBanLoadVersion += 1;
   groupChatModal.hidden = true;
   groupChatModal.dataset.groupId = "";
 }
@@ -2440,7 +2570,7 @@ function closeShopItemModal() {
 }
 
 function renderCommands(commands) {
-  const filtered = filterList("commands", commands, (command) => `${command.command} ${commandLabel(command.command)} ${command.description}`);
+  const filtered = filterList("commands", commands, (command) => `${command.command} ${commandLabel(command.command)} ${command.description} ${command.reply_value || ""}`);
   const pageData = renderLocalPagination(
     document.querySelector("#command-pagination"),
     filtered,
@@ -2455,8 +2585,8 @@ function renderCommands(commands) {
   commandPage = pageData.page;
   document.querySelector("#command-list").innerHTML = pageData.items.map((command) => `
     <article class="command-card">
-      <div class="command-heading"><div><b>${escapeHtml(commandLabel(command.command))}</b><small>${statusBadge(command.enabled ? "已启用" : "已停用", command.enabled ? "success" : "warning")}</small><small>${escapeHtml(command.description)}</small></div>
-      <div class="command-actions"><button class="secondary" data-command-templates="${escapeHtml(JSON.stringify(command.templates))}" data-command="${escapeHtml(command.command)}" data-command-description="${escapeHtml(command.description)}" type="button">配置回复</button>
+      <div class="command-heading"><div><b>${escapeHtml(commandLabel(command.command))}</b><small>${statusBadge(command.enabled ? "已启用" : "已停用", command.enabled ? "success" : "warning")}</small><small>${escapeHtml(command.description)}</small>${command.is_custom ? `<small>${escapeHtml(({text: "文本", image: "图片", group_invite: "分享群聊", novel: "分享小说"})[command.reply_type] || command.reply_type)} · ${escapeHtml((command.reply_value || "").slice(0, 100))}</small>` : ""}</div>
+      <div class="command-actions">${command.is_custom ? `<button class="secondary" data-custom-command-action="edit" data-command="${escapeHtml(command.command)}" type="button">编辑</button><button class="danger-button" data-custom-command-action="delete" data-command="${escapeHtml(command.command)}" type="button">删除</button>` : `<button class="secondary" data-command-templates="${escapeHtml(JSON.stringify(command.templates))}" data-command="${escapeHtml(command.command)}" data-command-description="${escapeHtml(command.description)}" type="button">配置回复</button>`}
       <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></div></div>
     </article>`).join("") || "<p class=\"muted\">暂无指令。</p>";
 }
@@ -3554,6 +3684,21 @@ for (const button of document.querySelectorAll(".nav-item")) {
   button.addEventListener("click", () => void loadGameView(button.dataset.view));
 }
 document.querySelector("#create-group-chat").addEventListener("click", () => openGroupChatModal());
+document.querySelector("#group-chat-ban-operator-search").addEventListener("input", () => {
+  renderGroupBanOperators();
+});
+document.querySelector("#group-chat-ban-operators").addEventListener("change", (event) => {
+  if (!event.target.matches('input[type="checkbox"]')) return;
+  if (event.target.checked) groupBanSelectedIds.add(event.target.value);
+  else groupBanSelectedIds.delete(event.target.value);
+  renderGroupBanOperators();
+});
+document.querySelector("#group-chat-selected-admins").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-remove-group-admin]");
+  if (!button) return;
+  groupBanSelectedIds.delete(button.dataset.removeGroupAdmin);
+  renderGroupBanOperators();
+});
 groupChatModal.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-group-chat-modal]")) closeGroupChatModal();
 });
@@ -3569,6 +3714,7 @@ document.querySelector("#save-group-chat").addEventListener("click", async (even
     announcements_enabled: document.querySelector("#group-chat-announcements-enabled").checked,
     adult_shop_enabled: document.querySelector("#group-chat-adult-shop-enabled").checked,
     performances_enabled: document.querySelector("#group-chat-performances-enabled").checked,
+    ban_operator_platform_ids: [...groupBanSelectedIds],
   };
   try {
     await runMutation(event.currentTarget, "保存中…", async () => {
@@ -3786,7 +3932,71 @@ departmentModal.addEventListener("click", async (event) => {
     setResult(`保存失败（${error.message}）`, "error");
   }
 });
+document.querySelector("#add-custom-command").addEventListener("click", () => openCustomCommandModal());
+customCommandType.addEventListener("change", updateCustomCommandFields);
+customCommandImageFile.addEventListener("change", () => {
+  if (customCommandImageFile.files[0]) uploadCustomCommandImage(customCommandImageFile.files[0]);
+});
+customCommandModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-custom-command-modal]")) {
+    closeCustomCommandModal();
+    return;
+  }
+  if (event.target.id !== "save-custom-command") return;
+  const button = event.target;
+  if (button.disabled) return;
+  const oldCommand = customCommandModal.dataset.oldCommand;
+  const payload = {
+    command: customCommandName.value.trim(),
+    description: customCommandDescription.value.trim(),
+    enabled: customCommandEnabled.checked,
+    reply_type: customCommandType.value,
+    content: customCommandType.value === "image" ? null : customCommandContent.value,
+    upload_task_id: customCommandType.value === "image" ? customCommandImageTaskId : null,
+  };
+  if (oldCommand) payload.old_command = oldCommand;
+  try {
+    await runMutation(button, "保存中…", async () => {
+      const updated = await requestGame("/api/game/custom-commands", {
+        method: oldCommand ? "PUT" : "POST",
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify(payload),
+      });
+      configurationVersion = updated.version;
+      closeCustomCommandModal();
+      await loadGameView("commands");
+    });
+    setResult("自定义指令已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
 document.querySelector("#command-list").addEventListener("click", async (event) => {
+  const custom = event.target.closest("button[data-custom-command-action]");
+  if (custom) {
+    const command = commandDefinitions.find((item) => item.command === custom.dataset.command && item.is_custom);
+    if (!command) return;
+    if (custom.dataset.customCommandAction === "edit") {
+      openCustomCommandModal(command);
+      return;
+    }
+    if (!window.confirm(`确定删除 ${command.command}？`)) return;
+    try {
+      await runMutation(custom, "删除中…", async () => {
+        const deleted = await requestGame("/api/game/custom-commands", {
+          method: "DELETE",
+          headers: {"Content-Type": "application/json", ...configurationHeaders()},
+          body: JSON.stringify({old_command: command.command}),
+        });
+        configurationVersion = deleted.version;
+        await loadGameView("commands");
+      });
+      setResult("自定义指令已删除", "success");
+    } catch (error) {
+      setResult(`删除失败（${error.message}）`, "error");
+    }
+    return;
+  }
   const button = event.target.closest("button[data-command][data-enabled]");
   if (button) {
     try {

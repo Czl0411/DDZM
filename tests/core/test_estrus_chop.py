@@ -754,6 +754,7 @@ def test_my_estrus_and_popularity_ranking():
     _receive(service, "q1", "user-1", "/我的凿", NOW)
     texts = _replies(factory)
     assert any("【我的凿】" in text for text in texts)
+    assert any("名字：乙" in text for text in texts)
     assert any("发情值：20/100" in text for text in texts)
     assert any("被凿：今日 2 次 / 累计 2 次" in text for text in texts)
     assert any("凿人：今日 0 次 / 累计 0 次" in text for text in texts)

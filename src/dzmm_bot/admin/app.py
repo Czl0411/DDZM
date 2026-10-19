@@ -476,6 +476,13 @@ def create_app(
                     )
                 )
             )
+            or (
+                "ban_operator_platform_ids" in request
+                and (
+                    not isinstance(request["ban_operator_platform_ids"], list)
+                    or not all(isinstance(value, str) for value in request["ban_operator_platform_ids"])
+                )
+            )
         ):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid group chat"
@@ -487,6 +494,7 @@ def create_app(
             "enabled_game_types": request.get(
                 "enabled_game_types", list(GROUP_GAME_TYPES)
             ),
+            "ban_operator_platform_ids": request.get("ban_operator_platform_ids", []),
             "now": beijing_now().isoformat(),
         }
         return versioned_configuration_response(
@@ -514,6 +522,7 @@ def create_app(
             "listening_enabled",
             "games_enabled",
             "enabled_game_types",
+            "ban_operator_platform_ids",
             "random_events_enabled",
             "announcements_enabled",
             "adult_shop_enabled",
@@ -528,7 +537,7 @@ def create_app(
             for key in ("name", "chat_url")
         ) or any(
             key in request and not isinstance(request[key], bool)
-            for key in allowed - {"name", "chat_url", "enabled_game_types"}
+            for key in allowed - {"name", "chat_url", "enabled_game_types", "ban_operator_platform_ids"}
         ) or (
             "enabled_game_types" in request
             and (
@@ -542,6 +551,11 @@ def create_app(
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid group chat"
             )
+        if "ban_operator_platform_ids" in request and (
+            not isinstance(request["ban_operator_platform_ids"], list)
+            or not all(isinstance(value, str) for value in request["ban_operator_platform_ids"])
+        ):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid group chat")
         payload = {**request, "now": beijing_now().isoformat()}
         return versioned_configuration_response(
             identity,
@@ -593,6 +607,49 @@ def create_app(
     def game_commands(_: Annotated[None, Depends(authorize)]) -> list[dict]:
         version = repository.config_version()
         return [{**command, "version": version} for command in core.list_game_commands()]
+
+    @app.post("/api/game/custom-commands", status_code=status.HTTP_201_CREATED)
+    def create_custom_command(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity, idempotency_key, if_match,
+            lambda: _relay_core(lambda: core.create_custom_command(request)),
+            scope=f"custom-command:{request.get('command')}",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    @app.put("/api/game/custom-commands")
+    def update_custom_command(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        return versioned_configuration_response(
+            identity, idempotency_key, if_match,
+            lambda: _relay_core(lambda: core.update_custom_command(request)),
+            scope=f"custom-command:{request.get('old_command')}",
+        )
+
+    @app.delete("/api/game/custom-commands")
+    def delete_custom_command(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        old_command = request.get("old_command")
+        if not isinstance(old_command, str):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid command")
+        return versioned_configuration_response(
+            identity, idempotency_key, if_match,
+            lambda: _relay_core(lambda: core.delete_custom_command(old_command)),
+            scope=f"custom-command:{old_command}",
+        )
 
     @app.patch("/api/game/commands")
     def set_game_command_enabled(
@@ -1176,15 +1233,7 @@ def create_app(
             )
         )
 
-    @app.post(
-        "/api/game/users/{platform_id}/profile-image",
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def upload_personal_profile_image(
-        platform_id: str,
-        _: Annotated[None, Depends(authorize)],
-        file: Annotated[UploadFile, File()],
-    ) -> dict:
+    async def save_uploaded_image(file: UploadFile, fallback_name: str) -> dict:
         allowed = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
         if file.content_type not in allowed:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid image type")
@@ -1218,18 +1267,53 @@ def create_app(
                 )
             upload = {
                 "temp_path": str(destination),
-                "original_filename": file.filename or "profile-image",
+                "original_filename": file.filename or fallback_name,
                 "mime_type": file.content_type,
                 "now": beijing_now().isoformat(),
             }
-            return _relay_core(
-                lambda: core.create_profile_image_upload(platform_id, upload)
-            )
+            return upload
         except Exception:
             destination.unlink(missing_ok=True)
             raise
         finally:
             await file.close()
+
+    @app.post(
+        "/api/game/users/{platform_id}/profile-image",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def upload_personal_profile_image(
+        platform_id: str,
+        _: Annotated[None, Depends(authorize)],
+        file: Annotated[UploadFile, File()],
+    ) -> dict:
+        upload = await save_uploaded_image(file, "profile-image")
+        try:
+            return _relay_core(lambda: core.create_profile_image_upload(platform_id, upload))
+        except Exception:
+            Path(upload["temp_path"]).unlink(missing_ok=True)
+            raise
+
+    @app.post(
+        "/api/game/custom-command-images",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def upload_custom_command_image(
+        _: Annotated[None, Depends(authorize)],
+        file: Annotated[UploadFile, File()],
+    ) -> dict:
+        upload = await save_uploaded_image(file, "custom-command-image")
+        try:
+            return _relay_core(lambda: core.create_custom_command_image_upload(upload))
+        except Exception:
+            Path(upload["temp_path"]).unlink(missing_ok=True)
+            raise
+
+    @app.get("/api/game/custom-command-images/{task_id}")
+    def custom_command_image_upload_status(
+        task_id: str, _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return _relay_core(lambda: core.get_custom_command_image_upload(task_id))
 
     @app.get("/api/game/profile-image-uploads/{task_id}")
     def personal_profile_image_upload_status(

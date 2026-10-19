@@ -357,6 +357,19 @@ def test_trpc_add_bot_uses_a_post_mutation_request(tmp_path):
     assert observed["method"] == "POST"
 
 
+def test_trpc_remove_member_uses_a_post_mutation_request(tmp_path):
+    context = FakeContext("https://chat.example/chat?c=group-1")
+    observed = {}
+    context.pages[0].evaluate = lambda _script, argument=None: observed.update(argument) or {}
+    session = BrowserSession(
+        tmp_path / "profile", "https://chat.example/login",
+        chat_url="https://chat.example/chat?c=group-1",
+    )
+    session._context = context
+    session._request("groupChat.removeMember", {"chatroomId": "group-1", "memberId": "outsider"})
+    assert observed["method"] == "POST"
+
+
 def test_configured_session_recovers_socket_identity_from_auth_cookie_on_418(tmp_path):
     page = FakePage("https://chat.example/chat?c=group-1")
     page.evaluate = lambda _script, _argument=None: (_ for _ in ()).throw(
@@ -424,6 +437,41 @@ def test_configured_session_uploads_image_as_multipart_without_hex_encoding(tmp_
             "chatroomId": "group-1",
         },
     )]
+
+
+def test_configured_session_upload_failure_reports_status_without_response_body(tmp_path):
+    page = FakePage("https://chat.example/chat?c=group-1")
+    page.evaluate = lambda script, arg=None: (
+        "short-lived-token"
+        if "api/auth/token" in script
+        else {"id": "bot-1"}
+        if arg["procedure"] == "user.getMe"
+        else {"messages": []}
+    )
+    context = FakeContext(page.url)
+    context.request = FakeRequestContext()
+    context.pages = [page]
+    session = BrowserSession(
+        tmp_path / "profile", "https://chat.example/login",
+        chat_url="https://chat.example/chat?c=group-1",
+        playwright_factory=lambda: FakePlaywright(FakeChromium(context)),
+        socket_factory=FakeSocket,
+    )
+    image_path = tmp_path / "private.webp"
+    image_path.write_bytes(b"raw-image")
+    gateway = session.start_headless()
+
+    class RejectedResponse:
+        ok = False
+        status = 415
+
+        def text(self):
+            return "secret platform response"
+
+    context.request.post = lambda url, *, multipart: RejectedResponse()
+    with pytest.raises(RuntimeError, match="HTTP 415") as error:
+        gateway.upload_image(image_path, "image/webp")
+    assert "secret platform response" not in str(error.value)
 
 
 def test_configured_session_uploads_image_from_outbound_thread(tmp_path, monkeypatch):

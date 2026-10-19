@@ -32,6 +32,8 @@ def test_estrus_global_state_migration_merges_legacy_group_rows(tmp_path, monkey
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("group_chat_id", "user_id"),
     )
+    sa.Table("liar_dice_settings", metadata, sa.Column("id", sa.Integer(), primary_key=True))
+    sa.Table("liar_dice_games", metadata, sa.Column("id", sa.Uuid(), primary_key=True))
     metadata.create_all(engine)
     user_id = uuid4()
     with engine.begin() as connection:
@@ -68,8 +70,8 @@ def test_estrus_global_state_migration_merges_legacy_group_rows(tmp_path, monkey
         )
 
     config = Config(str(ROOT / "alembic.ini"))
-    command.stamp(config, "20261011_103")
-    command.upgrade(config, "20261012_103")
+    command.stamp(config, "20261012_105")
+    command.upgrade(config, "20261013_106")
 
     with engine.connect() as connection:
         row = connection.execute(
@@ -86,6 +88,12 @@ def test_estrus_global_state_migration_merges_legacy_group_rows(tmp_path, monkey
         for constraint in sa.inspect(engine).get_unique_constraints("estrus_states")
     }
     assert "ux_estrus_state_user" in names
+    assert {"signup_timeout_minutes", "continue_timeout_minutes", "deal_timeout_seconds"} <= {
+        column["name"] for column in sa.inspect(engine).get_columns("liar_dice_settings")
+    }
+    assert {"round_end_deadline", "dealing_deadline"} <= {
+        column["name"] for column in sa.inspect(engine).get_columns("liar_dice_games")
+    }
 
     with pytest.raises(sa.exc.IntegrityError), engine.begin() as connection:
         connection.execute(

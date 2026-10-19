@@ -29,8 +29,8 @@ cd /opt/dzmm/current
 install -m 644 /opt/dzmm/current/deploy/systemd/dzmm-*.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable dzmm-ai-worker.service
-systemctl enable dzmm-ai-memory-worker.service
-systemctl stop dzmm-admin-web.service dzmm-browser-worker.service dzmm-ai-worker.service dzmm-ai-memory-worker.service
+systemctl disable --now dzmm-ai-memory-worker.service
+systemctl stop dzmm-admin-web.service dzmm-browser-worker.service dzmm-ai-worker.service
 systemctl restart dzmm-core.service
 dzmm_core_ready=false
 for _ in $(seq 1 30); do
@@ -44,5 +44,5 @@ if [ "$dzmm_core_ready" != true ]; then
   systemctl status dzmm-core.service --no-pager
   exit 1
 fi
-systemctl reset-failed dzmm-admin-web.service dzmm-browser-worker.service dzmm-ai-worker.service dzmm-ai-memory-worker.service || true
-systemctl restart dzmm-admin-web.service dzmm-browser-worker.service dzmm-ai-worker.service dzmm-ai-memory-worker.service
+systemctl reset-failed dzmm-admin-web.service dzmm-browser-worker.service dzmm-ai-worker.service || true
+systemctl restart dzmm-admin-web.service dzmm-browser-worker.service dzmm-ai-worker.service

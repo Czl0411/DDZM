@@ -12,7 +12,7 @@ liar_dice(20261002_77)，从未跑过 origin/main 的 8 个迁移：
 - 20260919_82 black_history_delete_drafts（1 表）
 - 20260930_83 shop_scratch_reward_ranges（2 列 + 数据）
 
-本迁移按"最终形态"补齐全部结构与数据，所有操作幂等，可在任意中间状态重跑。
+本迁移补齐缺失结构；已有的后台配置和有效彩票轮次保持不变。
 """
 
 from collections.abc import Sequence
@@ -22,8 +22,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20261010_102"
-down_revision: str | None = "20261010_101"
+revision: str = "20261012_105"
+down_revision: str | None = "20261012_104"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -60,7 +60,7 @@ def _add_columns_if_missing(table: str, columns: list[sa.Column]) -> None:
 
 
 def _lottery_economy() -> None:
-    """main 20260915_76：彩票经济数值 + 未开售票轮次提前关闭。"""
+    """仅修正停售时间无效的未售轮次，保留已配置的彩票经济数值。"""
     bind = op.get_bind()
     if not sa.inspect(bind).has_table("company_lottery_settings"):
         return
@@ -82,17 +82,6 @@ def _lottery_economy() -> None:
         sa.column("max_tickets_per_round", sa.Integer()),
         sa.column("close_offset_minutes", sa.Integer()),
     )
-    values = {
-        "head_prize": 500,
-        "second_prize": 120,
-        "third_prize": 20,
-        "fourth_prize": 5,
-        "fifth_prize": 1,
-        "pool_ceiling": 1000,
-        "per_person_cap": 500,
-        "close_offset_minutes": 30,
-    }
-    bind.execute(settings.update().where(settings.c.id == 1).values(**values))
     current = bind.execute(
         sa.select(settings).where(settings.c.id == 1)
     ).mappings().first()
@@ -125,7 +114,8 @@ def _lottery_economy() -> None:
     )
     rows = bind.execute(
         sa.select(rounds.c.id, rounds.c.draw_at).where(
-            rounds.c.state == "open", rounds.c.tickets_sold == 0
+            rounds.c.state == "open", rounds.c.tickets_sold == 0,
+            rounds.c.close_at >= rounds.c.draw_at,
         )
     ).mappings()
     for row in rows:
@@ -133,7 +123,7 @@ def _lottery_economy() -> None:
             rounds.update()
             .where(rounds.c.id == row["id"])
             .values(
-                close_at=row["draw_at"] - timedelta(minutes=30),
+                close_at=row["draw_at"] - timedelta(minutes=current["close_offset_minutes"]),
                 rules_snapshot=snapshot,
             )
         )
@@ -158,7 +148,7 @@ VOTE_SETTINGS_COLUMNS = (
     sa.Column(
         "vote_random_candidates", sa.Integer(), nullable=False, server_default="3"
     ),
-    sa.Column("vote_ad_slot_limit", sa.Integer(), nullable=False, server_default="1"),
+    sa.Column("vote_ad_slot_limit", sa.Integer(), nullable=False, server_default="3"),
     sa.Column(
         "vote_fallback_minutes", sa.Integer(), nullable=False, server_default="30"
     ),
@@ -276,7 +266,7 @@ def _vote_command_gate() -> None:
 
 
 def _random_event_ad_slots() -> None:
-    """main 20260917_79 + 20260917_80：广告卡两表（最终形态）与数据。"""
+    """main 20260917_79 + 20260917_80：优选投稿位两表（最终形态）。"""
     inspector = sa.inspect(op.get_bind())
     if not inspector.has_table("random_event_ad_slots"):
         op.create_table(
@@ -346,7 +336,6 @@ def _random_event_ad_slots() -> None:
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint("user_id"),
         )
-    op.execute("UPDATE random_event_settings SET vote_ad_slot_limit = 3")
 
 
 def _black_history_entries() -> None:
@@ -387,7 +376,7 @@ def _black_history_delete_drafts() -> None:
 
 
 def _scratch_reward_ranges() -> None:
-    """main 20260930_83：刮刮卡奖励区间列与默认值。"""
+    """main 20260930_83：补齐刮刮卡奖励区间列及缺失值。"""
     _add_columns_if_missing(
         "items",
         [
@@ -402,7 +391,7 @@ def _scratch_reward_ranges() -> None:
     ):
         op.execute(
             sa.text(
-                "UPDATE items SET scratch_reward_min = :minimum, "
-                "scratch_reward_max = :maximum WHERE system_key = :key"
+                "UPDATE items SET scratch_reward_min = COALESCE(scratch_reward_min, :minimum), "
+                "scratch_reward_max = COALESCE(scratch_reward_max, :maximum) WHERE system_key = :key"
             ).bindparams(key=key, minimum=minimum, maximum=maximum)
         )

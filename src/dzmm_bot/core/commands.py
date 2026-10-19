@@ -32,8 +32,6 @@ from .memory_guild_match import (
 from .performance import parse_postponement
 from .reply_templates import render_template, template_definition
 from .shop_cards import CATEGORY_DISPLAY_ORDER, CATEGORY_OTHER
-from .equipment import EQUIPMENT_COMMANDS
-from .equipment_commands import handle_equipment_command
 from .schema import PRIMARY_GROUP_CHAT_ID
 from .repository import (
     BlameGameResult,
@@ -66,7 +64,6 @@ _COMMANDS = {
     "/设置性别", "/修改性别",
 }
 _COMMANDS.add("/随机事件时间表")
-_COMMANDS.update(EQUIPMENT_COMMANDS)
 _COMMANDS.add("/q")
 _COMMANDS.update({"/黑历史", "/删除黑历史", "/下一页"})
 
@@ -94,17 +91,14 @@ def _valid_image_url(value: str | None) -> bool:
 
 
 class GroupCommandHandler:
-    def __init__(self, repository: CoreRepository, *, workstation_links=None) -> None:
+    def __init__(self, repository: CoreRepository) -> None:
         self._repository = repository
-        self._workstation_links = workstation_links
 
     def handle(self, message: InboundMessage) -> str | list[str] | None:
         content = message.content.strip()
         if not content:
             return None
         command = content.split(maxsplit=1)[0]
-        if command == "/装备商店":
-            command = "/装备商城"
         command = _DARK_MARKET_QUERY_ALIASES.get(command, command)
         if re.fullmatch(r"/第[1-9]\d*场", command):
             command = "/公会赛场次"
@@ -145,14 +139,6 @@ class GroupCommandHandler:
             else None
         )
         group_chat_id = None if group is None else group.id
-        if command in EQUIPMENT_COMMANDS:
-            result = handle_equipment_command(
-                self._repository, message, command, group_chat_id,
-                workstation_links=self._workstation_links,
-            )
-            if command == "/我的工位" and isinstance(result, list):
-                return [result[0], CommandReply(result[1], reference_inbound=False)]
-            return result
         if command == "/q":
             if message.source_type != "group" or group_chat_id is None:
                 return "请在群内回复一条消息后发送 /q。"
@@ -5300,17 +5286,6 @@ class GroupCommandHandler:
         }.get(topic, topic)
 
         guides = {
-            "装备商城": (
-                "【装备商城与工位】",
-                (
-                    ("/装备商城", "/装备商城：查看独立装备目录，/装备商店 等效"),
-                    ("/购买装备", "/购买装备 编号：购买永久装备，每件限购一次"),
-                    ("/装备", "/装备 编号：将已购装备放入工位"),
-                    ("/卸下", "/卸下 编号：卸下装备并保留所有权"),
-                    ("/我的装备", "/我的装备：查看跨群共享的装备库"),
-                    ("/我的工位", "/我的工位：获取个人工位链接，点击查看装备和预计日收入；自动结算尚未启用"),
-                ),
-            ),
             "基础": (
                 "【基础与资产】",
                 (
@@ -5607,7 +5582,6 @@ class GroupCommandHandler:
             categories = (
                 ("基础", "/帮助 基础：入职与资产"),
                 ("商店", "/帮助 商店：购买、使用、赠送与授权"),
-                ("装备商城", "/帮助 装备商城：工位装备购买、装卸和收益预览"),
                 (
                     "游戏",
                     "/帮助 游戏：玩法总览；/帮助 摸鱼躲藏、/帮助 记忆考核、/帮助 谁是卧底、/帮助 甩锅游戏、/帮助 蹦蹦数字炸弹、/帮助 德州扑克、/帮助 我有你没有、/帮助 真心换真心、/帮助 暗网交易所、/帮助 公演预约",

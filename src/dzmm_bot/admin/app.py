@@ -49,7 +49,6 @@ from .shop_excel import (
     error_report as shop_error_report, export_workbook as export_shop_workbook,
     parse_workbook as parse_shop_workbook,
 )
-from .workstation import install_workstation_routes
 from dzmm_bot.core.honors import HonorConfigInput, HonorSettleInput, HonorCorrectionInput
 
 
@@ -117,7 +116,6 @@ def create_app(
     if not admin_token:
         raise ValueError("admin_token must be nonempty")
     app = FastAPI()
-    install_workstation_routes(app, core)
     app.add_middleware(ShopExcelUploadLimitMiddleware)
     console = console_client or NoVNCClient()
     connect_websocket = websocket_connector or NoVNCWebSocketConnector()

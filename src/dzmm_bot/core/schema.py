@@ -3327,47 +3327,6 @@ class IntegrationIdempotencyRecord(Base):
     )
 
 
-class EquipmentItemRecord(Base):
-    __tablename__ = "equipment_items"
-    __table_args__ = (
-        CheckConstraint("price >= 0", name="ck_equipment_price"),
-        CheckConstraint("daily_income >= 0", name="ck_equipment_income"),
-    )
-
-    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    public_number: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
-    asset_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(64), nullable=False)
-    price: Mapped[int] = mapped_column(Integer, nullable=False)
-    daily_income: Mapped[int] = mapped_column(Integer, nullable=False)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-
-
-class EquipmentOwnershipRecord(Base):
-    __tablename__ = "equipment_ownerships"
-    __table_args__ = (UniqueConstraint("user_id", "item_id", name="uq_equipment_owner"),)
-
-    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    item_id: Mapped[UUID] = mapped_column(ForeignKey("equipment_items.id"), nullable=False)
-    equipped: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    purchased_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
-
-
-class EquipmentPurchaseRecord(Base):
-    __tablename__ = "equipment_purchases"
-    __table_args__ = (CheckConstraint("price >= 0", name="ck_equipment_purchase_price"),)
-
-    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    inbound_message_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), unique=True, nullable=False)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    item_id: Mapped[UUID] = mapped_column(ForeignKey("equipment_items.id"), nullable=False)
-    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
-    price: Mapped[int] = mapped_column(Integer, nullable=False)
-    result: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
-
-
 class ItemRecord(Base):
     __tablename__ = "items"
 

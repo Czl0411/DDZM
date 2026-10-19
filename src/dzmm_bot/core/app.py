@@ -245,8 +245,6 @@ from .performance import HttpCoverImageValidator
 from .shop_management import ShopChangesConfirmRequest, ShopChangesPreviewRequest
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
-from .workstation import WorkstationLinks
-from .gamefy import install_gamefy_routes
 
 
 def create_server(repository: CoreRepository, settings: Settings) -> Server:
@@ -256,9 +254,6 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
             repository,
             settings.core_token,
             require_group_chat_bootstrap=True,
-            workstation_public_url=settings.workstation_public_url,
-            workstation_game_url=settings.workstation_game_url,
-            gamefy_game_id=settings.gamefy_game_id,
         ),
         host="127.0.0.1",
         port=settings.core_api_port,
@@ -285,9 +280,6 @@ def create_app_from_environment() -> FastAPI:
         repository,
         settings.core_token,
         require_group_chat_bootstrap=True,
-        workstation_public_url=settings.workstation_public_url,
-        workstation_game_url=settings.workstation_game_url,
-        gamefy_game_id=settings.gamefy_game_id,
     )
 
 
@@ -330,36 +322,19 @@ def create_app(
     clock: Callable[[], datetime] = beijing_now,
     require_group_chat_bootstrap: bool = False,
     cover_image_validator=None,
-    workstation_public_url: str | None = None,
-    workstation_game_url: str | None = None,
-    gamefy_game_id: str | None = None,
 ) -> FastAPI:
     app = FastAPI()
-    workstation_links = WorkstationLinks(core_token, workstation_public_url, game_url=workstation_game_url)
     if cover_image_validator is None:
         cover_image_validator = HttpCoverImageValidator(httpx.Client(timeout=5))
     service = CoreService(
         repository,
-        GroupCommandHandler(repository, workstation_links=workstation_links),
+        GroupCommandHandler(repository),
         cover_image_validator=cover_image_validator,
     )
 
     def authorize(x_core_token: Annotated[str | None, Header()] = None) -> None:
         if x_core_token is None or not compare_digest(x_core_token, core_token):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unauthorized")
-
-    install_gamefy_routes(app, repository, authorize, gamefy_game_id)
-
-    @app.get("/internal/workstations/{token}")
-    def get_workstation(token: str, _: Annotated[None, Depends(authorize)]):
-        user_id = workstation_links.user_id_for(token)
-        workstation = None if user_id is None else repository.get_workstation(user_id)
-        if workstation is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "工位链接无效或已失效，请在群里重新发送 /我的工位。")
-        return JSONResponse(
-            {**workstation, "currency_name": repository.get_game_settings().currency_name},
-            headers={"Cache-Control": "no-store"},
-        )
 
     @app.post("/internal/inbound", response_model=InboundResponse)
     def receive_inbound(

@@ -1189,41 +1189,6 @@ def test_worker_renders_uploads_and_sends_black_history_card(context, monkeypatc
     ]
 
 
-def test_worker_composes_and_uploads_workstation_to_selected_group(context, monkeypatch):
-    worker, gateway, _, _, _, _ = context
-    rendered = []
-
-    def render(payload, output_path):
-        rendered.append(payload)
-        output_path.write_bytes(b"png")
-
-    monkeypatch.setattr("dzmm_bot.browser.worker.render_workstation_image", render)
-    outbound = OutboundClaim(
-        OUTBOUND_ID, None,
-        '{"display_name":"糯糯","employee_number":"#0001","equipped":[]}',
-        LEASE, content_type="workstation", destination_chatroom_id="group-a",
-    )
-    worker._send_outbound(gateway, outbound)
-    assert rendered[0]["equipped"] == []
-    assert gateway.uploaded_images[0][1] == "image/png"
-    assert gateway.sent_images_to == [("group-a", "https://cdn.example.com/uploaded.png", "糯糯的工位（工号：#0001）")]
-    assert not gateway.sent_to
-
-
-def test_worker_does_not_send_text_on_workstation_upload_failure(context):
-    worker, gateway, _, _, _, _ = context
-    gateway.upload_error = RuntimeError("upload failed")
-    outbound = OutboundClaim(
-        OUTBOUND_ID, None,
-        '{"display_name":"糯糯","employee_number":"#0001","equipped":[]}',
-        LEASE, content_type="workstation", destination_chatroom_id="group-a",
-    )
-    with pytest.raises(RuntimeError, match="upload failed"):
-        worker._send_outbound(gateway, outbound)
-    assert not gateway.sent_images_to
-    assert not gateway.sent_to
-
-
 def test_worker_reports_an_expired_black_history_image(context, monkeypatch):
     worker, gateway, _, _, _, _ = context
 

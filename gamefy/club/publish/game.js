@@ -62,10 +62,17 @@ function tileLabel(id) {
   if (type < 27) return `${type - 17}索`;
   return ["東", "南", "西", "北", "白", "發", "中"][type - 27];
 }
+function tileGlyph(id) {
+  const type = tileType(id);
+  if (type < 9) return String.fromCodePoint(0x1f007 + type);
+  if (type < 18) return String.fromCodePoint(0x1f019 + type - 9);
+  if (type < 27) return String.fromCodePoint(0x1f010 + type - 18);
+  return String.fromCodePoint([0x1f000, 0x1f001, 0x1f002, 0x1f003, 0x1f006, 0x1f005, 0x1f004][type - 27]);
+}
 function tileSuit(id) { const type = tileType(id); return type < 9 ? "man" : type < 18 ? "pin" : type < 27 ? "sou" : "honor"; }
 function tileNode(id, small = false) {
   const tile = document.createElement("button");
-  tile.type = "button"; tile.className = `tile ${small ? "small" : ""}`; tile.dataset.id = String(id); tile.dataset.suit = tileSuit(id); tile.textContent = tileLabel(id);
+  tile.type = "button"; tile.className = `tile ${small ? "small" : ""}`; tile.dataset.id = String(id); tile.dataset.suit = tileSuit(id); tile.textContent = tileGlyph(id); tile.setAttribute("aria-label", tileLabel(id)); tile.title = tileLabel(id);
   return tile;
 }
 function gameCard(game) {
@@ -142,7 +149,7 @@ function renderWaiting() {
 }
 function renderPlayer(selector, seat) {
   const node = $(selector); const player = room.players[seat]; node.replaceChildren(); node.classList.toggle("active", room.game.turn === seat);
-  const avatar = document.createElement("span"); avatar.textContent = player?.name?.slice(0, 1) || "?"; const copy = document.createElement("div"); const name = document.createElement("strong"); name.textContent = playerText(seat); const count = document.createElement("small"); count.textContent = `${room.game.hand_counts[seat]} 张${room.game.riichi[seat] ? " · 立直" : ""}`; copy.append(name, count); node.append(avatar, copy);
+  const avatar = document.createElement("span"); avatar.textContent = player?.name?.slice(0, 1) || "?"; const copy = document.createElement("div"); const name = document.createElement("strong"); name.textContent = playerText(seat); const count = document.createElement("small"); count.textContent = `${winds[(seat - room.game.dealer + 4) % 4]}风 · ${room.game.hand_counts[seat]} 张${room.game.riichi[seat] ? " · 立直" : ""}`; copy.append(name, count); node.append(avatar, copy);
 }
 function renderRivers() {
   const holder = $("#rivers"); holder.replaceChildren();
@@ -161,14 +168,14 @@ function renderHand() {
 function actionButton(label, action, payload = {}, className = "secondary") { const button = document.createElement("button"); button.type = "button"; button.className = className; button.textContent = label; button.addEventListener("click", () => perform(action, payload)); return button; }
 function renderActions() {
   const bar = $("#action-bar"); bar.replaceChildren(); const actions = room.game.actions || {};
-  if (actions.pass) bar.append(actionButton("过", "pass"));
+  if (actions.pass) bar.append(actionButton("过", "pass", {}, "secondary pass-action"));
   if (actions.ron) bar.append(actionButton("荣和", "ron", {}, "primary gold"));
   if (actions.tsumo) bar.append(actionButton("自摸", "tsumo", {}, "primary gold"));
-  for (const choice of actions.chi || []) bar.append(actionButton(`吃 ${choice.map(tileLabel).join(" ")}`, "chi", {tiles: choice}));
-  for (const choice of actions.pon || []) bar.append(actionButton("碰", "pon", {tiles: choice}));
-  for (const choice of actions.kan || []) bar.append(actionButton("杠", "kan", {tiles: choice}));
-  for (const type of actions.ankan || []) bar.append(actionButton(`暗杠 ${tileLabel(type * 4)}`, "ankan", {tile_type: type}));
-  for (const choice of actions.kakan || []) bar.append(actionButton(`加杠 ${tileLabel(choice.tile_type * 4)}`, "kakan", {meld_index: choice.meld_index}));
+  for (const choice of actions.chi || []) bar.append(actionButton(`吃 ${choice.map(tileLabel).join(" ")}`, "chi", {tiles: choice}, "primary action-call"));
+  for (const choice of actions.pon || []) bar.append(actionButton("碰", "pon", {tiles: choice}, "primary action-call"));
+  for (const choice of actions.kan || []) bar.append(actionButton("杠", "kan", {tiles: choice}, "primary action-call"));
+  for (const type of actions.ankan || []) bar.append(actionButton(`暗杠 ${tileLabel(type * 4)}`, "ankan", {tile_type: type}, "primary action-call"));
+  for (const choice of actions.kakan || []) bar.append(actionButton(`加杠 ${tileLabel(choice.tile_type * 4)}`, "kakan", {meld_index: choice.meld_index}, "primary action-call"));
   if (actions.kyuushu) bar.append(actionButton("九种九牌", "kyuushu"));
   if (selectedTile !== null && (actions.discard || []).includes(selectedTile)) { if ((actions.riichi || []).includes(selectedTile)) bar.append(actionButton("立直打出", "riichi", {tile: selectedTile}, "primary gold")); bar.append(actionButton("打出", "discard", {tile: selectedTile}, "primary")); }
 }
@@ -182,8 +189,9 @@ function renderResult() {
   order.forEach((seat, index) => { const row = document.createElement("div"); const delta = room.game.result.deltas?.[seat]; row.innerHTML = `<b>${index + 1}</b><strong></strong><span>${room.game.points[seat].toLocaleString()}${delta === undefined ? "" : `（${delta >= 0 ? "+" : ""}${delta}）`}</span>`; row.querySelector("strong").textContent = room.players[seat]?.name || "玩家"; rows.append(row); }); holder.append(title, rows);
 }
 function renderGame() {
-  show("#waiting", false); show("#mahjong-table"); const order = seatOrder(); renderPlayer("#opponent-left", order.left); renderPlayer("#opponent-top", order.top); renderPlayer("#opponent-right", order.right); $("#self-player").textContent = playerText(order.self);
-  $("#round-label").textContent = `${winds[room.game.round_wind - 27] || "东"}${room.game.hand_number}局 · ${room.game.honba}本场`; $("#turn-status").textContent = room.game.turn === room.seat ? "轮到你出牌" : `${room.players[room.game.turn]?.name || "玩家"} 思考中`;
+  show("#waiting", false); show("#mahjong-table"); const order = seatOrder(); renderPlayer("#opponent-left", order.left); renderPlayer("#opponent-top", order.top); renderPlayer("#opponent-right", order.right); renderPlayer("#self-player", order.self);
+  const round = `${winds[room.game.round_wind - 27] || "东"}${room.game.hand_number}局`;
+  $("#round-label").textContent = `${round} · ${room.game.honba}本场`; $("#center-round").textContent = round; $("#remaining-count").textContent = `余 ${room.game.remaining} 张`; $("#turn-status").textContent = room.game.turn === room.seat ? "轮到你出牌" : `${room.players[room.game.turn]?.name || "玩家"} 思考中`;
   const dora = $("#dora"); dora.replaceChildren(document.createTextNode("宝牌指示 ")); room.game.dora_indicators.forEach(id => { const node = tileNode(id, true); node.disabled = true; dora.append(node); });
   renderRivers(); renderMelds(); renderHand(); renderActions(); renderResult();
 }

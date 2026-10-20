@@ -4,5 +4,11 @@
     "deployedAt": "2026-10-20T09:54:56.240Z",
     "label": "摸鱼 Club 首版",
     "gitHead": "a5472f1"
+  },
+  {
+    "revision": "1792491428177",
+    "deployedAt": "2026-10-20T10:16:06.302Z",
+    "label": "横屏沉浸版",
+    "gitHead": "0833e1f"
   }
 ]

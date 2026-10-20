@@ -115,6 +115,7 @@ from .group_games import GROUP_GAME_TYPES, normalized_group_game_types
 from .chess_repository import ChessRepositoryMixin
 from .doudizhu_repository import DoudizhuRepositoryMixin
 from .drawguess_repository import DrawguessRepositoryMixin
+from .mistrealm_repository import MistrealmRepositoryMixin
 from .mahjong_repository import MahjongRepositoryMixin
 from .club_repository import ClubRepositoryMixin
 from .performance import (
@@ -3084,7 +3085,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository(ClubRepositoryMixin, MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
+class CoreRepository(ClubRepositoryMixin, MahjongRepositoryMixin, MistrealmRepositoryMixin, DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],

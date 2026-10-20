@@ -1,15 +1,15 @@
 """unify Club identity, social features, tasks, and game stakes
 
-Revision ID: 20261021_113
-Revises: 20261020_112
+Revision ID: 20261021_126
+Revises: 20261020_125
 """
 
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20261021_113"
-down_revision = "20261020_112"
+revision = "20261021_126"
+down_revision = "20261020_125"
 branch_labels = None
 depends_on = None
 

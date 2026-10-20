@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_unified_club_is_the_only_migration_head():
     scripts = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert scripts.get_heads() == ["20261021_113"]
-    assert scripts.get_revision("20261021_113").down_revision == "20261020_112"
+    assert scripts.get_heads() == ["20261021_126"]
+    assert scripts.get_revision("20261021_126").down_revision == "20261020_125"
 
 
 def test_unified_club_generates_postgresql_upgrade_sql():
@@ -24,7 +24,7 @@ def test_unified_club_generates_postgresql_upgrade_sql():
         [
             str(ROOT / ".venv/bin/alembic"),
             "upgrade",
-            "20261020_112:20261021_113",
+            "20261020_125:20261021_126",
             "--sql",
         ],
         cwd=ROOT,

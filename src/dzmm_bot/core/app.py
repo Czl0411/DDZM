@@ -263,6 +263,7 @@ from .service import CoreService
 from .chess_api import chess_router
 from .doudizhu_api import doudizhu_router
 from .drawguess_api import drawguess_router
+from .mistrealm_api import mistrealm_router
 from .club_api import club_router
 
 
@@ -281,6 +282,7 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
             doudizhu_game_url=settings.doudizhu_game_url,
             doudizhu_public_api_url=settings.doudizhu_public_api_url,
             doudizhu_chatroom_id=settings.doudizhu_chatroom_id,
+            mistrealm_enabled=settings.mistrealm_enabled,
             drawguess_game_id=settings.drawguess_game_id,
             drawguess_game_url=settings.drawguess_game_url,
             drawguess_public_api_url=settings.drawguess_public_api_url,
@@ -325,6 +327,7 @@ def create_app_from_environment() -> FastAPI:
         doudizhu_game_url=settings.doudizhu_game_url,
         doudizhu_public_api_url=settings.doudizhu_public_api_url,
         doudizhu_chatroom_id=settings.doudizhu_chatroom_id,
+        mistrealm_enabled=settings.mistrealm_enabled,
         drawguess_game_id=settings.drawguess_game_id,
         drawguess_game_url=settings.drawguess_game_url,
         drawguess_public_api_url=settings.drawguess_public_api_url,
@@ -382,6 +385,7 @@ def create_app(
     doudizhu_game_url: str | None = None,
     doudizhu_public_api_url: str | None = None,
     doudizhu_chatroom_id: str | None = None,
+    mistrealm_enabled: bool = False,
     drawguess_game_id: str | None = None,
     drawguess_game_url: str | None = None,
     drawguess_public_api_url: str | None = None,
@@ -392,7 +396,7 @@ def create_app(
     club_chatroom_id: str | None = None,
 ) -> FastAPI:
     app = FastAPI()
-    if chess_game_id or doudizhu_game_id or drawguess_game_id or club_game_id:
+    if chess_game_id or doudizhu_game_id or drawguess_game_id or mistrealm_enabled or club_game_id:
         app.add_middleware(
             CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"],
             allow_headers=["Authorization", "Content-Type"],
@@ -415,6 +419,15 @@ def create_app(
         async def drawguess_no_cache(request, call_next):
             response = await call_next(request)
             if request.url.path.startswith("/api/drawguess/"):
+                response.headers["Cache-Control"] = "no-store"
+            return response
+    if mistrealm_enabled:
+        app.include_router(mistrealm_router(repository, clock))
+
+        @app.middleware("http")
+        async def mistrealm_no_cache(request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith("/api/mistrealm/"):
                 response.headers["Cache-Control"] = "no-store"
             return response
     if club_game_id:
@@ -4127,6 +4140,8 @@ def create_app(
             repository.advance_doudizhu_deadlines(request.now)
         if drawguess_game_id:
             repository.advance_drawguess_deadlines(request.now)
+        if mistrealm_enabled:
+            repository.advance_mistrealm_deadlines(request.now)
         if club_game_id:
             repository.advance_mahjong_deadlines(request.now)
         return AcceptedResponse(accepted=True)

@@ -1,8 +1,14 @@
 {
-  "revision": "1792491428177",
+  "revision": "1792492343799",
   "source": "workspace",
-  "pulledAt": "2026-10-20T10:16:06.271Z",
+  "pulledAt": "2026-10-20T10:31:22.692Z",
   "files": [
+    "assets/club-hero-v2.webp",
+    "assets/game-chess.webp",
+    "assets/game-doudizhu.webp",
+    "assets/game-drawguess.webp",
+    "assets/game-mahjong.webp",
+    "assets/mahjong-table.webp",
     "client.js",
     "config.js",
     "game.js",

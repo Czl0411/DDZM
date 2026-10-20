@@ -16,5 +16,11 @@
     "deployedAt": "2026-10-20T10:31:22.731Z",
     "label": "Club 美术升级版",
     "gitHead": "5ef7e97"
+  },
+  {
+    "revision": "1792492926390",
+    "deployedAt": "2026-10-20T10:41:05.287Z",
+    "label": "麻将牌桌 UI 升级版",
+    "gitHead": "1f4081a"
   }
 ]

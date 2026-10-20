@@ -21,11 +21,11 @@ PYTHONPATH=. .venv/bin/pytest -q gamefy/club/tests/test_club_sandbox.py
 
 ## 发布前配置
 
-创建独立 Gamefy 草稿后，把游戏 ID 写入 `dzmm.json`，上传 `publish/`，并在服务器环境中配置：
+Gamefy 游戏卡为 `3799452`。上传 `publish/` 前确认 `dzmm.json` 已绑定该 ID，并在服务器环境中配置：
 
 ```text
-DZMM_CLUB_GAME_ID=<游戏 ID>
-DZMM_CLUB_GAME_URL=https://www.aikda.com/chat?card=<游戏 ID>
+DZMM_CLUB_GAME_ID=3799452
+DZMM_CLUB_GAME_URL=https://www.aikda.com/chat?card=3799452
 DZMM_CLUB_PUBLIC_API_URL=https://49.234.20.159
 DZMM_CLUB_CHATROOM_ID=4fc4a2fd-465a-4436-9884-dbb5e60c6af2
 ```

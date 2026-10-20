@@ -622,6 +622,8 @@ _BALANCE_SOURCE_LABELS = {
     "dark_market_bid_refund": "暗网报价退款",
     "dark_market_sale_income": "暗网成交收入",
     "dark_market_sale_fee": "暗网成交手续费",
+    "dept_dark_market": "暗网成交津贴",
+    "estrus_climax_reward": "高潮奖励",
     "dark_market_force_refund": "暗网强制下架退款",
     "dark_market_complaint_refund": "暗网投诉退款",
     "dark_market_complaint_penalty": "暗网投诉卖家罚款",
@@ -1592,6 +1594,7 @@ DEPARTMENT_ALLOWANCE_DAILY_CAP = 5
 _DEPARTMENT_ALLOWANCE_RULES = {
     "dept_checkin": "checkin",
     "dept_event": "event",
+    "dept_dark_market": "event",
     "dept_game_host": "game",
     "dept_game_play": "game",
     "dept_submission": "submission",
@@ -1602,6 +1605,7 @@ _DEPARTMENT_ALLOWANCE_RULES = {
 _DEPARTMENT_ALLOWANCE_LABELS = {
     "dept_checkin": "打卡奖励",
     "dept_event": "演出奖励",
+    "dept_dark_market": "暗网成交奖励",
     "dept_game_host": "开局奖励",
     "dept_game_play": "参与奖励",
     "dept_submission": "投稿奖励",
@@ -2804,6 +2808,7 @@ _COMMAND_DEFINITIONS = (
     ("/大话骰子", "/大话骰子", "创建大话骰子报名局"),
     ("/牌局", "/牌局", "查看大话骰子当前战况"),
     ("/开骰", "/开骰", "大话骰子中质疑当前叫数并开牌"),
+    ("/跳开", "/跳开", "大话骰子中未轮到自己时抢先开骰，失败接受双重惩罚"),
     ("/看骰", "/看骰（仅私聊）", "私聊查看自己的大话骰子骰子"),
     ("/大话骰子数据", "/大话骰子数据", "查看当前大话骰子局实时统计"),
     ("/真心换真心", "/真心换真心", "创建真心换真心报名局"),
@@ -10456,6 +10461,14 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         listing.fee_amount = fee
         listing.receipt_resolved_at = now
         listing.finished_at = now
+        self._grant_department_allowance(
+            session,
+            seller,
+            "dept_dark_market",
+            now,
+            group_chat_id=listing.announcement_group_id,
+            detail=f"暗网商品 #{listing.public_number} 交易成功",
+        )
         settings = session.get(DarkMarketSettingsRecord, 1)
         if settings is None:
             raise RuntimeError("暗网设置不存在")
@@ -12543,7 +12556,7 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                     dice_commands = ("/继续", "/牌局", "/退出", "/结束游戏")
                 else:
                     dice_role = "participant"
-                    dice_commands = ("N个X", "/开骰", "/牌局", "/退出", "/结束游戏")
+                    dice_commands = ("N个X", "/开骰", "/跳开", "/牌局", "/退出", "/结束游戏")
                 active.append(
                     ActiveGameplaySummary(
                         "liar_dice",
@@ -13868,6 +13881,12 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                 round_record.revealed_numbers = selected
                 round_record.state = "revealed"
                 round_record.revealed_at = now
+                self._bump_department_game_rounds(
+                    session,
+                    [UUID(user_id) for user_id in round_record.number_map],
+                    now,
+                    group_chat_id=game.group_chat_id,
+                )
                 game.state = "revealed"
                 game.king_phase_deadline = None
                 return self._king_game_result_locked(session, game, "revealed")
@@ -14126,12 +14145,9 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         game.finished_at = now
         game.finish_reason = reason
         if state in {"completed", "forced_ended"}:
-            self._bump_department_game_plays(
-                session,
-                resolved_game_users(session, "king_game", game.id),
-                now,
-                group_chat_id=game.group_chat_id,
-                game_type="king_game", game_id=game.id,
+            record_game_participations(
+                session, "king_game", game.id, game.group_chat_id,
+                resolved_game_users(session, "king_game", game.id), now,
             )
 
     def _king_game_statistics_locked(
@@ -14313,12 +14329,9 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         game.finished_at = now
         game.finish_reason = reason
         if state in {"completed", "forced_ended"}:
-            self._bump_department_game_plays(
-                session,
-                resolved_game_users(session, "liar_dice", game.id),
-                now,
-                group_chat_id=game.group_chat_id,
-                game_type="liar_dice", game_id=game.id,
+            record_game_participations(
+                session, "liar_dice", game.id, game.group_chat_id,
+                resolved_game_users(session, "liar_dice", game.id), now,
             )
 
     def _liar_dice_result_locked(
@@ -14374,10 +14387,7 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         now: datetime,
         start_seat: int = 1,
     ) -> None:
-        """重摇骰子并私聊发新骰（dealing 状态，发齐后进 calling）。
-
-        座位保持稳定：不清位、不重排，本轮首叫从 start_seat 开始（连续轮转）。
-        """
+        """按本轮座位重摇并私聊发骰，发齐后从 start_seat 开始叫骰。"""
         players = self._liar_dice_players(session, game.id, ("active",))
         wild = roll_wild(self._liar_dice_random)
         round_number = game.round_number + 1
@@ -14411,7 +14421,9 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                 raise RuntimeError("大话骰子私聊会话在发牌阶段消失")
             outbound = self.enqueue_system_outbound(
                 f"【大话骰子】你的骰子（第 {round_number} 轮）："
-                f"{dice_str(player.dice or [])}。私聊发送 /看骰 可再次查看。",
+                f"{dice_str(player.dice or [])}。\n"
+                f"本轮万能点：{dice_str([wild])}（可顶任何点数；叫过该点后失效，只算自身）。\n"
+                "私聊发送 /看骰 可再次查看。",
                 destination_chatroom_id=room,
                 delivery_kind="liar_dice_hand",
             )
@@ -14467,7 +14479,7 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         )
         lines.append(
             f"由 {game.current_seat}号 {first} 首叫：最少 {len(players)} 个，直接发送“N个X”；"
-            "质疑则发 /开骰。超时将自动跳过。"
+            "轮到自己质疑则发 /开骰，其他参与者可 /跳开 抢先质疑。超时将自动跳过。"
         )
         self.enqueue_system_outbound(
             "\n".join(lines),
@@ -14780,6 +14792,8 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         platform_id: str,
         now: datetime,
         group_chat_id: UUID = PRIMARY_GROUP_CHAT_ID,
+        *,
+        jump: bool = False,
     ) -> LiarDiceResult:
         now = now.astimezone(BEIJING)
         with self.transaction():
@@ -14794,15 +14808,22 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                 if game.state != "calling":
                     return self._liar_dice_result_locked(session, game, "wrong_state")
                 players = self._liar_dice_players(session, game.id, ("active",))
+                if not any(player.user_id == actor.id for player, _ in players):
+                    return self._liar_dice_result_locked(session, game, "not_participant")
                 current = next(
                     (p for p, _ in players if p.seat_number == game.current_seat), None
                 )
-                if current is None or current.user_id != actor.id:
+                if not jump and (current is None or current.user_id != actor.id):
                     return self._liar_dice_result_locked(session, game, "not_your_turn")
                 if game.current_call is None or game.last_caller_user_id is None:
                     return self._liar_dice_result_locked(session, game, "no_call")
                 if game.last_caller_user_id == actor.id:
                     return self._liar_dice_result_locked(session, game, "own_call")
+                if jump:
+                    if current is not None and current.user_id == actor.id:
+                        return self._liar_dice_result_locked(session, game, "use_normal_open")
+                    if current is None or current.user_id == game.last_caller_user_id:
+                        return self._liar_dice_result_locked(session, game, "no_jump_target")
                 round_record = self._liar_dice_current_round(session, game.id)
                 if round_record is None:
                     raise RuntimeError("大话骰子回合不存在")
@@ -14834,9 +14855,15 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                 }
                 round_record.state = "resolved"
                 round_record.resolved_at = now
+                self._bump_department_game_rounds(
+                    session,
+                    [player.user_id for player, _ in players],
+                    now,
+                    group_chat_id=game.group_chat_id,
+                )
                 game.state = "round_end"
                 game.turn_deadline = None
-                lines = ["🎲 开牌！全场骰子："]
+                lines = ["🎲 跳开！全场骰子：" if jump else "🎲 开牌！全场骰子："]
                 lines.extend(
                     f"{player.seat_number}号 {user.display_name}：{dice_str(player.dice or [])}"
                     for player, user in players
@@ -14849,11 +14876,20 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                         else f"（万能点 🎲{round_record.wild_face} 已失效）"
                     )
                 )
-                lines.append(
-                    f"🎉 {winner.display_name} 赢！{loser.display_name} 输了，"
-                    f"接受惩罚——{winner.display_name} 获得发令权（可像国王游戏一样"
-                    f"给 {loser.display_name} 布置一个惩罚任务）。"
-                )
+                if jump and caller_win:
+                    next_user = next(user for player, user in players if player == current)
+                    lines.append(
+                        f"{actor.display_name} 跳开失败！接受双重惩罚——"
+                        f"叫骰者 {caller.display_name} 和原本下一个叫骰者 {next_user.display_name} "
+                        f"各获得一次发令权，各给 {actor.display_name} 布置一个惩罚任务。"
+                    )
+                else:
+                    lines.append(
+                        (f"{actor.display_name} 跳开成功！" if jump else "")
+                        + f"🎉 {winner.display_name} 赢！{loser.display_name} 输了，"
+                        f"接受惩罚——{winner.display_name} 获得发令权（可像国王游戏一样"
+                        f"给 {loser.display_name} 布置一个惩罚任务）。"
+                    )
                 lines.append(
                     "发 /继续 开下一轮，发起者或任意参与者可 /结束游戏 查看总战绩。"
                 )
@@ -14891,14 +14927,14 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                         session, game, "completed", "not_enough_players", now
                     )
                     return self._liar_dice_result_locked(session, game, "completed")
-                # 连续轮转：从开牌者（current_seat）的下一位开始新一轮
-                start_seat = self._liar_dice_next_active_seat(
-                    players, game.current_seat
-                )
-                if start_seat is None:
-                    start_seat = 1
+                for player, _ in players:
+                    player.seat_number = None
+                session.flush()
+                self._liar_dice_random.shuffle(players)
+                for seat, (player, _) in enumerate(players, start=1):
+                    player.seat_number = seat
                 game.timeout_streak = 0
-                self._liar_dice_deal_round(session, game, now, start_seat)
+                self._liar_dice_deal_round(session, game, now, start_seat=1)
                 return self._liar_dice_result_locked(session, game, "dealing")
 
     def liar_dice_end(
@@ -15332,9 +15368,9 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         if heat_roll < settings.heat_p0:
             heat_gain = 0
         elif heat_roll < settings.heat_p0 + settings.heat_p1:
-            heat_gain = 1
+            heat_gain = 5
         else:
-            heat_gain = 2
+            heat_gain = 10
         if settings.target_fixed_coins is not None:
             coins = settings.target_fixed_coins
         else:
@@ -15386,7 +15422,7 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         chopper_rank_quotas: dict[str, int] | None = None,
         combo_chop_enabled: bool = False,
         g_spot_percent: int = 10,
-        g_spot_heat_bonus: int = 10,
+        g_spot_heat_bonus: int = 20,
         chopper_coin_p0: int = 50,
         chopper_coin_p1: int = 30,
         chopper_coin_p2: int = 20,
@@ -15997,6 +16033,9 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                         state.heat = 0
                         state.total_climaxes = int(state.total_climaxes) + 1
                         state.today_climaxes = int(state.today_climaxes) + 1
+                        self._apply_balance_change(
+                            target, 10, "estrus_climax_reward", now
+                        )
                     if coins > 0:
                         self._apply_balance_change(
                             target, coins, "estrus_gain", now
@@ -16020,7 +16059,7 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                         )
                     )
                     total_heat_gain += heat_gain
-                    total_coins += coins
+                    total_coins += coins + (10 if climax_triggered else 0)
                     total_coins_deducted += coins_deducted
                     received_today += 1
                     executed += 1
@@ -16355,6 +16394,12 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         game.state = "round_complete"
         game.phase_deadline = None
         game.settled_rounds += 1
+        self._bump_department_game_rounds(
+            session,
+            [player.user_id for player, _ in players],
+            now,
+            group_chat_id=game.group_chat_id,
+        )
         # 顺序发言下每人每轮固定一问一答，排行无意义，不再展示
         return (
             f"【真心换真心】第 {game.round_number} 轮结束。\n"
@@ -16395,12 +16440,9 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         game.finished_at = now
         game.finish_reason = reason
         if state == "finished":
-            self._bump_department_game_plays(
-                session,
-                truth_trade_game_users(session, game),
-                now,
-                group_chat_id=game.group_chat_id,
-                game_type="truth_trade", game_id=game.id,
+            record_game_participations(
+                session, "truth_trade", game.id, game.group_chat_id,
+                truth_trade_game_users(session, game), now,
             )
 
     def start_truth_trade(
@@ -18028,6 +18070,15 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
             )
             session.add(response)
             responses[player.user_id] = response
+        eligible_user_ids = [
+            player.user_id
+            for player in players
+            if player.state == "active"
+            and (
+                player.user_id == round_record.speaker_user_id
+                or player.user_id in responses
+            )
+        ]
         for user_id, response in responses.items():
             player = by_user_id.get(user_id)
             if player is None or player.state != "active":
@@ -18041,6 +18092,12 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                 player.elimination_reason = "response_deduct"
         round_record.state = "settled"
         round_record.settled_at = now
+        self._bump_department_game_rounds(
+            session,
+            eligible_user_ids,
+            now,
+            group_chat_id=game.group_chat_id,
+        )
         game.response_deadline = None
         if self._never_have_i_ever_reached_threshold(session, game):
             self._enter_never_have_i_ever_free_punishment_locked(game, now)
@@ -18294,12 +18351,9 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         game.finished_at = now
         game.finish_reason = reason
         if state in {"completed", "forced_ended"}:
-            self._bump_department_game_plays(
-                session,
-                other_game_users(session, "never_have_i_ever", game.id),
-                now,
-                group_chat_id=game.group_chat_id,
-                game_type="never_have_i_ever", game_id=game.id,
+            record_game_participations(
+                session, "never_have_i_ever", game.id, game.group_chat_id,
+                other_game_users(session, "never_have_i_ever", game.id), now,
             )
         for player in session.scalars(
             select(NeverHaveIEverPlayerRecord).where(
@@ -19154,6 +19208,16 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
             )
 
         round_record.state = "settled"
+        self._bump_department_game_rounds(
+            session,
+            [
+                player.user_id
+                for player, _ in rows
+                if player.submitted_number is not None
+            ],
+            now,
+            group_chat_id=game.group_chat_id,
+        )
         game.state = "waiting_continue"
         game.next_reminder_at = None
         game.skip_enabled = False
@@ -19284,6 +19348,12 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         round_record.player_count = len(reported)
         round_record.state = "settled"
         round_record.finished_at = now
+        self._bump_department_game_rounds(
+            session,
+            [player.user_id for player, _, _ in reported],
+            now,
+            group_chat_id=game.group_chat_id,
+        )
         game.last_activity_at = now
         game.next_reminder_at = None
         game.skip_enabled = False
@@ -19776,12 +19846,9 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         game.finished_at = now
         game.finish_reason = reason
         if reason != "empty_signup":
-            self._bump_department_game_plays(
-                session,
-                other_game_users(session, "number_bomb", game.id),
-                now,
-                group_chat_id=game.group_chat_id,
-                game_type="number_bomb", game_id=game.id,
+            record_game_participations(
+                session, "number_bomb", game.id, game.group_chat_id,
+                other_game_users(session, "number_bomb", game.id), now,
             )
         collecting_round = session.scalar(
             select(NumberBombRoundRecord).where(
@@ -29849,6 +29916,7 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         amounts = {
             "dept_checkin": allowance_settings.checkin_amount,
             "dept_event": allowance_settings.event_amount,
+            "dept_dark_market": 5,
             "dept_game_host": allowance_settings.game_host_amount,
             "dept_game_play": allowance_settings.game_play_amount,
             "dept_submission": allowance_settings.submission_amount,
@@ -29991,6 +30059,7 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
                 (
                     "dept_checkin",
                     "dept_event",
+                    "dept_dark_market",
                     "dept_game_host",
                     "dept_game_play",
                     "dept_submission",
@@ -30056,7 +30125,7 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
             ("演出奖励", event_amount, 0, 999),
             ("开局奖励", game_host_amount, 0, 999),
             ("游戏参与奖励", game_play_amount, 0, 999),
-            ("游戏参与计局步长", game_play_step, 1, 999),
+            ("游戏参与有效轮次步长", game_play_step, 1, 999),
             ("投稿奖励", submission_amount, 0, 999),
             ("水群掉落概率", chat_drop_percent, 0, 100),
             ("水群掉落金额", chat_drop_amount, 0, 999),
@@ -30548,7 +30617,7 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
         game_type: str | None = None,
         game_id: UUID | None = None,
     ) -> None:
-        """对局完成时给参与者计 1 局；每满步长局发 1 币（步长可配置）。"""
+        """单轮制游戏完成时记录整局参与，并累计一个有效轮次。"""
         if (game_type is None) != (game_id is None):
             raise ValueError("game_type and game_id must be provided together")
         if game_type is not None:
@@ -30557,13 +30626,25 @@ class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuR
             user_ids = record_game_participations(
                 session, game_type, game_id, group_chat_id, user_ids, now,
             )
+        self._bump_department_game_rounds(
+            session, user_ids, now, group_chat_id=group_chat_id,
+        )
+
+    def _bump_department_game_rounds(
+        self,
+        session: Session,
+        user_ids: Sequence[UUID],
+        now: datetime,
+        group_chat_id: UUID | None = None,
+    ) -> None:
+        """已完成的有效轮次立即累计；调用方必须处在唯一的轮次结算状态迁移中。"""
         if not user_ids:
             return
         allow_date = now.astimezone(BEIJING).date()
         settings_row = self._department_allowance_settings_row(session)
         step = max(1, int(settings_row.game_play_step))
         dialect_name = session.get_bind().dialect.name
-        for user_id in user_ids:
+        for user_id in dict.fromkeys(user_ids):
             values = {
                 "id": uuid4(),
                 "user_id": user_id,

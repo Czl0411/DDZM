@@ -2855,7 +2855,7 @@ function renderDepartmentAllowancePanel(settings) {
     </div>
     <div class="panel-heading"><div><h2>触发参数与封顶</h2></div></div>
     <div class="event-input-grid">
-      ${birthdayNumberField("allowance-game-step", "游戏参与计局步长（每 N 局发一次）", settings.game_play_step, 1, 999)}
+      ${birthdayNumberField("allowance-game-step", "游戏参与有效轮次步长（每 N 轮发一次）", settings.game_play_step, 1, 999)}
       ${birthdayNumberField("allowance-chat-percent", "水群掉落概率(%)", settings.chat_drop_percent, 0, 100)}
       ${birthdayNumberField("allowance-chat-cooldown", "水群掉落冷却（秒，0=不冷却）", settings.chat_drop_cooldown_seconds, 0, 86400)}
       ${birthdayNumberField("allowance-daily-cap", "每人每日津贴封顶", settings.daily_cap, 1, 9999)}
@@ -3043,11 +3043,11 @@ function renderEstrusSettingsPanel(settings, ranks) {
       ${birthdayNumberField("estrus-g-spot-percent", "凿中G点概率(%)", settings.g_spot_percent, 0, 100)}
       ${birthdayNumberField("estrus-g-spot-bonus", "G点发情值加成", settings.g_spot_heat_bonus, 0, 1000)}
     </div>
-    <div class="panel-heading"><div><h2>发情值增量概率（0/1/2）</h2></div></div>
+    <div class="panel-heading"><div><h2>发情值增量概率（0/5/10）</h2></div></div>
     <div class="event-input-grid">
       ${birthdayNumberField("estrus-heat-p0", "发情值 +0 概率(%)", settings.heat_p0, 0, 100)}
-      ${birthdayNumberField("estrus-heat-p1", "发情值 +1 概率(%)", settings.heat_p1, 0, 100)}
-      ${birthdayNumberField("estrus-heat-p2", "发情值 +2 概率(%)", settings.heat_p2, 0, 100)}
+      ${birthdayNumberField("estrus-heat-p1", "发情值 +5 概率(%)", settings.heat_p1, 0, 100)}
+      ${birthdayNumberField("estrus-heat-p2", "发情值 +10 概率(%)", settings.heat_p2, 0, 100)}
     </div>
     <div class="panel-heading"><div><h2>被凿者获得摸鱼币概率（0/1/2）</h2></div></div>
     <div class="event-input-grid">

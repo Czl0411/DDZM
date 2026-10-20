@@ -1024,6 +1024,14 @@ def create_app(
             **request.model_dump(mode="json"), "actor": identity.username,
         }))
 
+    @app.post("/api/game/honors/backfill")
+    def honor_backfill(
+        identity: Annotated[AdminIdentity, Depends(require_super_admin)],
+    ) -> dict:
+        return forward_integration(lambda: core.honor_mutate(
+            "backfill", {"actor": identity.username}
+        ))
+
     @app.get("/api/game/honors/periods")
     def honor_periods(_: Annotated[AdminIdentity, Depends(authorize)],
                       page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> dict:

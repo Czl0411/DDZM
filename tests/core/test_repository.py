@@ -3058,7 +3058,10 @@ def test_number_bomb_points_tournament_settlement_persists_round_and_total_point
     assert result.status == "settled"
     assert "本轮积分" in result.public_message
     assert repository.number_bomb_game_summary().state == "waiting_continue"
+    from dzmm_bot.core.schema import DepartmentGamePlayRecord
+
     with repository._session() as session:
+        counts = sorted(session.scalars(select(DepartmentGamePlayRecord.count)))
         rows = list(
             session.execute(
                 select(
@@ -3079,6 +3082,7 @@ def test_number_bomb_points_tournament_settlement_persists_round_and_total_point
                 .order_by(NumberBombMemberRecord.roster_order)
             )
         )
+    assert counts == [1] * 8
     assert rows == [
         (platform_ids[0], -3, 7, -3, "reported"),
         (platform_ids[1], 0, 6, 0, "reported"),
@@ -3594,7 +3598,10 @@ def test_number_bomb_valid_settlement_persists_exact_results_and_activity_facts(
         ), 8),
     )
     assert repository.number_bomb_game_summary().state == "waiting_continue"
+    from dzmm_bot.core.schema import DepartmentGamePlayRecord
+
     with repository._session() as session:
+        counts = sorted(session.scalars(select(DepartmentGamePlayRecord.count)))
         round_record = session.scalar(select(NumberBombRoundRecord))
         rows = list(session.execute(
             select(NumberBombRoundPlayerRecord, UserRecord)
@@ -3606,6 +3613,7 @@ def test_number_bomb_valid_settlement_persists_exact_results_and_activity_facts(
                 AIActivityEventRecord.activity_type == "number_bomb"
             ).order_by(AIActivityEventRecord.event_key)
         ))
+    assert counts == [1, 1, 1]
     assert (
         round_record.total,
         round_record.multiplier_tenths,
@@ -7920,6 +7928,10 @@ def test_never_have_i_ever_statement_responses_and_settlement(repository):
         (3, 5),
     ]
     assert settled.current_speaker_number == 2
+    from dzmm_bot.core.schema import DepartmentGamePlayRecord
+
+    with repository._session() as session:
+        assert sorted(session.scalars(select(DepartmentGamePlayRecord.count))) == [1, 1, 1]
 
 
 def test_never_have_i_ever_rejects_invalid_or_duplicate_responses(repository):

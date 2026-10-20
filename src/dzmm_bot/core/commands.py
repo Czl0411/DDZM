@@ -64,7 +64,7 @@ _COMMANDS = {
     "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/跳过", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证",
     "/设置生日", "/我的生日", "/本月生日",
     "/随礼",
-    "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据",
+    "/大话骰子", "/开骰", "/跳开", "/看骰", "/牌局", "/大话骰子数据",
     "/真心换真心", "/真心换真心数据", "/问题", "/真心",
     "/罚款", "/我的罚款", "/我的津贴",
     "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/人气榜",
@@ -686,8 +686,10 @@ class GroupCommandHandler:
             return self._king_game_statistics(message, group_chat_id)
         if command == "/大话骰子":
             return self._liar_dice_start(message, received_at, group_chat_id)
-        if command == "/开骰":
-            return self._liar_dice_open(message, received_at, group_chat_id)
+        if command in {"/开骰", "/跳开"}:
+            return self._liar_dice_open(
+                message, received_at, group_chat_id, jump=command == "/跳开"
+            )
         if command == "/牌局":
             return self._liar_dice_status(message, received_at, group_chat_id)
         if command == "/看骰":
@@ -2051,11 +2053,11 @@ class GroupCommandHandler:
             return f"还没轮到你哦～现在轮到 {result.turn_name}～"
         return None
 
-    def _liar_dice_open(self, message, received_at, group_chat_id):
+    def _liar_dice_open(self, message, received_at, group_chat_id, *, jump=False):
         if message.source_type != "group" or group_chat_id is None:
-            return "请在大话骰子所在群发送 /开骰。"
+            return f"请在大话骰子所在群发送 {'/跳开' if jump else '/开骰'}。"
         result = self._repository.liar_dice_open(
-            message.sender_platform_id, received_at, group_chat_id
+            message.sender_platform_id, received_at, group_chat_id, jump=jump
         )
         if result.status == "opened":
             return result.public_message
@@ -2067,6 +2069,9 @@ class GroupCommandHandler:
             "wrong_state": "当前不在叫牌阶段，无法开牌。",
             "no_call": "还没有人叫数呢，不能开～",
             "own_call": "你不能开自己叫的数哦～",
+            "not_participant": "只有本轮参与者可以开骰，下一轮加入者请等待下一轮。",
+            "use_normal_open": "已经轮到你了，请使用 /开骰；/跳开 仅供未轮到的参与者使用。",
+            "no_jump_target": "当前没有可跳过的下一位叫骰者，无法跳开。",
         }.get(result.status, "当前不能开牌。")
 
     def _liar_dice_continue(self, message, received_at, group_chat_id):
@@ -2078,7 +2083,7 @@ class GroupCommandHandler:
         if result.status == "dealing":
             return (
                 f"【大话骰子】第 {result.round_number} 轮摇骰中（{len(result.players)} 人），"
-                "新骰子正在私聊发放，未收到的话稍后私聊发 /看骰。"
+                "顺序已重新随机排列，新骰子和本轮万能点正在私聊发放，未收到的话稍后私聊发 /看骰。"
             )
         if result.status == "completed":
             return "【大话骰子】剩余人数不足 2 人，本局结束。"
@@ -3160,7 +3165,7 @@ class GroupCommandHandler:
             "event": f"参与随机事件/公演并正常完成额外 +{settings.event_amount} 摸鱼币",
             "game": (
                 f"开局小游戏 +{settings.game_host_amount}；"
-                f"每天参与满 {settings.game_play_step} 局 +{settings.game_play_amount}"
+                f"每完成 {settings.game_play_step} 个有效轮次 +{settings.game_play_amount}"
             ),
             "submission": f"随机事件投稿过审额外 +{settings.submission_amount} 摸鱼币",
             "chat": (
@@ -5681,9 +5686,10 @@ class GroupCommandHandler:
                     ("/开始", "/开始：发起者摇骰开局，骰子私聊发放"),
                     ("N个X", "直接发送如“3个5”：当前行动者叫数或加码"),
                     ("/开骰", "/开骰：当前行动者质疑上一手叫数，全场明牌定胜负"),
+                    ("/跳开", "/跳开：未轮到的参与者抢先开骰；成功惩罚叫骰者，失败接受叫骰者和原定下一位各一个惩罚"),
                     ("/牌局", "/牌局：查看座位、当前叫数与万能点状态"),
                     ("/看骰", "私聊 /看骰：查看自己当前骰子"),
-                    ("/继续", "/继续：开牌后任一参与者开启下一轮"),
+                    ("/继续", "/继续：开牌后任一参与者开启下一轮，重新随机排列顺序"),
                     ("/大话骰子数据", "/大话骰子数据：查看开牌、败露、拆穿与受罚统计"),
                     ("/结束游戏", "/结束游戏：任一参与者结束本局并公布统计"),
                 ),
@@ -5784,7 +5790,7 @@ class GroupCommandHandler:
                 "【凿与发情值】",
                 (
                     ("/凿", "引用对方消息发送 /凿 [附言]，或 /凿 名字 [附言]：凿一下对方"),
-                    ("/凿", "被凿者发情值随机 +0~2、获得随机摸鱼币；发情值攒满 100 触发高潮"),
+                    ("/凿", "被凿者发情值随机 +0/+5/+10，G 点 +20；发情值攒满 100 触发高潮并奖励 10 摸鱼币"),
                     ("/拒绝被凿", "/拒绝被凿：不再接受被凿，凿你的人会吃一杵子"),
                     ("/允许被凿", "/允许被凿：重新接受被凿"),
                     ("/我的凿", "/我的凿：查看自己的发情值、被凿/凿人与高潮次数（所有群合并统计）"),

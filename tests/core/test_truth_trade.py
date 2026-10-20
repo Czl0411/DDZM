@@ -349,7 +349,7 @@ def test_truth_trade_current_game_shows_roster_and_count():
     assert "1号 甲" in reply
 
 
-def test_truth_trade_allowance_host_and_whole_game_bump():
+def test_truth_trade_allowance_host_and_effective_round_bump():
     from dzmm_bot.core.schema import (
         DepartmentGamePlayRecord,
         DepartmentRecord,
@@ -398,7 +398,7 @@ def test_truth_trade_allowance_host_and_whole_game_bump():
     assert _game(repository).state == "round_complete"
     with factory() as session:
         counts = session.scalars(select(DepartmentGamePlayRecord.count)).all()
-        assert counts == []
+        assert sorted(counts) == [1, 1, 1]
 
     _receive(service, "continue", "user-0", "/继续", now)
     _receive(service, "q4", "user-0", "/问题 跳过", now)
@@ -406,12 +406,13 @@ def test_truth_trade_allowance_host_and_whole_game_bump():
     _receive(service, "q6", "user-2", "/问题 跳过", now)
     assert _game(repository).settled_rounds == 2
     with factory() as session:
-        assert session.scalars(select(DepartmentGamePlayRecord.count)).all() == []
+        counts = session.scalars(select(DepartmentGamePlayRecord.count)).all()
+        assert sorted(counts) == [2, 2, 2]
 
     _receive(service, "end", "user-0", "/结束游戏", now)
     with factory() as session:
         counts = session.scalars(select(DepartmentGamePlayRecord.count)).all()
-        assert sorted(counts) == [1, 1, 1]
+        assert sorted(counts) == [2, 2, 2]
     finished = _finished_game(repository)
     assert finished.state == "finished"
 

@@ -27,5 +27,11 @@
     "revision": "1792519131263",
     "deployedAt": "2026-10-20T17:57:50.278Z",
     "gitHead": "cf54ef1"
+  },
+  {
+    "revision": "1792528691183",
+    "deployedAt": "2026-10-20T20:37:12.966Z",
+    "label": "Club 全功能整合版",
+    "gitHead": "abe0143"
   }
 ]

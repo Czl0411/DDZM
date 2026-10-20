@@ -109,7 +109,7 @@ def _joined_text(factory, snippet):
 
 def test_chop_by_name_with_probabilistic_gains():
     service, repository, factory = _service(
-        estrus_random=_SeqRandom([0.60, 0.60])  # 热值 1，币 1
+        estrus_random=_SeqRandom([0.60, 0.60])  # 热值 5，币 1
     )
     _join(service, "j0", "user-0", "甲", NOW)
     _join(service, "j1", "user-1", "乙", NOW)
@@ -118,7 +118,7 @@ def test_chop_by_name_with_probabilistic_gains():
 
     texts = _replies(factory, "c1")
     assert any("【凿】甲凿了一下乙（试一试）" in text for text in texts)
-    assert any("乙 发情值 +1（当前 1/100），获得 1 摸鱼币。" in text for text in texts)
+    assert any("乙 发情值 +5（当前 5/100），获得 1 摸鱼币。" in text for text in texts)
     assert any("甲 共被扣除 1 摸鱼币。" in text for text in texts)
     assert _balance(factory, "user-1") == _balance(factory, "user-0") + 2
 
@@ -278,7 +278,7 @@ def test_fixed_chop_coins_override_random_and_linked_rolls(
     with factory() as session:
         chop = session.scalar(select(EstrusChopRecord))
         assert (chop.coins, chop.coins_deducted) == (gain, deduction)
-        assert chop.heat_gain == 1
+        assert chop.heat_gain == 5
         transactions = session.scalars(
             select(BalanceTransactionRecord).where(
                 BalanceTransactionRecord.source.in_(("estrus_gain", "estrus_chop_cost"))
@@ -322,7 +322,7 @@ def test_default_chop_settings_link_coins_and_leave_target_unlimited():
     assert settings.target_fixed_coins is None
     assert settings.combo_chop_enabled is False
     assert settings.g_spot_percent == 10
-    assert settings.g_spot_heat_bonus == 10
+    assert settings.g_spot_heat_bonus == 20
     assert settings.chopper_rank_quotas is None
     assert (settings.chopper_coin_p0, settings.chopper_coin_p1, settings.chopper_coin_p2) == (
         settings.coin_p0, settings.coin_p1, settings.coin_p2
@@ -454,7 +454,7 @@ def test_target_daily_limit_counts_all_choppers_without_charging_blocked_chops()
     assert random.values == [0.60, 0.60]
     info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)
     assert info["chopped_count"] == 2
-    assert info["heat"] == 2
+    assert info["heat"] == 10
 
     _receive(service, "c4", "user-3", "/凿 甲", NOW + timedelta(minutes=3))
 
@@ -476,7 +476,7 @@ def test_target_daily_limit_resets_at_beijing_midnight():
     assert _joined_text(factory, "乙 今天已经被凿了 1 次，达到每日上限（1 次）")
     info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, late + timedelta(minutes=1))
     assert info["chopped_count"] == 2
-    assert info["heat"] == 2  # 发情值跨天不清零：两次各 +2
+    assert info["heat"] == 10  # 发情值跨天不清零：两次各 +5
 
 
 def test_estrus_state_and_opt_out_are_shared_across_groups():
@@ -506,7 +506,7 @@ def test_estrus_state_and_opt_out_are_shared_across_groups():
     )
 
     info = repository.get_my_estrus("user-1", second_group.id, NOW)
-    assert info["heat"] == 2
+    assert info["heat"] == 10
     assert info["today_chopped"] == 2
     assert info["chopped_count"] == 2
 
@@ -603,7 +603,7 @@ def test_chop_with_zero_gains_reads_as_nothing():
 
 def test_chop_reply_reference_form_wins():
     service, repository, factory = _service(
-        estrus_random=_SeqRandom([0.90, 0.90])  # 热值 2，币 2
+        estrus_random=_SeqRandom([0.90, 0.90])  # 热值 10，币 2
     )
     _join(service, "j0", "user-0", "甲", NOW)
     _join(service, "j1", "user-1", "乙", NOW)
@@ -619,13 +619,13 @@ def test_chop_reply_reference_form_wins():
 
     texts = _replies(factory, "c1")
     assert any("【凿】甲凿了一下乙（接招）" in text for text in texts)
-    assert any("乙 发情值 +2（当前 2/100）" in text for text in texts)
+    assert any("乙 发情值 +10（当前 10/100）" in text for text in texts)
 
 
 def test_chop_climax_triggers_resets_and_counts():
-    # 阈值校验下限 10：热值恒为 2，连凿 5 次第 5 次触发
+    # 阈值校验下限 10：热值恒为 10，单次即触发
     service, repository, factory = _service(
-        estrus_random=_SeqRandom([0.90, 0.0] * 5)
+        estrus_random=_SeqRandom([0.90, 0.0])
     )
     _join(service, "j0", "user-0", "甲", NOW)
     _join(service, "j1", "user-1", "乙", NOW)
@@ -640,12 +640,8 @@ def test_chop_climax_triggers_resets_and_counts():
         coin_p2=20,
         chop_cooldown_seconds=0,
     )
-    for index in range(4):
-        _receive(
-            service, f"c{index}", "user-0", "/凿 乙",
-            NOW + timedelta(minutes=index),
-        )
-    final_index = 4
+    target_before = _balance(factory, "user-1")
+    final_index = 0
     _receive(
         service, f"c{final_index}", "user-0", "/凿 乙",
         NOW + timedelta(minutes=final_index),
@@ -657,6 +653,15 @@ def test_chop_climax_triggers_resets_and_counts():
     assert any("发情值爆表" in text for text in texts)
     # AI 未配置 → unknown 兜底文案库第一条
     assert any("被凿得浑身一激灵" in text for text in texts)
+    assert _balance(factory, "user-1") == target_before + 10
+    with factory() as session:
+        reward = session.scalar(
+            select(BalanceTransactionRecord).where(
+                BalanceTransactionRecord.source == "estrus_climax_reward"
+            )
+        )
+        assert reward is not None
+        assert reward.amount == 10
 
     info = repository.get_my_estrus(
         "user-1", PRIMARY_GROUP_CHAT_ID, NOW
@@ -754,7 +759,7 @@ def test_my_estrus_and_popularity_ranking():
     texts = _replies(factory)
     assert any("【我的凿】" in text for text in texts)
     assert any("名字：乙" in text for text in texts)
-    assert any("发情值：4/100" in text for text in texts)
+    assert any("发情值：20/100" in text for text in texts)
     assert any("被凿：今日 2 次 / 累计 2 次" in text for text in texts)
     assert any("凿人：今日 0 次 / 累计 0 次" in text for text in texts)
     assert any("状态：允许被凿" in text for text in texts)
@@ -783,7 +788,7 @@ def test_popularity_board_counts_today_only_and_keeps_heat():
     _join(service, "j1", "user-1", "乙", NOW)
     _join(service, "j2", "user-2", "丙", NOW)
 
-    # 昨天：乙被凿 2 次（发情值 4）
+    # 昨天：乙被凿 2 次（发情值 20）
     _receive(service, "c1", "user-0", "/凿 乙", NOW)
     _receive(service, "c2", "user-0", "/凿 乙", NOW + timedelta(minutes=1))
     # 今天：乙被凿 1 次、丙被凿 1 次
@@ -799,9 +804,9 @@ def test_popularity_board_counts_today_only_and_keeps_heat():
     assert any("丙：今日被凿1次（总计：1次）" in text for text in texts)
     assert not any("今日被凿2次" in text for text in texts)
 
-    # 发情值跨天不清零：乙昨天 4，今天再 +2 → 6
+    # 发情值跨天不清零：乙昨天 20，今天再 +10 → 30
     info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, tomorrow)
-    assert info["heat"] == 6
+    assert info["heat"] == 30
     assert info["chopped_count"] == 3  # 累计不清零
     assert info["today_chopped"] == 1
 
@@ -851,7 +856,7 @@ def test_heat_persists_across_days_without_chop():
     _receive(service, "c1", "user-0", "/凿 乙", NOW)
     tomorrow = NOW + timedelta(days=1)
     info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, tomorrow)
-    assert info["heat"] == 2  # 发情值跨天不清零
+    assert info["heat"] == 10  # 发情值跨天不清零
     assert info["today_climaxes"] == 0  # 今日高潮仍跨天重置
     assert info["chopped_count"] == 1
 
@@ -887,7 +892,7 @@ def test_chopper_rank_quota_blocks_and_counts():
     # 第 2 凿被拒：乙只被凿 1 次（被拒的不计入）
     info = repository.get_my_estrus("user-1", PRIMARY_GROUP_CHAT_ID, NOW)
     assert info["chopped_count"] == 1
-    assert info["heat"] == 1
+    assert info["heat"] == 5
 
     # 甲自己的凿人统计：今日 1 次（被拒的不计）
     _receive(service, "q1", "user-0", "/我的凿", NOW)
@@ -930,7 +935,7 @@ def test_combo_chop_executes_and_aggregates_reply():
     texts = _replies(factory)
     assert any("【凿】甲凿了 3 次乙" in text for text in texts)
     assert any("甲 共被扣除 3 摸鱼币。" in text for text in texts)
-    assert any("乙 发情值 +3（当前 3/100），获得 3 摸鱼币。" in text for text in texts)
+    assert any("乙 发情值 +15（当前 15/100），获得 3 摸鱼币。" in text for text in texts)
     assert _balance(factory, "user-1") == _balance(factory, "user-0") + 6
     assert random.values == []
     with factory() as session:
@@ -966,7 +971,7 @@ def test_combo_chop_reference_form():
 
     texts = _replies(factory)
     assert any("【凿】甲凿了 2 次乙" in text for text in texts)
-    assert any("乙 发情值 +4（当前 4/100），一无所获。" in text for text in texts)
+    assert any("乙 发情值 +20（当前 20/100），一无所获。" in text for text in texts)
 
 
 def test_combo_chop_truncated_by_target_daily_limit():
@@ -1008,18 +1013,18 @@ def test_g_spot_hit_grants_bonus_heat():
     service, repository, factory = _service(estrus_random=random)
     _join(service, "j0", "user-0", "甲", NOW)
     _join(service, "j1", "user-1", "乙", NOW)
-    _configure_estrus_settings(repository, g_spot_percent=100, g_spot_heat_bonus=10)
+    _configure_estrus_settings(repository, g_spot_percent=100)
 
     _receive(service, "c1", "user-0", "/凿 乙", NOW)
 
     texts = _replies(factory)
     assert any("🎯 凿中G点 1 次！" in text for text in texts)
-    assert any("乙 发情值 +10（当前 10/100），获得 1 摸鱼币。" in text for text in texts)
+    assert any("乙 发情值 +20（当前 20/100），获得 1 摸鱼币。" in text for text in texts)
     assert _balance(factory, "user-1") == 1
     assert _balance(factory, "user-0") == -1
     with factory() as session:
         chop = session.scalar(select(EstrusChopRecord))
-        assert chop.heat_gain == 10
+        assert chop.heat_gain == 20
 
 
 def test_chop_special_targets_get_dedicated_replies():

@@ -233,7 +233,13 @@ from .api_models import (
     WorkerCommandResponse,
 )
 from .database import create_session_factory
-from .honors import HonorConfigRequest, HonorSettleRequest, HonorCorrectionRequest, HonorConflict
+from .honors import (
+    HonorBackfillRequest,
+    HonorConfigRequest,
+    HonorConflict,
+    HonorCorrectionRequest,
+    HonorSettleRequest,
+)
 from .commands import GroupCommandHandler, is_reserved_command_name
 from .company_lottery import PrizeTier
 from .repository import (
@@ -1631,6 +1637,10 @@ def create_app(
     @app.post("/internal/game/honors/settle")
     def honor_settle(request: HonorSettleRequest, _: Annotated[None, Depends(authorize)]) -> dict:
         return honor_call(lambda: repository.settle_honors(request.week_start, request.actor, clock(), request.preview_digest))
+
+    @app.post("/internal/game/honors/backfill")
+    def honor_backfill(request: HonorBackfillRequest, _: Annotated[None, Depends(authorize)]) -> dict:
+        return honor_call(lambda: repository.backfill_missing_honor_periods(request.actor, clock()))
 
     @app.get("/internal/game/honors/periods")
     def honor_periods(_: Annotated[None, Depends(authorize)], page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> dict:

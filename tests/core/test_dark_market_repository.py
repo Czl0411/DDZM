@@ -14,6 +14,8 @@ from dzmm_bot.core.schema import (
     DarkMarketBidRecord,
     DarkMarketDisclosureRecord,
     DarkMarketListingRecord,
+    DepartmentAllowanceRecord,
+    DepartmentRecord,
     OutboundRecord,
     PRIMARY_GROUP_CHAT_ID,
     UserRecord,
@@ -528,6 +530,53 @@ def test_buyer_confirmation_pays_seller_fee_and_starts_disclosure(
     assert set(ledger) == {(21, "dark_market_sale_income"), (-2, "dark_market_sale_fee")}
     assert disclosure is not None
     assert disclosure.deadline == confirmed_at + timedelta(minutes=10)
+
+
+def test_successful_trade_grants_only_erotic_department_seller_five_allowance(
+    repository, now
+) -> None:
+    listing = _active_listing(repository, now)
+    with repository._session() as session:
+        department = session.scalar(
+            select(DepartmentRecord).where(DepartmentRecord.name == "色色事业部")
+        )
+        seller = session.scalar(
+            select(UserRecord).where(UserRecord.platform_id == "seller")
+        )
+        assert department is not None
+        assert seller is not None
+        department.allowance_kind = "event"
+        seller.department_id = department.id
+        session.commit()
+
+    confirmed_at = _confirm_listing(repository, listing, now)
+
+    with repository._session() as session:
+        allowances = session.scalars(select(DepartmentAllowanceRecord)).all()
+        stored = session.get(DarkMarketListingRecord, listing.id)
+        assert stored is not None
+        assert [(row.user_id, row.kind, row.amount) for row in allowances] == [
+            (stored.seller_user_id, "dept_dark_market", 5)
+        ]
+        transactions = session.scalars(
+            select(BalanceTransactionRecord).where(
+                BalanceTransactionRecord.source == "dept_dark_market"
+            )
+        ).all()
+        assert [(row.user_id, row.amount) for row in transactions] == [
+            (stored.seller_user_id, 5)
+        ]
+
+    repeated = repository.resolve_dark_market_receipt(
+        "buyer-a",
+        listing.public_number,
+        "confirm",
+        _inbound_id(repository, "buyer-a", "/确认收货 1", confirmed_at),
+        confirmed_at,
+    )
+    assert repeated.status == "already_resolved"
+    with repository._session() as session:
+        assert len(session.scalars(select(DepartmentAllowanceRecord)).all()) == 1
 
 
 def test_setting_disclosure_duration_recalculates_pending_deadline_from_created_at(

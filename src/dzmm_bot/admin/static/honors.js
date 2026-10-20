@@ -57,7 +57,7 @@ function renderHonorConfiguration(config, groups) {
       <label>公告群<select id="honor-announcement-group"><option value="">不选择</option>${options}</select></label>
     </div><h3>参与统计的群</h3><div class="event-input-grid">${groupChecks}</div><h3>候选称号（${values.rules.length} 项）</h3><div class="honor-rules">${rules}</div>
     <button class="primary" type="submit">保存，下个统计周生效</button></fieldset></form>
-    <section class="panel"><h2>周期预览与补结算</h2><div class="command-actions"><label>统计周周一<input id="honor-week" type="date" value="${escapeHtml(initialWeek)}"></label><button id="honor-preview-button" class="secondary" type="button">预览</button><button id="honor-settle-button" class="primary" type="button" disabled>确认结算</button></div><div id="honor-preview-results" aria-live="polite"></div></section>
+    <section class="panel"><h2>周期预览与补结算</h2><div class="command-actions"><label>统计周周一<input id="honor-week" type="date" value="${escapeHtml(initialWeek)}"></label><button id="honor-preview-button" class="secondary" type="button">预览</button><button id="honor-settle-button" class="primary" type="button" disabled>确认结算</button><button id="honor-backfill-button" class="secondary" type="button"${disabled}>补结算全部缺失周期</button></div><div id="honor-preview-results" aria-live="polite"></div></section>
     <section class="panel"><h2>结算与纠错</h2><div id="honor-periods"></div><nav id="honor-period-pagination" class="pagination"></nav><div id="honor-corrections"></div></section>
     <section class="panel"><h2>荣誉历史</h2><form id="honor-history-filters" class="event-input-grid"><label>员工 ID（可从员工档案复制）<input id="honor-history-user" placeholder="留空查全部"></label><label>称号<select id="honor-history-title"><option value="">全部</option>${values.rules.map((rule) => `<option value="${escapeHtml(rule.key)}">${escapeHtml(rule.name)}</option>`).join("")}</select></label><label>统计周周一<input id="honor-history-week" type="date"></label><button class="secondary" type="submit">查询</button></form><div id="honor-history"></div><nav id="honor-history-pagination" class="pagination"></nav></section>`;
   document.querySelector("#honor-config-form").addEventListener("submit", saveHonorConfiguration);
@@ -68,6 +68,7 @@ function renderHonorConfiguration(config, groups) {
   });
   document.querySelector("#honor-preview-button").addEventListener("click", previewHonorPeriod);
   document.querySelector("#honor-settle-button").addEventListener("click", settleHonorPeriod);
+  document.querySelector("#honor-backfill-button").addEventListener("click", backfillHonorPeriods);
   document.querySelector("#honor-history-filters").addEventListener("submit", (event) => {
     event.preventDefault();
     loadHonorHistory(1).catch((error) => setResult(error.message, "error"));
@@ -137,6 +138,17 @@ async function settleHonorPeriod() {
     document.querySelector("#honor-settle-button").disabled = true;
     setResult(error.message, "error");
   }
+}
+
+async function backfillHonorPeriods() {
+  if (identity?.role !== "super_admin" || !window.confirm("确认补结算所有真正缺失的已结束周期？已结算周期不会改写。")) return;
+  try {
+    await runMutation(document.querySelector("#honor-backfill-button"), "补结算中…", async () => {
+      const result = await requestGame("/api/game/honors/backfill", {method: "POST"});
+      await Promise.all([loadHonorPeriods(), loadHonorHistory()]);
+      setResult(result.count ? `已补结算 ${result.count} 个周期：${result.settled_weeks.join("、")}` : "没有缺失的已结束周期。", "success");
+    });
+  } catch (error) { setResult(error.message, "error"); }
 }
 
 async function loadHonorPeriods(page = honorPeriodsPage) {

@@ -617,6 +617,8 @@ _BALANCE_SOURCE_LABELS = {
     "dark_market_bid_refund": "暗网报价退款",
     "dark_market_sale_income": "暗网成交收入",
     "dark_market_sale_fee": "暗网成交手续费",
+    "dept_dark_market": "暗网成交津贴",
+    "estrus_climax_reward": "高潮奖励",
     "dark_market_force_refund": "暗网强制下架退款",
     "dark_market_complaint_refund": "暗网投诉退款",
     "dark_market_complaint_penalty": "暗网投诉卖家罚款",
@@ -1584,6 +1586,7 @@ DEPARTMENT_ALLOWANCE_DAILY_CAP = 5
 _DEPARTMENT_ALLOWANCE_RULES = {
     "dept_checkin": "checkin",
     "dept_event": "event",
+    "dept_dark_market": "event",
     "dept_game_host": "game",
     "dept_game_play": "game",
     "dept_submission": "submission",
@@ -1594,6 +1597,7 @@ _DEPARTMENT_ALLOWANCE_RULES = {
 _DEPARTMENT_ALLOWANCE_LABELS = {
     "dept_checkin": "打卡奖励",
     "dept_event": "演出奖励",
+    "dept_dark_market": "暗网成交奖励",
     "dept_game_host": "开局奖励",
     "dept_game_play": "参与奖励",
     "dept_submission": "投稿奖励",
@@ -10417,6 +10421,14 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         listing.fee_amount = fee
         listing.receipt_resolved_at = now
         listing.finished_at = now
+        self._grant_department_allowance(
+            session,
+            seller,
+            "dept_dark_market",
+            now,
+            group_chat_id=listing.announcement_group_id,
+            detail=f"暗网商品 #{listing.public_number} 交易成功",
+        )
         settings = session.get(DarkMarketSettingsRecord, 1)
         if settings is None:
             raise RuntimeError("暗网设置不存在")
@@ -15316,9 +15328,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         if heat_roll < settings.heat_p0:
             heat_gain = 0
         elif heat_roll < settings.heat_p0 + settings.heat_p1:
-            heat_gain = 1
+            heat_gain = 5
         else:
-            heat_gain = 2
+            heat_gain = 10
         if settings.target_fixed_coins is not None:
             coins = settings.target_fixed_coins
         else:
@@ -15370,7 +15382,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         chopper_rank_quotas: dict[str, int] | None = None,
         combo_chop_enabled: bool = False,
         g_spot_percent: int = 10,
-        g_spot_heat_bonus: int = 10,
+        g_spot_heat_bonus: int = 20,
         chopper_coin_p0: int = 50,
         chopper_coin_p1: int = 30,
         chopper_coin_p2: int = 20,
@@ -15981,6 +15993,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                         state.heat = 0
                         state.total_climaxes = int(state.total_climaxes) + 1
                         state.today_climaxes = int(state.today_climaxes) + 1
+                        self._apply_balance_change(
+                            target, 10, "estrus_climax_reward", now
+                        )
                     if coins > 0:
                         self._apply_balance_change(
                             target, coins, "estrus_gain", now
@@ -16004,7 +16019,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                         )
                     )
                     total_heat_gain += heat_gain
-                    total_coins += coins
+                    total_coins += coins + (10 if climax_triggered else 0)
                     total_coins_deducted += coins_deducted
                     received_today += 1
                     executed += 1
@@ -29861,6 +29876,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         amounts = {
             "dept_checkin": allowance_settings.checkin_amount,
             "dept_event": allowance_settings.event_amount,
+            "dept_dark_market": 5,
             "dept_game_host": allowance_settings.game_host_amount,
             "dept_game_play": allowance_settings.game_play_amount,
             "dept_submission": allowance_settings.submission_amount,
@@ -30003,6 +30019,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 (
                     "dept_checkin",
                     "dept_event",
+                    "dept_dark_market",
                     "dept_game_host",
                     "dept_game_play",
                     "dept_submission",

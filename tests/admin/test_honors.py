@@ -60,6 +60,7 @@ def test_regular_admin_cannot_configure_settle_or_correct(context):
     assert client.patch("/api/game/honors/config", headers=viewer, json=payload(repository)).status_code == 403
     assert client.post("/api/game/honors/settle", headers=viewer,
         json={"week_start": "2026-09-28", "preview_digest": "0" * 64}).status_code == 403
+    assert client.post("/api/game/honors/backfill", headers=viewer).status_code == 403
     assert client.post(f"/api/game/honors/awards/{uuid4()}/correct", headers=viewer,
         json={"winner_id": None, "reason": "测试", "expected_revision": 1}).status_code == 403
 
@@ -86,6 +87,22 @@ def test_super_admin_validation_conflicts_and_trusted_actor(context):
     assert client.post("/api/game/honors/settle", headers=headers, json=settle).json()["id"] == response.json()["id"]
     assert client.get("/api/game/users/user-1/honors", headers=headers).json()["name"] == "糯糯"
     assert client.get("/api/game/users/missing/honors", headers=headers).status_code == 404
+
+
+def test_super_admin_can_backfill_all_missing_periods(context):
+    client, repository, _ = context
+    response = client.post(
+        "/api/game/honors/backfill",
+        headers={"X-Admin-Token": "admin-secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "count": 1,
+        "settled_weeks": ["2026-09-28"],
+        "next_week": "2026-10-05",
+    }
+    assert repository.honor_periods()["total"] == 1
 
 
 @pytest.mark.parametrize("invalid_time", ["24:00", "09:60", "9:00", "09:00:00", "", None, 900])

@@ -46,6 +46,7 @@ assert.ok(!node("#honors-panel").innerHTML.includes("<img src=x"));
 assert.ok(!node("#honors-panel").innerHTML.includes("<script>bad()"));
 assert.ok(node("#honors-panel").innerHTML.includes('value="2099-01-05"'));
 assert.ok(node("#honors-panel").innerHTML.includes('id="honor-announcement-time" type="time" value="09:00" required'));
+assert.ok(node("#honors-panel").innerHTML.includes("补结算全部缺失周期"));
 context.config.configuration.announcement_time = "08:45";
 vm.runInContext("renderHonorConfiguration(config, groups)", context);
 assert.ok(node("#honors-panel").innerHTML.includes('id="honor-announcement-time" type="time" value="08:45" required'));

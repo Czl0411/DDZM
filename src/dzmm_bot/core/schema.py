@@ -3124,7 +3124,7 @@ class EstrusSettingsRecord(Base):
         Integer, default=10, server_default="10", nullable=False
     )
     g_spot_heat_bonus: Mapped[int] = mapped_column(
-        Integer, default=10, server_default="10", nullable=False
+        Integer, default=20, server_default="20", nullable=False
     )
     chopper_rank_quotas: Mapped[dict | None] = mapped_column(JSON)
     target_daily_limit: Mapped[int] = mapped_column(
@@ -3139,7 +3139,7 @@ class DepartmentAllowanceRecord(Base):
     __table_args__ = (
         Index("ix_department_allowances_user_date", "user_id", "allow_date"),
         CheckConstraint(
-            "kind IN ('dept_checkin', 'dept_event', 'dept_game_host', "
+            "kind IN ('dept_checkin', 'dept_event', 'dept_dark_market', 'dept_game_host', "
             "'dept_game_play', 'dept_submission', 'dept_chat', 'dept_referral', "
             "'dept_fine')",
             name="ck_department_allowance_kind",

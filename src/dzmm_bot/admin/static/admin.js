@@ -3043,11 +3043,11 @@ function renderEstrusSettingsPanel(settings, ranks) {
       ${birthdayNumberField("estrus-g-spot-percent", "凿中G点概率(%)", settings.g_spot_percent, 0, 100)}
       ${birthdayNumberField("estrus-g-spot-bonus", "G点发情值加成", settings.g_spot_heat_bonus, 0, 1000)}
     </div>
-    <div class="panel-heading"><div><h2>发情值增量概率（0/1/2）</h2></div></div>
+    <div class="panel-heading"><div><h2>发情值增量概率（0/5/10）</h2></div></div>
     <div class="event-input-grid">
       ${birthdayNumberField("estrus-heat-p0", "发情值 +0 概率(%)", settings.heat_p0, 0, 100)}
-      ${birthdayNumberField("estrus-heat-p1", "发情值 +1 概率(%)", settings.heat_p1, 0, 100)}
-      ${birthdayNumberField("estrus-heat-p2", "发情值 +2 概率(%)", settings.heat_p2, 0, 100)}
+      ${birthdayNumberField("estrus-heat-p1", "发情值 +5 概率(%)", settings.heat_p1, 0, 100)}
+      ${birthdayNumberField("estrus-heat-p2", "发情值 +10 概率(%)", settings.heat_p2, 0, 100)}
     </div>
     <div class="panel-heading"><div><h2>被凿者获得摸鱼币概率（0/1/2）</h2></div></div>
     <div class="event-input-grid">

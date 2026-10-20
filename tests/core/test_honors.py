@@ -678,6 +678,23 @@ def test_late_backfill_keeps_original_expiry_and_resumes_cursor(context):
         assert session.scalar(select(func.count()).select_from(OutboundRecord)) == 1
 
 
+def test_bulk_backfill_settles_only_missing_ended_periods_and_is_idempotent(context):
+    repository, factory = context
+    configure(repository, announce=False)
+    repository.settle_honors(WEEK, "manual", SETTLED)
+    now = midnight(date(2026, 10, 26))
+
+    result = repository.backfill_missing_honor_periods("admin", now)
+
+    assert result["settled_weeks"] == ["2026-09-28", "2026-10-12", "2026-10-19"]
+    assert result["count"] == 3
+    assert result["next_week"] == "2026-10-26"
+    assert repository.honor_periods()["total"] == 4
+    assert repository.backfill_missing_honor_periods("admin", now)["count"] == 0
+    with factory() as session:
+        assert session.get(HonorStateRecord, 1).next_week == date(2026, 10, 26)
+
+
 def test_seven_day_activity_streak_gender_and_scope(context):
     repository, factory = context
     configure(repository)

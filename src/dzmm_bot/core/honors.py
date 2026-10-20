@@ -198,6 +198,12 @@ class HonorSettleRequest(HonorSettleInput):
     actor: str = Field(min_length=1, max_length=128)
 
 
+class HonorBackfillRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str = Field(min_length=1, max_length=128)
+
+
 class HonorCorrectionRequest(HonorCorrectionInput):
     actor: str = Field(min_length=1, max_length=128)
 
@@ -555,6 +561,29 @@ class HonorsMixin:
             session.flush()
             self._honor_announce(session, period, now)
             return self._honor_period_view(session, period)
+
+    def backfill_missing_honor_periods(self, actor, now):
+        """结算游标至当前周之间真正缺失的已结束周期；已结算周期保持原快照。"""
+        settled_weeks = []
+        with self.transaction(), self._session() as session:
+            state = self._honor_lock(session, now)
+            current_week = week_of(now)
+            while state.next_week < current_week:
+                week = state.next_week
+                existing = session.scalar(
+                    select(HonorPeriodRecord).where(
+                        HonorPeriodRecord.week_start == week
+                    )
+                )
+                if existing is None:
+                    self.settle_honors(week, actor, now)
+                    settled_weeks.append(week.isoformat())
+                state.next_week += timedelta(days=7)
+            return {
+                "count": len(settled_weeks),
+                "settled_weeks": settled_weeks,
+                "next_week": state.next_week.isoformat(),
+            }
 
     @staticmethod
     def _honor_add_awards(session, period, entry, winners, week):

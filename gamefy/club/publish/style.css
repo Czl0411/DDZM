@@ -76,3 +76,48 @@ body[data-view="table"] .feedback{top:10px;left:74px;right:150px}
   .room-list{overflow:visible;padding-bottom:28px}
   .room-panel .empty{min-height:180px}
 }
+
+/* Club art direction: emerald felt, ivory paper and restrained antique gold. */
+.app-shell{background:linear-gradient(145deg,#f7f1e5 0%,#edf2ef 58%,#e5ece8 100%)}
+.topbar{background:linear-gradient(90deg,rgba(255,253,248,.98),rgba(245,240,229,.96));box-shadow:0 8px 28px rgb(22 50 43 / 7%)}
+.brand>span{border:1px solid #dcbf7a;background:linear-gradient(145deg,#214e43,#102f29);box-shadow:inset 0 0 0 2px rgb(255 255 255 / 7%),0 6px 18px rgb(17 52 43 / 18%)}
+.identity{border:1px solid #d9e4df;background:rgba(231,239,236,.86)}
+.club-home-layout .hero{isolation:isolate;border:1px solid rgb(225 190 108 / 45%);background-image:linear-gradient(90deg,rgba(8,30,25,.9) 0%,rgba(10,35,29,.7) 45%,rgba(10,35,29,.15) 100%),url("./assets/club-hero-v2.webp");background-position:center;background-size:cover;box-shadow:0 22px 50px rgb(13 43 35 / 22%)}
+.club-home-layout .hero:before{position:absolute;z-index:-1;inset:13px;content:"";border:1px solid rgb(223 186 98 / 30%);border-radius:20px;pointer-events:none}
+.club-home-layout .hero:after{display:none}
+.club-home-layout .hero h1{max-width:8em;color:#fffaf0;font-family:"Songti SC","STSong",serif;font-weight:800;letter-spacing:.02em;text-shadow:0 3px 18px rgb(0 0 0 / 40%)}
+.club-home-layout .hero p{max-width:24em;color:#e1ebe6;line-height:1.75}
+.hero-label{color:#e2bd69}
+.game-panel,.room-panel{padding:14px;border:1px solid rgb(212 202 182 / 75%);border-radius:25px;background:rgba(255,253,248,.72);box-shadow:0 18px 45px rgb(30 55 48 / 8%);backdrop-filter:blur(10px)}
+.game-panel .section-head,.room-panel .section-head{margin-right:6px;margin-left:6px}
+.section-head span,.page-title span,.eyebrow{color:#b2832f}
+.game-card{position:relative;overflow:hidden;border-color:#e1d7c4;background:linear-gradient(145deg,#fffdf8,#f7f1e6);box-shadow:0 9px 24px rgb(28 49 42 / 8%);transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.game-card:before{position:absolute;top:0;right:0;left:0;height:2px;content:"";background:linear-gradient(90deg,transparent,#d6a84b,transparent);opacity:.62}
+.game-card:hover{border-color:#d8bd82;box-shadow:0 14px 30px rgb(25 54 45 / 13%);transform:translateY(-2px)}
+.game-card:active{transform:scale(.985)}
+.game-art{width:clamp(62px,7vw,84px);height:clamp(62px,7vw,84px);overflow:hidden;border:1px solid rgb(255 255 255 / 70%);border-radius:18px;color:transparent;background-color:#173f37;background-position:center;background-size:cover;box-shadow:0 8px 22px rgb(20 39 34 / 20%)}
+.game-card strong{font-family:"Songti SC","STSong",serif;font-weight:800;letter-spacing:.02em}
+.game-card>b{display:grid;width:28px;height:28px;place-items:center;border-radius:50%;color:#86672d;background:#f1e4c8}
+.mahjong-banner{position:relative;isolation:isolate;overflow:hidden;border:1px solid rgb(225 190 108 / 42%);background-image:linear-gradient(180deg,rgba(8,34,28,.35),rgba(7,28,23,.91)),url("./assets/game-mahjong.webp");background-position:center;background-size:cover;box-shadow:0 20px 46px rgb(10 42 34 / 22%)}
+.mahjong-banner:after{position:absolute;z-index:-1;inset:12px;content:"";border:1px solid rgb(226 189 100 / 30%);border-radius:16px}
+.mahjong-banner>span{visibility:hidden}
+.mahjong-banner b{font-family:"Songti SC","STSong",serif;text-shadow:0 2px 14px rgb(0 0 0 / 52%)}
+.mahjong-banner p{color:#dce8e2;text-shadow:0 2px 10px rgb(0 0 0 / 45%)}
+.room-card{border-color:#dfd6c5;background:linear-gradient(135deg,#fffefa,#f6f0e5);box-shadow:0 8px 20px rgb(28 53 45 / 6%);transition:border-color .16s ease,transform .16s ease}
+.room-card:hover{border-color:#cfaa5d;transform:translateY(-1px)}
+.room-icon{color:transparent;background-image:url("./assets/game-mahjong.webp");background-position:center;background-size:cover;box-shadow:0 5px 14px rgb(22 58 48 / 16%)}
+.primary{background:linear-gradient(145deg,#245b4f,#143c34);box-shadow:0 7px 17px rgb(19 64 52 / 18%)}
+.primary.gold{background:linear-gradient(145deg,#e7c46e,#c39237)}
+.secondary{background:linear-gradient(180deg,#fff,#faf6ee)}
+.mahjong-table{border-color:rgb(225 190 108 / 42%);background-image:linear-gradient(rgba(8,37,30,.12),rgba(6,31,25,.24)),url("./assets/mahjong-table.webp");background-position:center;background-size:cover;box-shadow:inset 0 0 65px rgb(2 17 14 / 28%),0 18px 46px rgb(4 26 21 / 18%)}
+.waiting-card{border:1px solid #decda9;background:linear-gradient(145deg,rgba(255,253,248,.98),rgba(246,241,229,.98));box-shadow:0 18px 48px rgb(3 22 17 / 18%)}
+
+@media (min-width:700px){
+  .game-card{grid-template-columns:minmax(78px,38%) 1fr auto}
+  .game-art{width:100%;height:100%;min-height:74px}
+}
+
+@media (orientation:portrait),(max-width:699px){
+  .game-panel,.room-panel{padding:12px;border-radius:22px}
+  .game-art{width:68px;height:68px}
+}

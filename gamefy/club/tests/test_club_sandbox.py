@@ -156,3 +156,9 @@ def test_source_does_not_use_forbidden_storage_or_expand_the_page():
     assert "localStorage" not in source
     assert "100dvh" in source
     assert "overflow:hidden" in source.replace(" ", "")
+    for asset in (
+        "club-hero-v2.webp", "game-mahjong.webp", "game-chess.webp",
+        "game-doudizhu.webp", "game-drawguess.webp", "mahjong-table.webp",
+    ):
+        assert (publish / "assets" / asset).is_file()
+        assert asset in source

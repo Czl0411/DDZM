@@ -70,7 +70,7 @@ function tileNode(id, small = false) {
 }
 function gameCard(game) {
   const button = document.createElement("button"); button.type = "button"; button.className = "game-card";
-  const art = document.createElement("span"); art.className = `game-art ${game.id}`; art.textContent = game.icon;
+  const art = document.createElement("span"); art.className = `game-art ${game.id}`; art.textContent = game.icon; art.style.backgroundImage = `url("${game.image}")`; art.setAttribute("aria-hidden", "true");
   const copy = document.createElement("div"); const name = document.createElement("strong"); name.textContent = game.name; const description = document.createElement("small"); description.textContent = game.description; copy.append(name, description);
   const arrow = document.createElement("b"); arrow.textContent = "›"; button.append(art, copy, arrow);
   if (game.cardId) button.addEventListener("click", () => window.open(`https://www.aikda.com/chat?card=${encodeURIComponent(game.cardId)}`, "_blank", "noopener"));
@@ -78,7 +78,7 @@ function gameCard(game) {
 }
 function renderGames() {
   const grid = $("#game-grid"); grid.replaceChildren();
-  const mahjong = {id: "mahjong", name: "摸鱼麻将", icon: "雀", description: "四人立直 · 休闲 / 摸鱼币"};
+  const mahjong = {id: "mahjong", name: "摸鱼麻将", icon: "雀", image: "./assets/game-mahjong.webp", description: "四人立直 · 休闲 / 摸鱼币"};
   const mahjongCard = gameCard(mahjong); mahjongCard.addEventListener("click", openLobby);
   grid.append(mahjongCard, ...CONFIG.games.map(gameCard));
 }

@@ -126,6 +126,10 @@ def test_club_and_table_stay_in_one_viewport(width, height):
         page.wait_for_timeout(1200)
         expect(page.locator("#mahjong-table")).to_be_visible()
         expect(page.locator("#hand .tile")).to_have_count(14)
+        expect(page.locator("#hand .tile").first).to_have_attribute("aria-label", "1萬")
+        expect(page.locator("#hand .tile").first).to_have_text("🀇")
+        expect(page.locator("#remaining-count")).to_have_text("余 69 张")
+        expect(page.locator("#self-player")).to_contain_text("东风 · 14 张")
         tile_box = page.locator("#hand .tile").first.bounding_box()
         assert tile_box["y"] + tile_box["height"] <= height, tile_box
         assert tile_box["x"] >= 0, tile_box

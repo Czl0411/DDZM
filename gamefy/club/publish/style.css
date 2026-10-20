@@ -121,3 +121,50 @@ body[data-view="table"] .feedback{top:10px;left:74px;right:150px}
   .game-panel,.room-panel{padding:12px;border-radius:22px}
   .game-art{width:68px;height:68px}
 }
+
+/* Mahjong play surface: readable at a glance on a low-height landscape canvas. */
+.mahjong-table{--hand-tile-width:clamp(29px,3.2vw,40px);--hand-tile-height:clamp(40px,4.2vw,54px);--river-tile-width:clamp(19px,2vw,25px);--river-tile-height:clamp(26px,2.7vw,34px)}
+.player{min-width:128px;max-width:31%;padding:7px 10px;border:1px solid rgb(225 190 108 / 24%);border-radius:15px;background:linear-gradient(135deg,rgb(7 31 26 / 86%),rgb(16 57 47 / 75%));box-shadow:0 8px 24px rgb(0 0 0 / 20%);backdrop-filter:blur(8px)}
+.player>span{width:34px;height:34px;border:1px solid #e1bd6c;color:#153f35;background:linear-gradient(145deg,#fff8e8,#d9c18b);box-shadow:0 3px 10px rgb(0 0 0 / 22%)}
+.player strong{font-size:11px}.player small{font-size:9px;letter-spacing:.03em}
+.player.active{border-color:#efd177;box-shadow:0 0 0 2px rgb(239 209 119 / 72%),0 0 24px rgb(239 209 119 / 42%);animation:active-player 1.7s ease-in-out infinite}
+@keyframes active-player{50%{box-shadow:0 0 0 3px rgb(239 209 119 / 42%),0 0 34px rgb(239 209 119 / 58%)}}
+.player-top{top:9px}.player-left{top:50%;left:10px;transform:translateY(-50%)}.player-right{top:50%;right:10px;transform:translateY(-50%)}
+.self-player{left:12px;bottom:12px;max-width:28%}
+.board-center{inset:48px 104px 72px;display:block}
+.rivers{position:absolute;top:50%;left:50%;width:min(30vw,calc(100dvh - 138px),360px);transform:translate(-50%,-50%)}
+.table-console{position:absolute;z-index:2;top:50%;left:50%;display:grid;min-width:118px;gap:5px;justify-items:center;padding:9px 11px;border:1px solid rgb(230 195 111 / 36%);border-radius:15px;color:#fff;background:linear-gradient(145deg,rgb(7 37 30 / 90%),rgb(21 70 57 / 86%));box-shadow:0 10px 32px rgb(0 0 0 / 30%);transform:translate(-50%,-50%);backdrop-filter:blur(8px)}
+.table-meta{display:flex;align-items:center;gap:8px}.table-meta strong{color:#f4d784;font-size:12px}.table-meta span{color:#c9dcd6;font-size:9px}
+.dora{font-size:8px}.dora .tile{margin-left:3px}.turn-status{margin:0;padding:5px 10px;font-size:9px;white-space:nowrap}
+.tile{width:var(--hand-tile-width);height:var(--hand-tile-height);padding:0;border:1px solid #e0d6c3;border-bottom:5px solid #c4b799;border-radius:7px;color:#24201b;background:linear-gradient(145deg,#fffef8,#f1e8d8);box-shadow:0 3px 7px rgb(0 0 0 / 34%);font:400 clamp(24px,3vw,37px)/1 "Apple Color Emoji","Segoe UI Symbol","Noto Sans Symbols 2",sans-serif;transition:transform .14s ease,filter .14s ease,box-shadow .14s ease}
+.tile.small{width:var(--river-tile-width);height:var(--river-tile-height);border-bottom-width:3px;border-radius:4px;font-size:clamp(15px,1.8vw,23px)}
+.tile:disabled{opacity:1}.hand .tile:disabled{filter:saturate(.65) brightness(.8);opacity:.74}.hand .tile:not(:disabled):hover{filter:brightness(1.08);transform:translateY(-5px)}
+.tile.selected{z-index:2;filter:brightness(1.08);transform:translateY(-13px);box-shadow:0 0 0 3px #f1cf73,0 9px 18px rgb(0 0 0 / 34%)}
+.river{gap:2px}.river .tile{justify-self:center}
+.hand{right:12%;left:12%;bottom:7px;gap:2px;min-height:58px;overflow-x:auto;scrollbar-width:none}.hand::-webkit-scrollbar{display:none}.hand .tile{flex:0 0 var(--hand-tile-width)}
+.melds{right:16%;bottom:75px;left:16%;justify-content:center}
+.action-bar{z-index:4;right:24%;bottom:67px;left:24%;gap:8px;overflow:visible}
+.action-bar button{min-width:66px;min-height:40px;padding:0 16px;border-radius:14px;border-color:rgb(226 194 119 / 55%);box-shadow:0 7px 18px rgb(0 0 0 / 24%);font-size:12px}
+.action-bar .action-call{background:linear-gradient(145deg,#347565,#184a3e)}
+.action-bar .pass-action{color:#5c625e;background:rgba(255,255,255,.92)}
+
+@media (min-width:700px) and (max-height:700px){
+  .board-center{inset:42px 96px 68px}
+  .rivers{width:min(30vw,calc(100dvh - 170px),300px)}
+  .player{min-width:112px;padding:5px 8px}.player>span{width:29px;height:29px}
+  .self-player{bottom:9px}
+  .melds{bottom:70px}
+  .action-bar{bottom:60px}
+  .hand{bottom:4px;min-height:52px}
+  .hand .tile{width:var(--hand-tile-width);height:var(--hand-tile-height);flex-basis:var(--hand-tile-width)}
+}
+
+@media (orientation:portrait),(max-width:699px){
+  .player{min-width:104px;max-width:42%;padding:5px 7px}.player>span{width:28px;height:28px}
+  .board-center{inset:58px 36px 118px}
+  .rivers{width:min(72vw,290px)}
+  .table-console{min-width:106px;padding:7px 9px}
+  .self-player{bottom:61px}
+  .action-bar{right:8px;bottom:58px;left:8px;overflow-x:auto}
+  .hand{right:4px;left:4px;min-height:48px}
+}

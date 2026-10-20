@@ -55,7 +55,7 @@ def playing_snapshot():
     return value
 
 
-@pytest.mark.parametrize(("width", "height"), [(320, 700), (390, 844), (1280, 900)])
+@pytest.mark.parametrize(("width", "height"), [(320, 700), (390, 844), (844, 390), (1280, 720)])
 def test_club_and_table_stay_in_one_viewport(width, height):
     publish = Path(__file__).resolve().parents[1] / "publish"
     state, actions = waiting_snapshot(), []
@@ -109,6 +109,8 @@ def test_club_and_table_stay_in_one_viewport(width, height):
         expect(page.locator("#mahjong-lobby")).to_be_visible()
         page.locator("#rooms .room-card").click()
         expect(page.locator("#waiting")).to_be_visible()
+        expect(page.locator("#fullscreen")).to_be_visible()
+        expect(page.locator("#home")).not_to_be_visible()
         page.locator("#ready").click()
         expect(page.locator("#ready")).to_have_text("取消准备")
         page.locator("#share-room").click()

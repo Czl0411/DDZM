@@ -79,6 +79,22 @@ def test_settings_reads_chess_test_chatroom_id(monkeypatch):
     assert Settings.from_environment().chess_test_chatroom_id == "test-group"
 
 
+def test_settings_reads_club_configuration(monkeypatch):
+    monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
+    monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")
+    monkeypatch.setenv("DZMM_CLUB_GAME_ID", "club-card")
+    monkeypatch.setenv("DZMM_CLUB_GAME_URL", "https://www.aikda.com/chat?card=club-card")
+    monkeypatch.setenv("DZMM_CLUB_PUBLIC_API_URL", "https://api.example.com")
+    monkeypatch.setenv("DZMM_CLUB_CHATROOM_ID", "games")
+
+    settings = Settings.from_environment()
+
+    assert settings.club_game_id == "club-card"
+    assert settings.club_game_url.endswith("club-card")
+    assert settings.club_public_api_url == "https://api.example.com"
+    assert settings.club_chatroom_id == "games"
+
+
 def test_settings_reads_optional_bot_api_token(monkeypatch):
     monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
     monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")

@@ -628,6 +628,16 @@ def test_group_submission_entry_enqueues_group_notice_and_private_prompt(reposit
     assert records[1].reference_message_id is None
 
 
+def test_submission_entry_accepts_traditional_fixed_type(repository):
+    _employee(repository)
+
+    reply = RandomEventSubmissionHandler(repository).handle(
+        _direct("/投稿 隨機事件")
+    )
+
+    assert reply.text == "请先发送场景名称（1～64 字）。"
+
+
 def test_direct_balance_command_does_not_advance_submission_draft(repository):
     _employee(repository)
     service = CoreService(repository, GroupCommandHandler(repository))

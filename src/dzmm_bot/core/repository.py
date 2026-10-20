@@ -54,6 +54,7 @@ from .ai_knowledge import (
 )
 
 from .ai_mentions import normalize_ai_mention
+from .chinese_input import canonicalize_command_name
 from .game_statistics import (
     other_game_users, record_game_participations, resolved_game_users, truth_trade_game_users,
 )
@@ -111,6 +112,10 @@ from .dark_market import (
     render_listing_summary,
 )
 from .group_games import GROUP_GAME_TYPES, normalized_group_game_types
+from .chess_repository import ChessRepositoryMixin
+from .doudizhu_repository import DoudizhuRepositoryMixin
+from .drawguess_repository import DrawguessRepositoryMixin
+from .mistrealm_repository import MistrealmRepositoryMixin
 from .performance import (
     PERFORMANCE_ACTIVE_STATES,
     PerformanceActionResult,
@@ -2734,6 +2739,9 @@ _COMMAND_DEFINITIONS = (
     ("/事件投票", "/事件投票 序号", "给全公司的下一场随机事件投一票（每人一票，可改票）"),
     ("/事件投票情况", "/事件投票情况", "查看本期随机事件投票的当前票型"),
     ("/随机事件时间表", "/随机事件时间表", "查看全公司今天全部随机事件场次与状态"),
+    ("/象棋", "/象棋", "创建 H5 象棋对局，已入职群友可凭四位码先到先得入座"),
+    ("/斗地主", "/斗地主", "创建三人 H5 斗地主，已入职群友凭四位码入座"),
+    ("/你画我猜", "/你画我猜", "创建 3～8 人 H5 轮流作画猜词房间，已入职群友凭四位码入座"),
     ("/q", "回复消息 /q", "花 1 摸鱼币将一条群聊消息记入对应员工的黑历史册"),
     ("/ban", "回复消息 /ban 原因", "由本群授权员工移除未入职成员（需二次确认）"),
     ("/是", "/是", "确认本群待处理的成员移除请求"),
@@ -3070,7 +3078,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository(ShopManagementMixin, HonorsMixin):
+class CoreRepository(MistrealmRepositoryMixin, DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -3878,6 +3886,8 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             yield
             return
         with self._session_factory.begin() as session:
+            from .mistrealm_events import observe
+            observe(session)
             token = self._active_session.set(session)
             try:
                 yield
@@ -3891,6 +3901,8 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             yield active
             return
         with self._session_factory.begin() as session:
+            from .mistrealm_events import observe
+            observe(session)
             yield session
 
     def accept_inbound(
@@ -4119,15 +4131,33 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
 
     @staticmethod
     def _custom_command_name(command: str) -> str:
+        if not isinstance(command, str):
+            raise ValueError("指令名称必须以 / 开头，不能包含空白，且不超过 32 字符")
+        command = canonicalize_command_name(command)
         if (
-            not isinstance(command, str)
-            or not command.startswith("/")
+            not command.startswith("/")
             or len(command) < 2
             or len(command) > 32
             or any(character.isspace() for character in command)
         ):
             raise ValueError("指令名称必须以 / 开头，不能包含空白，且不超过 32 字符")
         return command
+
+    def _find_custom_command(
+        self, session: Session, command: str,
+    ) -> CommandDefinitionRecord | None:
+        exact = session.get(CommandDefinitionRecord, command)
+        if exact is not None and exact.is_custom:
+            return exact
+        for record in session.scalars(select(CommandDefinitionRecord).where(
+            CommandDefinitionRecord.is_custom.is_(True)
+        )):
+            try:
+                if self._custom_command_name(record.command) == command:
+                    return record
+            except ValueError:
+                continue
+        return None
 
     @staticmethod
     def _custom_reply_value(
@@ -4183,7 +4213,10 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         self.ensure_command_definitions()
         command = self._custom_command_name(command)
         with self._session() as session:
-            if session.get(CommandDefinitionRecord, command) is not None:
+            if (
+                session.get(CommandDefinitionRecord, command) is not None
+                or self._find_custom_command(session, command) is not None
+            ):
                 raise ValueError("指令名称已被占用")
             value = self._custom_reply_value(session, reply_type, content, upload_task_id)
             record = CommandDefinitionRecord(
@@ -4199,12 +4232,16 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         self, old_command: str, command: str, description: str, reply_type: str,
         content: str | None, upload_task_id: UUID | None, enabled: bool,
     ) -> CommandDefinitionRecord:
+        old_command = self._custom_command_name(old_command)
         command = self._custom_command_name(command)
         with self._session() as session:
-            record = session.get(CommandDefinitionRecord, old_command)
+            record = self._find_custom_command(session, old_command)
             if record is None or not record.is_custom:
                 raise ValueError("只能编辑自定义指令")
-            if command != old_command and session.get(CommandDefinitionRecord, command) is not None:
+            occupied = session.get(CommandDefinitionRecord, command)
+            if occupied is None:
+                occupied = self._find_custom_command(session, command)
+            if occupied is not None and occupied is not record:
                 raise ValueError("指令名称已被占用")
             value = self._custom_reply_value(
                 session, reply_type, content, upload_task_id, record
@@ -4219,8 +4256,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             return record
 
     def delete_custom_command(self, command: str) -> bool:
+        command = self._custom_command_name(command)
         with self._session() as session:
-            record = session.get(CommandDefinitionRecord, command)
+            record = self._find_custom_command(session, command)
             if record is None or not record.is_custom:
                 return False
             session.delete(record)
@@ -4228,12 +4266,13 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             return True
 
     def get_enabled_custom_command(self, command: str) -> CommandDefinitionRecord | None:
+        try:
+            command = self._custom_command_name(command)
+        except ValueError:
+            return None
         with self._session() as session:
-            return session.scalar(select(CommandDefinitionRecord).where(
-                CommandDefinitionRecord.command == command,
-                CommandDefinitionRecord.is_custom.is_(True),
-                CommandDefinitionRecord.enabled.is_(True),
-            ))
+            record = self._find_custom_command(session, command)
+            return record if record is not None and record.enabled else None
 
     def create_custom_command_image_upload(
         self, temp_path: str, original_filename: str, mime_type: str, now: datetime,

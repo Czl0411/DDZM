@@ -22,6 +22,21 @@ class Settings:
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_base_url: str = "https://api.deepseek.com"
     integration_api_key: str | None = None
+    chess_game_id: str | None = None
+    chess_token_audience: str | None = None
+    chess_allow_uid: bool = False
+    chess_game_url: str | None = None
+    chess_public_api_url: str | None = None
+    chess_test_chatroom_id: str | None = None
+    doudizhu_game_id: str | None = None
+    doudizhu_game_url: str | None = None
+    doudizhu_public_api_url: str | None = None
+    doudizhu_chatroom_id: str | None = None
+    mistrealm_enabled: bool = False
+    drawguess_game_id: str | None = None
+    drawguess_game_url: str | None = None
+    drawguess_public_api_url: str | None = None
+    drawguess_chatroom_id: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -56,6 +71,21 @@ class Settings:
                 "DZMM_DEEPSEEK_BASE_URL", "https://api.deepseek.com"
             ),
             integration_api_key=_optional("DZMM_INTEGRATION_API_KEY"),
+            chess_game_id=_optional("DZMM_CHESS_GAME_ID", empty_as_none=True),
+            chess_token_audience=_optional("DZMM_CHESS_TOKEN_AUDIENCE", empty_as_none=True),
+            chess_allow_uid=os.environ.get("DZMM_CHESS_ALLOW_UID", "false").lower() == "true",
+            chess_game_url=_optional("DZMM_CHESS_GAME_URL", empty_as_none=True),
+            chess_public_api_url=_optional("DZMM_CHESS_PUBLIC_API_URL", empty_as_none=True),
+            chess_test_chatroom_id=_optional("DZMM_CHESS_TEST_CHATROOM_ID", empty_as_none=True),
+            doudizhu_game_id=_optional("DZMM_DOUDIZHU_GAME_ID", empty_as_none=True),
+            doudizhu_game_url=_optional("DZMM_DOUDIZHU_GAME_URL", empty_as_none=True),
+            doudizhu_public_api_url=_optional("DZMM_DOUDIZHU_PUBLIC_API_URL", empty_as_none=True),
+            doudizhu_chatroom_id=_optional("DZMM_DOUDIZHU_CHATROOM_ID", empty_as_none=True),
+            mistrealm_enabled=os.environ.get("DZMM_MISTREALM_ENABLED", "false").lower() == "true",
+            drawguess_game_id=_optional("DZMM_DRAWGUESS_GAME_ID", empty_as_none=True),
+            drawguess_game_url=_optional("DZMM_DRAWGUESS_GAME_URL", empty_as_none=True),
+            drawguess_public_api_url=_optional("DZMM_DRAWGUESS_PUBLIC_API_URL", empty_as_none=True),
+            drawguess_chatroom_id=_optional("DZMM_DRAWGUESS_CHATROOM_ID", empty_as_none=True),
         )
 
 

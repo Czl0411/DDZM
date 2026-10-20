@@ -71,6 +71,14 @@ def test_settings_reads_configured_group_chat_url(monkeypatch):
     assert Settings.from_environment().chat_url == "https://chat.example/chat?c=group-1"
 
 
+def test_settings_reads_chess_test_chatroom_id(monkeypatch):
+    monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
+    monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")
+    monkeypatch.setenv("DZMM_CHESS_TEST_CHATROOM_ID", "test-group")
+
+    assert Settings.from_environment().chess_test_chatroom_id == "test-group"
+
+
 def test_settings_reads_optional_bot_api_token(monkeypatch):
     monkeypatch.setenv("DZMM_DATABASE_URL", "postgresql+psycopg://dzmm@localhost/dzmm")
     monkeypatch.setenv("DZMM_CORE_TOKEN", "core-secret")

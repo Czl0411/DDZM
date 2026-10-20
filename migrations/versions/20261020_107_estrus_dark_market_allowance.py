@@ -33,7 +33,19 @@ def _replace_allowance_constraint(kinds: str) -> None:
         )
 
 
+def _equivalent_revision_applied() -> bool:
+    # The same change was released under a different ID on the other branch.
+    bind = op.get_bind()
+    return sa.inspect(bind).has_table("alembic_version") and bool(
+        bind.execute(sa.text(
+            "SELECT 1 FROM alembic_version WHERE version_num IN (:revision, :descendant)"
+        ), {"revision": "20261020_123", "descendant": "20261020_124"}).scalar()
+    )
+
+
 def upgrade() -> None:
+    if _equivalent_revision_applied():
+        return
     bind = op.get_bind()
     if sa.inspect(bind).has_table("estrus_settings"):
         bind.execute(sa.text("UPDATE estrus_settings SET g_spot_heat_bonus = 20"))
@@ -41,6 +53,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if _equivalent_revision_applied():
+        return
     bind = op.get_bind()
     if sa.inspect(bind).has_table("department_allowances"):
         bind.execute(

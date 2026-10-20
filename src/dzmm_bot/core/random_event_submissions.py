@@ -5,6 +5,7 @@ import re
 
 from dzmm_bot.runtime.contracts import InboundMessage
 
+from .chinese_input import canonicalize_command_content, canonicalize_fixed_option
 from .repository import (
     CoreRepository,
     RandomEventSubmission,
@@ -46,7 +47,7 @@ class RandomEventSubmissionHandler:
     def handle(
         self, message: InboundMessage
     ) -> SubmissionReply | list[SubmissionReply] | None:
-        content = message.content.strip()
+        content = canonicalize_command_content(message.content).strip()
         if not content:
             return None
         parts = content.split(maxsplit=1)
@@ -54,7 +55,11 @@ class RandomEventSubmissionHandler:
         now = message.received_at
 
         if command == "/投稿":
-            if len(parts) != 2 or parts[1].strip() != "随机事件":
+            submission_type = (
+                canonicalize_fixed_option(parts[1].strip(), {"随机事件"})
+                if len(parts) == 2 else ""
+            )
+            if submission_type != "随机事件":
                 return self._reply(message, self._text("/投稿", "usage", now))
             result = self._repository.start_random_event_submission(
                 message.sender_platform_id, now

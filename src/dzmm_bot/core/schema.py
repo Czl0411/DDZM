@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -2667,6 +2668,159 @@ class UserRecord(Base):
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class DoudizhuRoomRecord(Base):
+    __tablename__ = "doudizhu_rooms"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    inbound_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), unique=True, nullable=False)
+    creator_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    short_id: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)
+    code: Mapped[str] = mapped_column(String(4), nullable=False)
+    seats: Mapped[list] = mapped_column(JSON, nullable=False)
+    ready: Mapped[list] = mapped_column(JSON, nullable=False)
+    presence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    phase: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    round_id: Mapped[UUID | None] = mapped_column(Uuid)
+    round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    redeals: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+
+
+class DoudizhuRoundRecord(Base):
+    __tablename__ = "doudizhu_rounds"
+    __table_args__ = (UniqueConstraint("room_id", "number"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("doudizhu_rooms.id"), nullable=False)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[dict] = mapped_column(JSON, nullable=False)
+    notice_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class DoudizhuRequestRecord(Base):
+    __tablename__ = "doudizhu_requests"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("doudizhu_rooms.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class DoudizhuMessageRecord(Base):
+    __tablename__ = "doudizhu_messages"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("doudizhu_rooms.id"), nullable=False)
+    round_id: Mapped[UUID | None] = mapped_column(Uuid)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    content: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class DrawguessRoomRecord(Base):
+    __tablename__ = "drawguess_rooms"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    inbound_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), unique=True, nullable=False)
+    creator_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    short_id: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)
+    active_code: Mapped[str | None] = mapped_column(String(4), unique=True)
+    state: Mapped[dict] = mapped_column(JSON, nullable=False)
+    cursor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    phase: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+
+
+class DrawguessEventRecord(Base):
+    __tablename__ = "drawguess_events"
+    __table_args__ = (UniqueConstraint("room_id", "seq"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("drawguess_rooms.id"), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    turn_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    operation: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class DrawguessRequestRecord(Base):
+    __tablename__ = "drawguess_requests"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("drawguess_rooms.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    turn_id: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class DrawguessMessageRecord(Base):
+    __tablename__ = "drawguess_messages"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("drawguess_rooms.id"), nullable=False)
+    turn_id: Mapped[int | None] = mapped_column(Integer)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    content: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class ChessGameRecord(Base):
+    __tablename__ = "chess_games"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
+    inbound_message_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), nullable=False)
+    creator_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    opponent_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    red_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    black_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    code: Mapped[str] = mapped_column(String(4), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    claim_deadline: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    position: Mapped[dict | None] = mapped_column(JSON)
+    red_remaining_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=900000)
+    black_remaining_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=900000)
+    turn_started_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    result: Mapped[str | None] = mapped_column(String(64))
+    pending_offer: Mapped[str | None] = mapped_column(String(16))
+    offer_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    events: Mapped[list] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
+
+
+class ChessMoveRecord(Base):
+    __tablename__ = "chess_moves"
+    __table_args__ = (UniqueConstraint("game_id", "ply"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(ForeignKey("chess_games.id"), nullable=False)
+    ply: Mapped[int] = mapped_column(Integer, nullable=False)
+    from_x: Mapped[int] = mapped_column(Integer, nullable=False)
+    from_y: Mapped[int] = mapped_column(Integer, nullable=False)
+    to_x: Mapped[int] = mapped_column(Integer, nullable=False)
+    to_y: Mapped[int] = mapped_column(Integer, nullable=False)
+    position_before: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class ChessMessageRecord(Base):
+    __tablename__ = "chess_messages"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    game_id: Mapped[UUID] = mapped_column(ForeignKey("chess_games.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    content: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class BlackHistoryEntryRecord(Base):
     __tablename__ = "black_history_entries"
     __table_args__ = (
@@ -4272,3 +4426,195 @@ class DisciplineFineRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     revoked_by: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+
+
+class MistrealmPlayerRecord(Base):
+    __tablename__ = "mistrealm_players"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    platform_uid: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    avatar: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    rate_limits: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    queue_ticket: Mapped[UUID | None] = mapped_column(Uuid)
+    queued_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    queue_expires_at: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+    queue_rules_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    queue_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    channel_muted_until: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+    online_seen_at: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+    queue_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="casual", server_default="casual")
+    ranked_reward_season: Mapped[int | None] = mapped_column(Integer)
+    selected_v3_deck_id: Mapped[UUID | None] = mapped_column(Uuid)
+    preferences: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
+
+
+class MistrealmDeckRecord(Base):
+    __tablename__ = "mistrealm_decks"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    player_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    faction: Mapped[str] = mapped_column(String(20), nullable=False)
+    leader: Mapped[str] = mapped_column(String(4), nullable=False)
+    rules_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2, server_default="2")
+    counts: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+
+
+class MistrealmRoomRecord(Base):
+    __tablename__ = "mistrealm_rooms"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    host_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), nullable=False)
+    active_code: Mapped[str | None] = mapped_column(String(6), unique=True)
+    phase: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    match_id: Mapped[UUID | None] = mapped_column(Uuid)
+    state: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+
+
+class MistrealmSeatRecord(Base):
+    __tablename__ = "mistrealm_seats"
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_rooms.id"), primary_key=True)
+    seat_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    player_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), unique=True, nullable=False)
+
+
+class MistrealmSeasonRecord(Base):
+    __tablename__ = "mistrealm_seasons"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    starts_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False, index=True)
+    finalized_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class MistrealmRatingRecord(Base):
+    __tablename__ = "mistrealm_ratings"
+    season_id: Mapped[int] = mapped_column(ForeignKey("mistrealm_seasons.id"), primary_key=True)
+    player_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), primary_key=True)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    peak: Mapped[int] = mapped_column(Integer, nullable=False)
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    played_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    reward_tier: Mapped[str | None] = mapped_column(String(16))
+    __table_args__ = (Index("ix_mistrealm_ratings_standing", "season_id", "rating", "wins"),)
+
+
+class MistrealmRankedMatchRecord(Base):
+    __tablename__ = "mistrealm_ranked_matches"
+    match_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_rooms.id"), unique=True, nullable=False)
+    season_id: Mapped[int] = mapped_column(ForeignKey("mistrealm_seasons.id"), nullable=False, index=True)
+    player_a: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), nullable=False)
+    player_b: Mapped[UUID | None] = mapped_column(ForeignKey("mistrealm_players.id"))
+    rating_a: Mapped[int] = mapped_column(Integer, nullable=False)
+    rating_b: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+    result: Mapped[dict | None] = mapped_column(JSON)
+
+
+class MistrealmRequestRecord(Base):
+    __tablename__ = "mistrealm_requests"
+    player_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), primary_key=True)
+    request_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_rooms.id"), nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class MistrealmStoryProgressRecord(Base):
+    __tablename__ = "mistrealm_story_progress"
+    player_id: Mapped[UUID] = mapped_column(
+        ForeignKey("mistrealm_players.id"), primary_key=True
+    )
+    completed_chapters: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class MistrealmChannelMessageRecord(Base):
+    __tablename__ = "mistrealm_channel_messages"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    player_id: Mapped[UUID] = mapped_column(
+        ForeignKey("mistrealm_players.id"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    text: Mapped[str | None] = mapped_column(String(200))
+    room_id: Mapped[UUID | None] = mapped_column(ForeignKey("mistrealm_rooms.id"))
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class MistrealmFriendRecord(Base):
+    __tablename__ = "mistrealm_friends"
+    low_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), primary_key=True)
+    high_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), primary_key=True)
+    requester_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class MistrealmInviteRecord(Base):
+    __tablename__ = "mistrealm_invites"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    sender_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), nullable=False, index=True)
+    receiver_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    deck_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    room_id: Mapped[UUID | None] = mapped_column(ForeignKey("mistrealm_rooms.id"))
+
+
+class MistrealmDirectMessageRecord(Base):
+    __tablename__ = "mistrealm_direct_messages"
+    __table_args__ = (
+        UniqueConstraint('sender_id','request_id',name='uq_mistrealm_dm_request'),
+        Index('ix_mistrealm_dm_pair','sender_id','receiver_id','id'),
+        Index('ix_mistrealm_dm_unread','receiver_id','read_at','id'),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sender_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), nullable=False)
+    receiver_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    text: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+
+
+class MistrealmSocialRevisionRecord(Base):
+    __tablename__ = 'mistrealm_social_revisions'
+    scope: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class MistrealmBalanceMatchRecord(Base):
+    __tablename__ = 'mistrealm_balance_matches'
+    match_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    room_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    finished_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False, index=True)
+    rules_revision: Mapped[str] = mapped_column(String(40), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    population: Mapped[str] = mapped_column(String(16), nullable=False)
+    first_seat: Mapped[int | None] = mapped_column(Integer)
+    winner: Mapped[int | None] = mapped_column(Integer)
+    end_reason: Mapped[str] = mapped_column(String(16), nullable=False)
+    rounds: Mapped[int] = mapped_column(Integer, nullable=False)
+    participants: Mapped[list] = mapped_column(JSON, nullable=False)
+
+
+class MistrealmHistoryRecord(Base):
+    __tablename__ = 'mistrealm_history'
+    match_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    player_id: Mapped[UUID] = mapped_column(ForeignKey('mistrealm_players.id'), primary_key=True)
+    finished_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    seat: Mapped[int] = mapped_column(Integer, nullable=False)
+    summary: Mapped[dict] = mapped_column(JSON, nullable=False)
+    actions: Mapped[list] = mapped_column(JSON, nullable=False)
+    __table_args__ = (Index('ix_mistrealm_history_player_time','player_id','finished_at'),)

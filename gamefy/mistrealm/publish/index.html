@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0c1217"><title>雾境 · 王冠与群鸦</title>
+<link rel="stylesheet" href="./style.css">
+<link rel="stylesheet" href="./layout.css">
+</head>
+<body>
+<div class="fog" aria-hidden="true"></div>
+<header><a class="brand" href="#" id="home-link"><b>雾境</b><span>王冠与群鸦</span></a><nav><button id="rules-open">规则</button><button id="catalog-open">图鉴</button><button id="settings-open">设置</button><button id="refresh">刷新连接</button></nav></header>
+<p id="feedback" role="status" aria-live="polite">正在读取平台身份…</p>
+<main id="main"><section class="hero"><div class="hero-copy"><p class="eyebrow">MISTREALM · A GAME OF CHOICES</p><h1>王冠将倾<br>群鸦将至</h1><p class="intro">两支军团，三局交锋。<br>决定胜负的，是你留下的最后一张牌。</p><button class="primary" id="boot-retry">正在连接…</button></div></section></main>
+<dialog id="modal"><button id="modal-close" class="close" aria-label="关闭">×</button><div id="modal-content"></div></dialog>
+<script type="module" src="./game.js"></script>
+</body></html>

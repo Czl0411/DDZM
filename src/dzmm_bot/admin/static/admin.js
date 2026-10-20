@@ -121,6 +121,7 @@ const pageContext = {
   "company-lottery": {crumb: "游戏运营 / 公司双色球", title: "公司双色球", description: "配置号码池、奖级与奖池，并核对每个群的期次、流水与派奖。"},
   performances: {crumb: "游戏运营 / 公演预约", title: "公演预约", description: "审核公演预约，管理未来、进行中与历史场次。"},
   "ai-assistant": {crumb: "机器人运营 / AI 总监事", title: "AI 总监事", description: "配置群内 AI 人设、系统提示词与各职位每日调用上限。"},
+  mistrealm: {crumb: "游戏运营 / 雾境频道", title: "雾境频道", description: "管理雾境公开聊天、约战消息与玩家禁言。"},
   settings: {crumb: "玩法与资源 / 玩法配置", title: "玩法配置", description: "集中维护经济、打卡、全勤和日活跃度规则。"},
   commands: {crumb: "玩法与资源 / 指令库", title: "指令库", description: "配置群内指令的启用状态与标准回复模板。"},
   shop: {crumb: "玩法与资源 / 物品与商店", title: "物品与商店", description: "上架物品、维护库存，并查看当前兑换资源。"},
@@ -2616,6 +2617,17 @@ async function loadAdministrators() {
   renderAdministrators(administratorAccounts);
 }
 
+async function loadMistrealmChannel() {
+  const data = await requestGame("/api/game/mistrealm/channel", {cache: "no-store"});
+  document.querySelector("#mistrealm-channel-list").innerHTML = data.items.map((item) => {
+    const muted = item.player.muted_until && new Date(item.player.muted_until) > new Date();
+    const content = item.kind === "challenge"
+      ? `约战房间 · ${escapeHtml(item.room_status || "未知状态")}`
+      : escapeHtml(item.text || "");
+    return `<article class="data-row"><div><b>${escapeHtml(item.player.name)}</b><small>${statusBadge(item.deleted ? "已删除" : item.kind === "challenge" ? "约战" : "发言", item.deleted ? "warning" : "")}</small><small>${content}</small><small>${escapeHtml(formatHeartbeat(item.created_at))}${muted ? ` · 禁言至 ${escapeHtml(formatHeartbeat(item.player.muted_until))}` : ""}</small></div><div class="command-actions">${item.deleted ? "" : `<button class="danger-button" data-mistrealm-delete="${escapeHtml(item.id)}" type="button">删除消息</button>`}<button class="secondary" data-mistrealm-player="${escapeHtml(item.player.id)}" data-mistrealm-muted="${muted}" type="button">${muted ? "解除禁言" : "禁言 1 小时"}</button></div></article>`;
+  }).join("") || '<p class="muted">频道还没有消息。</p>';
+}
+
 function showView(view) {
   for (const element of document.querySelectorAll(".dashboard-view")) {
     element.hidden = element.id !== `${view}-view`;
@@ -3255,6 +3267,7 @@ async function loadGameView(view) {
     if (view === "company-lottery") return loadCompanyLottery();
     if (view === "performances") return loadPerformances();
     if (view === "ai-assistant") return loadAiAssistant();
+    if (view === "mistrealm") return loadMistrealmChannel();
     if (view === "commands") {
       const commands = await requestGame("/api/game/commands");
       configurationVersion = commands[0]?.version ?? configurationVersion;
@@ -3676,6 +3689,30 @@ for (const button of document.querySelectorAll("button[data-action]")) {
 for (const button of document.querySelectorAll(".nav-item")) {
   button.addEventListener("click", () => void loadGameView(button.dataset.view));
 }
+document.querySelector("#refresh-mistrealm-channel").addEventListener("click", () => void loadMistrealmChannel());
+document.querySelector("#mistrealm-channel-list").addEventListener("click", async (event) => {
+  const remove = event.target.closest("[data-mistrealm-delete]");
+  const mute = event.target.closest("[data-mistrealm-player]");
+  if (!remove && !mute) return;
+  try {
+    if (remove) {
+      if (!window.confirm("确认删除这条公开频道消息？")) return;
+      await requestGame(`/api/game/mistrealm/channel/${remove.dataset.mistrealmDelete}`, {method: "DELETE"});
+      setResult("频道消息已删除", "success");
+    } else {
+      const unmute = mute.dataset.mistrealmMuted === "true";
+      await requestGame(`/api/game/mistrealm/channel/players/${mute.dataset.mistrealmPlayer}`, {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mute_minutes: unmute ? 0 : 60}),
+      });
+      setResult(unmute ? "玩家已解除禁言" : "玩家已禁言 1 小时", "success");
+    }
+    await loadMistrealmChannel();
+  } catch (error) {
+    setResult(`频道操作失败（${error.message}）`, "error");
+  }
+});
 document.querySelector("#create-group-chat").addEventListener("click", () => openGroupChatModal());
 document.querySelector("#group-chat-ban-operator-search").addEventListener("input", () => {
   renderGroupBanOperators();

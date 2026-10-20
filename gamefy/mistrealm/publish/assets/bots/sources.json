@@ -1,0 +1,168 @@
+{
+  "style": "Lorelei",
+  "artist": "Lisa Wischofsky",
+  "license": "CC0-1.0",
+  "source": "https://www.dicebear.com/styles/lorelei/",
+  "assets": [
+    {
+      "file": "lorelei-01.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-01&backgroundColor=e8dfce",
+      "sha256": "7a473c5f11995cc3a65ffd6cf1279f623d91de1260a921e1a0174b81ca4cf411"
+    },
+    {
+      "file": "lorelei-02.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-02&backgroundColor=c5d4d1",
+      "sha256": "27b5da6fb51348d647fc31f25916687f690f044b30cc5ca8cd253f1255dd9eb9"
+    },
+    {
+      "file": "lorelei-03.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-03&backgroundColor=d8c9b8",
+      "sha256": "14b90255c01b4f38d39a90e1f61bc8e82a14cba4203667139ec813de015da0e4"
+    },
+    {
+      "file": "lorelei-04.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-04&backgroundColor=c9c9da",
+      "sha256": "2463a240ca85cdb95a35b1957e5533541e4de7b05825afe0b7d7468cde5f8c0a"
+    },
+    {
+      "file": "lorelei-05.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-05&backgroundColor=e8dfce",
+      "sha256": "4dbe44ec4dec6a0439d4d6473e86a328efeea1fb9144df6311831d675a4ec0ec"
+    },
+    {
+      "file": "lorelei-06.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-06&backgroundColor=c5d4d1",
+      "sha256": "7c1f4c150b4f55a14c84c41a78fb0d693f662b810fdc8ad169272ef55a6a1bb4"
+    },
+    {
+      "file": "lorelei-07.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-07&backgroundColor=d8c9b8",
+      "sha256": "2b2b42296dbe50748c34e2f735899ee777ea62def7e4a7b2527f4dfc8ca38070"
+    },
+    {
+      "file": "lorelei-08.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-08&backgroundColor=c9c9da",
+      "sha256": "7629fe2d7c3011b8fcfeab343e1db49dea6e3bc9ac414a8f260b6c38596d7e3d"
+    },
+    {
+      "file": "lorelei-09.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-09&backgroundColor=e8dfce",
+      "sha256": "25f2135e17e44894831f63e64486fbfe8513266a977154422ec6ab6d8a4caa87"
+    },
+    {
+      "file": "lorelei-10.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-10&backgroundColor=c5d4d1",
+      "sha256": "e1abb20dc1e05035979c9e39d4c8ea91ba5291cad4b6513a356162d3befde170"
+    },
+    {
+      "file": "lorelei-11.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-11&backgroundColor=d8c9b8",
+      "sha256": "a913a8ecd2099f9c936ac53e91af476b6750086a338bac59fc6aaa73081e764b"
+    },
+    {
+      "file": "lorelei-12.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-12&backgroundColor=c9c9da",
+      "sha256": "d9fde80f6ea22f0383d46a24e25f9eb8f9694c44dd7944999e5dc6fe24944f99"
+    },
+    {
+      "file": "lorelei-13.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-13&backgroundColor=e8dfce",
+      "sha256": "7b95bf6237ebd4881e36357b4ad186ce0ad459215e7eba3fb77d78755b32e7b1"
+    },
+    {
+      "file": "lorelei-14.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-14&backgroundColor=c5d4d1",
+      "sha256": "34d9d711d5c7af11165b414e7aae912863f2096569e05b64b96c2c7755406cdb"
+    },
+    {
+      "file": "lorelei-15.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-15&backgroundColor=d8c9b8",
+      "sha256": "a2701e915059295f99bc3cf1d4dd59001622d8ea043370630bd74a7745a807e3"
+    },
+    {
+      "file": "lorelei-16.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-16&backgroundColor=c9c9da",
+      "sha256": "294e94fd2acccd1ab86167f99407453b8ee1e9fbb0f2b4b38f07328c3453a5a9"
+    },
+    {
+      "file": "lorelei-17.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-17&backgroundColor=e8dfce",
+      "sha256": "4c6d20b686ffb2d051560ee9d63b13473f21bb6ffb06ab535faa43a8c8632e14"
+    },
+    {
+      "file": "lorelei-18.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-18&backgroundColor=c5d4d1",
+      "sha256": "904334682b191404385d57a94cd49d88fdce324f36184dbf0ca7d988c6af1376"
+    },
+    {
+      "file": "lorelei-19.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-19&backgroundColor=d8c9b8",
+      "sha256": "ee35cdef44142d5fb58e76ce79abbb958d8b78cd17eb6f585e7122f5b823923e"
+    },
+    {
+      "file": "lorelei-20.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-20&backgroundColor=c9c9da",
+      "sha256": "a40e29de07e50f2027b0b997cbfaaa95c5f4080823663beac61f2885c6788a31"
+    },
+    {
+      "file": "lorelei-21.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-21&backgroundColor=e8dfce",
+      "sha256": "63894104c5f0606897189cfb4b4b4b7e54d629c98200c28edb96327e78491dd5"
+    },
+    {
+      "file": "lorelei-22.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-22&backgroundColor=c5d4d1",
+      "sha256": "6623e964d9427435cf2bbdd3e11c64e39d779ed7610beca56653f5973627f415"
+    },
+    {
+      "file": "lorelei-23.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-23&backgroundColor=d8c9b8",
+      "sha256": "e77cbabcb388fa9ca9965b8ea257afab8779a679e4d24a5beb945adc5f0c16af"
+    },
+    {
+      "file": "lorelei-24.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-24&backgroundColor=c9c9da",
+      "sha256": "eb4af367165bb16c3b7168c1ff08fa1a9cd525da6071970cbfb5b2fdf7d0c95c"
+    },
+    {
+      "file": "lorelei-25.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-25&backgroundColor=e8dfce",
+      "sha256": "d938900ed2c11c25bd357fa6efa0c03e6e355963d5e01a57b70de19543c641a4"
+    },
+    {
+      "file": "lorelei-26.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-26&backgroundColor=c5d4d1",
+      "sha256": "d362ebaeb8f85cc14a5a21d11d44a4502bc95edb1e99a729b69093bc16a16f15"
+    },
+    {
+      "file": "lorelei-27.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-27&backgroundColor=d8c9b8",
+      "sha256": "144d43a00558e80bb8acae81bfac8a6c7636e008efae1681940a2d54e228df36"
+    },
+    {
+      "file": "lorelei-28.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-28&backgroundColor=c9c9da",
+      "sha256": "8346c74c60c7ff0e8769db0f22e31a09e9dab6dab9f0aa4729681867bbbfd87e"
+    },
+    {
+      "file": "lorelei-29.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-29&backgroundColor=e8dfce",
+      "sha256": "31137b72e57bafc17d1f0901d3fe770a6eb3ab51fb52db622038b7171ad1e88c"
+    },
+    {
+      "file": "lorelei-30.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-30&backgroundColor=c5d4d1",
+      "sha256": "996ad16c9bdaee49dd5aaffd0b2a0bb0cfdd5982d101dc8be8008f44634f6a79"
+    },
+    {
+      "file": "lorelei-31.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-31&backgroundColor=d8c9b8",
+      "sha256": "29028789795d9250b5a729ea8b74fb5838ac10b92720c79dc97c08d069fe6793"
+    },
+    {
+      "file": "lorelei-32.svg",
+      "url": "https://api.dicebear.com/10.x/lorelei/svg?seed=mistrealm-32&backgroundColor=c9c9da",
+      "sha256": "28f3c1b0e2e324d4604283a231a1ebb5a1c7c63de9f75f25ab1de5ce810941a2"
+    }
+  ]
+}

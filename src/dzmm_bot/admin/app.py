@@ -690,6 +690,40 @@ def create_app(
             scope=f"game-template:{command}:{scenario}",
         )
 
+    @app.get("/api/game/mistrealm/channel")
+    def mistrealm_channel_overview(
+        _: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
+        return repository.mistrealm_channel_overview()
+
+    @app.delete("/api/game/mistrealm/channel/{message_id}")
+    def delete_mistrealm_channel_message(
+        message_id: UUID,
+        _: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
+        if not repository.delete_mistrealm_channel_message(message_id, beijing_now()):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "message not found")
+        return {"deleted": True}
+
+    @app.patch("/api/game/mistrealm/channel/players/{player_id}")
+    def mute_mistrealm_channel_player(
+        player_id: UUID,
+        request: dict,
+        _: Annotated[AdminIdentity, Depends(authorize)],
+    ) -> dict:
+        minutes = request.get("mute_minutes")
+        if type(minutes) is not int or minutes < 0 or minutes > 10080:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "mute_minutes must be between 0 and 10080",
+            )
+        player = repository.mute_mistrealm_channel_player(
+            player_id, minutes, beijing_now()
+        )
+        if player is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "player not found")
+        return player
+
     @app.get("/api/game/users")
     def game_users(
         _: Annotated[None, Depends(authorize)],

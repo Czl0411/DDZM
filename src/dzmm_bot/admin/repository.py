@@ -17,6 +17,9 @@ from dzmm_bot.core.schema import (
     AdminConfigRevisionRecord,
     AdminIdempotencyRecord,
     AdminSessionRecord,
+    MistrealmChannelMessageRecord,
+    MistrealmPlayerRecord,
+    MistrealmRoomRecord,
 )
 
 
@@ -243,6 +246,76 @@ class AdminRepository:
             record.version += 1
             session.flush()
             return result, record.version
+
+    def mistrealm_channel_overview(self, limit: int = 100) -> dict:
+        with self._session_factory.begin() as session:
+            messages = list(
+                session.scalars(
+                    select(MistrealmChannelMessageRecord)
+                    .order_by(
+                        MistrealmChannelMessageRecord.created_at.desc(),
+                        MistrealmChannelMessageRecord.id.desc(),
+                    )
+                    .limit(limit)
+                )
+            )
+            items = []
+            for message in messages:
+                player = session.get(MistrealmPlayerRecord, message.player_id)
+                room = (
+                    session.get(MistrealmRoomRecord, message.room_id)
+                    if message.room_id
+                    else None
+                )
+                items.append(
+                    {
+                        "id": str(message.id),
+                        "kind": message.kind,
+                        "text": message.text,
+                        "created_at": message.created_at.isoformat(),
+                        "deleted": message.deleted_at is not None,
+                        "player": {
+                            "id": str(player.id),
+                            "uid": player.platform_uid,
+                            "name": player.name,
+                            "muted_until": (
+                                player.channel_muted_until.isoformat()
+                                if player.channel_muted_until
+                                else None
+                            ),
+                        },
+                        "room_status": room.phase if room else None,
+                    }
+                )
+            return {"items": items}
+
+    def delete_mistrealm_channel_message(self, message_id: UUID, now: datetime) -> bool:
+        with self._session_factory.begin() as session:
+            message = session.get(MistrealmChannelMessageRecord, message_id)
+            if message is None:
+                return False
+            message.deleted_at = now
+            return True
+
+    def mute_mistrealm_channel_player(
+        self, player_id: UUID, minutes: int, now: datetime
+    ) -> dict | None:
+        with self._session_factory.begin() as session:
+            player = session.get(MistrealmPlayerRecord, player_id)
+            if player is None:
+                return None
+            player.channel_muted_until = (
+                None if minutes == 0 else now + timedelta(minutes=minutes)
+            )
+            return {
+                "id": str(player.id),
+                "name": player.name,
+                "muted_until": (
+                    player.channel_muted_until.isoformat()
+                    if player.channel_muted_until
+                    else None
+                ),
+            }
 
 
 def _hash_password(password: str) -> str:

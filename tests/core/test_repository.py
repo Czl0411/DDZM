@@ -142,6 +142,53 @@ def test_custom_command_repository_keeps_builtin_rows_and_supports_lifecycle(rep
     assert repository.get_enabled_custom_command("/新公告") is None
 
 
+def test_custom_command_repository_uses_one_simplified_command_identity(repository):
+    created = repository.create_custom_command(
+        "/导航", "入口", "text", "固定内容", None, True
+    )
+
+    assert created.command == "/导航"
+    assert repository.get_enabled_custom_command("/導航").reply_value == "固定内容"
+    with pytest.raises(ValueError, match="指令名称已被占用"):
+        repository.create_custom_command(
+            "/導航", "重复入口", "text", "另一条内容", None, True
+        )
+    repository.create_custom_command(
+        "/入口", "另一个入口", "text", "内容", None, True
+    )
+    with pytest.raises(ValueError, match="指令名称已被占用"):
+        repository.update_custom_command(
+            "/入口", "/導航", "重复入口", "text", "另一条内容", None, True
+        )
+    with pytest.raises(ValueError, match="指令名称已被占用"):
+        repository.create_custom_command(
+            "/幫助", "覆盖内置指令", "text", "内容", None, True
+        )
+
+
+def test_custom_command_repository_keeps_legacy_traditional_rows_accessible(repository):
+    from dzmm_bot.core.schema import CommandDefinitionRecord
+
+    with repository._session() as session:
+        session.add(CommandDefinitionRecord(
+            command="/導航", syntax="/導航", description="旧入口", enabled=True,
+            is_custom=True, reply_type="text", reply_value="旧内容",
+        ))
+        session.flush()
+
+    assert repository.get_enabled_custom_command("/导航").reply_value == "旧内容"
+    with pytest.raises(ValueError, match="指令名称已被占用"):
+        repository.create_custom_command(
+            "/导航", "重复入口", "text", "另一条内容", None, True
+        )
+    updated = repository.update_custom_command(
+        "/导航", "/新导航", "新入口", "text", "新内容", None, True
+    )
+    assert updated.command == "/新导航"
+    assert repository.get_enabled_custom_command("/新導航").reply_value == "新内容"
+    assert repository.delete_custom_command("/新導航")
+
+
 @pytest.mark.parametrize(
     "command,reply_type,content",
     [
@@ -2089,10 +2136,11 @@ def test_postgres_inbound_conflict_predicate_is_literal(
     from types import SimpleNamespace
 
     from sqlalchemy.dialects import postgresql
+    from sqlalchemy.orm import Session
 
     from dzmm_bot.core.repository import CoreRepository
 
-    class CompilingSession:
+    class CompilingSession(Session):
         compiled_statement = ""
 
         def get_bind(self):

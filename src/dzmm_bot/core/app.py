@@ -8,6 +8,7 @@ import httpx
 import logging
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from uvicorn import Config, Server
@@ -259,6 +260,10 @@ from .performance import HttpCoverImageValidator
 from .shop_management import ShopChangesConfirmRequest, ShopChangesPreviewRequest
 from .schema import WorkerCommandRecord, WorkerInstanceRecord, beijing_now
 from .service import CoreService
+from .chess_api import chess_router
+from .doudizhu_api import doudizhu_router
+from .drawguess_api import drawguess_router
+from .mistrealm_api import mistrealm_router
 
 
 def create_server(repository: CoreRepository, settings: Settings) -> Server:
@@ -268,6 +273,19 @@ def create_server(repository: CoreRepository, settings: Settings) -> Server:
             repository,
             settings.core_token,
             require_group_chat_bootstrap=True,
+            chess_game_id=settings.chess_game_id,
+            chess_game_url=settings.chess_game_url,
+            chess_public_api_url=settings.chess_public_api_url,
+            chess_test_chatroom_id=settings.chess_test_chatroom_id,
+            doudizhu_game_id=settings.doudizhu_game_id,
+            doudizhu_game_url=settings.doudizhu_game_url,
+            doudizhu_public_api_url=settings.doudizhu_public_api_url,
+            doudizhu_chatroom_id=settings.doudizhu_chatroom_id,
+            mistrealm_enabled=settings.mistrealm_enabled,
+            drawguess_game_id=settings.drawguess_game_id,
+            drawguess_game_url=settings.drawguess_game_url,
+            drawguess_public_api_url=settings.drawguess_public_api_url,
+            drawguess_chatroom_id=settings.drawguess_chatroom_id,
         ),
         host="127.0.0.1",
         port=settings.core_api_port,
@@ -294,6 +312,21 @@ def create_app_from_environment() -> FastAPI:
         repository,
         settings.core_token,
         require_group_chat_bootstrap=True,
+        chess_game_id=settings.chess_game_id,
+        chess_token_audience=settings.chess_token_audience,
+        chess_allow_uid=settings.chess_allow_uid,
+        chess_game_url=settings.chess_game_url,
+        chess_public_api_url=settings.chess_public_api_url,
+        chess_test_chatroom_id=settings.chess_test_chatroom_id,
+        doudizhu_game_id=settings.doudizhu_game_id,
+        doudizhu_game_url=settings.doudizhu_game_url,
+        doudizhu_public_api_url=settings.doudizhu_public_api_url,
+        doudizhu_chatroom_id=settings.doudizhu_chatroom_id,
+        mistrealm_enabled=settings.mistrealm_enabled,
+        drawguess_game_id=settings.drawguess_game_id,
+        drawguess_game_url=settings.drawguess_game_url,
+        drawguess_public_api_url=settings.drawguess_public_api_url,
+        drawguess_chatroom_id=settings.drawguess_chatroom_id,
     )
 
 
@@ -333,13 +366,70 @@ def create_app(
     clock: Callable[[], datetime] = beijing_now,
     require_group_chat_bootstrap: bool = False,
     cover_image_validator=None,
+    chess_game_id: str | None = None,
+    chess_token_audience: str | None = None,
+    chess_allow_uid: bool = False,
+    chess_game_url: str | None = None,
+    chess_public_api_url: str | None = None,
+    chess_test_chatroom_id: str | None = None,
+    doudizhu_game_id: str | None = None,
+    doudizhu_game_url: str | None = None,
+    doudizhu_public_api_url: str | None = None,
+    doudizhu_chatroom_id: str | None = None,
+    mistrealm_enabled: bool = False,
+    drawguess_game_id: str | None = None,
+    drawguess_game_url: str | None = None,
+    drawguess_public_api_url: str | None = None,
+    drawguess_chatroom_id: str | None = None,
 ) -> FastAPI:
     app = FastAPI()
+    if chess_game_id or doudizhu_game_id or drawguess_game_id or mistrealm_enabled:
+        app.add_middleware(
+            CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
+    if chess_game_id:
+        app.include_router(chess_router(repository, chess_token_audience or chess_game_id, clock, allow_uid=chess_allow_uid))
+    if doudizhu_game_id:
+        app.include_router(doudizhu_router(repository, clock))
+
+        @app.middleware('http')
+        async def doudizhu_no_cache(request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith('/api/doudizhu/'):
+                response.headers['Cache-Control'] = 'no-store'
+            return response
+    if drawguess_game_id:
+        app.include_router(drawguess_router(repository, clock))
+
+        @app.middleware("http")
+        async def drawguess_no_cache(request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith("/api/drawguess/"):
+                response.headers["Cache-Control"] = "no-store"
+            return response
+    if mistrealm_enabled:
+        app.include_router(mistrealm_router(repository, clock))
+
+        @app.middleware("http")
+        async def mistrealm_no_cache(request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith("/api/mistrealm/"):
+                response.headers["Cache-Control"] = "no-store"
+            return response
     if cover_image_validator is None:
         cover_image_validator = HttpCoverImageValidator(httpx.Client(timeout=5))
     service = CoreService(
         repository,
-        GroupCommandHandler(repository),
+        GroupCommandHandler(
+            repository, chess_game_id=chess_game_id,
+            chess_game_url=chess_game_url, chess_public_api_url=chess_public_api_url,
+            chess_test_chatroom_id=chess_test_chatroom_id,
+            doudizhu_game_id=doudizhu_game_id, doudizhu_game_url=doudizhu_game_url,
+            doudizhu_public_api_url=doudizhu_public_api_url, doudizhu_chatroom_id=doudizhu_chatroom_id,
+            drawguess_game_id=drawguess_game_id, drawguess_game_url=drawguess_game_url,
+            drawguess_public_api_url=drawguess_public_api_url, drawguess_chatroom_id=drawguess_chatroom_id,
+        ),
         cover_image_validator=cover_image_validator,
     )
 
@@ -4021,6 +4111,13 @@ def create_app(
         _: Annotated[None, Depends(authorize)],
     ) -> AcceptedResponse:
         repository.run_daily_jobs(request.now)
+        repository.advance_chess_deadlines(request.now)
+        if doudizhu_game_id:
+            repository.advance_doudizhu_deadlines(request.now)
+        if drawguess_game_id:
+            repository.advance_drawguess_deadlines(request.now)
+        if mistrealm_enabled:
+            repository.advance_mistrealm_deadlines(request.now)
         return AcceptedResponse(accepted=True)
 
     @app.get(

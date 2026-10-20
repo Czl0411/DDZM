@@ -71,9 +71,23 @@ def _rename(names: dict[str, str]) -> None:
             )
 
 
+def _equivalent_revision_applied() -> bool:
+    # Preserve the already executed alias when joining the two release chains.
+    bind = op.get_bind()
+    return sa.inspect(bind).has_table("alembic_version") and bool(
+        bind.execute(sa.text(
+            "SELECT 1 FROM alembic_version WHERE version_num = :revision"
+        ), {"revision": "20261020_124"}).scalar()
+    )
+
+
 def upgrade() -> None:
+    if _equivalent_revision_applied():
+        return
     _rename(NEW_NAMES)
 
 
 def downgrade() -> None:
+    if _equivalent_revision_applied():
+        return
     _rename(OLD_NAMES)

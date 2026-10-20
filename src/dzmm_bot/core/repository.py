@@ -3892,6 +3892,8 @@ class CoreRepository(ClubRepositoryMixin, MahjongRepositoryMixin, DrawguessRepos
             yield
             return
         with self._session_factory.begin() as session:
+            from .mistrealm_events import observe
+            observe(session)
             token = self._active_session.set(session)
             try:
                 yield
@@ -3905,6 +3907,8 @@ class CoreRepository(ClubRepositoryMixin, MahjongRepositoryMixin, DrawguessRepos
             yield active
             return
         with self._session_factory.begin() as session:
+            from .mistrealm_events import observe
+            observe(session)
             yield session
 
     def accept_inbound(

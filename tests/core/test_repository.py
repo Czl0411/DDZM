@@ -2136,10 +2136,11 @@ def test_postgres_inbound_conflict_predicate_is_literal(
     from types import SimpleNamespace
 
     from sqlalchemy.dialects import postgresql
+    from sqlalchemy.orm import Session
 
     from dzmm_bot.core.repository import CoreRepository
 
-    class CompilingSession:
+    class CompilingSession(Session):
         compiled_statement = ""
 
         def get_bind(self):

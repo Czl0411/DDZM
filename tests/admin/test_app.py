@@ -1986,6 +1986,21 @@ def test_admin_dashboard_serves_its_login_and_style_assets(client):
     assert refined_stylesheet.text == Path("src/dzmm_bot/admin/static/admin-refined.css").read_text(encoding="utf-8")
 
 
+def test_admin_exposes_mistrealm_channel_moderation(client, headers):
+    page = client.get("/")
+    overview = client.get("/api/game/mistrealm/channel", headers=headers)
+    invalid_mute = client.patch(
+        "/api/game/mistrealm/channel/players/00000000-0000-0000-0000-000000000001",
+        headers=headers,
+        json={"mute_minutes": 10081},
+    )
+
+    assert 'data-view="mistrealm"' in page.text
+    assert overview.status_code == 200
+    assert overview.json() == {"items": []}
+    assert invalid_mute.status_code == 422
+
+
 def test_admin_uses_a_grouped_desktop_console_shell(client):
     page = client.get("/").text
     stylesheet = Path("src/dzmm_bot/admin/static/admin.css").read_text()

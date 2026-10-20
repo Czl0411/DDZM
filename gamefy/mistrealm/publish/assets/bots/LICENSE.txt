@@ -1,0 +1,7 @@
+Lorelei avatar illustrations by Lisa Wischofsky, distributed via DiceBear.
+Source: https://www.dicebear.com/styles/lorelei/
+Original: https://www.figma.com/community/file/1198749693280469639
+License: CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/
+Downloaded from DiceBear HTTP API on 2026-10-16.
+See sources.json for each exact URL and SHA-256.

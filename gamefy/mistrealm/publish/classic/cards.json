@@ -1,0 +1,2032 @@
+{
+  "cards": {
+    "c001": {
+      "name": "烬冠步兵",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "bond"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c001.webp"
+    },
+    "c002": {
+      "name": "赤铜长枪队",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 5,
+      "abilities": [
+        "bond"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c002.webp"
+    },
+    "c003": {
+      "name": "誓约守卫",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c003.webp"
+    },
+    "c004": {
+      "name": "灰烬统领",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 5,
+      "abilities": [
+        "morale"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c004.webp"
+    },
+    "c005": {
+      "name": "王旗执掌者",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 2,
+      "abilities": [
+        "morale"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c005.webp"
+    },
+    "c006": {
+      "name": "王城密使",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "spy"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c006.webp"
+    },
+    "c007": {
+      "name": "山隘弩手",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 5,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c007.webp"
+    },
+    "c008": {
+      "name": "烬羽弩队",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 4,
+      "abilities": [
+        "bond"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c008.webp"
+    },
+    "c009": {
+      "name": "驿道观察员",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 5,
+      "abilities": [
+        "spy"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c009.webp"
+    },
+    "c010": {
+      "name": "火盆投石车",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 6,
+      "abilities": [
+        "bond"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c010.webp"
+    },
+    "c011": {
+      "name": "裂墙重弩",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c011.webp"
+    },
+    "c012": {
+      "name": "王庭攻城塔",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c012.webp"
+    },
+    "c013": {
+      "name": "前线军需官",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 1,
+      "abilities": [
+        "morale"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c013.webp"
+    },
+    "c014": {
+      "name": "战地修械营",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 5,
+      "abilities": [
+        "medic"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c014.webp"
+    },
+    "c015": {
+      "name": "余烬女将",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c015.webp"
+    },
+    "c016": {
+      "name": "王城守誓者",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c016.webp"
+    },
+    "c017": {
+      "name": "赤金观星官",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c017.webp"
+    },
+    "c018": {
+      "name": "最后的城主",
+      "faction": "crown",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c018.webp"
+    },
+    "c019": {
+      "name": "余烬摄政·晴空诏令",
+      "faction": "crown",
+      "type": "leader",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "clear"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c019.webp"
+    },
+    "c020": {
+      "name": "铁壁亲王·破城号令",
+      "faction": "crown",
+      "type": "leader",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "horn_siege"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c020.webp"
+    },
+    "c021": {
+      "name": "雾鸦骑士",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 7,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c021.webp"
+    },
+    "c022": {
+      "name": "断誓刺客",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 5,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c022.webp"
+    },
+    "c023": {
+      "name": "黑羽契卫",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 3,
+      "abilities": [
+        "bond"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c023.webp"
+    },
+    "c024": {
+      "name": "潜城密探",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 5,
+      "abilities": [
+        "spy"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c024.webp"
+    },
+    "c025": {
+      "name": "王座旁听者",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 7,
+      "abilities": [
+        "spy"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c025.webp"
+    },
+    "c026": {
+      "name": "白面使节",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 9,
+      "abilities": [
+        "spy"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c026.webp"
+    },
+    "c027": {
+      "name": "灰羽猎手",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c027.webp"
+    },
+    "c028": {
+      "name": "夜巷弩手",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 4,
+      "abilities": [
+        "bond"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c028.webp"
+    },
+    "c029": {
+      "name": "鸦群引路人",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 1,
+      "abilities": [
+        "medic"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c029.webp"
+    },
+    "c030": {
+      "name": "黑灯随军官",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 5,
+      "abilities": [
+        "medic"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c030.webp"
+    },
+    "c031": {
+      "name": "密库药师",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 0,
+      "abilities": [
+        "medic"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c031.webp"
+    },
+    "c032": {
+      "name": "哑钟重弩",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c032.webp"
+    },
+    "c033": {
+      "name": "黑铁攻城车",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c033.webp"
+    },
+    "c034": {
+      "name": "密令执旗官",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 1,
+      "abilities": [
+        "morale"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c034.webp"
+    },
+    "c035": {
+      "name": "帷幕女爵",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c035.webp"
+    },
+    "c036": {
+      "name": "无声刽子手",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c036.webp"
+    },
+    "c037": {
+      "name": "断誓元帅",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c037.webp"
+    },
+    "c038": {
+      "name": "鸦塔监国",
+      "faction": "raven",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c038.webp"
+    },
+    "c039": {
+      "name": "无冠鸦王·缄默王令",
+      "faction": "raven",
+      "type": "leader",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "cancel_leader"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c039.webp"
+    },
+    "c040": {
+      "name": "帷幕执政·借尸传信",
+      "faction": "raven",
+      "type": "leader",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "steal_grave"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c040.webp"
+    },
+    "c041": {
+      "name": "雪线游侠",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0,
+        1
+      ],
+      "power": 6,
+      "abilities": [
+        "agile"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c041.webp"
+    },
+    "c042": {
+      "name": "逐风斥候",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0,
+        1
+      ],
+      "power": 5,
+      "abilities": [
+        "agile"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c042.webp"
+    },
+    "c043": {
+      "name": "白枝猎手",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0,
+        1
+      ],
+      "power": 6,
+      "abilities": [
+        "agile"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c043.webp"
+    },
+    "c044": {
+      "name": "岩隙守望者",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0,
+        1
+      ],
+      "power": 5,
+      "abilities": [
+        "agile"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c044.webp"
+    },
+    "c045": {
+      "name": "雪径伏兵·弓",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 3,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c045.webp",
+      "group": "雪径伏兵"
+    },
+    "c046": {
+      "name": "雪径伏兵·刃",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 3,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c046.webp",
+      "group": "雪径伏兵"
+    },
+    "c047": {
+      "name": "雪径伏兵·索",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 3,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c047.webp",
+      "group": "雪径伏兵"
+    },
+    "c048": {
+      "name": "白木护卫·盾",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 3,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c048.webp",
+      "group": "白木护卫"
+    },
+    "c049": {
+      "name": "白木护卫·矛",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 3,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c049.webp",
+      "group": "白木护卫"
+    },
+    "c050": {
+      "name": "白木护卫·弩",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 3,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c050.webp",
+      "group": "白木护卫"
+    },
+    "c051": {
+      "name": "冰湖医者",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 0,
+      "abilities": [
+        "medic"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c051.webp"
+    },
+    "c052": {
+      "name": "风铃祭司",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 2,
+      "abilities": [
+        "morale"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c052.webp"
+    },
+    "c053": {
+      "name": "霜原行者",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c053.webp"
+    },
+    "c054": {
+      "name": "山隘射手",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c054.webp"
+    },
+    "c055": {
+      "name": "无声雪客",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c055.webp"
+    },
+    "c056": {
+      "name": "冬枝女侯",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c056.webp"
+    },
+    "c057": {
+      "name": "白石守约人",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c057.webp"
+    },
+    "c058": {
+      "name": "北境巡狩者",
+      "faction": "frost",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c058.webp"
+    },
+    "c059": {
+      "name": "霜境女王·冬藏",
+      "faction": "frost",
+      "type": "leader",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "extra_hand"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c059.webp"
+    },
+    "c060": {
+      "name": "逐风可汗·长风之歌",
+      "faction": "frost",
+      "type": "leader",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "horn_ranged"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c060.webp"
+    },
+    "c061": {
+      "name": "棘狼·灰鬃",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c061.webp",
+      "group": "棘狼"
+    },
+    "c062": {
+      "name": "棘狼·裂牙",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c062.webp",
+      "group": "棘狼"
+    },
+    "c063": {
+      "name": "棘狼·赤眼",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c063.webp",
+      "group": "棘狼"
+    },
+    "c064": {
+      "name": "腐巢虫·镰足",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c064.webp",
+      "group": "腐巢"
+    },
+    "c065": {
+      "name": "腐巢虫·骨翼",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c065.webp",
+      "group": "腐巢"
+    },
+    "c066": {
+      "name": "腐巢虫·重壳",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c066.webp",
+      "group": "腐巢"
+    },
+    "c067": {
+      "name": "腐巢母体",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 6,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c067.webp",
+      "group": "腐巢"
+    },
+    "c068": {
+      "name": "古林姊妹·根",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 6,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c068.webp",
+      "group": "古林姊妹"
+    },
+    "c069": {
+      "name": "古林姊妹·枝",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 6,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c069.webp",
+      "group": "古林姊妹"
+    },
+    "c070": {
+      "name": "古林姊妹·叶",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 6,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c070.webp",
+      "group": "古林姊妹"
+    },
+    "c071": {
+      "name": "沼泽潜行兽",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 5,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c071.webp"
+    },
+    "c072": {
+      "name": "苔背巨兽",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c072.webp"
+    },
+    "c073": {
+      "name": "骨翼掠食者",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c073.webp"
+    },
+    "c074": {
+      "name": "荆棘投掷者",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c074.webp"
+    },
+    "c075": {
+      "name": "焚巢巨蜥",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 7,
+      "abilities": [
+        "scorch_melee"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c075.webp"
+    },
+    "c076": {
+      "name": "千齿古兽",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c076.webp"
+    },
+    "c077": {
+      "name": "荒棘之心",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c077.webp"
+    },
+    "c078": {
+      "name": "无月巨蛾",
+      "faction": "beast",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c078.webp"
+    },
+    "c079": {
+      "name": "群巢之母·万兽齐鸣",
+      "faction": "beast",
+      "type": "leader",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "horn_melee"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c079.webp"
+    },
+    "c080": {
+      "name": "噬月兽王·荒野回声",
+      "faction": "beast",
+      "type": "leader",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "recover_grave"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c080.webp"
+    },
+    "c081": {
+      "name": "镜湖誓卫",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "bond"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c081.webp"
+    },
+    "c082": {
+      "name": "湖岸弓队",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 5,
+      "abilities": [
+        "bond"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c082.webp"
+    },
+    "c083": {
+      "name": "青铜舰弩",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 6,
+      "abilities": [
+        "bond"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c083.webp"
+    },
+    "c084": {
+      "name": "面具侍者·朝",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c084.webp",
+      "group": "面具侍者"
+    },
+    "c085": {
+      "name": "面具侍者·暮",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c085.webp",
+      "group": "面具侍者"
+    },
+    "c086": {
+      "name": "面具侍者·夜",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c086.webp",
+      "group": "面具侍者"
+    },
+    "c087": {
+      "name": "镜湖唤灵者",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 6,
+      "abilities": [
+        "muster"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c087.webp",
+      "group": "面具侍者"
+    },
+    "c088": {
+      "name": "镜血行者",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "transform"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c088.webp",
+      "transform": "t001"
+    },
+    "c089": {
+      "name": "幼镜行者",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 2,
+      "abilities": [
+        "transform"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c089.webp",
+      "transform": "t002"
+    },
+    "c090": {
+      "name": "湖心仪师",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 2,
+      "abilities": [
+        "ritual"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c090.webp"
+    },
+    "c091": {
+      "name": "雾岸仪师",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 2,
+      "abilities": [
+        "ritual"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c091.webp"
+    },
+    "c092": {
+      "name": "招魂侍者",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 0,
+      "abilities": [
+        "medic"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c092.webp"
+    },
+    "c093": {
+      "name": "碎镜鼓手",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 4,
+      "abilities": [
+        "morale"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c093.webp"
+    },
+    "c094": {
+      "name": "沉舟守卫",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c094.webp"
+    },
+    "c095": {
+      "name": "镜湖裁判",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 8,
+      "abilities": [
+        "scorch_siege"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c095.webp"
+    },
+    "c096": {
+      "name": "白塔遗主",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c096.webp"
+    },
+    "c097": {
+      "name": "无面贤者",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c097.webp"
+    },
+    "c098": {
+      "name": "湖底圣像",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 10,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c098.webp"
+    },
+    "c099": {
+      "name": "镜湖女祭司·归流",
+      "faction": "mirror",
+      "type": "leader",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "shuffle_graves"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c099.webp"
+    },
+    "c100": {
+      "name": "白塔执印者·薄暮",
+      "faction": "mirror",
+      "type": "leader",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "half_weather"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c100.webp"
+    },
+    "c101": {
+      "name": "荒境佣兵",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 5,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c101.webp"
+    },
+    "c102": {
+      "name": "铁盾卫士",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c102.webp"
+    },
+    "c103": {
+      "name": "漂泊弩客",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 5,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c103.webp"
+    },
+    "c104": {
+      "name": "旧路驮炮",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        2
+      ],
+      "power": 6,
+      "abilities": [],
+      "hero": false,
+      "copies": 2,
+      "art": "../assets/classic/c104.webp"
+    },
+    "c105": {
+      "name": "随军医师",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 1,
+      "abilities": [
+        "medic"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c105.webp"
+    },
+    "c106": {
+      "name": "战地歌者",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 2,
+      "abilities": [
+        "unit_horn"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c106.webp"
+    },
+    "c107": {
+      "name": "灰袍调停人",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        0,
+        1
+      ],
+      "power": 4,
+      "abilities": [
+        "agile"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c107.webp"
+    },
+    "c108": {
+      "name": "失名信使",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 0,
+      "abilities": [
+        "spy"
+      ],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c108.webp"
+    },
+    "c109": {
+      "name": "焚旗旅人",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 7,
+      "abilities": [
+        "scorch_melee"
+      ],
+      "hero": false,
+      "copies": 1,
+      "art": "../assets/classic/c109.webp"
+    },
+    "c110": {
+      "name": "无名守誓者",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 15,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c110.webp"
+    },
+    "c111": {
+      "name": "渡雾剑客",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 15,
+      "abilities": [],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c111.webp"
+    },
+    "c112": {
+      "name": "长夜医者",
+      "faction": "neutral",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 7,
+      "abilities": [
+        "medic"
+      ],
+      "hero": true,
+      "copies": 1,
+      "art": "../assets/classic/c112.webp"
+    },
+    "c113": {
+      "name": "霜白降临",
+      "faction": "neutral",
+      "type": "special",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "weather_melee"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c113.webp"
+    },
+    "c114": {
+      "name": "灰幕蔽日",
+      "faction": "neutral",
+      "type": "special",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "weather_ranged"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c114.webp"
+    },
+    "c115": {
+      "name": "铁雨倾城",
+      "faction": "neutral",
+      "type": "special",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "weather_siege"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c115.webp"
+    },
+    "c116": {
+      "name": "雾散天明",
+      "faction": "neutral",
+      "type": "special",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "clear"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c116.webp"
+    },
+    "c117": {
+      "name": "空甲替身",
+      "faction": "neutral",
+      "type": "special",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "decoy"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c117.webp"
+    },
+    "c118": {
+      "name": "军阵长鸣",
+      "faction": "neutral",
+      "type": "special",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "horn"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c118.webp"
+    },
+    "c119": {
+      "name": "同归余烬",
+      "faction": "neutral",
+      "type": "special",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "scorch"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c119.webp"
+    },
+    "c120": {
+      "name": "映身秘仪",
+      "faction": "neutral",
+      "type": "special",
+      "rows": [],
+      "power": 0,
+      "abilities": [
+        "ritual"
+      ],
+      "hero": false,
+      "copies": 3,
+      "art": "../assets/classic/c120.webp"
+    }
+  },
+  "transforms": {
+    "t001": {
+      "name": "镜角巨灵",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        0
+      ],
+      "power": 14,
+      "abilities": [],
+      "hero": false,
+      "art": "../assets/classic/t001.webp"
+    },
+    "t002": {
+      "name": "幼镜巨灵",
+      "faction": "mirror",
+      "type": "unit",
+      "rows": [
+        1
+      ],
+      "power": 8,
+      "abilities": [
+        "bond"
+      ],
+      "hero": false,
+      "art": "../assets/classic/t002.webp"
+    }
+  },
+  "starters": [
+    {
+      "name": "赤铜战线",
+      "faction": "crown",
+      "leader": "c019",
+      "counts": {
+        "c001": 3,
+        "c002": 3,
+        "c004": 1,
+        "c005": 1,
+        "c006": 1,
+        "c008": 3,
+        "c009": 1,
+        "c010": 3,
+        "c013": 1,
+        "c014": 1,
+        "c015": 1,
+        "c105": 1,
+        "c106": 1,
+        "c108": 1,
+        "c116": 1,
+        "c117": 2,
+        "c118": 1,
+        "c119": 1
+      }
+    },
+    {
+      "name": "攻城余烬",
+      "faction": "crown",
+      "leader": "c020",
+      "counts": {
+        "c003": 2,
+        "c006": 1,
+        "c007": 2,
+        "c009": 1,
+        "c010": 3,
+        "c011": 2,
+        "c012": 2,
+        "c013": 1,
+        "c014": 1,
+        "c017": 1,
+        "c018": 1,
+        "c102": 1,
+        "c104": 2,
+        "c105": 1,
+        "c108": 1,
+        "c113": 1,
+        "c116": 1,
+        "c117": 1,
+        "c118": 1
+      }
+    },
+    {
+      "name": "黑羽密令",
+      "faction": "raven",
+      "leader": "c039",
+      "counts": {
+        "c021": 2,
+        "c023": 3,
+        "c024": 1,
+        "c025": 1,
+        "c026": 1,
+        "c028": 3,
+        "c029": 1,
+        "c030": 1,
+        "c031": 1,
+        "c034": 1,
+        "c035": 1,
+        "c101": 2,
+        "c105": 1,
+        "c108": 1,
+        "c109": 1,
+        "c112": 1,
+        "c116": 1,
+        "c117": 3,
+        "c119": 1
+      }
+    },
+    {
+      "name": "长夜回声",
+      "faction": "raven",
+      "leader": "c040",
+      "counts": {
+        "c022": 2,
+        "c024": 1,
+        "c025": 1,
+        "c026": 1,
+        "c027": 2,
+        "c029": 1,
+        "c030": 1,
+        "c031": 1,
+        "c032": 2,
+        "c033": 2,
+        "c034": 1,
+        "c038": 1,
+        "c102": 2,
+        "c104": 1,
+        "c105": 1,
+        "c108": 1,
+        "c112": 1,
+        "c113": 1,
+        "c116": 1,
+        "c117": 2,
+        "c118": 1
+      }
+    },
+    {
+      "name": "白枝伏击",
+      "faction": "frost",
+      "leader": "c059",
+      "counts": {
+        "c041": 1,
+        "c042": 1,
+        "c043": 1,
+        "c044": 1,
+        "c045": 1,
+        "c046": 1,
+        "c047": 1,
+        "c048": 1,
+        "c049": 1,
+        "c050": 1,
+        "c051": 1,
+        "c052": 1,
+        "c053": 2,
+        "c054": 2,
+        "c055": 1,
+        "c101": 2,
+        "c105": 1,
+        "c107": 1,
+        "c108": 1,
+        "c113": 1,
+        "c116": 1,
+        "c117": 1,
+        "c118": 1,
+        "c119": 1
+      }
+    },
+    {
+      "name": "长风齐射",
+      "faction": "frost",
+      "leader": "c060",
+      "counts": {
+        "c041": 1,
+        "c042": 1,
+        "c043": 1,
+        "c044": 1,
+        "c045": 1,
+        "c046": 1,
+        "c047": 1,
+        "c048": 1,
+        "c049": 1,
+        "c050": 1,
+        "c051": 1,
+        "c052": 1,
+        "c054": 2,
+        "c056": 1,
+        "c058": 1,
+        "c103": 2,
+        "c105": 1,
+        "c107": 1,
+        "c108": 1,
+        "c112": 1,
+        "c113": 1,
+        "c116": 1,
+        "c117": 1,
+        "c118": 1
+      }
+    },
+    {
+      "name": "群巢夜行",
+      "faction": "beast",
+      "leader": "c079",
+      "counts": {
+        "c061": 1,
+        "c062": 1,
+        "c063": 1,
+        "c064": 1,
+        "c065": 1,
+        "c066": 1,
+        "c067": 1,
+        "c068": 1,
+        "c069": 1,
+        "c070": 1,
+        "c071": 2,
+        "c072": 2,
+        "c073": 2,
+        "c075": 1,
+        "c076": 1,
+        "c105": 1,
+        "c106": 1,
+        "c108": 1,
+        "c109": 1,
+        "c114": 1,
+        "c116": 1,
+        "c117": 1,
+        "c118": 1,
+        "c119": 1
+      }
+    },
+    {
+      "name": "荒野归途",
+      "faction": "beast",
+      "leader": "c080",
+      "counts": {
+        "c061": 1,
+        "c062": 1,
+        "c063": 1,
+        "c064": 1,
+        "c065": 1,
+        "c066": 1,
+        "c067": 1,
+        "c068": 1,
+        "c069": 1,
+        "c070": 1,
+        "c072": 2,
+        "c073": 2,
+        "c074": 2,
+        "c075": 1,
+        "c078": 1,
+        "c104": 1,
+        "c105": 1,
+        "c108": 1,
+        "c112": 1,
+        "c113": 1,
+        "c116": 1,
+        "c117": 2,
+        "c118": 1
+      }
+    },
+    {
+      "name": "镜血仪式",
+      "faction": "mirror",
+      "leader": "c099",
+      "counts": {
+        "c081": 3,
+        "c082": 3,
+        "c084": 1,
+        "c085": 1,
+        "c086": 1,
+        "c087": 1,
+        "c088": 1,
+        "c089": 3,
+        "c090": 1,
+        "c091": 1,
+        "c092": 1,
+        "c093": 1,
+        "c095": 1,
+        "c096": 1,
+        "c105": 1,
+        "c108": 1,
+        "c116": 1,
+        "c117": 1,
+        "c118": 1,
+        "c120": 2
+      }
+    },
+    {
+      "name": "薄暮阵列",
+      "faction": "mirror",
+      "leader": "c100",
+      "counts": {
+        "c081": 3,
+        "c082": 3,
+        "c083": 3,
+        "c088": 1,
+        "c089": 3,
+        "c090": 1,
+        "c091": 1,
+        "c092": 1,
+        "c093": 1,
+        "c094": 2,
+        "c095": 1,
+        "c098": 1,
+        "c105": 1,
+        "c113": 1,
+        "c114": 1,
+        "c115": 1,
+        "c116": 1,
+        "c120": 1
+      }
+    }
+  ],
+  "factions": {
+    "crown": "烬冠军团",
+    "raven": "黑鸦议会",
+    "frost": "寒霜盟约",
+    "beast": "荒棘兽群",
+    "mirror": "镜湖秘会"
+  }
+}

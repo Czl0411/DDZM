@@ -112,11 +112,10 @@ def test_claim_ready_start_host_transfer_and_rematch(game):
     assert room["canvas"] == []
 
 
-def test_expired_code_and_only_employees(game):
+def test_expired_code_and_guest_spectators(game):
     repo, factory, _ = game
     room = create_room(game)
-    with pytest.raises(ValueError, match="入职"):
-        repo.list_drawguess_rooms("unknown", NOW)
+    assert isinstance(repo.list_drawguess_rooms("unknown", NOW), list)
     with pytest.raises(ValueError, match="入座码"):
         action(repo, room, "p1", "claim", {"code": room["code"]}, NOW + timedelta(minutes=10))
     with factory.begin() as session:

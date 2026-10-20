@@ -5,7 +5,7 @@ from dataclasses import asdict
 from datetime import datetime
 import json
 import time
-from typing import Callable
+from typing import Callable, Literal
 from uuid import UUID
 
 import jwt
@@ -22,7 +22,12 @@ from .repository import CoreRepository
 
 
 class ClaimPayload(BaseModel):
-    code: str = Field(pattern=r"^\d{4}$")
+    code: str | None = Field(default=None, pattern=r"^\d{4}$")
+
+
+class CreateRoomPayload(BaseModel):
+    room_type: Literal["casual", "coin"] = "casual"
+    stake: Literal[0, 5, 10, 20] = 0
 
 
 class MovePayload(BaseModel):
@@ -43,7 +48,7 @@ class ChatPayload(BaseModel):
 def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], datetime], *, allow_uid: bool = False) -> APIRouter:
     router = APIRouter(prefix="/api/chess")
 
-    def employee(authorization: str | None) -> str:
+    def player_uid(authorization: str | None) -> str:
         if allow_uid and authorization and authorization.startswith("ChessUid "):
             platform_id = authorization[len("ChessUid "):].strip()
         elif authorization and authorization.startswith("Bearer "):
@@ -53,8 +58,6 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
                 raise HTTPException(401, str(error)) from error
         else:
             raise HTTPException(401, "请先登录 DZMM")
-        if repository.find_user(platform_id) is None:
-            raise HTTPException(403, "请先入职")
         return platform_id
 
     def snapshot(room_id: UUID, platform_id: str) -> dict:
@@ -75,7 +78,7 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
             role = "spectator"
         for key in ("creator", "opponent", "red", "black"):
             player = data.get(f"{key}_platform_id")
-            data[f"{key}_name"] = repository.find_user(player).display_name if player else None
+            data[f"{key}_name"] = repository.club_profile(player, clock())["name"] if player else None
         for key in ("creator", "opponent", "red", "black", "offer"):
             data.pop(f"{key}_platform_id", None)
         return jsonable_encoder({
@@ -86,16 +89,24 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
 
     @router.get("/rooms")
     def rooms(authorization: str | None = Header(default=None)) -> list[dict]:
-        employee(authorization)
+        repository.ensure_club_player(player_uid(authorization), clock())
         return repository.list_chess_rooms(clock())
+
+    @router.post("/rooms")
+    def create_room(payload: CreateRoomPayload, authorization: str | None = Header(default=None)) -> dict:
+        game = repository.create_chess_game(
+            player_uid(authorization), None, None, clock(),
+            room_type=payload.room_type, stake=payload.stake,
+        )
+        return snapshot(game.id, game.creator_platform_id)
 
     @router.get("/{room_id}")
     def get_game(room_id: UUID, authorization: str | None = Header(default=None)) -> dict:
-        return snapshot(room_id, employee(authorization))
+        return snapshot(room_id, player_uid(authorization))
 
     @router.post("/{room_id}/claim")
     def claim(room_id: UUID, payload: ClaimPayload, authorization: str | None = Header(default=None)) -> dict:
-        pid = employee(authorization)
+        pid = player_uid(authorization)
         result = repository.claim_chess_seat(room_id, pid, payload.code, clock())
         if result.status != "claimed":
             raise HTTPException(409, result.status)
@@ -103,7 +114,7 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
 
     @router.post("/{room_id}/moves")
     def move(room_id: UUID, payload: MovePayload, authorization: str | None = Header(default=None)) -> dict:
-        pid = employee(authorization)
+        pid = player_uid(authorization)
         try:
             repository.play_chess(room_id, pid, payload.from_xy, payload.to_xy, payload.version, clock())
         except (ValueError, IllegalChessMove) as error:
@@ -112,7 +123,7 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
 
     @router.post("/{room_id}/actions")
     def action(room_id: UUID, payload: ActionPayload, authorization: str | None = Header(default=None)) -> dict:
-        pid = employee(authorization)
+        pid = player_uid(authorization)
         try:
             repository.chess_action(room_id, pid, payload.action, clock(), payload.version)
         except ValueError as error:
@@ -121,7 +132,7 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
 
     @router.post("/{room_id}/chat")
     def chat(room_id: UUID, payload: ChatPayload, authorization: str | None = Header(default=None)) -> dict:
-        pid = employee(authorization)
+        pid = player_uid(authorization)
         try:
             repository.settle_chess_deadline(room_id, clock())
             return repository.chess_chat(room_id, pid, payload.text, clock())
@@ -132,7 +143,7 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
 
     @router.get("/{room_id}/events")
     async def events(room_id: UUID, request: Request, authorization: str | None = Header(default=None)):
-        pid = employee(authorization)
+        pid = player_uid(authorization)
         initial = snapshot(room_id, pid)
         expires_at = (time.time() + 1800 if authorization.startswith("ChessUid ")
                       else jwt.decode(authorization[7:], options={"verify_signature": False})["exp"])

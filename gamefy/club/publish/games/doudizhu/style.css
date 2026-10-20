@@ -1,0 +1,121 @@
+:root { color-scheme: dark; --gold: #e9c36e; --cream: #fff7e5; --muted: #a9c0b7; --line: rgb(234 205 139 / 22%); font-family: Inter, system-ui, -apple-system, "PingFang SC", sans-serif; color: var(--cream); background: #071d18; }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; overflow: hidden; background: #071d18 url('./card-room-v1.webp') center / cover fixed; }
+body::before { content: ''; position: fixed; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgb(2 17 13 / 77%), rgb(4 30 22 / 22%) 48%, rgb(2 17 13 / 77%)); }
+button, input { font: inherit; }
+button { min-height: 42px; padding: 10px 17px; cursor: pointer; color: #2f281b; border: 1px solid rgb(250 220 149 / 62%); border-radius: 12px; background: linear-gradient(145deg, #f4d994, #c89c45); box-shadow: 0 8px 20px rgb(0 0 0 / 14%); font-weight: 750; transition: .18s ease; }
+button:hover { filter: brightness(1.06); transform: translateY(-1px); }
+button:disabled { cursor: default; opacity: .42; transform: none; }
+button.quiet { color: var(--cream); border-color: var(--line); background: rgb(255 255 255 / 7%); box-shadow: none; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+input { min-width: 0; padding: 11px 12px; color: var(--cream); border: 1px solid var(--line); border-radius: 11px; background: rgb(1 19 14 / 82%); }
+.app-shell { position: relative; z-index: 1; display: grid; width: min(1380px, 100%); height: 100dvh; margin: auto; padding: 16px clamp(14px, 3vw, 38px); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.game-header { display: flex; align-items: center; justify-content: space-between; min-height: 62px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-mark { display: grid; width: 46px; height: 46px; place-items: center; color: #17362d; border: 1px solid #f0d18a; border-radius: 15px; background: linear-gradient(145deg, #f4d991, #c79c49); font-size: 25px; box-shadow: 0 12px 24px rgb(0 0 0 / 24%); }
+.game-header small, .eyebrow { color: var(--gold); font-size: 10px; font-weight: 800; letter-spacing: .2em; }
+h1 { margin: 2px 0 0; font-size: 22px; }
+h2, p { margin-top: 0; }
+#feedback { min-height: 24px; margin: 4px 0 8px; color: #f2cf80; font-size: 12px; }
+.lobby { display: grid; min-height: 0; grid-template-columns: minmax(280px, .82fr) minmax(430px, 1.18fr); gap: 18px; padding: clamp(16px, 4vw, 46px); overflow: hidden; border: 1px solid var(--line); border-radius: 28px; background: linear-gradient(105deg, rgb(3 26 20 / 91%), rgb(9 46 34 / 74%)); box-shadow: 0 30px 78px rgb(0 0 0 / 36%); backdrop-filter: blur(12px); }
+.lobby-hero { display: flex; flex-direction: column; justify-content: flex-end; min-height: 280px; padding: clamp(14px, 3vw, 36px); border-radius: 22px; background: linear-gradient(180deg, transparent, rgb(2 24 18 / 76%)); }
+.lobby-hero h2 { max-width: 8em; margin: 9px 0 15px; font-family: "STKaiti", "KaiTi", serif; font-size: clamp(38px, 5vw, 62px); line-height: 1.05; }
+.lobby-hero p { max-width: 30em; margin-bottom: 0; color: #c4d4cd; line-height: 1.8; }
+.lobby-panel { display: grid; min-height: 0; padding: 20px; grid-template-rows: auto auto minmax(0, 1fr); border: 1px solid var(--line); border-radius: 22px; background: rgb(2 22 17 / 72%); }
+.section-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.section-title h2 { margin: 7px 0 0; }
+.section-title > span, footer { color: var(--muted); font-size: 11px; }
+.muted { color: var(--muted); font-size: 12px; line-height: 1.7; }
+#rooms { display: grid; align-content: start; gap: 10px; overflow-y: auto; overscroll-behavior: contain; }
+.room-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 15px 16px; color: var(--cream); text-align: left; border-color: var(--line); background: rgb(255 255 255 / 7%); box-shadow: none; }
+.room-card span { display: grid; gap: 5px; min-width: 0; }
+.room-card small { color: var(--muted); }
+.room-card b { flex: none; color: var(--gold); font-size: 12px; }
+.game-table { display: grid; min-height: 0; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+.table-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 46px; }
+.table-nav > div { display: flex; align-items: center; gap: 12px; }
+.gold { color: var(--gold); }
+.table-layout { display: grid; min-height: 0; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: 14px; overflow: hidden; }
+.play-stage { position: relative; display: grid; min-width: 0; min-height: 0; grid-template-rows: minmax(0, 1fr) auto auto auto; overflow: hidden; border: 1px solid var(--line); border-radius: 28px; background: linear-gradient(rgb(4 38 28 / 72%), rgb(2 27 20 / 88%)); box-shadow: 0 24px 58px rgb(0 0 0 / 34%); backdrop-filter: blur(8px); }
+#opponents { position: absolute; z-index: 3; top: 14px; right: 20px; left: 20px; display: flex; justify-content: space-between; gap: 12px; pointer-events: none; }
+.player { display: grid; min-width: 150px; max-width: 44%; padding: 9px 13px; border: 1px solid var(--line); border-radius: 14px; background: rgb(2 24 18 / 86%); box-shadow: 0 10px 24px rgb(0 0 0 / 22%); font-size: 13px; }
+.player.active { border-color: var(--gold); box-shadow: 0 0 0 2px rgb(233 195 110 / 14%), 0 10px 24px rgb(0 0 0 / 22%); }
+.player small { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.felt { position: relative; display: grid; min-height: 0; margin: 0; padding: 72px 18px 24px; align-content: center; text-align: center; }
+#bottom { display: flex; justify-content: center; gap: 5px; min-height: 48px; }
+#phase-label { margin: 9px 0 3px; color: var(--gold); font-weight: 750; }
+#countdown { min-height: 18px; font-size: 12px; font-variant-numeric: tabular-nums; }
+#plays { display: flex; min-height: 54px; margin-top: 8px; justify-content: space-around; gap: 10px; }
+.play { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.play small { display: block; margin-bottom: 4px; color: #c0d4cc; }
+.watermark { position: absolute; right: 0; bottom: 10px; left: 0; color: rgb(255 255 255 / 12%); font-size: 11px; font-weight: 800; letter-spacing: .5em; pointer-events: none; }
+#self { display: flex; justify-content: center; min-height: 43px; }
+#self .player { min-width: 210px; max-width: 90%; align-self: center; text-align: center; background: rgb(2 25 19 / 78%); }
+.control-dock, #actions, #play-actions, #claim-panel { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.control-dock { min-height: 50px; padding: 3px 10px; }
+#actions, #play-actions, #claim-panel { margin: 0; }
+#hand { display: grid; width: min(920px, 96%); min-height: 104px; margin: 0 auto; padding: 12px 0 8px; grid-template-columns: repeat(20, minmax(0, 1fr)); touch-action: pan-y; }
+#hand .card { width: calc(100% + 20px); z-index: 1; }
+#hand .card:last-child { width: 100%; }
+#hand .card.selected { z-index: 2; transform: translateY(-14px); border-color: #e3b34b; box-shadow: 0 0 0 2px #e3b34b, 0 8px 18px rgb(0 0 0 / 28%); }
+.card { position: relative; display: flex; height: 100px; min-height: 78px; padding: 6px 5px; flex-direction: column; justify-content: space-between; color: #202931; text-align: left; border: 1px solid #bcc5bb; border-radius: 8px; background: linear-gradient(145deg, #fffef6, #e8e5d8); box-shadow: 0 4px 8px rgb(0 0 0 / 28%); user-select: none; touch-action: none; }
+.card.red { color: #b53538; }
+.pip { font-size: 19px; font-weight: 850; line-height: 1; }
+.suit { font-size: 25px; line-height: 1; }
+.card.small { display: inline-flex; width: 32px; height: 46px; min-height: 46px; padding: 4px; }
+.small .pip { font-size: 12px; } .small .suit { font-size: 15px; }
+#result { padding: 12px; border: 1px solid var(--gold); border-radius: 14px; background: rgb(3 31 23 / 94%); line-height: 1.7; animation: arrive .3s; }
+#result h2 { margin-bottom: 4px; color: var(--gold); }
+.chat-panel { display: grid; min-height: 0; padding: 16px; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; border: 1px solid var(--line); border-radius: 24px; background: rgb(2 25 19 / 88%); box-shadow: 0 24px 58px rgb(0 0 0 / 32%); backdrop-filter: blur(12px); }
+.chat-panel:not([open]) { display: block; min-height: 54px; align-self: end; }
+summary { cursor: pointer; font-weight: 750; }
+summary span { float: right; color: var(--muted); font-size: 10px; font-weight: 500; }
+#messages { min-height: 0; padding: 12px 0; overflow-y: auto; overflow-wrap: anywhere; font-size: 12px; }
+#messages p { margin: 0 0 9px; padding: 9px 11px; border-radius: 4px 12px 12px; background: rgb(255 255 255 / 7%); }
+.chat-compose { display: flex; gap: 8px; }
+.chat-compose input { width: 0; flex: 1; }
+footer { padding-top: 8px; text-align: center; }
+[hidden] { display: none !important; }
+@keyframes arrive { from { opacity: .2; transform: scale(.97); } }
+.celebrate { animation: arrive .45s ease-out; font-weight: 750; }
+@media (max-width: 760px) {
+  .app-shell { padding: 8px; }
+  .game-header { min-height: 54px; }
+  .brand-mark { width: 40px; height: 40px; }
+  h1 { font-size: 18px; }
+  .brand small, footer { display: none; }
+  .lobby { grid-template-columns: 1fr; padding: 11px; overflow-y: auto; }
+  .lobby-hero { min-height: 180px; padding: 20px; }
+  .lobby-hero h2 { font-size: 38px; }
+  .lobby-panel { min-height: 300px; padding: 15px; }
+  .table-layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; gap: 7px; }
+  .play-stage { border-radius: 20px; }
+  #opponents { top: 7px; right: 8px; left: 8px; }
+  .player { min-width: 0; padding: 6px 8px; font-size: 11px; }
+  .felt { padding: 54px 8px 8px; }
+  #plays { min-height: 40px; }
+  #self { min-height: 34px; }
+  #self .player { padding: 5px 9px; }
+  .control-dock { min-height: 42px; }
+  #hand { min-height: 78px; padding: 8px 0 3px; grid-template-columns: repeat(17, minmax(0, 1fr)); }
+  #hand .card { width: calc(100% + 18px); }
+  .card { height: 76px; min-height: 68px; padding: 4px; }
+  .pip { font-size: 15px; } .suit { font-size: 20px; }
+  .chat-panel { max-height: 190px; padding: 11px; border-radius: 18px; }
+  .chat-panel:not([open]) { min-height: 46px; }
+}
+@media (max-height: 700px) and (orientation: landscape) {
+  .game-header, body.table-open #feedback, body.table-open footer { display: none; }
+  .app-shell { padding: 7px 12px; grid-template-rows: minmax(0, 1fr); }
+  .table-nav { position: absolute; z-index: 8; top: 12px; right: 18px; left: 18px; pointer-events: none; }
+  .table-nav button { pointer-events: auto; }
+  .game-table { grid-template-rows: minmax(0, 1fr); }
+  .table-layout { height: 100%; grid-template-columns: minmax(0, 1fr) minmax(235px, 290px); }
+  .felt { padding-top: 46px; }
+  #hand { min-height: 74px; padding-top: 3px; }
+  .card { height: 66px; min-height: 62px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+/* Club-integrated lobby controls. */
+.club-link{margin-left:auto;padding:9px 13px;border:1px solid rgba(235,205,139,.3);border-radius:12px;color:#f2d27a;background:rgba(7,32,27,.74);font-size:11px;font-weight:800;text-decoration:none}.create-strip{display:flex;flex-wrap:wrap;gap:7px;margin-top:18px}.create-strip button{min-height:38px;padding:0 13px;border:1px solid rgba(235,205,139,.32);border-radius:12px;color:#fff7df;background:rgba(8,38,31,.8);font-weight:800}.create-strip button:first-child{color:#39290a;background:linear-gradient(145deg,#efcf78,#c6963e)}

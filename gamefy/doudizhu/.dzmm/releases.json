@@ -1,0 +1,30 @@
+[
+  {
+    "revision": "1791901878224",
+    "deployedAt": "2026-10-13T14:30:16.869Z",
+    "gitHead": "386745a"
+  },
+  {
+    "revision": "1791946111731",
+    "deployedAt": "2026-10-14T02:47:31.324Z",
+    "label": "startup-diagnostics",
+    "gitHead": "386745a"
+  },
+  {
+    "revision": "1791947088374",
+    "deployedAt": "2026-10-14T03:03:46.804Z",
+    "label": "room-entry-diagnostics",
+    "gitHead": "386745a"
+  },
+  {
+    "revision": "1791947764631",
+    "deployedAt": "2026-10-14T03:15:03.034Z",
+    "label": "no-hash-navigation",
+    "gitHead": "386745a"
+  },
+  {
+    "revision": "1792519109009",
+    "deployedAt": "2026-10-20T17:57:27.534Z",
+    "gitHead": "cf54ef1"
+  }
+]

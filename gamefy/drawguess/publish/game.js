@@ -44,11 +44,11 @@ async function boot(refresh=false){
 
 function renderLobby(){
   document.body.classList.remove('room-open');show('#lobby');show('#room-view',false);const list=$('#rooms');list.replaceChildren();
-  if(!rooms.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='暂无房间，去开放群发送 /你画我猜 创建一局吧';list.append(empty);return;}
+  if(!rooms.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='暂无房间，可以先开一局';list.append(empty);return;}
   for(const item of rooms){
     const button=document.createElement('button');button.type='button';button.className='room-button';
-    const title=document.createElement('strong');title.textContent=`房间 ${item.short_id}`;
-    const meta=document.createElement('span');meta.textContent=`${phaseText(item.phase)} · ${item.occupied}/${item.capacity} 人${item.mine?' · 我已入座':''}`;
+    const title=document.createElement('strong');title.textContent=`${item.creator_name}的房间`;
+    const meta=document.createElement('span');meta.textContent=`${item.room_type==='coin'?`${item.stake} 币场`:'休闲场'} · ${phaseText(item.phase)} · ${item.occupied}/${item.capacity} 人${item.mine?' · 我已入座':''}`;
     button.append(title,meta);button.addEventListener('click',()=>enterRoom(item.room_id));list.append(button);
   }
 }
@@ -111,7 +111,7 @@ function renderChatContext(){
 function renderRoom(){
   document.body.classList.add('room-open');show('#lobby',false);show('#room-view');const state=room.state;
   const titles={waiting:'候场房间',selecting:'选择题目',drawing:'正在作画',revealing:'答案揭晓',finished:'本局排行'};
-  $('#phase-label').textContent=phaseText(state.phase);$('#room-title').textContent=titles[state.phase]||'游戏房间';$('#room-code').textContent=room.short_id;
+  $('#phase-label').textContent=phaseText(state.phase);$('#room-title').textContent=titles[state.phase]||'游戏房间';$('#room-code').textContent=`${room.creator_name||'玩家'}的房间`;
   $('#round-label').textContent=state.phase==='waiting'?'准备入座':state.phase==='finished'?'最终排名':`第 ${state.turn_index+1}/${state.players.length*2} 题`;
   renderPlayers();
   for(const id of ['#waiting','#choosing','#play-area','#reveal','#ranking'])show(id,false);
@@ -124,7 +124,7 @@ function renderRoom(){
 }
 
 function renderWaiting(){
-  show('#waiting');const self=room.self_seat;$('#waiting-copy').textContent=self===null?'输入群内公布的四位入座码，先到先得。':`已入座 · ${room.state.players.filter(Boolean).length}/8 人`;
+  show('#waiting');const self=room.self_seat;$('#waiting-copy').textContent=self===null?'房间还有空位，先到先得。':`已入座 · ${room.state.players.filter(Boolean).length}/8 人`;
   show('#claim-controls',self===null);show('#seat-controls',self!==null);
   if(self!==null){const player=room.state.players[self];$('#ready').textContent=player.ready?'取消准备':'准备';$('#ready').dataset.action=player.ready?'unready':'ready';const start=$('#start');start.hidden=!player.is_host;const canStart=room.state.players.length>=3&&room.state.players.every(item=>item.ready);start.disabled=!canStart;start.title=canStart?'':'至少三人且所有人准备后才能开始';}
 }
@@ -160,8 +160,9 @@ async function sendChat(){
 function updateTimer(){const value=secondsLeft();$('#timer').textContent=value===null?'--':`${value}s`;}
 
 $('#refresh').addEventListener('click',()=>boot(true));$('#room-refresh').addEventListener('click',()=>room&&enterRoom(room.room_id));
-$('#back').addEventListener('click',async()=>{generation++;followStop?.();followStop=null;const uid=await client.identity();await client.kvPut(`drawguess:last-room:${uid}`,null);room=null;rooms=await client.rooms();renderLobby();feedback();});
-$('#claim').addEventListener('click',()=>sendAction('claim',{code:$('#seat-code').value.trim()}));
+$('#back').addEventListener('click',async()=>{generation++;followStop?.();followStop=null;try{if(room?.state.phase==='waiting'&&room.self_seat!==null)await client.action(room.room_id,{turn_id:room.state.turn_id,version:room.state.version,action:'leave',payload:{}});}catch(error){feedback(error.message);}const uid=await client.identity();await client.kvPut(`drawguess:last-room:${uid}`,null);room=null;rooms=await client.rooms();renderLobby();feedback();});
+$('#claim').addEventListener('click',()=>sendAction('claim'));
+document.querySelectorAll('[data-create-room]').forEach(button=>button.addEventListener('click',async()=>{button.disabled=true;try{const next=await client.create(button.dataset.createRoom,Number(button.dataset.stake));await enterRoom(next.room_id);}catch(error){feedback(error.message);}finally{button.disabled=false;}}));
 $('#ready').addEventListener('click',()=>sendAction($('#ready').dataset.action||'ready'));$('#start').addEventListener('click',()=>sendAction('start'));
 $('#chat-send').addEventListener('click',sendChat);$('#chat-input').addEventListener('compositionstart',()=>{composing=true;});$('#chat-input').addEventListener('compositionend',()=>{composing=false;});$('#chat-input').addEventListener('keydown',event=>{if(event.key==='Enter'&&!composing&&!event.isComposing){event.preventDefault();sendChat();}});
 for(const button of document.querySelectorAll('[data-color]'))button.addEventListener('click',()=>{currentTool={...currentTool,tool:'pen',color:button.dataset.color};board.setTool(currentTool);document.querySelectorAll('[data-color]').forEach(item=>item.classList.toggle('active',item===button));$('#eraser').classList.remove('active');});

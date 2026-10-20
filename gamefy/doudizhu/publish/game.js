@@ -1,4 +1,4 @@
-import {DoudizhuClient} from './client.js';
+import {DoudizhuClient,withTimeout} from './client.js';
 import {cardElement,cardLabel,selectGesture,toggleSelection} from './cards.js';
 
 const $=id=>document.getElementById(id);
@@ -6,6 +6,13 @@ const kinds={single:'单张',pair:'对子',triple:'三张',triple_single:'三带
 const phases={waiting:'等待三人入座准备',bidding:'叫分定地主',playing:'正在对局',finished:'本局结束',cancelled:'房间已取消'};
 let client,state,roomId=null,stop=null,selected=new Set(),busy=false,handKey='',controlsKey='',hintIndex=0,lastVersion=null,clockOffset=0;
 let navigation=0,savedRoomWrites=Promise.resolve();
+let booting=false,bootStage='start',bootStarted=0;
+function startupStage(stage,message){
+  if(!booting)return;
+  bootStage=stage;feedback(message);
+  window.dzmm?.loading?.progress?.({phase:'runtime_initializing',message});
+  window.dzmm?.log?.info?.('斗地主启动阶段',{stage,elapsedMs:Date.now()-bootStarted},'DDZ_BOOT_STAGE');
+}
 const text=(id,value)=>{$(id).textContent=value;};
 function feedback(value,animate=false){const el=$('feedback');el.classList.remove('celebrate');text('feedback',value);if(animate){void el.offsetWidth;el.classList.add('celebrate');}}
 function button(label,action,payload={}){const b=document.createElement('button');b.textContent=label;b.dataset.action=action;if(action==='bid')b.dataset.score=payload.score;b.onclick=()=>perform(action,payload);return b;}
@@ -32,8 +39,8 @@ function render(next,error){
   if(state&&next.round_id===state.round_id&&next.version<state.version)return;
   state=next;clockOffset=Date.parse(next.server_time)-Date.now();
   selected=new Set([...selected].filter(c=>state.hand.includes(c)));
-  $('lobby').hidden=true;$('table').hidden=false;
-  text('room-label',`房间 ${state.short_id}`);text('multiplier',`× ${state.multiplier}`);
+  document.body.classList.add('table-open');$('lobby').hidden=true;$('table').hidden=false;
+  text('room-label',`${state.creator_name||'玩家'}的房间`);text('multiplier',`× ${state.multiplier}`);
   const self=state.seat,others=self===null?[0,1,2]:[(self+1)%3,(self+2)%3];
   $('opponents').replaceChildren(...others.map(player));$('self').replaceChildren(...(self===null?[]:[player(self)]));
   $('bottom').replaceChildren(...(state.bottom.length?state.bottom.map(id=>cardElement(id,true)):Array.from({length:3},()=>{const el=document.createElement('span');el.className='card small';el.textContent='♠';return el;})));
@@ -65,30 +72,51 @@ async function perform(action,payload={}){
   catch(error){feedback(error.message);try{render(await client.snapshot(id));}catch{}}
   finally{busy=false;}
 }
+function rememberRoom(id,uid=client.uid){
+  const generation=navigation;
+  savedRoomWrites=savedRoomWrites.then(async()=>{if(generation!==navigation||uid!==client.uid)return;await client.sdk.kv.put(`doudizhu:last-room:${uid}`,id,{flush:true});}).catch(()=>{});
+}
 async function enter(id){
   const generation=++navigation;
+  const started=Date.now();let stage='request';
+  const trace=(code)=>window.dzmm?.log?.info?.(code,{elapsedMs:Date.now()-started},code);
+  trace('DDZ_ROOM_ENTER');feedback('正在进入房间…');
+  try{
   stop?.();roomId=id;state=null;selected.clear();controlsKey=handKey='';lastVersion=null;
-  const next=await client.snapshot(id);if(generation!==navigation)return;render(next);feedback('');
-  location.hash=`room=${id}`;stop=client.follow(id,render);
-  const uid=client.uid;
-  savedRoomWrites=savedRoomWrites.then(async()=>{if(generation!==navigation||uid!==client.uid)return;await client.sdk.kv.put(`doudizhu:last-room:${uid}`,id,{flush:true});}).catch(()=>{});
+  const next=await client.snapshot(id);if(generation!==navigation)return;
+  trace('DDZ_ROOM_FETCHED');stage='render';render(next);feedback('');
+  trace('DDZ_ROOM_RENDERED');stage='connection';
+  stop=client.follow(id,render);
+  trace('DDZ_ROOM_FOLLOW_STARTED');
+  rememberRoom(id);
+  }catch(e){
+    if(generation!==navigation)return;
+    const code=`DDZ_ROOM_${stage.toUpperCase()}_FAILED`;
+    window.dzmm?.log?.error?.(code,{stage,elapsedMs:Date.now()-started,status:e.status||null,errorType:e.name},code);
+    feedback(`进入房间失败：${e.message}（${code}），请重试`);
+    throw e;
+  }
 }
 async function lobby(restore=false){
   const generation=++navigation;
-  stop?.();roomId=null;state=null;selected.clear();$('table').hidden=true;$('lobby').hidden=false;
+  stop?.();roomId=null;state=null;selected.clear();document.body.classList.remove('table-open');$('table').hidden=true;$('lobby').hidden=false;
   $('rooms').replaceChildren();
-  await client.identity(true);if(generation!==navigation)return;const rooms=await client.rooms();if(generation!==navigation)return;
-  if(restore&&location.hash!=='#lobby'){
-    const requested=/^#room=([a-f0-9-]{36})$/i.exec(location.hash)?.[1];
-    let saved=requested;
-    if(!saved)try{saved=(await client.sdk.kv.get(`doudizhu:last-room:${client.uid}`))?.value;}catch{}
+  startupStage('identity','正在读取玩家身份…');
+  await client.identity(true);if(generation!==navigation)return;
+  startupStage('rooms','正在连接游戏服务器…');
+  const rooms=await client.rooms();if(generation!==navigation)return;
+  if(!restore)rememberRoom(null);
+  if(restore){
+    startupStage('storage','正在读取上次牌局…');
+    const saved=(await withTimeout(client.sdk.kv.get(`doudizhu:last-room:${client.uid}`),'读取上次牌局'))?.value;
     if(generation!==navigation)return;
-    if(typeof saved==='string'&&/^[a-f0-9-]{36}$/i.test(saved))try{await enter(saved);return;}catch{roomId=null;state=null;}
+    if(typeof saved==='string'&&/^[a-f0-9-]{36}$/i.test(saved))try{startupStage('restore','正在恢复牌局…');await enter(saved);return;}catch(e){if(![403,404,409].includes(e.status))throw e;roomId=null;state=null;}
   }
-  $('rooms').replaceChildren(...rooms.map(r=>{const b=document.createElement('button');b.textContent=`${r.short_id} · ${phases[r.phase]} · ${r.occupied}/3 人`;b.onclick=()=>enter(r.id).catch(e=>feedback(e.message));return b;}));
-  if(!rooms.length)text('rooms','暂无牌局，请在群里发送 /斗地主');feedback('');
+  $('rooms').replaceChildren(...rooms.map(r=>{const b=document.createElement('button');b.className='room-card';const copy=document.createElement('span');const title=document.createElement('strong');const meta=document.createElement('small');const action=document.createElement('b');title.textContent=`${r.creator_name}的牌桌`;meta.textContent=`${r.room_type==='coin'?`${r.stake} 币场`:'休闲场'} · ${phases[r.phase]} · ${r.occupied}/3 人`;action.textContent=r.phase==='waiting'?'加入牌桌':'进入观战';copy.append(title,meta);b.append(copy,action);b.onclick=()=>enter(r.id).catch(e=>feedback(e.message));return b;}));
+  if(!rooms.length)text('rooms','暂无牌局，可以先开一桌');feedback('');
 }
-$('claim').onclick=()=>{const code=$('code').value.trim();if(!/^\d{4}$/.test(code)){feedback('请输入四位数字入座码');return;}perform('claim',{code});};
+$('claim').onclick=()=>perform('claim');
+document.querySelectorAll('[data-create-room]').forEach(button=>button.onclick=async()=>{button.disabled=true;try{const next=await client.create(button.dataset.createRoom,Number(button.dataset.stake));await enter(next.id);}catch(error){feedback(error.message);}finally{button.disabled=false;}});
 $('play').onclick=()=>{if(!selected.size){feedback('请先选择要出的牌');return;}perform('play',{cards:[...selected]});};
 $('pass').onclick=()=>perform('pass');
 $('hint').onclick=async()=>{try{const id=roomId,version=state.version,plays=await client.suggestions(id);if(id!==roomId||version!==state.version)return;if(!plays.length){feedback('没有能压过的牌，可以选择不出');return;}selected=new Set(plays[hintIndex++%plays.length].cards);paintHand();}catch(e){feedback(e.message);}};
@@ -101,7 +129,25 @@ $('hand').addEventListener('click',e=>{if(e.detail!==0)return;const card=e.targe
 let chatBusy=false;
 async function sendChat(){if(chatBusy||!state)return;const value=$('chat-input').value.trim();if(!value)return;chatBusy=true;try{await client.chat(roomId,{round_id:state.round_id,request_id:crypto.randomUUID(),text:value});$('chat-input').value='';render(await client.snapshot(roomId));}catch(e){feedback(e.message);}finally{chatBusy=false;}}
 $('chat-send').onclick=sendChat;$('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();sendChat();}});
-$('back').onclick=()=>{location.hash='lobby';lobby().catch(e=>feedback(e.message));};
+$('back').onclick=async()=>{try{if(state?.phase==='waiting'&&state?.seat!==null)await client.action(roomId,{round_id:state.round_id,version:state.version,request_id:crypto.randomUUID(),action:'leave',payload:{}});}catch(e){feedback(e.message);}finally{lobby().catch(e=>feedback(e.message));}};
 $('refresh').onclick=()=>boot();
-async function boot(){try{if(!window.DOUDIZHU_CONFIG?.apiBase)throw new Error('游戏后端尚未配置');if(!window.dzmm?.user)throw new Error('请从平台游戏卡进入');if(!client)client=new DoudizhuClient({sdk:window.dzmm,apiBase:window.DOUDIZHU_CONFIG.apiBase});await lobby(true);}catch(e){feedback(e.message);}finally{window.dzmm?.loading?.ready?.();}}
+async function boot(){
+  if(booting)return;
+  booting=true;bootStage='start';bootStarted=Date.now();$('refresh').disabled=true;
+  window.dzmm?.loading?.progress?.({phase:'start',message:'正在启动斗地主'});
+  try{
+    if(!window.DOUDIZHU_CONFIG?.apiBase)throw new Error('游戏后端尚未配置');
+    if(!window.dzmm?.user)throw new Error('请从平台游戏卡进入');
+    if(!client)client=new DoudizhuClient({sdk:window.dzmm,apiBase:window.DOUDIZHU_CONFIG.apiBase});
+    await lobby(true);
+    window.dzmm?.log?.info?.('斗地主启动完成',{elapsedMs:Date.now()-bootStarted},'DDZ_BOOT_READY');
+    window.dzmm?.loading?.ready?.();
+  }catch(e){
+    const code=`DDZ_BOOT_${bootStage.toUpperCase()}`;
+    const message=`${e.message}（${code}），可点击刷新重试`;
+    feedback(message);
+    window.dzmm?.log?.error?.('斗地主启动失败',{stage:bootStage,elapsedMs:Date.now()-bootStarted,status:e.status||null},code);
+    window.dzmm?.loading?.error?.(code,message);
+  }finally{booting=false;$('refresh').disabled=false;}
+}
 setInterval(tick,500);boot();

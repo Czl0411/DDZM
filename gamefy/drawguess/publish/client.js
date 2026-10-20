@@ -40,6 +40,7 @@ export class DrawguessClient{
     }finally{controller.abort();}
   }
   rooms(){return this.request('/rooms');}
+  create(roomType,stake){return this.request('/rooms',{method:'POST',body:JSON.stringify({room_type:roomType,stake})});}
   async snapshot(roomId){this.state=await this.request(`/rooms/${roomId}`);this.strokesBlocked=false;return this.state;}
   action(roomId,envelope){return this.request(`/rooms/${roomId}/actions`,{method:'POST',body:JSON.stringify({...envelope,request_id:envelope.request_id||requestId()})});}
   chat(roomId,envelope){return this.request(`/rooms/${roomId}/chat`,{method:'POST',body:JSON.stringify({...envelope,request_id:envelope.request_id||requestId()})});}

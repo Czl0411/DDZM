@@ -23,7 +23,7 @@ def _migration():
 def test_pr6_migrations_merge_into_deployed_main_chain_without_second_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
 
-    assert script.get_heads() == ["20261013_107"]
+    assert script.get_heads() == ["20261021_113"]
     assert script.get_revision("20261012_105").down_revision == "20261012_104"
     assert script.get_revision("20261013_106").down_revision == (
         "20261012_105", "20261012_103"
@@ -31,6 +31,7 @@ def test_pr6_migrations_merge_into_deployed_main_chain_without_second_head():
     assert script.get_revision("20261013_107").down_revision == (
         "20261013_106", "20261013_102"
     )
+    assert script.get_revision("20261021_113").down_revision == "20261020_112"
 
 
 def test_pr5_backfill_preserves_live_economy_settings(monkeypatch):

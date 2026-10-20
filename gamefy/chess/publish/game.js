@@ -28,6 +28,7 @@ export class ChessClient {
     this.state = null;
   }
   rooms() { return this.request('/rooms'); }
+  create(roomType, stake) { return this.request('/rooms', { method: 'POST', body: JSON.stringify({ room_type: roomType, stake }) }); }
   selectRoom(roomId) { this.base = `${this.root}/${roomId}`; }
   async identity() {
     if (this.playerId) return this.playerId;
@@ -63,7 +64,7 @@ export class ChessClient {
     } catch (error) { await this.snapshot().catch(() => {}); throw error; }
   }
   move(from_xy, to_xy, version) { return this.post('/moves', { from_xy, to_xy, version }); }
-  claim(code) { return this.post('/claim', { code }); }
+  claim() { return this.post('/claim', {}); }
   action(action, version) { return this.post('/actions', { action, version }); }
   async chat(text) {
     await this.request('/chat', { method: 'POST', body: JSON.stringify({ text }) });
@@ -168,17 +169,33 @@ async function boot() {
         try {
           const rooms = await client.rooms();
           list.replaceChildren();
-          status.textContent = rooms.length ? '选择棋局，输入入座码加入；也可以直接观战。' : '暂无可加入或观战的棋局。';
+          status.textContent = rooms.length ? '选择棋局直接入座，也可以进入观战。' : '暂无棋局，可以先开一桌。';
           for (const room of rooms) {
             const button = document.createElement('button');
             button.type = 'button';
-            button.textContent = `${room.creator_name} · ${room.id.slice(0, 8)} · ${room.status === 'waiting' ? '等待入座' : '正在对局'} · 进入 / 观战`;
+            button.className = 'room-card';
+            const copy = document.createElement('span');
+            const title = document.createElement('strong');
+            const meta = document.createElement('small');
+            const action = document.createElement('b');
+            title.textContent = `${room.creator_name}的棋局`;
+            meta.textContent = `${room.room_type === 'coin' ? `${room.stake} 币场` : '休闲场'} · ${room.status === 'waiting' ? '等待入座' : '正在对局'}`;
+            action.textContent = room.status === 'waiting' ? '加入棋局' : '进入观战';
+            copy.append(title, meta); button.append(copy, action);
             button.addEventListener('click', () => resolve(room.id));
             list.append(button);
           }
         } catch (error) { status.textContent = error.message; }
       };
       document.querySelector('#refresh-rooms').addEventListener('click', refresh);
+      document.querySelectorAll('[data-create-room]').forEach(button => button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          const next = await client.create(button.dataset.createRoom, Number(button.dataset.stake));
+          resolve(next.game.id);
+        } catch (error) { status.textContent = error.message; }
+        finally { button.disabled = false; }
+      }));
       refresh();
     });
     client.selectRoom(roomId);
@@ -315,18 +332,13 @@ async function boot() {
   const feedback = document.querySelector('#feedback');
   const claimButton = document.querySelector('#claim-seat');
   claimButton.addEventListener('click', async () => {
-    const code = document.querySelector('#claim-code').value.trim();
-    if (!/^[0-9]{4}$/.test(code)) { feedback.textContent = '请输入四位数字入座码。'; return; }
     claimButton.disabled = true;
     feedback.textContent = '正在申请入座…';
-    try { render(await client.claim(code)); feedback.textContent = '入座成功。'; }
+    try { render(await client.claim()); feedback.textContent = '入座成功。'; }
     catch (error) {
-      feedback.textContent = ({ invalid_code: '入座码不正确，请核对群内消息。', expired: '入座码已过期，请重新创建棋局。', occupied: '席位已被抢占或棋局已结束。', same_player: '你已是创建者，不能抢第二席。', not_announced: '入座码尚未发送到群，请稍后再试。', not_joined: '请先入职后再加入棋局。', not_found: '棋局不存在，请返回列表。' })[error.message] || error.message;
+      feedback.textContent = ({ expired: '棋局已过期，请重新创建。', occupied: '席位已被抢占或棋局已结束。', same_player: '你已是创建者，不能抢第二席。', not_found: '棋局不存在，请返回列表。' })[error.message] || error.message;
     }
     finally { claimButton.disabled = false; }
-  });
-  document.querySelector('#claim-code').addEventListener('keydown', event => {
-    if (event.key === 'Enter') { event.preventDefault(); claimButton.click(); }
   });
   document.querySelector('#chat-send').addEventListener('click', async () => {
     const input = document.querySelector('#chat-input');

@@ -23,9 +23,11 @@ export class ClubClient {
   constructor({sdk, fetchImpl = fetch, apiBase, sleepImpl = ms => new Promise(resolve => setTimeout(resolve, ms))}) {
     this.sdk = sdk;
     this.fetchImpl = fetchImpl.bind(globalThis);
-    this.root = `${apiBase.replace(/\/$/, "")}/api/club/mahjong`;
+    this.apiRoot = `${apiBase.replace(/\/$/, "")}/api/club`;
+    this.root = `${this.apiRoot}/mahjong`;
     this.sleepImpl = sleepImpl;
     this.uid = null;
+    this.userInfo = null;
     this.identityPromise = null;
     this.stop = null;
   }
@@ -34,14 +36,23 @@ export class ClubClient {
     if (refresh) {
       this.stop?.();
       this.uid = null;
+      this.userInfo = null;
       this.identityPromise = null;
     }
     if (this.uid) return this.uid;
     if (!this.identityPromise) {
       this.identityPromise = withTimeout(this.sdk.user.info(), "读取玩家身份")
-        .then(info => {
+        .then(async info => {
           if (typeof info?.id !== "string" || !info.id.trim()) throw new Error("无法读取玩家身份，请重试");
           this.uid = info.id;
+          this.userInfo = info;
+          await this.clubRequest("/session", {
+            method: "POST",
+            body: JSON.stringify({
+              name: info.name || info.displayName || info.nickname || null,
+              avatar_url: info.avatar_url || info.avatarUrl || info.avatar || null,
+            }),
+          });
           return this.uid;
         });
     }
@@ -76,9 +87,33 @@ export class ClubClient {
     }
   }
 
+  async clubRequest(path, options = {}) {
+    const uid = this.uid || await this.identity();
+    const controller = new AbortController();
+    try {
+      return await withTimeout((async () => {
+        const response = await this.fetchImpl(this.apiRoot + path, {
+          ...options,
+          signal: controller.signal,
+          headers: {
+            Authorization: `ClubUid ${uid}`,
+            ...(options.body ? {"Content-Type": "application/json"} : {}),
+          },
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(typeof body.detail === "string" ? body.detail : "请求失败，请重试");
+        }
+        return response.json();
+      })(), "连接 Club 服务器");
+    } finally {
+      controller.abort();
+    }
+  }
+
   rooms() { return this.request("/rooms"); }
-  create(roomType, matchMode) {
-    return this.request("/rooms", {method: "POST", body: JSON.stringify({request_id: requestId(), room_type: roomType, match_mode: matchMode})});
+  create(roomType, stake, matchMode) {
+    return this.request("/rooms", {method: "POST", body: JSON.stringify({request_id: requestId(), room_type: roomType, stake, match_mode: matchMode})});
   }
   snapshot(roomId) { return this.request(`/rooms/${roomId}`); }
   action(roomId, version, action, payload = {}) {
@@ -87,6 +122,16 @@ export class ClubClient {
   chat(roomId, text) {
     return this.request(`/rooms/${roomId}/chat`, {method: "POST", body: JSON.stringify({request_id: requestId(), text})});
   }
+  profile() { return this.clubRequest("/profile"); }
+  channel() { return this.clubRequest("/channel"); }
+  sendChannel(text) { return this.clubRequest("/channel", {method: "POST", body: JSON.stringify({request_id: requestId(), text})}); }
+  friends() { return this.clubRequest("/friends"); }
+  requestFriend(playerId) { return this.clubRequest("/friends", {method: "POST", body: JSON.stringify({player_id: playerId})}); }
+  acceptFriend(requestIdValue) { return this.clubRequest(`/friends/${requestIdValue}/accept`, {method: "POST"}); }
+  directMessages(playerId) { return this.clubRequest(`/friends/${playerId}/messages`); }
+  sendDirectMessage(playerId, text) { return this.clubRequest(`/friends/${playerId}/messages`, {method: "POST", body: JSON.stringify({request_id: requestId(), text})}); }
+  tasks() { return this.clubRequest("/tasks"); }
+  claimTask(taskKey) { return this.clubRequest("/tasks/claim", {method: "POST", body: JSON.stringify({task_key: taskKey})}); }
   follow(roomId, onUpdate, onError) {
     this.stop?.();
     const controller = new AbortController();

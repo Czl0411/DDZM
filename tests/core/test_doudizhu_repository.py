@@ -69,8 +69,7 @@ def test_create_dedup_and_two_claims(ddz):
     assert 'code' not in room
     with pytest.raises(ValueError):
         act(repo, room, 'viewer', 'claim', {'code': code})
-    with pytest.raises(ValueError):
-        repo.doudizhu_view(UUID(room['id']), 'nobody', NOW)
+    assert repo.doudizhu_view(UUID(room['id']), 'nobody', NOW)['seat'] is None
 
 
 def test_ready_leave_and_rematch(ddz):

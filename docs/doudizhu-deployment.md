@@ -1,15 +1,19 @@
 # 斗地主发布检查单
 
-目前是本地实现，不代表已创建平台游戏卡或上线。首版无摸鱼币、无付费 AI，独立于象棋。
+2026-10-13 已上传独立游戏卡 `3763357` 的代码版本 `1791901878224`，6 个静态文件回读一致，尚未提交公开审核。后端代码 `386745a` 已部署到 `49.234.20.159`，数据库已从 108 升至 109，仅配置测试群 `c1f72c3c-409b-4c5a-be74-51370922a270`。首版无摸鱼币、无付费 AI，独立于象棋；真人三人对局仍待验收。
+
+部署前数据库隔离副本升级通过；备份保存在服务器 `/opt/dzmm/backups/ddz-20261013-2235/`（数据库、代码、环境和 Caddy 配置）。HTTPS 未授权请求返回 401，跨域预检返回 200，象棋接口保留。部署时 worker 先于 core 就绪触发连接失败，待 core 健康后重置失败状态并重启。原有 AI worker 失败状态未在本次处理。
+
+迁移以数据库管理员执行后，新表起初属于 postgres，导致应用维护任务 500；已将四张新表所有者改为 dzmm，确认维护入口连续返回 200、worker 心跳恢复、核心/消息 worker/后台/Caddy 均 active。以后正式迁移应使用应用数据库账号；若使用管理员，必须同步核验新表权限。本次部署前相关回归为 139 通过、1 跳过（未启动本地 PostgreSQL 并发测试库）。
 
 ## 配置与入口
 
-取得用户上线授权后创建独立 Gamefy 草稿，记录真实 ID；不能使用象棋 3761638。按现有 Gamefy CLI 文档生成 `gamefy/doudizhu/dzmm.json`，发布目录为 `publish`，入口 `index.html`。开发密钥仅由本地环境提供，不写入文件或命令日志。
+取得用户上线授权后使用已提供的独立 Gamefy 草稿 `3763357`；不能使用象棋 3761638。`gamefy/doudizhu/dzmm.json` 已配置卡 ID，发布目录为 `publish`，入口 `index.html`。开发密钥仅由本地环境提供，不写入文件或命令日志。
 
 服务器环境需要四项配置，缺省不开放：
 
-- `DZMM_DOUDIZHU_GAME_ID`：独立游戏卡 ID。
-- `DZMM_DOUDIZHU_GAME_URL`：对应站点的 HTTPS 游戏入口。
+- `DZMM_DOUDIZHU_GAME_ID`：`3763357`。
+- `DZMM_DOUDIZHU_GAME_URL`：`https://www.aikda.com/chat?card=3763357`。
 - `DZMM_DOUDIZHU_PUBLIC_API_URL`：公开 HTTPS 后端地址。
 - `DZMM_DOUDIZHU_CHATROOM_ID`：先指定测试群；验收后经批准再改小游戏群 `4fc4a2fd-465a-4436-9884-dbb5e60c6af2`。
 

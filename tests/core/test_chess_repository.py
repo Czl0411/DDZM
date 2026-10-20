@@ -43,7 +43,6 @@ def test_parallel_games_and_sent_gate(chess_repo):
     assert repo.claim_chess_seat(one.id, "alice", one.code, NOW).status == "not_announced"
     mark_sent(factory, inbound_id)
     assert repo.claim_chess_seat(one.id, "creator", one.code, NOW).status == "same_player"
-    assert repo.claim_chess_seat(one.id, "nobody", one.code, NOW).status == "not_joined"
     assert repo.claim_chess_seat(one.id, "alice", "00000", NOW).status == "invalid_code"
     claimed = repo.claim_chess_seat(one.id, "alice", one.code, NOW)
     assert claimed.status == "claimed"
@@ -52,8 +51,7 @@ def test_parallel_games_and_sent_gate(chess_repo):
     assert claimed.game.black_platform_id in {"creator", "alice"}
     assert repo.claim_chess_seat(one.id, "bob", one.code, NOW).status == "occupied"
     assert repo.claim_chess_seat(two.id, "bob", two.code, NOW + timedelta(minutes=10)).status == "expired"
-    with pytest.raises(ValueError):
-        repo.create_chess_game("nobody", PRIMARY_GROUP_CHAT_ID, inbound_id, NOW)
+    assert repo.create_chess_game("nobody", None, None, NOW).creator_platform_id == "nobody"
 
 
 def test_concurrent_claim_has_one_winner(chess_repo):
@@ -72,5 +70,4 @@ def test_registered_players_can_chat_while_waiting(chess_repo):
     for pid in ("creator", "bob"):
         message = repo.chess_chat(game.id, pid, "等你来下棋", NOW)
         assert message["text"] == "等你来下棋"
-    with pytest.raises(ValueError):
-        repo.chess_chat(game.id, "nobody", "hello", NOW)
+    assert repo.chess_chat(game.id, "nobody", "hello", NOW)["text"] == "hello"

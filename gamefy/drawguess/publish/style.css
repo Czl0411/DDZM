@@ -1152,3 +1152,266 @@ canvas {
     transition-duration: .01ms !important;
   }
 }
+
+/* v3: commercial creative-studio skin. Layout behavior remains unchanged. */
+body {
+  background:
+    linear-gradient(90deg, rgb(255 249 244 / 91%), rgb(255 249 244 / 70%)),
+    url('./assets/art-studio-v1.webp') center / cover fixed;
+}
+
+.app-shell {
+  width: min(100% - 28px, 1240px);
+  padding-top: 14px;
+}
+
+.brand-bar {
+  padding: 0 4px;
+}
+
+.brand-mark {
+  border: 1px solid rgb(255 255 255 / 72%);
+  background: linear-gradient(145deg, #ff766d, #eb4e58);
+  box-shadow: 0 12px 26px rgb(222 67 74 / 24%);
+}
+
+.lobby {
+  display: grid;
+  min-height: 100%;
+  padding: 14px 0 22px;
+  grid-template-columns: minmax(300px, .9fr) minmax(440px, 1.1fr);
+  gap: 16px;
+}
+
+.lobby-hero {
+  position: relative;
+  display: flex;
+  min-height: 480px;
+  padding: clamp(28px, 5vw, 58px);
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 70%);
+  border-radius: 28px;
+  color: #402b29;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 4%) 35%, rgb(255 244 232 / 90%) 100%),
+    url('./assets/art-studio-v1.webp') 43% center / cover;
+  box-shadow: 0 26px 70px rgb(151 92 60 / 16%);
+}
+
+.lobby-hero::before {
+  content: '✎';
+  position: absolute;
+  top: 32px;
+  left: 36px;
+  display: grid;
+  width: 60px;
+  height: 60px;
+  place-items: center;
+  border-radius: 20px;
+  color: #fff;
+  background: linear-gradient(145deg, #ff766d, #ed4f58);
+  box-shadow: 0 14px 30px rgb(219 67 73 / 25%);
+  font-size: 30px;
+}
+
+.lobby-hero h2 {
+  max-width: 8em;
+  margin: 9px 0 14px;
+  font-size: clamp(40px, 5.2vw, 66px);
+  letter-spacing: -.04em;
+}
+
+.lobby-hero > p {
+  max-width: 31em;
+  color: #735b57;
+  line-height: 1.8;
+}
+
+.hero-tags {
+  display: flex;
+  margin-top: 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hero-tags span {
+  padding: 7px 11px;
+  border: 1px solid rgb(220 121 105 / 18%);
+  border-radius: 999px;
+  color: #9b4b48;
+  background: rgb(255 255 255 / 64%);
+  font-size: 11px;
+  font-weight: 750;
+  backdrop-filter: blur(8px);
+}
+
+.lobby-panel {
+  display: grid;
+  min-height: 0;
+  padding: clamp(20px, 3vw, 30px);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border-color: rgb(221 194 177 / 52%);
+  background: rgb(255 255 255 / 88%);
+  backdrop-filter: blur(18px);
+}
+
+.lobby-panel > .muted {
+  margin-top: 14px;
+}
+
+.lobby-panel .room-list {
+  grid-template-columns: 1fr;
+  align-content: start;
+  min-height: 0;
+  margin-top: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.room-button {
+  position: relative;
+  min-height: 80px;
+  padding: 16px 18px 16px 66px;
+  border-color: #f1e2da;
+  background: linear-gradient(145deg, #fff, #fff9f5);
+}
+
+.room-button::before {
+  content: '✎';
+  position: absolute;
+  left: 17px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(145deg, #ff8275, #ef555d);
+  font-size: 18px;
+}
+
+body.room-open {
+  background:
+    linear-gradient(90deg, rgb(255 249 244 / 94%), rgb(255 249 244 / 78%)),
+    url('./assets/art-studio-v1.webp') center / cover fixed;
+}
+
+.room-toolbar,
+.round-strip,
+.seats-panel,
+.stage-card,
+.canvas-frame,
+.chat-column {
+  border-color: rgb(224 198 182 / 55%);
+  background: rgb(255 255 255 / 91%);
+  backdrop-filter: blur(16px);
+}
+
+.room-toolbar {
+  box-shadow: 0 14px 38px rgb(141 83 53 / 10%);
+}
+
+.seats-panel {
+  box-shadow: 0 12px 30px rgb(141 83 53 / 8%);
+}
+
+.avatar {
+  background: linear-gradient(145deg, #ff8d7d, #ed555c);
+  box-shadow: 0 0 0 2px #ffd8cf, 0 8px 18px rgb(220 71 78 / 17%);
+}
+
+.stage-workspace {
+  border-radius: 22px;
+  box-shadow: 0 18px 40px rgb(141 83 53 / 9%);
+}
+
+.canvas-frame {
+  border-width: 6px;
+  border-color: rgb(255 255 255 / 94%);
+  box-shadow: 0 0 0 1px rgb(224 198 182 / 62%), 0 18px 42px rgb(141 83 53 / 13%);
+}
+
+.chat-column {
+  box-shadow: 0 18px 42px rgb(141 83 53 / 10%);
+}
+
+.chat-heading {
+  background: linear-gradient(145deg, #fff9f5, #fff);
+}
+
+.message {
+  margin-bottom: 9px;
+  padding: 9px 11px;
+  border-radius: 4px 14px 14px;
+  background: #fff7f2;
+}
+
+.composer {
+  background: rgb(255 250 247 / 94%);
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    width: min(100% - 16px, 560px);
+    padding-top: 8px;
+  }
+
+  .lobby {
+    grid-template-columns: 1fr;
+    padding-top: 7px;
+  }
+
+  .lobby-hero {
+    min-height: 220px;
+    padding: 24px;
+  }
+
+  .lobby-hero::before {
+    top: 20px;
+    left: 22px;
+    width: 46px;
+    height: 46px;
+    border-radius: 15px;
+    font-size: 23px;
+  }
+
+  .lobby-hero h2 {
+    font-size: 38px;
+  }
+
+  .lobby-hero > p {
+    display: none;
+  }
+
+  .hero-tags {
+    margin-top: 10px;
+  }
+
+  .lobby-panel {
+    min-height: 360px;
+  }
+}
+
+@media (max-height: 700px) and (orientation: landscape) {
+  body.room-open .room-toolbar {
+    min-height: 48px;
+    padding: 5px 8px;
+  }
+
+  body.room-open .room-layout {
+    grid-template-columns: minmax(0, 1.8fr) minmax(240px, .62fr);
+    gap: 8px;
+  }
+
+  body.room-open .seats-panel {
+    padding: 5px 8px;
+  }
+
+  body.room-open .avatar {
+    width: 30px;
+  }
+}
+/* Club-integrated lobby controls. */
+.club-link{margin-left:auto;padding:9px 13px;border:1px solid rgba(220,99,91,.22);border-radius:12px;color:#ce514b;background:#fff7f1;font-size:11px;font-weight:800;text-decoration:none}.create-strip{display:flex;flex-wrap:wrap;gap:7px;margin-top:18px}.create-strip button{min-height:38px;padding:0 13px;border:1px solid rgba(255,255,255,.38);border-radius:12px;color:#fff;background:rgba(153,60,54,.42);font-weight:800}.create-strip button:first-child{color:#9c342f;background:#fff3e9}

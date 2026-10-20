@@ -2667,16 +2667,98 @@ class UserRecord(Base):
     joined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class ClubPlayerRecord(Base):
+    __tablename__ = "club_players"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    platform_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    avatar_url: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id"), unique=True
+    )
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class ClubPublicMessageRecord(Base):
+    __tablename__ = "club_public_messages"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    player_id: Mapped[UUID] = mapped_column(
+        ForeignKey("club_players.id"), nullable=False, index=True
+    )
+    content: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, nullable=False, index=True
+    )
+
+
+class ClubFriendshipRecord(Base):
+    __tablename__ = "club_friendships"
+    __table_args__ = (
+        UniqueConstraint("requester_id", "recipient_id"),
+        CheckConstraint("requester_id <> recipient_id", name="ck_club_friend_distinct"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    requester_id: Mapped[UUID] = mapped_column(
+        ForeignKey("club_players.id"), nullable=False, index=True
+    )
+    recipient_id: Mapped[UUID] = mapped_column(
+        ForeignKey("club_players.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class ClubDirectMessageRecord(Base):
+    __tablename__ = "club_direct_messages"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    sender_id: Mapped[UUID] = mapped_column(
+        ForeignKey("club_players.id"), nullable=False, index=True
+    )
+    recipient_id: Mapped[UUID] = mapped_column(
+        ForeignKey("club_players.id"), nullable=False, index=True
+    )
+    content: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        BeijingDateTime, nullable=False, index=True
+    )
+
+
+class ClubTaskClaimRecord(Base):
+    __tablename__ = "club_task_claims"
+    __table_args__ = (UniqueConstraint("user_id", "task_key"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    task_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    reward: Mapped[int] = mapped_column(Integer, nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class DoudizhuRoomRecord(Base):
     __tablename__ = "doudizhu_rooms"
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
-    inbound_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), unique=True, nullable=False)
-    creator_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    group_chat_id: Mapped[UUID | None] = mapped_column(ForeignKey("group_chats.id"))
+    inbound_id: Mapped[UUID | None] = mapped_column(ForeignKey("inbound_messages.id"), unique=True)
+    creator_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
     short_id: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)
     code: Mapped[str] = mapped_column(String(4), nullable=False)
     seats: Mapped[list] = mapped_column(JSON, nullable=False)
     ready: Mapped[list] = mapped_column(JSON, nullable=False)
+    room_type: Mapped[str] = mapped_column(
+        String(16), default="casual", server_default="casual", nullable=False
+    )
+    stake: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    escrowed: Mapped[list] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
+    settled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    settlement: Mapped[dict | None] = mapped_column(JSON)
     presence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     phase: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     round_id: Mapped[UUID | None] = mapped_column(Uuid)
@@ -2702,7 +2784,7 @@ class DoudizhuRequestRecord(Base):
     __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     room_id: Mapped[UUID] = mapped_column(ForeignKey("doudizhu_rooms.id"), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
     request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     digest: Mapped[str] = mapped_column(String(64), nullable=False)
 
@@ -2713,7 +2795,7 @@ class DoudizhuMessageRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     room_id: Mapped[UUID] = mapped_column(ForeignKey("doudizhu_rooms.id"), nullable=False)
     round_id: Mapped[UUID | None] = mapped_column(Uuid)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
     request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     content: Mapped[str] = mapped_column(String(300), nullable=False)
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
@@ -2722,11 +2804,18 @@ class DoudizhuMessageRecord(Base):
 class DrawguessRoomRecord(Base):
     __tablename__ = "drawguess_rooms"
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
-    inbound_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), unique=True, nullable=False)
-    creator_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    group_chat_id: Mapped[UUID | None] = mapped_column(ForeignKey("group_chats.id"))
+    inbound_id: Mapped[UUID | None] = mapped_column(ForeignKey("inbound_messages.id"), unique=True)
+    creator_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
     short_id: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)
     active_code: Mapped[str | None] = mapped_column(String(4), unique=True)
+    room_type: Mapped[str] = mapped_column(
+        String(16), default="casual", server_default="casual", nullable=False
+    )
+    stake: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    escrowed: Mapped[list] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
+    settled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    settlement: Mapped[dict | None] = mapped_column(JSON)
     state: Mapped[dict] = mapped_column(JSON, nullable=False)
     cursor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     phase: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
@@ -2750,7 +2839,7 @@ class DrawguessRequestRecord(Base):
     __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     room_id: Mapped[UUID] = mapped_column(ForeignKey("drawguess_rooms.id"), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
     request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     digest: Mapped[str] = mapped_column(String(64), nullable=False)
     turn_id: Mapped[int | None] = mapped_column(Integer)
@@ -2763,7 +2852,7 @@ class DrawguessMessageRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     room_id: Mapped[UUID] = mapped_column(ForeignKey("drawguess_rooms.id"), nullable=False)
     turn_id: Mapped[int | None] = mapped_column(Integer)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
     request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     content: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
@@ -2778,11 +2867,12 @@ class MahjongRoomRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     group_chat_id: Mapped[UUID | None] = mapped_column(ForeignKey("group_chats.id"))
     inbound_id: Mapped[UUID | None] = mapped_column(ForeignKey("inbound_messages.id"), unique=True)
-    creator_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    creator_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
     create_request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     short_id: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)
     code: Mapped[str] = mapped_column(String(4), nullable=False, index=True)
     room_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    stake: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     match_mode: Mapped[str] = mapped_column(String(16), nullable=False)
     seats: Mapped[list] = mapped_column(JSON, nullable=False)
     ready: Mapped[list] = mapped_column(JSON, nullable=False)
@@ -2803,7 +2893,7 @@ class MahjongRequestRecord(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     room_id: Mapped[UUID] = mapped_column(ForeignKey("mahjong_rooms.id"), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
     request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     digest: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
@@ -2815,7 +2905,7 @@ class MahjongMessageRecord(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     room_id: Mapped[UUID] = mapped_column(ForeignKey("mahjong_rooms.id"), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
     request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     content: Mapped[str] = mapped_column(String(300), nullable=False)
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
@@ -2825,13 +2915,20 @@ class ChessGameRecord(Base):
     __tablename__ = "chess_games"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    group_chat_id: Mapped[UUID] = mapped_column(ForeignKey("group_chats.id"), nullable=False)
-    inbound_message_id: Mapped[UUID] = mapped_column(ForeignKey("inbound_messages.id"), nullable=False)
-    creator_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    opponent_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
-    red_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
-    black_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    group_chat_id: Mapped[UUID | None] = mapped_column(ForeignKey("group_chats.id"))
+    inbound_message_id: Mapped[UUID | None] = mapped_column(ForeignKey("inbound_messages.id"))
+    creator_user_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
+    opponent_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("club_players.id"))
+    red_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("club_players.id"))
+    black_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("club_players.id"))
     code: Mapped[str] = mapped_column(String(4), nullable=False)
+    room_type: Mapped[str] = mapped_column(
+        String(16), default="casual", server_default="casual", nullable=False
+    )
+    stake: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    escrowed: Mapped[list] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
+    settled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    settlement: Mapped[dict | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
     claim_deadline: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
@@ -2842,7 +2939,7 @@ class ChessGameRecord(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     result: Mapped[str | None] = mapped_column(String(64))
     pending_offer: Mapped[str | None] = mapped_column(String(16))
-    offer_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    offer_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("club_players.id"))
     finished_at: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     events: Mapped[list] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
 
@@ -2867,7 +2964,7 @@ class ChessMessageRecord(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     game_id: Mapped[UUID] = mapped_column(ForeignKey("chess_games.id"), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("club_players.id"), nullable=False)
     content: Mapped[str] = mapped_column(String(300), nullable=False)
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 

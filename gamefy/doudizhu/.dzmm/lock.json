@@ -1,0 +1,15 @@
+{
+  "revision": "1792519109009",
+  "source": "workspace",
+  "pulledAt": "2026-10-20T17:57:27.505Z",
+  "files": [
+    "card-room-v1.webp",
+    "cards.js",
+    "client.js",
+    "config.js",
+    "game.js",
+    "index.html",
+    "style.css"
+  ],
+  "functions": []
+}

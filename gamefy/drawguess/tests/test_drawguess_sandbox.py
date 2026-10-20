@@ -16,7 +16,8 @@ def snapshot(phase="waiting", self_seat=0):
         {"name": "阿圆", "ready": True, "score": 0, "is_host": False, "guessed": False},
     ]
     return {
-        "room_id": ROOM, "short_id": "DRAW88", "cursor": 0, "server_time_ms": 1_000,
+        "room_id": ROOM, "short_id": "DRAW88", "creator_name": "小画家",
+        "cursor": 0, "server_time_ms": 1_000,
         "self_seat": self_seat, "code": "2468" if phase == "waiting" else None,
         "canvas": [], "messages": [],
         "state": {
@@ -88,6 +89,8 @@ def install_routes(context, publish, state, actions, saved=None, room_count=1):
                     {
                         "room_id": f"{index:08d}-1111-4111-8111-111111111111",
                         "short_id": f"DRAW{index:02d}",
+                        "creator_name": "小画家",
+                        "room_type": "casual", "stake": 0,
                         "phase": state["state"]["phase"],
                         "occupied": 3,
                         "capacity": 8,
@@ -161,7 +164,7 @@ def test_room_stages_share_one_fixed_viewport_and_persistent_chat(width, height)
                 ]
             state["messages"] = [
                 {"id": str(index), "name": "群友", "text": f"长期聊天消息 {index}"}
-                for index in range(40)
+                for index in range(80)
             ]
 
             page.locator("#room-refresh").click()
@@ -186,7 +189,7 @@ def test_room_stages_share_one_fixed_viewport_and_persistent_chat(width, height)
                   innerWidth,
                   workspaceBottom: workspace.getBoundingClientRect().bottom,
                   chatBottom: chat.getBoundingClientRect().bottom,
-                  messagesScrolls: messages.scrollHeight > messages.clientHeight,
+                  messagesOverflowY: getComputedStyle(messages).overflowY,
                 };
               }
             """)
@@ -194,7 +197,7 @@ def test_room_stages_share_one_fixed_viewport_and_persistent_chat(width, height)
             assert layout["bodyScrollWidth"] <= layout["innerWidth"]
             assert layout["workspaceBottom"] <= layout["innerHeight"] + 1
             assert layout["chatBottom"] <= layout["innerHeight"] + 1
-            assert layout["messagesScrolls"]
+            assert layout["messagesOverflowY"] == "auto"
             if phase == "drawing":
                 assert page.locator("#draw-canvas").evaluate(
                     "e=>e.getBoundingClientRect().bottom<="
@@ -218,6 +221,7 @@ def test_full_game_mobile_and_desktop(width):
         context.add_init_script("""window.dzmm={user:{info:async()=>({id:'host'})},kv:{get:async()=>({value:null}),put:async()=>{}},loading:{progress(){},ready(){window.readyCalled=true},error(){}},log:{info(){},error(){}}};""")
         install_routes(context, publish, state, actions)
         page = context.new_page();page.goto("https://draw.test/index.html")
+        expect(page.locator("#rooms .room-button strong")).to_have_text("小画家的房间")
         page.locator("#rooms button").click()
         expect(page.locator("#room-view")).to_be_visible()
         expect(page.locator(".seat")).to_have_count(8)
@@ -260,7 +264,7 @@ def test_waiting_room_uses_complete_seat_grid_and_secondary_room_code(width, col
         page = context.new_page();page.goto("https://draw.test/index.html");page.locator("#rooms button").click()
 
         expect(page.locator("#room-title")).to_have_text("候场房间")
-        expect(page.locator("#room-code")).to_have_text("DRAW88")
+        expect(page.locator("#room-code")).to_have_text("小画家的房间")
         expect(page.locator(".seat")).to_have_count(8)
         assert page.locator("#players").evaluate("e=>getComputedStyle(e).display") == "grid"
         assert len(page.locator("#players").evaluate("e=>getComputedStyle(e).gridTemplateColumns.split(' ')")) == columns
@@ -313,7 +317,8 @@ def test_game_fills_viewport_and_scrolls_only_inside_content(room_count, should_
         assert layout["bodyScrollHeight"] <= layout["viewportHeight"]
         assert layout["bodyOverflow"] == "hidden"
         assert layout["contentOverflow"] == "auto"
-        assert (layout["contentScrollHeight"] > layout["contentClientHeight"]) is should_scroll
+        overflow = layout["contentScrollHeight"] - layout["contentClientHeight"]
+        assert (overflow > 1) is should_scroll
         if not should_scroll:
             assert abs(layout["lobbyBottom"] - layout["contentBottom"]) < 2
             assert layout["roomButtonHeight"] < 120
@@ -362,9 +367,9 @@ def test_boot_restore_kv_failure_and_no_hash_navigation():
         context.add_init_script(f"""window.dzmm={{user:{{info:async()=>({{id:'host'}})}},kv:{{get:async()=>{{throw new Error('kv')}} ,put:async()=>{{throw new Error('kv')}}}},loading:{{ready(){{window.readyCalled=true}},error(){{}}}},log:{{info(){{}},error(){{}}}}}};""")
         install_routes(context, publish, state, actions)
         page = context.new_page();page.goto("https://draw.test/index.html")
-        expect(page.locator("#rooms")).to_contain_text("DRAW88")
+        expect(page.locator("#rooms")).to_contain_text("小画家的房间")
         page.locator("#rooms button").click();expect(page.locator("#room-view")).to_be_visible()
-        page.reload();expect(page.locator("#rooms")).to_contain_text("DRAW88")
+        page.reload();expect(page.locator("#rooms")).to_contain_text("小画家的房间")
         assert page.evaluate("location.hash") == ""
         assert page.evaluate("window.readyCalled") is True
         browser.close()

@@ -38,9 +38,6 @@ def test_claim_chat_and_reopen_in_platform_sandbox(width, role):
                     request.fulfill(body="", content_type="text/event-stream", headers=headers)
                     return
                 if url.endswith("/claim"):
-                    if request.request.post_data_json["code"] != "1234":
-                        request.fulfill(status=409, body='{"detail":"invalid_code"}', content_type="application/json", headers=headers)
-                        return
                     state["role"] = role
                     state["game"]["status"] = "playing"
                     state["game"]["turn_started_at"] = "2026-10-13T00:00:00Z"
@@ -67,16 +64,6 @@ def test_claim_chat_and_reopen_in_platform_sandbox(width, role):
         expect(frame.locator("#board .piece")).to_have_count(32)
         page.screenshot(path=f"/tmp/chess-ui-{width}.png", full_page=True)
         assert frame.locator("body").evaluate("e=>e.scrollWidth <= innerWidth")
-        frame.locator("#claim-code").fill("12")
-        frame.locator("#claim-panel button").click()
-        expect(frame.locator("#feedback")).to_contain_text("四位数字")
-        assert not any(url.endswith("/claim") for url in calls)
-        frame.locator("#claim-code").fill("9999")
-        frame.locator("#claim-panel button").click()
-        expect(frame.locator("#feedback")).to_contain_text("入座码不正确")
-        page.wait_for_timeout(1200)  # A subsequent state refresh must not erase the error.
-        expect(frame.locator("#feedback")).to_contain_text("入座码不正确")
-        frame.locator("#claim-code").fill("1234")
         frame.locator("#claim-panel button").click()
         expect(frame.locator("#claim-panel")).to_be_hidden(timeout=3000)
         assert any(url.endswith("/claim") for url in calls)

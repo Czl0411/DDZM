@@ -12,15 +12,17 @@
     <header class="brand-bar">
       <div class="brand-mark" aria-hidden="true">✎</div>
       <div><h1>你画我猜</h1><p>轮流画，抢先猜</p></div>
-      <button id="refresh" class="icon-button" type="button" aria-label="刷新">↻</button>
+      <a class="club-link" href="../../index.html">返回 Club</a><button id="refresh" class="icon-button" type="button" aria-label="刷新">↻</button>
     </header>
     <div class="content-scroll">
       <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
 
-      <section id="lobby" class="panel lobby">
-        <div class="section-heading"><div><span class="eyebrow">游戏大厅</span><h2>选择房间</h2></div><span class="rule-chip">3～8 人</span></div>
-        <p class="muted">在开放群发送 /你画我猜 创建房间，入座后全员准备即可开始。</p>
-        <div id="rooms" class="room-list"></div>
+      <section id="lobby" class="lobby">
+        <div class="lobby-hero"><span class="eyebrow">DRAW &amp; GUESS</span><h2>灵感开场<br>默契接力</h2><p>轮流当画手，好友抢先猜。画得像不像不重要，大家看得懂才有趣。</p><div class="hero-tags"><span>3～8 人</span><span>实时画板</span><span>好友对局</span></div><div class="create-strip"><button type="button" data-create-room="casual" data-stake="0">休闲局</button><button type="button" data-create-room="coin" data-stake="5">5 币场</button><button type="button" data-create-room="coin" data-stake="10">10 币场</button><button type="button" data-create-room="coin" data-stake="20">20 币场</button></div></div>
+        <div class="panel lobby-panel"><div class="section-heading"><div><span class="eyebrow">游戏大厅</span><h2>选择房间</h2></div><span class="rule-chip">3～8 人</span></div>
+          <p class="muted">直接选择房间入座；摸鱼币场由最终第一名获得奖池，同分则平分。</p>
+          <div id="rooms" class="room-list"></div>
+        </div>
       </section>
 
       <section id="room-view" class="room-view" hidden>
@@ -46,11 +48,7 @@
             <div class="stage-workspace">
               <section id="waiting" class="stage-card" hidden>
                 <div id="waiting-copy"></div>
-                <div id="claim-controls" class="inline-form" hidden>
-                  <label class="sr-only" for="seat-code">四位入座码</label>
-                  <input id="seat-code" inputmode="numeric" maxlength="4" placeholder="输入 4 位入座码">
-                  <button id="claim" class="primary" type="button">加入房间</button>
-                </div>
+                <div id="claim-controls" class="inline-form" hidden><span>空位先到先得</span><button id="claim" class="primary" type="button">加入房间</button></div>
                 <div id="seat-controls" class="action-row" hidden>
                   <button id="ready" class="secondary" type="button">准备</button>
                   <button id="start" class="primary" type="button">开始游戏</button>

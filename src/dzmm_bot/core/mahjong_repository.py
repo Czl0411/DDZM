@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from .mahjong_state import action_options, apply_action, apply_timeout, new_match
 from .schema import (
+    ClubPlayerRecord,
     GroupChatRecord,
     InboundRecord,
     MahjongMessageRecord as Message,
@@ -19,9 +20,7 @@ from .schema import (
     UserRecord,
 )
 
-
-BUY_IN = 100
-PRIZES = (200, 120, 60, 20)
+COIN_STAKES = {5, 10, 20}
 
 
 class MahjongRateLimitError(ValueError):
@@ -32,15 +31,15 @@ class MahjongRepositoryMixin:
     _mahjong_random = SystemRandom()
 
     @staticmethod
-    def _mahjong_employee(session, platform_id: str, *, lock: bool = False):
-        if not isinstance(platform_id, str) or not platform_id or len(platform_id) > 255 or any(char.isspace() for char in platform_id):
-            raise ValueError("无法读取玩家身份")
-        query = select(UserRecord).where(UserRecord.platform_id == platform_id)
+    def _mahjong_account(session, player: ClubPlayerRecord, *, lock: bool = False):
+        if player.user_id is None:
+            raise ValueError("摸鱼币场仅限已入职员工")
+        query = select(UserRecord).where(UserRecord.id == player.user_id)
         if lock:
             query = query.with_for_update()
         user = session.scalar(query)
         if user is None:
-            raise ValueError("请先入职")
+            raise ValueError("摸鱼币场仅限已入职员工")
         return user
 
     @staticmethod
@@ -82,6 +81,7 @@ class MahjongRepositoryMixin:
         now: datetime,
         *,
         room_type: str = "coin",
+        stake: int = 10,
         match_mode: str = "east",
         request_id: UUID,
         group_chat_id: UUID | None = None,
@@ -89,16 +89,20 @@ class MahjongRepositoryMixin:
     ) -> dict:
         if room_type not in {"casual", "coin"}:
             raise ValueError("房间类型无效")
+        if room_type == "casual":
+            stake = 0
+        elif stake not in COIN_STAKES:
+            raise ValueError("摸鱼币场仅支持 5、10、20 币")
         if match_mode not in {"east", "south"}:
             raise ValueError("场次类型无效")
         with self.transaction():
             with self._session() as session:
-                user = self._mahjong_employee(session, platform_id, lock=True)
+                player = self._club_player(session, platform_id, now, lock=True)
                 existing = session.scalar(
-                    select(Room).where(Room.creator_id == user.id, Room.create_request_id == request_id)
+                    select(Room).where(Room.creator_id == player.id, Room.create_request_id == request_id)
                 )
                 if existing is not None:
-                    return {**self._mahjong_view(session, existing, user, now), "code": existing.code}
+                    return self._mahjong_view(session, existing, player, now)
                 if group_chat_id is not None:
                     inbound = session.scalar(select(InboundRecord).where(InboundRecord.id == inbound_id).with_for_update())
                     group = session.get(GroupChatRecord, group_chat_id)
@@ -110,18 +114,22 @@ class MahjongRepositoryMixin:
                         or not group.listening_enabled
                     ):
                         raise ValueError("群聊或入站消息不可用")
-                if room_type == "coin" and user.balance < BUY_IN:
-                    raise ValueError(f"创建摸鱼币房需要{BUY_IN}摸鱼币")
+                account = None
+                if room_type == "coin":
+                    account = self._mahjong_account(session, player, lock=True)
+                    if account.balance < stake:
+                        raise ValueError(f"创建摸鱼币房需要{stake}摸鱼币")
                 room = Room(
                     group_chat_id=group_chat_id,
                     inbound_id=inbound_id,
-                    creator_id=user.id,
+                    creator_id=player.id,
                     create_request_id=request_id,
                     short_id=uuid4().hex[:12],
                     code=self._mahjong_code(session),
                     room_type=room_type,
+                    stake=stake,
                     match_mode=match_mode,
-                    seats=[str(user.id), None, None, None],
+                    seats=[str(player.id), None, None, None],
                     ready=[False, False, False, False],
                     escrowed=[room_type == "coin", False, False, False],
                     presence={},
@@ -135,10 +143,10 @@ class MahjongRepositoryMixin:
                 session.flush()
                 if room_type == "coin":
                     self._apply_balance_change(
-                        user, -BUY_IN, "mahjong_buy_in", now,
+                        account, -stake, "mahjong_buy_in", now,
                         memo=f"麻将房间 {room.short_id} 入场托管",
                     )
-                return {**self._mahjong_view(session, room, user, now), "code": room.code}
+                return self._mahjong_view(session, room, player, now)
 
     def _mahjong_names(self, session, seats: list) -> list[dict | None]:
         players = []
@@ -146,17 +154,19 @@ class MahjongRepositoryMixin:
             if raw_id is None:
                 players.append(None)
                 continue
-            user = session.get(UserRecord, UUID(raw_id))
+            user = session.get(ClubPlayerRecord, UUID(raw_id))
             players.append({
-                "name": user.display_name if user else "已离职玩家",
-                "employee_number": user.employee_number if user else None,
+                "id": str(user.id) if user else raw_id,
+                "name": user.display_name if user else "已离开玩家",
+                "employee_number": None,
+                "avatar_url": user.avatar_url if user else None,
             })
         return players
 
     def _mahjong_messages(self, session, room_id: UUID) -> list[dict]:
         rows = session.execute(
-            select(Message, UserRecord.display_name)
-            .join(UserRecord, UserRecord.id == Message.user_id)
+            select(Message, ClubPlayerRecord.display_name)
+            .join(ClubPlayerRecord, ClubPlayerRecord.id == Message.user_id)
             .where(Message.room_id == room_id)
             .order_by(Message.created_at.desc(), Message.id.desc())
             .limit(100)
@@ -166,7 +176,7 @@ class MahjongRepositoryMixin:
             for message, name in reversed(rows)
         ]
 
-    def _mahjong_view(self, session, room: Room, user: UserRecord, now: datetime) -> dict:
+    def _mahjong_view(self, session, room: Room, user: ClubPlayerRecord, now: datetime) -> dict:
         raw_user = str(user.id)
         seat = room.seats.index(raw_user) if raw_user in room.seats else None
         if seat is not None:
@@ -181,13 +191,15 @@ class MahjongRepositoryMixin:
                     ready=room.ready[index],
                     online=bool(last_seen) and (now - datetime.fromisoformat(last_seen)).total_seconds() < 30,
                 )
+        creator = session.get(ClubPlayerRecord, room.creator_id)
         view = {
             "id": str(room.id),
             "short_id": room.short_id,
+            "creator_name": creator.display_name if creator else "玩家",
             "room_type": room.room_type,
             "match_mode": room.match_mode,
-            "buy_in": BUY_IN if room.room_type == "coin" else 0,
-            "prizes": list(PRIZES) if room.room_type == "coin" else [0, 0, 0, 0],
+            "buy_in": room.stake,
+            "prizes": [room.stake * 4, 0, 0, 0] if room.room_type == "coin" else [0, 0, 0, 0],
             "phase": room.phase,
             "version": room.version,
             "seat": seat,
@@ -198,8 +210,6 @@ class MahjongRepositoryMixin:
             "messages": self._mahjong_messages(session, room.id),
             "settlement": room.settlement,
         }
-        if seat is not None and room.phase == "waiting":
-            view["code"] = room.code
         state = room.state
         if state is None:
             return view
@@ -242,14 +252,14 @@ class MahjongRepositoryMixin:
         with self.transaction():
             with self._session() as session:
                 room = self._mahjong_room(session, room_id)
-                user = self._mahjong_employee(session, platform_id)
+                user = self._club_player(session, platform_id, now)
                 self._settle_mahjong_deadline(session, room, now)
                 return self._mahjong_view(session, room, user, now)
 
     def list_mahjong_rooms(self, platform_id: str, now: datetime) -> list[dict]:
         with self.transaction():
             with self._session() as session:
-                user = self._mahjong_employee(session, platform_id)
+                user = self._club_player(session, platform_id, now)
                 rooms = session.scalars(
                     select(Room)
                     .where(Room.phase.in_(("waiting", "playing", "hand_finished")))
@@ -263,10 +273,13 @@ class MahjongRepositoryMixin:
                     if room.phase not in {"waiting", "playing", "hand_finished"} or not self._mahjong_announced(session, room):
                         continue
                     players = self._mahjong_names(session, room.seats)
+                    creator = session.get(ClubPlayerRecord, room.creator_id)
                     result.append({
                         "id": str(room.id),
                         "short_id": room.short_id,
+                        "creator_name": creator.display_name if creator else "玩家",
                         "room_type": room.room_type,
+                        "stake": room.stake,
                         "match_mode": room.match_mode,
                         "phase": room.phase,
                         "occupied": sum(value is not None for value in room.seats),
@@ -275,7 +288,7 @@ class MahjongRepositoryMixin:
                     })
                 return result
 
-    def _receipt(self, session, room: Room, user: UserRecord, request_id: UUID, digest: str):
+    def _receipt(self, session, room: Room, user: ClubPlayerRecord, request_id: UUID, digest: str):
         previous = session.scalar(
             select(Receipt).where(
                 Receipt.room_id == room.id,
@@ -304,7 +317,7 @@ class MahjongRepositoryMixin:
         with self.transaction():
             with self._session() as session:
                 room = self._mahjong_room(session, room_id)
-                user = self._mahjong_employee(session, platform_id, lock=True)
+                user = self._club_player(session, platform_id, now, lock=True)
                 self._settle_mahjong_deadline(session, room, now)
                 previous = self._receipt(session, room, user, request_id, digest)
                 if previous is not None:
@@ -334,25 +347,24 @@ class MahjongRepositoryMixin:
                 session.flush()
                 return self._mahjong_view(session, room, user, now)
 
-    def _mahjong_waiting_action(self, session, room: Room, user: UserRecord, action: str, payload: dict, now: datetime) -> None:
+    def _mahjong_waiting_action(self, session, room: Room, user: ClubPlayerRecord, action: str, payload: dict, now: datetime) -> None:
         raw_user = str(user.id)
         seat = room.seats.index(raw_user) if raw_user in room.seats else None
         if action == "claim":
             if seat is not None:
                 return
-            if payload.get("code") != room.code or room.deadline is None or now >= room.deadline:
-                raise ValueError("入座码无效或已过期")
-            if not self._mahjong_announced(session, room):
-                raise ValueError("邀请消息尚未送达")
+            if room.deadline is None or now >= room.deadline:
+                raise ValueError("房间已过期")
             try:
                 seat = room.seats.index(None)
             except ValueError as error:
                 raise ValueError("房间已满") from error
             if room.room_type == "coin":
-                if user.balance < BUY_IN:
-                    raise ValueError(f"余额不足，需要{BUY_IN}摸鱼币")
+                account = self._mahjong_account(session, user, lock=True)
+                if account.balance < room.stake:
+                    raise ValueError(f"余额不足，需要{room.stake}摸鱼币")
                 self._apply_balance_change(
-                    user, -BUY_IN, "mahjong_buy_in", now,
+                    account, -room.stake, "mahjong_buy_in", now,
                     memo=f"麻将房间 {room.short_id} 入场托管",
                 )
             seats, escrowed = list(room.seats), list(room.escrowed)
@@ -394,10 +406,11 @@ class MahjongRepositoryMixin:
     def _refund_mahjong_seat(self, session, room: Room, seat: int, now: datetime, reason: str) -> None:
         if not room.escrowed[seat] or room.seats[seat] is None:
             return
-        user = session.get(UserRecord, UUID(room.seats[seat]), with_for_update=True)
+        player = session.get(ClubPlayerRecord, UUID(room.seats[seat]))
+        user = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
         if user is not None:
             self._apply_balance_change(
-                user, BUY_IN, "mahjong_refund", now,
+                user, room.stake, "mahjong_refund", now,
                 memo=f"麻将房间 {room.short_id}：{reason}",
             )
 
@@ -411,22 +424,32 @@ class MahjongRepositoryMixin:
             return
         order = room.state["result"]["order"]
         payouts = [0, 0, 0, 0]
+        top_score = max(room.state["points"])
+        winner_seats = [seat for seat in order if room.state["points"][seat] == top_score]
         if room.room_type == "coin":
             if not all(room.escrowed):
                 raise RuntimeError("麻将奖池托管不完整")
-            for place, seat in enumerate(order):
-                user = session.get(UserRecord, UUID(room.seats[seat]), with_for_update=True)
+            pot = room.stake * 4
+            for winner_index, seat in enumerate(winner_seats):
+                player = session.get(ClubPlayerRecord, UUID(room.seats[seat]))
+                user = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
                 if user is None:
                     raise RuntimeError("麻将结算玩家不存在")
-                payout = PRIZES[place]
+                payout = pot // len(winner_seats) + (1 if winner_index < pot % len(winner_seats) else 0)
                 payouts[seat] = payout
                 self._apply_balance_change(
                     user, payout, "mahjong_settlement", now,
-                    memo=f"麻将房间 {room.short_id} 第{place + 1}名",
+                    memo=f"麻将房间 {room.short_id} 胜方结算",
                 )
         room.escrowed = [False, False, False, False]
         room.settled = True
-        room.settlement = {"order": order, "payouts": payouts, "points": room.state["points"]}
+        room.settlement = {
+            "order": order,
+            "payouts": payouts,
+            "points": room.state["points"],
+            "winner_seats": winner_seats,
+            "outcomes": ["win" if seat in winner_seats else "loss" for seat in range(4)],
+        }
         room.phase = "match_finished"
         room.deadline = None
 
@@ -437,7 +460,7 @@ class MahjongRepositoryMixin:
         with self.transaction():
             with self._session() as session:
                 room = self._mahjong_room(session, room_id)
-                user = self._mahjong_employee(session, platform_id)
+                user = self._club_player(session, platform_id, now)
                 previous = session.scalar(select(Message).where(
                     Message.room_id == room.id, Message.user_id == user.id, Message.request_id == request_id,
                 ))

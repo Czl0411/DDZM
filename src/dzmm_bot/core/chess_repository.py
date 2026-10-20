@@ -9,19 +9,25 @@ from .chess_rules import (
     ChessMove, ChessPosition, ChessViolation, IllegalChessMove, adjudicate_repetition,
     basic_outcome, checked_king, initial_position, play_move,
 )
-from .schema import ChessGameRecord, ChessMessageRecord, ChessMoveRecord, GroupChatRecord, InboundRecord, OutboundRecord, UserRecord
+from .schema import ClubPlayerRecord, ChessGameRecord, ChessMessageRecord, ChessMoveRecord, GroupChatRecord, InboundRecord, OutboundRecord, UserRecord
+
+
+COIN_STAKES = {5, 10, 20}
 
 
 @dataclass(frozen=True)
 class ChessGameView:
     id: UUID
-    group_chat_id: UUID
-    inbound_message_id: UUID
+    group_chat_id: UUID | None
+    inbound_message_id: UUID | None
     creator_platform_id: str
     opponent_platform_id: str | None
     red_platform_id: str | None
     black_platform_id: str | None
     code: str
+    room_type: str
+    stake: int
+    settlement: dict | None
     status: str
     created_at: datetime
     claim_deadline: datetime
@@ -49,8 +55,20 @@ class ChessRateLimitError(ValueError):
 
 
 class ChessRepositoryMixin:
+    @staticmethod
+    def _chess_account(session, player, *, lock=False):
+        if player.user_id is None:
+            raise ValueError("摸鱼币场仅限已入职员工")
+        query = select(UserRecord).where(UserRecord.id == player.user_id)
+        if lock:
+            query = query.with_for_update()
+        account = session.scalar(query)
+        if account is None:
+            raise ValueError("摸鱼币场仅限已入职员工")
+        return account
+
     def chess_inbound_id(self, group_chat_id: UUID, platform_message_id: str) -> UUID | None:
-        with self._session() as session:
+        with self.transaction(), self._session() as session:
             return session.scalar(select(InboundRecord.id).where(
                 InboundRecord.group_chat_id == group_chat_id,
                 InboundRecord.platform_message_id == platform_message_id,
@@ -67,13 +85,15 @@ class ChessRepositoryMixin:
 
     def _chess_view(self, session, row: ChessGameRecord) -> ChessGameView:
         def pid(user_id):
-            return session.get(UserRecord, user_id).platform_id if user_id else None
+            player = session.get(ClubPlayerRecord, user_id) if user_id else None
+            return player.platform_id if player else None
 
         return ChessGameView(
             id=row.id, group_chat_id=row.group_chat_id, inbound_message_id=row.inbound_message_id,
             creator_platform_id=pid(row.creator_user_id), opponent_platform_id=pid(row.opponent_user_id),
             red_platform_id=pid(row.red_user_id), black_platform_id=pid(row.black_user_id),
-            code=row.code, status=row.status, created_at=row.created_at, claim_deadline=row.claim_deadline,
+            code=row.code, room_type=row.room_type, stake=row.stake, settlement=row.settlement,
+            status=row.status, created_at=row.created_at, claim_deadline=row.claim_deadline,
             position=row.position, red_remaining_ms=row.red_remaining_ms,
             black_remaining_ms=row.black_remaining_ms, turn_started_at=row.turn_started_at,
             version=row.version, result=row.result, pending_offer=row.pending_offer,
@@ -100,24 +120,41 @@ class ChessRepositoryMixin:
                               check=checked_king(after) is not None)
 
     def create_chess_game(
-        self, creator_platform_id: str, group_chat_id: UUID, inbound_id: UUID, now: datetime
+        self, creator_platform_id: str, group_chat_id: UUID | None = None,
+        inbound_id: UUID | None = None, now: datetime | None = None, *,
+        room_type: str = "casual", stake: int = 0,
     ) -> ChessGameView:
-        with self._session() as session:
-            creator = session.scalar(select(UserRecord).where(UserRecord.platform_id == creator_platform_id))
-            group = session.get(GroupChatRecord, group_chat_id)
-            inbound = session.get(InboundRecord, inbound_id)
-            if creator is None:
-                raise ValueError("只有已入职用户可以发起象棋")
-            if group is None or not group.listening_enabled or inbound is None or inbound.group_chat_id != group_chat_id or inbound.sender_platform_id != creator_platform_id:
-                raise ValueError("群聊或入站消息不可用")
+        if room_type not in {"casual", "coin"}:
+            raise ValueError("房间类型无效")
+        if room_type == "casual":
+            stake = 0
+        elif stake not in COIN_STAKES:
+            raise ValueError("摸鱼币场仅支持 5、10、20 币")
+        with self.transaction(), self._session() as session:
+            creator = self._club_player(session, creator_platform_id, now, lock=True)
+            if group_chat_id is not None:
+                group = session.get(GroupChatRecord, group_chat_id)
+                inbound = session.get(InboundRecord, inbound_id)
+                if group is None or not group.listening_enabled or inbound is None or inbound.group_chat_id != group_chat_id or inbound.sender_platform_id != creator_platform_id:
+                    raise ValueError("群聊或入站消息不可用")
+            account = None
+            if room_type == "coin":
+                account = self._chess_account(session, creator, lock=True)
+                if account.balance < stake:
+                    raise ValueError(f"余额不足，需要{stake}摸鱼币")
             row = ChessGameRecord(
                 group_chat_id=group_chat_id, inbound_message_id=inbound_id,
                 creator_user_id=creator.id, code=f"{randbelow(10000):04d}",
+                room_type=room_type, stake=stake,
+                escrowed=[room_type == "coin", False], settled=False,
                 status="waiting", created_at=now, claim_deadline=now + timedelta(minutes=10),
                 red_remaining_ms=900000, black_remaining_ms=900000, version=0,
             )
             session.add(row)
             session.flush()
+            if account is not None:
+                self._apply_balance_change(account, -stake, "chess_buy_in", now,
+                                           memo=f"象棋房间 {row.id} 入场托管")
             return self._chess_view(session, row)
 
     def get_chess_game(self, game_id: UUID) -> ChessGameView:
@@ -130,49 +167,56 @@ class ChessRepositoryMixin:
     def list_chess_rooms(self, now: datetime) -> list[dict]:
         with self._session() as session:
             rows = session.execute(
-                select(ChessGameRecord, UserRecord.display_name)
-                .join(UserRecord, UserRecord.id == ChessGameRecord.creator_user_id)
+                select(ChessGameRecord, ClubPlayerRecord.display_name)
+                .join(ClubPlayerRecord, ClubPlayerRecord.id == ChessGameRecord.creator_user_id)
                 .where(
                     (ChessGameRecord.status == "playing")
                     | ((ChessGameRecord.status == "waiting") & (ChessGameRecord.claim_deadline > now)),
-                    select(OutboundRecord.id).where(
-                        OutboundRecord.inbound_message_id == ChessGameRecord.inbound_message_id,
-                        OutboundRecord.content_type == "text",
-                        OutboundRecord.status == "sent",
-                    ).exists(),
+                    (ChessGameRecord.inbound_message_id.is_(None))
+                    | select(OutboundRecord.id).where(
+                            OutboundRecord.inbound_message_id == ChessGameRecord.inbound_message_id,
+                            OutboundRecord.content_type == "text",
+                            OutboundRecord.status == "sent",
+                        ).exists(),
                 )
                 .order_by(ChessGameRecord.created_at.desc())
             ).all()
-            return [{"id": str(row.id), "creator_name": name, "status": row.status} for row, name in rows]
+            return [{"id": str(row.id), "creator_name": name, "status": row.status,
+                     "room_type": row.room_type, "stake": row.stake} for row, name in rows]
 
     def claim_chess_seat(
-        self, game_id: UUID, platform_id: str, code: str, now: datetime
+        self, game_id: UUID, platform_id: str, code: str | None, now: datetime
     ) -> ChessClaimResult:
-        with self._session() as session:
+        with self.transaction(), self._session() as session:
             row = session.get(ChessGameRecord, game_id)
             if row is None:
                 return ChessClaimResult("not_found")
-            user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
-            if user is None:
-                return ChessClaimResult("not_joined")
+            user = self._club_player(session, platform_id, now, lock=True)
             if row.status != "waiting":
                 return ChessClaimResult("occupied", self._chess_view(session, row))
             if user.id == row.creator_user_id:
                 return ChessClaimResult("same_player")
             if now >= row.claim_deadline:
                 return ChessClaimResult("expired")
-            if code != row.code:
+            if row.inbound_message_id is not None and code != row.code:
                 return ChessClaimResult("invalid_code")
-            sent = session.scalar(
-                select(OutboundRecord.id).where(
-                    OutboundRecord.inbound_message_id == row.inbound_message_id,
-                    OutboundRecord.group_chat_id == row.group_chat_id,
-                    OutboundRecord.status == "sent",
-                    OutboundRecord.content_type == "text",
-                ).limit(1)
-            )
-            if sent is None:
-                return ChessClaimResult("not_announced")
+            if row.inbound_message_id is not None:
+                sent = session.scalar(
+                    select(OutboundRecord.id).where(
+                        OutboundRecord.inbound_message_id == row.inbound_message_id,
+                        OutboundRecord.group_chat_id == row.group_chat_id,
+                        OutboundRecord.status == "sent",
+                        OutboundRecord.content_type == "text",
+                    ).limit(1)
+                )
+                if sent is None:
+                    return ChessClaimResult("not_announced")
+            if row.room_type == "coin":
+                account = self._chess_account(session, user, lock=True)
+                if account.balance < row.stake:
+                    return ChessClaimResult("insufficient_balance")
+                self._apply_balance_change(account, -row.stake, "chess_buy_in", now,
+                                           memo=f"象棋房间 {row.id} 入场托管")
             creator_red = randbelow(2) == 0
             values = {
                 "opponent_user_id": user.id,
@@ -180,6 +224,7 @@ class ChessRepositoryMixin:
                 "black_user_id": user.id if creator_red else row.creator_user_id,
                 "status": "playing", "turn_started_at": now, "version": 1,
                 "position": self._position_data(initial_position()),
+                "escrowed": [row.room_type == "coin", row.room_type == "coin"],
                 "code": "",  # Used code is never usable again.
             }
             result = session.execute(
@@ -194,6 +239,8 @@ class ChessRepositoryMixin:
 
     @staticmethod
     def _chess_notice(session, row: ChessGameRecord, text: str) -> None:
+        if row.group_chat_id is None:
+            return
         group = session.get(GroupChatRecord, row.group_chat_id)
         if group is None or group.chatroom_id is None:
             return
@@ -201,6 +248,55 @@ class ChessRepositoryMixin:
             group_chat_id=row.group_chat_id, destination_chatroom_id=group.chatroom_id,
             delivery_key=group.chatroom_id, delivery_kind="group", text=text,
         ))
+
+    def _refund_chess_room(self, session, row, now, reason):
+        if row.room_type != "coin":
+            return
+        escrowed = list(row.escrowed or [False, False])
+        player_ids = [row.creator_user_id, row.opponent_user_id]
+        for index, held in enumerate(escrowed):
+            if not held or player_ids[index] is None:
+                continue
+            player = session.get(ClubPlayerRecord, player_ids[index])
+            account = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
+            if account is not None:
+                self._apply_balance_change(
+                    account, row.stake, "chess_refund", now,
+                    memo=f"象棋房间 {row.id}：{reason}",
+                )
+            escrowed[index] = False
+        row.escrowed = escrowed
+
+    def _settle_chess_room(self, session, row, result, now):
+        if row.settled:
+            return
+        winner, _ = result.split(":", 1)
+        payouts = {"red": 0, "black": 0}
+        outcomes = {"red": "draw", "black": "draw"}
+        if row.room_type == "coin":
+            if not all(row.escrowed):
+                raise RuntimeError("象棋奖池托管不完整")
+            if winner == "draw":
+                self._refund_chess_room(session, row, now, "和棋退还")
+                payouts = {"red": row.stake, "black": row.stake}
+            else:
+                player_id = row.red_user_id if winner == "red" else row.black_user_id
+                player = session.get(ClubPlayerRecord, player_id)
+                account = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
+                if account is None:
+                    raise RuntimeError("象棋结算玩家不存在")
+                payout = row.stake * 2
+                payouts[winner] = payout
+                self._apply_balance_change(
+                    account, payout, "chess_settlement", now,
+                    memo=f"象棋房间 {row.id} 胜方结算",
+                )
+                row.escrowed = [False, False]
+        if winner != "draw":
+            loser = "black" if winner == "red" else "red"
+            outcomes = {winner: "win", loser: "loss"}
+        row.settled = True
+        row.settlement = {"winner": winner, "payouts": payouts, "outcomes": outcomes}
 
     def _finish_chess(self, session, row: ChessGameRecord, result: str, now: datetime) -> None:
         if row.status != "playing":
@@ -214,10 +310,11 @@ class ChessRepositoryMixin:
         row.pending_offer = None
         row.offer_user_id = None
         row.version += 1
+        self._settle_chess_room(session, row, result, now)
         session.execute(delete(ChessMessageRecord).where(ChessMessageRecord.game_id == row.id))
         names = {
-            "red": session.get(UserRecord, row.red_user_id).display_name,
-            "black": session.get(UserRecord, row.black_user_id).display_name,
+            "red": session.get(ClubPlayerRecord, row.red_user_id).display_name,
+            "black": session.get(ClubPlayerRecord, row.black_user_id).display_name,
         }
         winner, reason = result.split(":", 1)
         sides = {"red": "红方", "black": "黑方"}
@@ -258,7 +355,7 @@ class ChessRepositoryMixin:
         self, game_id: UUID, platform_id: str, from_xy: tuple[int, int],
         to_xy: tuple[int, int], expected_version: int, now: datetime,
     ) -> ChessGameView:
-        with self._session() as session:
+        with self.transaction(), self._session() as session:
             row = session.scalar(select(ChessGameRecord).where(ChessGameRecord.id == game_id).with_for_update())
             if row is None or row.status != "playing":
                 raise ValueError("棋局未在进行")
@@ -267,7 +364,7 @@ class ChessRepositoryMixin:
             if row.version != expected_version:
                 raise ValueError("棋局版本已变化")
             position = self._position(row.position)
-            user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
+            user = self._club_player(session, platform_id, now)
             current_user_id = row.red_user_id if position.turn == "red" else row.black_user_id
             if user is None or user.id != current_user_id:
                 raise ValueError("现在不是你的回合")
@@ -320,7 +417,7 @@ class ChessRepositoryMixin:
         valid = {"offer_undo", "accept_undo", "decline_undo", "offer_draw", "accept_draw", "decline_draw", "resign"}
         if action not in valid:
             raise ValueError("未知的象棋操作")
-        with self._session() as session:
+        with self.transaction(), self._session() as session:
             row = session.scalar(select(ChessGameRecord).where(ChessGameRecord.id == game_id).with_for_update())
             if row is None or row.status != "playing":
                 raise ValueError("棋局未在进行")
@@ -328,7 +425,7 @@ class ChessRepositoryMixin:
                 return self._chess_view(session, row)
             if row.version != expected_version:
                 raise ValueError("棋局版本已变化")
-            user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
+            user = self._club_player(session, platform_id, now)
             if user is None or user.id not in {row.red_user_id, row.black_user_id}:
                 raise ValueError("只有棋手能执行此操作")
             color = "red" if user.id == row.red_user_id else "black"
@@ -378,6 +475,7 @@ class ChessRepositoryMixin:
 
     def _advance_chess_row(self, session, row: ChessGameRecord, now: datetime) -> bool:
         if row.status == "waiting" and now >= row.claim_deadline:
+            self._refund_chess_room(session, row, now, "等待超时")
             row.status = "cancelled"
             row.version += 1
             sent = session.scalar(select(OutboundRecord.id).where(
@@ -390,13 +488,13 @@ class ChessRepositoryMixin:
         return self._timeout_chess(session, row, now)
 
     def settle_chess_deadline(self, game_id: UUID, now: datetime) -> None:
-        with self._session() as session:
+        with self.transaction(), self._session() as session:
             row = session.scalar(select(ChessGameRecord).where(ChessGameRecord.id == game_id).with_for_update())
             if row is not None:
                 self._advance_chess_row(session, row, now)
 
     def advance_chess_deadlines(self, now: datetime) -> int:
-        with self._session() as session:
+        with self.transaction(), self._session() as session:
             rows = session.scalars(
                 select(ChessGameRecord).where(ChessGameRecord.status.in_(("waiting", "playing"))).with_for_update()
             ).all()
@@ -413,7 +511,7 @@ class ChessRepositoryMixin:
                 .order_by(ChessMessageRecord.created_at, ChessMessageRecord.id)
             ).all()
             return [
-                {"id": str(item.id), "sender": session.get(UserRecord, item.user_id).display_name,
+                {"id": str(item.id), "sender": session.get(ClubPlayerRecord, item.user_id).display_name,
                  "text": item.content, "created_at": item.created_at.isoformat()}
                 for item in records
             ]
@@ -437,8 +535,8 @@ class ChessRepositoryMixin:
             raise ValueError("聊天内容须为 1～300 字纯文字")
         with self._session() as session:
             game = session.scalar(select(ChessGameRecord).where(ChessGameRecord.id == game_id).with_for_update())
-            user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
-            if game is None or user is None or game.status not in ("waiting", "playing"):
+            user = self._club_player(session, platform_id, now)
+            if game is None or game.status not in ("waiting", "playing"):
                 raise ValueError("当前不可发送聊天")
             last = session.scalar(
                 select(ChessMessageRecord.created_at)

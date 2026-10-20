@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
+from .club_repository import ClubRateLimitError
 from .mahjong_repository import MahjongRateLimitError
 
 
@@ -16,6 +17,7 @@ class CreateRoomPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: UUID
     room_type: Literal["casual", "coin"] = "coin"
+    stake: Literal[0, 5, 10, 20] = 10
     match_mode: Literal["east", "south"] = "east"
 
 
@@ -37,6 +39,24 @@ class ChatPayload(BaseModel):
     text: str = Field(min_length=1, max_length=300)
 
 
+class SessionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, max_length=64)
+    avatar_url: str | None = Field(default=None, max_length=2048)
+
+
+class FriendPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    player_id: UUID
+
+
+class TaskPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_key: Literal[
+        "employment", "checkin", "random_event", "five_rounds", "activity", "dark_market"
+    ]
+
+
 def _uid(authorization: str | None) -> str:
     if not authorization or not authorization.startswith("ClubUid "):
         raise HTTPException(401, "无法读取玩家身份")
@@ -49,7 +69,7 @@ def _uid(authorization: str | None) -> str:
 def _call(function, *args, **kwargs):
     try:
         return function(*args, **kwargs)
-    except MahjongRateLimitError as error:
+    except (MahjongRateLimitError, ClubRateLimitError) as error:
         raise HTTPException(429, str(error)) from error
     except ValueError as error:
         raise HTTPException(409, str(error)) from error
@@ -86,8 +106,94 @@ def club_router(repository, clock):
             _uid(authorization),
             clock(),
             room_type=body.room_type,
+            stake=body.stake,
             match_mode=body.match_mode,
             request_id=body.request_id,
+        )
+
+    @router.post("/session")
+    def session(body: SessionPayload, authorization: str | None = Header(None)):
+        return _call(
+            repository.ensure_club_player,
+            _uid(authorization),
+            clock(),
+            display_name=body.name,
+            avatar_url=body.avatar_url,
+        )
+
+    @router.get("/profile")
+    def profile(authorization: str | None = Header(None)):
+        return _call(repository.club_profile, _uid(authorization), clock())
+
+    @router.get("/channel")
+    def channel(authorization: str | None = Header(None)):
+        return _call(repository.club_public_messages, _uid(authorization), clock())
+
+    @router.post("/channel")
+    def send_channel(body: ChatPayload, authorization: str | None = Header(None)):
+        return _call(
+            repository.send_club_public_message,
+            _uid(authorization),
+            body.text,
+            clock(),
+        )
+
+    @router.get("/friends")
+    def friends(authorization: str | None = Header(None)):
+        return _call(repository.club_friends, _uid(authorization), clock())
+
+    @router.post("/friends")
+    def request_friend(body: FriendPayload, authorization: str | None = Header(None)):
+        return _call(
+            repository.request_club_friend,
+            _uid(authorization),
+            body.player_id,
+            clock(),
+        )
+
+    @router.post("/friends/{request_id}/accept")
+    def accept_friend(request_id: UUID, authorization: str | None = Header(None)):
+        return _call(
+            repository.accept_club_friend,
+            _uid(authorization),
+            request_id,
+            clock(),
+        )
+
+    @router.get("/friends/{player_id}/messages")
+    def direct_messages(player_id: UUID, authorization: str | None = Header(None)):
+        return _call(
+            repository.club_direct_messages,
+            _uid(authorization),
+            player_id,
+            clock(),
+        )
+
+    @router.post("/friends/{player_id}/messages")
+    def send_direct_message(
+        player_id: UUID,
+        body: ChatPayload,
+        authorization: str | None = Header(None),
+    ):
+        return _call(
+            repository.send_club_direct_message,
+            _uid(authorization),
+            player_id,
+            body.text,
+            clock(),
+        )
+
+    @router.get("/tasks")
+    def tasks(authorization: str | None = Header(None)):
+        return _call(repository.club_tasks, _uid(authorization), clock())
+
+    @router.post("/tasks/claim")
+    def claim_task(body: TaskPayload, authorization: str | None = Header(None)):
+        return _call(
+            repository.claim_club_task,
+            _uid(authorization),
+            body.task_key,
+            clock(),
         )
 
     @router.get("/mahjong/rooms/{room_id}")
@@ -97,7 +203,7 @@ def club_router(repository, clock):
     @router.post("/mahjong/rooms/{room_id}/actions")
     def action(room_id: UUID, body: ActionPayload, authorization: str | None = Header(None)):
         expected = {
-            "claim": {"code"},
+            "claim": set(),
             "discard": {"tile"},
             "riichi": {"tile"},
             "chi": {"tiles"},

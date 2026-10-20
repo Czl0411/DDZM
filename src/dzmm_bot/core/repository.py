@@ -116,6 +116,7 @@ from .chess_repository import ChessRepositoryMixin
 from .doudizhu_repository import DoudizhuRepositoryMixin
 from .drawguess_repository import DrawguessRepositoryMixin
 from .mahjong_repository import MahjongRepositoryMixin
+from .club_repository import ClubRepositoryMixin
 from .performance import (
     PERFORMANCE_ACTIVE_STATES,
     PerformanceActionResult,
@@ -3083,7 +3084,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
+class CoreRepository(ClubRepositoryMixin, MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],

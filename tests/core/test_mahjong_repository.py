@@ -45,9 +45,8 @@ def act(repo, room, uid, action, payload=None, now=NOW, request_id=None):
 def seated(mahjong, room_type="coin"):
     repo, _ = mahjong
     room = create(repo, room_type)
-    code = room["code"]
     for uid in ("alice", "bob", "carol"):
-        room = act(repo, room, uid, "claim", {"code": code})
+        room = act(repo, room, uid, "claim")
     for uid in ("host", "alice", "bob", "carol"):
         room = act(repo, room, uid, "ready")
     room = act(repo, room, "host", "start")
@@ -60,16 +59,14 @@ def test_coin_room_escrows_exactly_once_and_hides_private_hands(mahjong):
     room = create(repo, request_id=request_id)
     duplicate = create(repo, request_id=request_id)
     assert duplicate["id"] == room["id"]
-    assert balance(factory, "host") == 900
-    code = room["code"]
+    assert balance(factory, "host") == 990
     claim_id = uuid4()
-    room = act(repo, room, "alice", "claim", {"code": code}, request_id=claim_id)
+    room = act(repo, room, "alice", "claim", request_id=claim_id)
     repeated = repo.mahjong_action(
-        UUID(room["id"]), "alice", 0, claim_id, "claim", {"code": code}, NOW,
+        UUID(room["id"]), "alice", 0, claim_id, "claim", {}, NOW,
     )
     assert repeated["seat"] == 1
-    assert repeated["code"] == code
-    assert balance(factory, "alice") == 900
+    assert balance(factory, "alice") == 990
     viewer = repo.mahjong_view(UUID(room["id"]), "viewer", NOW)
     assert viewer["seat"] is None
     assert "code" not in viewer
@@ -78,8 +75,8 @@ def test_coin_room_escrows_exactly_once_and_hides_private_hands(mahjong):
 def test_waiting_leave_and_expiry_refund_coin_escrow(mahjong):
     repo, factory = mahjong
     room = create(repo)
-    room = act(repo, room, "alice", "claim", {"code": room["code"]})
-    assert balance(factory, "alice") == 900
+    room = act(repo, room, "alice", "claim")
+    assert balance(factory, "alice") == 990
     room = act(repo, room, "alice", "leave")
     assert balance(factory, "alice") == 1000
     assert room["players"][1] is None
@@ -97,7 +94,7 @@ def test_four_ready_players_start_authoritative_match(mahjong):
     assert viewer["game"]["hand_counts"] == [14, 13, 13, 13]
 
 
-def test_match_settlement_pays_fixed_zero_sum_prizes_once(mahjong):
+def test_match_settlement_pays_winner_the_zero_sum_pot_once(mahjong):
     repo, factory = mahjong
     room = seated(mahjong)
     from dzmm_bot.core.schema import MahjongRoomRecord
@@ -118,10 +115,11 @@ def test_match_settlement_pays_fixed_zero_sum_prizes_once(mahjong):
         row.deadline = NOW - timedelta(seconds=1)
     settled = repo.mahjong_view(UUID(room["id"]), "host", NOW)
     assert settled["phase"] == "match_finished"
-    assert settled["settlement"]["payouts"] == [200, 120, 60, 20]
-    assert [balance(factory, uid) for uid in ("host", "alice", "bob", "carol")] == [1100, 1020, 960, 920]
+    assert settled["settlement"]["payouts"] == [40, 0, 0, 0]
+    assert settled["settlement"]["outcomes"] == ["win", "loss", "loss", "loss"]
+    assert [balance(factory, uid) for uid in ("host", "alice", "bob", "carol")] == [1030, 990, 990, 990]
     repo.mahjong_view(UUID(room["id"]), "host", NOW + timedelta(minutes=1))
-    assert [balance(factory, uid) for uid in ("host", "alice", "bob", "carol")] == [1100, 1020, 960, 920]
+    assert [balance(factory, uid) for uid in ("host", "alice", "bob", "carol")] == [1030, 990, 990, 990]
 
 
 def test_casual_room_never_moves_balance(mahjong):

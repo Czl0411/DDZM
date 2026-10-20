@@ -2855,7 +2855,7 @@ function renderDepartmentAllowancePanel(settings) {
     </div>
     <div class="panel-heading"><div><h2>触发参数与封顶</h2></div></div>
     <div class="event-input-grid">
-      ${birthdayNumberField("allowance-game-step", "游戏参与计局步长（每 N 局发一次）", settings.game_play_step, 1, 999)}
+      ${birthdayNumberField("allowance-game-step", "游戏参与有效轮次步长（每 N 轮发一次）", settings.game_play_step, 1, 999)}
       ${birthdayNumberField("allowance-chat-percent", "水群掉落概率(%)", settings.chat_drop_percent, 0, 100)}
       ${birthdayNumberField("allowance-chat-cooldown", "水群掉落冷却（秒，0=不冷却）", settings.chat_drop_cooldown_seconds, 0, 86400)}
       ${birthdayNumberField("allowance-daily-cap", "每人每日津贴封顶", settings.daily_cap, 1, 9999)}

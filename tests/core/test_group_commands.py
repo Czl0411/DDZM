@@ -412,6 +412,10 @@ def test_king_game_group_command_flow():
         king = session.get(UserRecord, game.current_king_user_id)
     _group_receive(service, "reveal", king.platform_id, "/公开 1，2", now, "king-game")
     assert "第 1 轮公开" in _latest_reply(factory)
+    with factory() as session:
+        from dzmm_bot.core.schema import DepartmentGamePlayRecord
+
+        assert sorted(session.scalars(select(DepartmentGamePlayRecord.count))) == [1, 1, 1]
     _group_receive(service, "continue", "u2", "/继续", now, "king-game")
     assert "第 2 轮" in _latest_reply(factory)
 

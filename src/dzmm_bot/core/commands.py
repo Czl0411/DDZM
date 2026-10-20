@@ -3009,7 +3009,7 @@ class GroupCommandHandler:
             "event": f"参与随机事件/公演并正常完成额外 +{settings.event_amount} 摸鱼币",
             "game": (
                 f"开局小游戏 +{settings.game_host_amount}；"
-                f"每天参与满 {settings.game_play_step} 局 +{settings.game_play_amount}"
+                f"每完成 {settings.game_play_step} 个有效轮次 +{settings.game_play_amount}"
             ),
             "submission": f"随机事件投稿过审额外 +{settings.submission_amount} 摸鱼币",
             "chat": (

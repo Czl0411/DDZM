@@ -279,6 +279,13 @@ def test_liar_dice_full_flow():
     assert "全场骰子" in _latest_reply(factory)
     assert "获得发令权" in _latest_reply(factory)
     assert _dice_game(repository).state == "round_end"
+    from dzmm_bot.core.schema import DepartmentGamePlayRecord
+
+    with factory() as session:
+        assert sorted(session.scalars(select(DepartmentGamePlayRecord.count))) == [1, 1, 1]
+    _receive(service, "m8-repeat", seat2, "/开骰", now)
+    with factory() as session:
+        assert sorted(session.scalars(select(DepartmentGamePlayRecord.count))) == [1, 1, 1]
 
     _receive(service, "m9", "user-0", "/大话骰子数据", now)
     reply = _latest_reply(factory)
@@ -339,10 +346,10 @@ def test_liar_dice_full_flow():
             )
         )
     assert finished.state == "completed"
-    from dzmm_bot.core.schema import DepartmentGamePlayRecord, GameParticipationRecord, LiarDiceRoundRecord
+    from dzmm_bot.core.schema import GameParticipationRecord, LiarDiceRoundRecord
 
     with factory() as session:
-        assert sorted(session.scalars(select(DepartmentGamePlayRecord.count))) == [1, 1, 1]
+        assert sorted(session.scalars(select(DepartmentGamePlayRecord.count))) == [2, 3, 3]
         assert len(session.scalars(select(GameParticipationRecord)).all()) == 3
         snapshots = session.scalars(select(LiarDiceRoundRecord.dice_snapshot)).all()
         assert all(set(snapshot) <= {str(repository.find_user(f"user-{index}").id)

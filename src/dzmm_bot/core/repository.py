@@ -13829,6 +13829,12 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 round_record.revealed_numbers = selected
                 round_record.state = "revealed"
                 round_record.revealed_at = now
+                self._bump_department_game_rounds(
+                    session,
+                    [UUID(user_id) for user_id in round_record.number_map],
+                    now,
+                    group_chat_id=game.group_chat_id,
+                )
                 game.state = "revealed"
                 game.king_phase_deadline = None
                 return self._king_game_result_locked(session, game, "revealed")
@@ -14087,12 +14093,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         game.finished_at = now
         game.finish_reason = reason
         if state in {"completed", "forced_ended"}:
-            self._bump_department_game_plays(
-                session,
-                resolved_game_users(session, "king_game", game.id),
-                now,
-                group_chat_id=game.group_chat_id,
-                game_type="king_game", game_id=game.id,
+            record_game_participations(
+                session, "king_game", game.id, game.group_chat_id,
+                resolved_game_users(session, "king_game", game.id), now,
             )
 
     def _king_game_statistics_locked(
@@ -14274,12 +14277,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         game.finished_at = now
         game.finish_reason = reason
         if state in {"completed", "forced_ended"}:
-            self._bump_department_game_plays(
-                session,
-                resolved_game_users(session, "liar_dice", game.id),
-                now,
-                group_chat_id=game.group_chat_id,
-                game_type="liar_dice", game_id=game.id,
+            record_game_participations(
+                session, "liar_dice", game.id, game.group_chat_id,
+                resolved_game_users(session, "liar_dice", game.id), now,
             )
 
     def _liar_dice_result_locked(
@@ -14803,6 +14803,12 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 }
                 round_record.state = "resolved"
                 round_record.resolved_at = now
+                self._bump_department_game_rounds(
+                    session,
+                    [player.user_id for player, _ in players],
+                    now,
+                    group_chat_id=game.group_chat_id,
+                )
                 game.state = "round_end"
                 game.turn_deadline = None
                 lines = ["🎲 跳开！全场骰子：" if jump else "🎲 开牌！全场骰子："]
@@ -16333,6 +16339,12 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         game.state = "round_complete"
         game.phase_deadline = None
         game.settled_rounds += 1
+        self._bump_department_game_rounds(
+            session,
+            [player.user_id for player, _ in players],
+            now,
+            group_chat_id=game.group_chat_id,
+        )
         # 顺序发言下每人每轮固定一问一答，排行无意义，不再展示
         return (
             f"【真心换真心】第 {game.round_number} 轮结束。\n"
@@ -16373,12 +16385,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         game.finished_at = now
         game.finish_reason = reason
         if state == "finished":
-            self._bump_department_game_plays(
-                session,
-                truth_trade_game_users(session, game),
-                now,
-                group_chat_id=game.group_chat_id,
-                game_type="truth_trade", game_id=game.id,
+            record_game_participations(
+                session, "truth_trade", game.id, game.group_chat_id,
+                truth_trade_game_users(session, game), now,
             )
 
     def start_truth_trade(
@@ -18006,6 +18015,15 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             )
             session.add(response)
             responses[player.user_id] = response
+        eligible_user_ids = [
+            player.user_id
+            for player in players
+            if player.state == "active"
+            and (
+                player.user_id == round_record.speaker_user_id
+                or player.user_id in responses
+            )
+        ]
         for user_id, response in responses.items():
             player = by_user_id.get(user_id)
             if player is None or player.state != "active":
@@ -18019,6 +18037,12 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
                 player.elimination_reason = "response_deduct"
         round_record.state = "settled"
         round_record.settled_at = now
+        self._bump_department_game_rounds(
+            session,
+            eligible_user_ids,
+            now,
+            group_chat_id=game.group_chat_id,
+        )
         game.response_deadline = None
         if self._never_have_i_ever_reached_threshold(session, game):
             self._enter_never_have_i_ever_free_punishment_locked(game, now)
@@ -18272,12 +18296,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         game.finished_at = now
         game.finish_reason = reason
         if state in {"completed", "forced_ended"}:
-            self._bump_department_game_plays(
-                session,
-                other_game_users(session, "never_have_i_ever", game.id),
-                now,
-                group_chat_id=game.group_chat_id,
-                game_type="never_have_i_ever", game_id=game.id,
+            record_game_participations(
+                session, "never_have_i_ever", game.id, game.group_chat_id,
+                other_game_users(session, "never_have_i_ever", game.id), now,
             )
         for player in session.scalars(
             select(NeverHaveIEverPlayerRecord).where(
@@ -19132,6 +19153,16 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             )
 
         round_record.state = "settled"
+        self._bump_department_game_rounds(
+            session,
+            [
+                player.user_id
+                for player, _ in rows
+                if player.submitted_number is not None
+            ],
+            now,
+            group_chat_id=game.group_chat_id,
+        )
         game.state = "waiting_continue"
         game.next_reminder_at = None
         game.skip_enabled = False
@@ -19262,6 +19293,12 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         round_record.player_count = len(reported)
         round_record.state = "settled"
         round_record.finished_at = now
+        self._bump_department_game_rounds(
+            session,
+            [player.user_id for player, _, _ in reported],
+            now,
+            group_chat_id=game.group_chat_id,
+        )
         game.last_activity_at = now
         game.next_reminder_at = None
         game.skip_enabled = False
@@ -19754,12 +19791,9 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         game.finished_at = now
         game.finish_reason = reason
         if reason != "empty_signup":
-            self._bump_department_game_plays(
-                session,
-                other_game_users(session, "number_bomb", game.id),
-                now,
-                group_chat_id=game.group_chat_id,
-                game_type="number_bomb", game_id=game.id,
+            record_game_participations(
+                session, "number_bomb", game.id, game.group_chat_id,
+                other_game_users(session, "number_bomb", game.id), now,
             )
         collecting_round = session.scalar(
             select(NumberBombRoundRecord).where(
@@ -30034,7 +30068,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             ("演出奖励", event_amount, 0, 999),
             ("开局奖励", game_host_amount, 0, 999),
             ("游戏参与奖励", game_play_amount, 0, 999),
-            ("游戏参与计局步长", game_play_step, 1, 999),
+            ("游戏参与有效轮次步长", game_play_step, 1, 999),
             ("投稿奖励", submission_amount, 0, 999),
             ("水群掉落概率", chat_drop_percent, 0, 100),
             ("水群掉落金额", chat_drop_amount, 0, 999),
@@ -30526,7 +30560,7 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
         game_type: str | None = None,
         game_id: UUID | None = None,
     ) -> None:
-        """对局完成时给参与者计 1 局；每满步长局发 1 币（步长可配置）。"""
+        """单轮制游戏完成时记录整局参与，并累计一个有效轮次。"""
         if (game_type is None) != (game_id is None):
             raise ValueError("game_type and game_id must be provided together")
         if game_type is not None:
@@ -30535,13 +30569,25 @@ class CoreRepository(ShopManagementMixin, HonorsMixin):
             user_ids = record_game_participations(
                 session, game_type, game_id, group_chat_id, user_ids, now,
             )
+        self._bump_department_game_rounds(
+            session, user_ids, now, group_chat_id=group_chat_id,
+        )
+
+    def _bump_department_game_rounds(
+        self,
+        session: Session,
+        user_ids: Sequence[UUID],
+        now: datetime,
+        group_chat_id: UUID | None = None,
+    ) -> None:
+        """已完成的有效轮次立即累计；调用方必须处在唯一的轮次结算状态迁移中。"""
         if not user_ids:
             return
         allow_date = now.astimezone(BEIJING).date()
         settings_row = self._department_allowance_settings_row(session)
         step = max(1, int(settings_row.game_play_step))
         dialect_name = session.get_bind().dialect.name
-        for user_id in user_ids:
+        for user_id in dict.fromkeys(user_ids):
             values = {
                 "id": uuid4(),
                 "user_id": user_id,

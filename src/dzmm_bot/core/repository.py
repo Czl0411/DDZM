@@ -115,6 +115,7 @@ from .group_games import GROUP_GAME_TYPES, normalized_group_game_types
 from .chess_repository import ChessRepositoryMixin
 from .doudizhu_repository import DoudizhuRepositoryMixin
 from .drawguess_repository import DrawguessRepositoryMixin
+from .mahjong_repository import MahjongRepositoryMixin
 from .performance import (
     PERFORMANCE_ACTIVE_STATES,
     PerformanceActionResult,
@@ -631,6 +632,9 @@ _BALANCE_SOURCE_LABELS = {
     "discipline_fine": "风纪罚款",
     "discipline_fine_refund": "风纪罚款退款",
     "fine_kickback": "风纪执法抽成",
+    "mahjong_buy_in": "麻将入场托管",
+    "mahjong_refund": "麻将托管退款",
+    "mahjong_settlement": "麻将牌局结算",
 }
 # 风纪罚款执法者每日次数默认配额：按职级序（sort_order）取值；
 # rank_quotas 中显式配置的 rank_id 优先于该默认
@@ -2737,6 +2741,8 @@ _COMMAND_DEFINITIONS = (
     ("/象棋", "/象棋", "创建 H5 象棋对局，已入职群友可凭四位码先到先得入座"),
     ("/斗地主", "/斗地主", "创建三人 H5 斗地主，已入职群友凭四位码入座"),
     ("/你画我猜", "/你画我猜", "创建 3～8 人 H5 轮流作画猜词房间，已入职群友凭四位码入座"),
+    ("/club", "/club；/摸鱼Club", "打开统一 H5 游戏大厅"),
+    ("/麻将", "/麻将 [休闲|摸鱼币] [东风|半庄]", "创建四人经典立直麻将房间"),
     ("/q", "回复消息 /q", "花 1 摸鱼币将一条群聊消息记入对应员工的黑历史册"),
     ("/ban", "回复消息 /ban 原因", "由本群授权员工移除未入职成员（需二次确认）"),
     ("/是", "/是", "确认本群待处理的成员移除请求"),
@@ -3072,7 +3078,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository(DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
+class CoreRepository(MahjongRepositoryMixin, DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],

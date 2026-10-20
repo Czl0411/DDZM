@@ -20,6 +20,7 @@ dependencies = [
     "defusedxml>=0.7,<1",
     "PyJWT[crypto]>=2.8,<3",
     "opencc-python-reimplemented==0.1.7",
+    "mahjong==2.0.0",
 ]
 
 [project.optional-dependencies]

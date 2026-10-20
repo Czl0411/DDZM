@@ -2769,6 +2769,58 @@ class DrawguessMessageRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class MahjongRoomRecord(Base):
+    __tablename__ = "mahjong_rooms"
+    __table_args__ = (
+        UniqueConstraint("creator_id", "create_request_id", name="uq_mahjong_room_create_request"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    group_chat_id: Mapped[UUID | None] = mapped_column(ForeignKey("group_chats.id"))
+    inbound_id: Mapped[UUID | None] = mapped_column(ForeignKey("inbound_messages.id"), unique=True)
+    creator_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    create_request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    short_id: Mapped[str] = mapped_column(String(12), unique=True, nullable=False)
+    code: Mapped[str] = mapped_column(String(4), nullable=False, index=True)
+    room_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    match_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    seats: Mapped[list] = mapped_column(JSON, nullable=False)
+    ready: Mapped[list] = mapped_column(JSON, nullable=False)
+    escrowed: Mapped[list] = mapped_column(JSON, nullable=False)
+    presence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    state: Mapped[dict | None] = mapped_column(JSON)
+    phase: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    settled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    settlement: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime, index=True)
+
+
+class MahjongRequestRecord(Base):
+    __tablename__ = "mahjong_requests"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("mahjong_rooms.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
+class MahjongMessageRecord(Base):
+    __tablename__ = "mahjong_messages"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", "request_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("mahjong_rooms.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    content: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class ChessGameRecord(Base):
     __tablename__ = "chess_games"
 

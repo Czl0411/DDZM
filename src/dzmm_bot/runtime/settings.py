@@ -36,6 +36,10 @@ class Settings:
     drawguess_game_url: str | None = None
     drawguess_public_api_url: str | None = None
     drawguess_chatroom_id: str | None = None
+    club_game_id: str | None = None
+    club_game_url: str | None = None
+    club_public_api_url: str | None = None
+    club_chatroom_id: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -84,6 +88,10 @@ class Settings:
             drawguess_game_url=_optional("DZMM_DRAWGUESS_GAME_URL", empty_as_none=True),
             drawguess_public_api_url=_optional("DZMM_DRAWGUESS_PUBLIC_API_URL", empty_as_none=True),
             drawguess_chatroom_id=_optional("DZMM_DRAWGUESS_CHATROOM_ID", empty_as_none=True),
+            club_game_id=_optional("DZMM_CLUB_GAME_ID", empty_as_none=True),
+            club_game_url=_optional("DZMM_CLUB_GAME_URL", empty_as_none=True),
+            club_public_api_url=_optional("DZMM_CLUB_PUBLIC_API_URL", empty_as_none=True),
+            club_chatroom_id=_optional("DZMM_CLUB_CHATROOM_ID", empty_as_none=True),
         )
 
 

@@ -16,21 +16,29 @@
     </header>
     <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
 
-    <section id="club-home" class="screen scroll-screen">
-      <div class="hero"><span class="hero-label">TONIGHT'S CLUB</span><h1>今晚，开哪一桌？</h1><p>和群友下一盘、打一局，或者开桌麻将。</p></div>
-      <div class="section-head"><div><span>CLUB GAMES</span><h2>游戏大厅</h2></div><b>4 款</b></div>
-      <div id="game-grid" class="game-grid"></div>
+    <section id="club-home" class="screen club-home-screen">
+      <div class="club-home-layout">
+        <div class="hero"><span class="hero-label">TONIGHT'S CLUB</span><h1>今晚，开哪一桌？</h1><p>和群友下一盘、打一局，或者开桌麻将。</p></div>
+        <div class="game-panel">
+          <div class="section-head"><div><span>CLUB GAMES</span><h2>游戏大厅</h2></div><b>4 款</b></div>
+          <div id="game-grid" class="game-grid"></div>
+        </div>
+      </div>
     </section>
 
-    <section id="mahjong-lobby" class="screen scroll-screen" hidden>
+    <section id="mahjong-lobby" class="screen lobby-screen" hidden>
       <div class="page-title"><button id="club-back" class="icon-button" type="button">←</button><div><span>摸鱼 Club</span><h1>立直麻将</h1></div><button id="create-room" class="primary compact" type="button">开一桌</button></div>
-      <div class="mahjong-banner"><div><b>四人立直</b><p>经典日麻规则 · 东风战 / 半庄战</p></div><span>🀄</span></div>
-      <div class="section-head"><div><span>TABLES</span><h2>当前牌桌</h2></div><b id="room-count">0 桌</b></div>
-      <div id="rooms" class="room-list"></div>
+      <div class="mahjong-lobby-layout">
+        <div class="mahjong-banner"><div><span class="eyebrow">RIICHI MAHJONG</span><b>四人立直</b><p>经典日麻规则<br>东风战 / 半庄战</p></div><span>🀄</span></div>
+        <div class="room-panel">
+          <div class="section-head"><div><span>TABLES</span><h2>当前牌桌</h2></div><b id="room-count">0 桌</b></div>
+          <div id="rooms" class="room-list"></div>
+        </div>
+      </div>
     </section>
 
     <section id="table" class="screen table-screen" hidden>
-      <div class="table-head"><button id="lobby-back" class="icon-button" type="button">←</button><div><span id="round-label">候场</span><h2 id="table-title">牌桌</h2></div><div class="table-head-actions"><b id="timer">--</b><button id="chat-toggle" class="icon-button" type="button">聊</button></div></div>
+      <div class="table-head"><button id="lobby-back" class="icon-button" type="button" aria-label="返回麻将大厅">←</button><div><span id="round-label">候场</span><h2 id="table-title">牌桌</h2></div><div class="table-head-actions"><b id="timer">--</b><button id="fullscreen" class="icon-button" type="button" aria-label="进入全屏">全</button><button id="chat-toggle" class="icon-button" type="button">聊</button></div></div>
       <div id="waiting" class="waiting-card" hidden>
         <div class="waiting-meta"><span id="room-kind">休闲房</span><strong id="room-code">----</strong></div>
         <div id="seats" class="waiting-seats"></div>

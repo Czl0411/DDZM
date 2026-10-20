@@ -13,6 +13,42 @@ const resultNames = {tsumo: "自摸", ron: "荣和", "荒牌流局": "荒牌流�
 function feedback(text = "") { $("#feedback").textContent = text; }
 function show(selector, value = true) { $(selector).hidden = !value; }
 function markReady() { if (!bootReady) { bootReady = true; sdk?.loading?.ready?.(); } }
+function fullscreenElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+function updateFullscreenButton() {
+  const active = Boolean(fullscreenElement());
+  $("#fullscreen").textContent = active ? "退" : "全";
+  $("#fullscreen").setAttribute("aria-label", active ? "退出全屏" : "进入全屏");
+}
+async function enterFullscreen(silent = false) {
+  if (fullscreenElement()) return true;
+  const root = document.documentElement;
+  const request = root.requestFullscreen || root.webkitRequestFullscreen;
+  if (!request) {
+    if (!silent) feedback("当前浏览器不支持游戏内全屏，请使用平台顶部的全屏按钮");
+    return false;
+  }
+  try {
+    await request.call(root);
+    return true;
+  } catch (error) {
+    if (!silent) feedback("浏览器未允许全屏，请使用平台顶部的全屏按钮");
+    return false;
+  }
+}
+async function toggleFullscreen() {
+  if (!fullscreenElement()) return enterFullscreen();
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if (exit) {
+    try { await exit.call(document); } catch { feedback("无法退出全屏，请重试"); }
+  }
+}
+async function returnToLobby() {
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if (fullscreenElement() && exit) {
+    try { await exit.call(document); } catch {}
+  }
+  await openLobby();
+}
 function secondsLeft() {
   if (!room?.deadline) return null;
   const server = Date.parse(room.server_time) + (Date.now() - receivedAt);
@@ -74,14 +110,15 @@ function renderRooms() {
     const button = document.createElement("button"); button.className = "room-card"; button.type = "button";
     const icon = document.createElement("span"); icon.className = "room-icon"; icon.textContent = "🀄";
     const copy = document.createElement("div"); const title = document.createElement("strong"); title.textContent = `牌桌 ${item.short_id}`; const meta = document.createElement("small"); meta.textContent = `${item.room_type === "coin" ? "100 币" : "休闲"} · ${item.match_mode === "south" ? "半庄战" : "东风战"} · ${item.occupied}/4 人${item.mine ? " · 我已入座" : ""}`; copy.append(title, meta);
-    const phase = document.createElement("b"); phase.textContent = phaseNames[item.phase] || item.phase; button.append(icon, copy, phase); button.addEventListener("click", () => enterRoom(item.id)); list.append(button);
+    const phase = document.createElement("b"); phase.textContent = phaseNames[item.phase] || item.phase; button.append(icon, copy, phase); button.addEventListener("click", () => enterRoom(item.id, null, true)); list.append(button);
   }
 }
 async function createRoom() {
   feedback("正在创建牌桌…");
   try { const next = await client.create($("#room-type").value, $("#match-mode").value); $("#create-dialog").close(); await enterRoom(next.id, next); } catch (error) { feedback(error.message); }
 }
-async function enterRoom(roomId, initial = null) {
+async function enterRoom(roomId, initial = null, immersive = false) {
+  if (immersive) void enterFullscreen(true);
   stopFollow?.(); feedback("正在落座…");
   try {
     setRoom(initial || await client.snapshot(roomId)); show("#club-home", false); show("#mahjong-lobby", false); show("#table"); document.body.dataset.view = "table"; renderTable(); feedback();
@@ -165,9 +202,10 @@ async function shareRoom() {
 }
 function updateTimer() { const seconds = secondsLeft(); $("#timer").textContent = seconds === null ? "--" : `${seconds}s`; }
 
-$("#refresh").addEventListener("click", () => boot(true)); $("#home").addEventListener("click", openHome); $("#club-back").addEventListener("click", openHome); $("#lobby-back").addEventListener("click", openLobby);
-$("#create-room").addEventListener("click", () => $("#create-dialog").showModal()); $("#confirm-create").addEventListener("click", event => { event.preventDefault(); createRoom(); });
+$("#refresh").addEventListener("click", () => boot(true)); $("#home").addEventListener("click", openHome); $("#club-back").addEventListener("click", openHome); $("#lobby-back").addEventListener("click", returnToLobby);
+$("#create-room").addEventListener("click", () => $("#create-dialog").showModal()); $("#confirm-create").addEventListener("click", event => { event.preventDefault(); void enterFullscreen(true); createRoom(); });
 $("#claim").addEventListener("click", () => perform("claim", {code: $("#seat-code").value.trim()})); $("#ready").addEventListener("click", () => perform($("#ready").dataset.action || "ready")); $("#start").addEventListener("click", () => perform("start")); $("#leave").addEventListener("click", () => perform("leave"));
 $("#share-room").addEventListener("click", shareRoom);
+$("#fullscreen").addEventListener("click", toggleFullscreen); document.addEventListener("fullscreenchange", updateFullscreenButton); document.addEventListener("webkitfullscreenchange", updateFullscreenButton);
 $("#chat-toggle").addEventListener("click", () => show("#chat-drawer")); $("#chat-close").addEventListener("click", () => show("#chat-drawer", false)); $("#chat-send").addEventListener("click", sendChat); $("#chat-input").addEventListener("keydown", event => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); sendChat(); } });
-setInterval(updateTimer, 500); window.addEventListener("pagehide", () => client.dispose()); boot();
+setInterval(updateTimer, 500); window.addEventListener("pagehide", () => client.dispose()); updateFullscreenButton(); boot();

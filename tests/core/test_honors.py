@@ -580,15 +580,15 @@ def test_name_suffix_wear_cancel_expiry_and_direct_commands(context, wear_comman
 
     assert command("/我").splitlines()[0] == "糯糯"
     honors_text = command("/我的称号")
-    assert "最有魅力帅哥" in honors_text
+    assert "公司最靓的仔" in honors_text
     assert "有效至 2026-10-19 00:00" in honors_text
     assert "历史累计获得荣誉 1 次。" in honors_text
     assert "发送 /装备称号 序号 切换" in honors_text
     assert "已佩戴" in command("/佩戴称号 1")
-    assert command("/我").splitlines()[0] == "糯糯【荣誉称号：最有魅力帅哥】"
-    assert command("/me").splitlines()[0] == "糯糯【荣誉称号：最有魅力帅哥】"
+    assert command("/我").splitlines()[0] == "糯糯【荣誉称号：公司最靓的仔】"
+    assert command("/me").splitlines()[0] == "糯糯【荣誉称号：公司最靓的仔】"
     repository.edit_own_profile("male-1", "我的个人档案")
-    assert command("/我的档案").startswith("糯糯【荣誉称号：最有魅力帅哥】\n")
+    assert command("/我的档案").startswith("糯糯【荣誉称号：公司最靓的仔】\n")
     assert "序号无效" in command("/佩戴称号 9")
     assert "用法" in command("/佩戴称号 -1")
     service = CoreService(repository, handler)
@@ -815,7 +815,7 @@ def test_core_api_auth_validation_conflicts_and_employee_display(context):
     repository.wear_honor("male-1", 1, SETTLED)
     users = client.get("/internal/game/users", headers=headers).json()["items"]
     user = next(item for item in users if item["platform_id"] == "male-1")
-    assert user["honor_title"] == "最有魅力帅哥"
+    assert user["honor_title"] == "公司最靓的仔"
     assert client.get("/internal/game/users/missing/honors", headers=headers).status_code == 404
 
 
@@ -905,7 +905,7 @@ def test_scheduled_announcement_uses_settled_result_once_after_restart(context, 
         assert len(announcements) == 2
         assert "周一定时公告" not in announcements[0].text
         assert "周一定时公告" in announcements[1].text
-        assert "最有魅力帅哥：糯糯" in announcements[1].text
+        assert "公司最靓的仔：糯糯" in announcements[1].text
         assert session.scalar(select(func.count()).select_from(HonorAwardRecord).where(
             HonorAwardRecord.period_id == UUID(period["id"]))) == 29
 
@@ -1037,7 +1037,7 @@ def test_later_configuration_does_not_change_unsettled_previous_week(context):
     configure(repository, now=SETTLED, rules=rules)
     assert repository.preview_honors(WEEK, SETTLED)["preview_digest"] == before["preview_digest"]
     result = repository.settle_honors(WEEK, "admin", SETTLED)
-    assert award(result, "charm_m")["name"] == "最有魅力帅哥"
+    assert award(result, "charm_m")["name"] == "公司最靓的仔"
     assert award(result, "charm_m")["winner_name"] == "糯糯"
     later = repository.preview_honors(date(2026, 10, 19), SETTLED + timedelta(days=7))
     assert entry(later, "charm_m")["name"] == "新称号名称"

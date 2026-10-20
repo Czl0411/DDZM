@@ -92,10 +92,10 @@ const report = {week_start: "2026-10-05", config_version: 1, can_settle: true,
   assert.equal(node("#honor-settle-button").disabled, true);
   context.employeeProfileModal.dataset.platformId = "one";
   context.requestGame = async (path) => path.includes("/users/") ? {
-    name: "糯糯", user_id: "uuid-one", equipped: "最有魅力帅哥", items: [], history_counts: {charm_m: 1},
+    name: "糯糯", user_id: "uuid-one", equipped: "公司最靓的仔", items: [], history_counts: {charm_m: 1},
   } : {items: [{week_start: "2026-10-05", name: "<unsafe-title>", active: true}]};
   await vm.runInContext('loadEmployeeHonors("one")', context);
-  assert.equal(node("#employee-profile-modal-title").textContent, "编辑档案：糯糯【荣誉称号：最有魅力帅哥】");
+  assert.equal(node("#employee-profile-modal-title").textContent, "编辑档案：糯糯【荣誉称号：公司最靓的仔】");
   assert.ok(!node("#employee-honors-history").innerHTML.includes("<unsafe-title>"));
   let finishOld;
   context.requestGame = () => new Promise((done) => { finishOld = done; });

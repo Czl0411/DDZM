@@ -1,7 +1,7 @@
 """add club mahjong rooms
 
 Revision ID: 20261020_125
-Revises: 20261020_124
+Revises: 20261020_mr_archive
 """
 
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 
 revision = "20261020_125"
-down_revision = "20261020_124"
+down_revision = "20261020_mr_archive"
 branch_labels = None
 depends_on = None
 

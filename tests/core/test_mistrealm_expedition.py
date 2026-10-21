@@ -23,13 +23,20 @@ def test_draft_pools_and_pvp_isolation():
     assert r['phase']=='battle' and r['battle_step']=='wave' and len(r['deck'])==5
     assert not set(x.pool()) & set(x.CARDS)
     for f in x.FACTIONS:
+        faction_cards=[d for d in x.CARDS.values() if d['faction']==f]
+        assert len(faction_cards)==20
+        assert sum(d['type']=='unit' and not d['hero'] for d in faction_cards)==12
+        assert sum(d['hero'] for d in faction_cards)==4
+        assert sum(d['type']=='special' and not d['persistent'] for d in faction_cards)==1
+        assert sum(d['persistent'] for d in faction_cards)==1
+        assert sum(d['type']=='leader' for d in faction_cards)==2
         mixed=x.pool(f)
         assert len({x.CATALOGUE[c]['faction'] for c in mixed})==7
         assert all(x.CATALOGUE[c]['type']!='leader' for c in mixed)
         assert len(r['bosses'][f])==len(set(r['bosses'][f]))==3
     deck=deepcopy(STARTER_DECKS[0]);deck['counts']['xb01']=1
     with pytest.raises(ValueError,match='未知卡牌'):validate_deck(deck['faction'],deck['leader'],deck['counts'])
-    assert len(x.BASE_CARDS)==120 and len(x.CARDS)==48
+    assert len(x.BASE_CARDS)==120 and len(x.CARDS)==60
     assert all((Path('gamefy/mistrealm/publish/v3')/d['art']).is_file() for d in x.CARDS.values())
 
 
@@ -92,7 +99,7 @@ def test_shop_and_upgrade_preserve_card_identity_and_gold():
     assert definition(c)['power']==5 and x.CARDS['xb01']['power']==3
 
 
-@pytest.mark.parametrize('cid',list(x.CARDS))
+@pytest.mark.parametrize('cid',[cid for cid,d in x.CARDS.items() if d['type']!='leader'])
 def test_all_new_cards_have_legal_resolving_effects(cid):
     s=empty();s['mode']='expedition'
     # Give every targeting/revival/condition archetype a meaningful board.

@@ -1123,6 +1123,7 @@ class LiarDiceGameRecord(Base):
     turn_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     timeout_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     signup_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
+    dealing_deadline: Mapped[datetime | None] = mapped_column(BeijingDateTime)
     created_at: Mapped[datetime] = mapped_column(
         BeijingDateTime, default=beijing_now, nullable=False
     )

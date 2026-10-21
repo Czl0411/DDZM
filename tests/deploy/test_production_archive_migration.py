@@ -32,7 +32,7 @@ def test_equivalent_revision_preserves_existing_values(revision, other, directio
 
 def test_archive_has_one_head_and_both_previous_heads():
     scripts = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert scripts.get_heads() == ["20261020_mr_archive"]
+    assert scripts.get_heads() == ["20261022_mr_expedition"]
     assert scripts.get_revision("20261020_mr_archive").down_revision == (
         "20261020_124", "20261020_108"
     )

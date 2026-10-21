@@ -4529,6 +4529,13 @@ class MistrealmRequestRecord(Base):
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 
+class MistrealmExpeditionRecord(Base):
+    __tablename__ = "mistrealm_expeditions"
+    player_id: Mapped[UUID] = mapped_column(ForeignKey("mistrealm_players.id"), primary_key=True)
+    state: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class MistrealmStoryProgressRecord(Base):
     __tablename__ = "mistrealm_story_progress"
     player_id: Mapped[UUID] = mapped_column(

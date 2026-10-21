@@ -730,3 +730,43 @@ c090部署从弃牌区施放即时术的目标新增实体整场限次：每张�
 最终生产124归档：并行发布已将生产荣誉改名迁移推进至20261020_124，因此最终mr_archive父节点更新为生产124和main108，保留124→123的真实链。107/123的防重放判断同时识别其后继108/124；108/124的等价改名迁移也增加双向防重放。两组历史编号与父节点均保留，只有兼容判断新增。补充从后继节点升级及称号别名防重放回归，相关测试73项通过。迁移套件最终73 passed/56 failed，所有56项均是原main已有失败。
 
 重新备份当前生产124：database-124.dump及source-124.tar.gz保存在/var/backups/dzmm/archive-20261020，指纹见JSON。生产源码与安装目录逐字一致，候选仅有两个已验证的战绩兼容修复不同。以新备份重跑生产124→mr_archive、空库→mr_archive、main108→mr_archive全部通过；这次不需任何名称规范化，219张业务表、1,022,183行记录原始JSON摘要完全一致，main已有数据也完全一致。测试库已删除，四个线上服务active，未执行候选迁移或发布候选代码。
+
+
+## 2026-10-22 远征：本地首版（未部署）
+
+开发分支 `codex/mistrealm-expedition`，基于生产归档提交 `6498609`。正式部署前须先完成生产归档分支的审查与合并，不能只复制远征文件后跳过迁移依赖。
+
+### 已确认的玩法
+
+- 无领袖，开局从原五阵营与中立卡池连续进行五次三选一；排除所有领袖卡。
+- 每关单局定胜负。牌组跨关保留，开战时全部恢复、洗牌、抽五张；战斗内的伤害、阵亡与技能次数不带入下一关。
+- 顺序为白骨王庭、绯夜血裔、赤砂斗场；每个阵营三阶段，每阶段六个选择节点后接一个英雄Boss，共63节点。
+- 每阵营四名英雄随机取三名作为不同阶段Boss，同一次远征不重复。
+- 节点类型：普通、精英、商店、随机事件、强化。每次展示三个不同选项；第一节点无商店，商店后下一次选项无商店。Boss节点固定。
+- 赢得战斗后，从原五阵营＋中立＋当前敌方阵营的七类混池三选一。
+
+### 首版数值与实现边界
+
+- 48张新卡：每阵营8张普通单位、4张术卡、4张英雄。完整名称、战列、数值、效果在 `mistrealm_expedition_cards.py` 与游戏内“新阵营图鉴”。使用三幅原创SVG阵营纹章牌面，尚未制作48幅独立角色插画。
+- 初始20金币；普通/精英/Boss胜利分别获得10/18/25金币；商店买牌15金币、移除10金币，牌组至少保留5张。强化使所选单位实体基础战力永久＋2，仅本次远征有效。
+- 随机事件提供金币、卡牌、强化中的两种选择；非战斗节点不自动发放战斗奖励。失败、认输、平局结束本次远征，重新开始需确认。
+- 敌方牌组：随机6张普通单位与2张术卡，Boss额外加入本阶段英雄并保证开局入手。敌方单位基础强化＝阵营序号（从0开始）＋阶段序号整除2＋精英加1。该难度曲线为试玩初值，未宣称完成平衡。
+- 远征是单人PvE模式，仍通过现有服务端保存与结算，需要网络连接；不是离线本地运行。
+- 独立表 `mistrealm_expeditions` 按玩家UID保存一份当前进度；服务端锁定玩家记录并校验run_id/version，阻止跨账号读取、旧请求与重复领奖。
+- 普通组牌仍保持120张卡、20张牌组与原领袖校验；新卡不进入排位构筑，也不写排位积分、匹配统计或普通房间。
+
+### 迁移与验证
+
+新迁移 `20261022_mr_expedition` 继承归档合并头 `20261020_mr_archive`，只新增远征进度表；升级/回退已在独立SQLite测试库验证，旧玩家数据保持。
+
+验证命令：
+
+```sh
+PYTHONPATH=src python -m pytest tests/core/test_mistrealm_v3*.py tests/core/test_mistrealm_expedition*.py gamefy/mistrealm/tests/test_platform_build.py -q
+PYTHONPATH=src python -m pytest tests/deploy/test_expedition_migration.py tests/deploy/test_production_archive_migration.py -q
+node --test gamefy/mistrealm/tests/*.test.mjs
+PYTHONPATH=src python scripts/mistrealm_dev.py --port 18771
+PYTHONPATH=src python gamefy/mistrealm/tests/expedition_browser.py
+```
+
+本地预览入口 `http://127.0.0.1:18771/v3/?player=expedition-preview`，大厅点击“远征 · 三族试炼”。开发服务器使用临时SQLite数据库，关闭开发服务器后预览存档会清空；正式部署使用持久数据库。

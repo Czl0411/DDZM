@@ -118,6 +118,7 @@ from .drawguess_repository import DrawguessRepositoryMixin
 from .mistrealm_repository import MistrealmRepositoryMixin
 from .mahjong_repository import MahjongRepositoryMixin
 from .club_repository import ClubRepositoryMixin
+from .club_card_repository import ClubCardRepositoryMixin
 from .performance import (
     PERFORMANCE_ACTIVE_STATES,
     PerformanceActionResult,
@@ -709,6 +710,7 @@ _DEFAULT_RANDOM_EVENT_SIGNUP_NOTICE_TEMPLATE = (
     "可选身份：{可选身份}\n"
     "请使用 /加入 身份 报名，报名将在 {报名截止分钟} 分钟后截止。"
 )
+_LIAR_DICE_DEAL_TIMEOUT_SECONDS = 15
 _COMPANY_STORY_NOVEL_URL_PATTERN = re.compile(
     r"/novel/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
@@ -3085,7 +3087,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository(ClubRepositoryMixin, MahjongRepositoryMixin, MistrealmRepositoryMixin, DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
+class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongRepositoryMixin, MistrealmRepositoryMixin, DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -14413,6 +14415,9 @@ class CoreRepository(ClubRepositoryMixin, MahjongRepositoryMixin, MistrealmRepos
         game.current_seat = start_seat
         game.state = "dealing"
         game.turn_deadline = None
+        game.dealing_deadline = now + timedelta(
+            seconds=_LIAR_DICE_DEAL_TIMEOUT_SECONDS
+        )
         for player, user in players:
             player.dice = roll_dice(self._liar_dice_random)
             player.hand_delivery_state = "pending"
@@ -14456,11 +14461,20 @@ class CoreRepository(ClubRepositoryMixin, MahjongRepositoryMixin, MistrealmRepos
         )
         if int(pending or 0) != 0:
             return
+        self._start_liar_dice_calling_locked(session, game, now)
+
+    def _start_liar_dice_calling_locked(
+        self,
+        session: Session,
+        game: LiarDiceGameRecord,
+        now: datetime,
+    ) -> None:
         players = self._liar_dice_players(session, game.id, ("active",))
         round_record = self._liar_dice_current_round(session, game.id)
         if round_record is None:
             raise RuntimeError("大话骰子回合不存在")
         game.state = "calling"
+        game.dealing_deadline = None
         game.turn_deadline = now + timedelta(
             seconds=self._liar_dice_settings_row(
                 session, PRIMARY_GROUP_CHAT_ID
@@ -14483,6 +14497,17 @@ class CoreRepository(ClubRepositoryMixin, MahjongRepositoryMixin, MistrealmRepos
             f"{player.seat_number}号 {user.display_name}"
             for player, user in players
         )
+        failed_names = [
+            user.display_name
+            for player, user in players
+            if player.hand_delivery_state == "failed"
+        ]
+        if failed_names:
+            lines.append(
+                "⚠️ "
+                + "、".join(failed_names)
+                + " 的骰面私聊发送超时；牌局已继续，可在私聊发送 /看骰 补看。"
+            )
         lines.append(
             f"由 {game.current_seat}号 {first} 首叫：最少 {len(players)} 个，直接发送“N个X”；"
             "轮到自己质疑则发 /开骰，其他参与者可 /跳开 抢先质疑。超时将自动跳过。"
@@ -17206,6 +17231,52 @@ class CoreRepository(ClubRepositoryMixin, MahjongRepositoryMixin, MistrealmRepos
                             session, game, "cancelled", "signup_expired", now
                         )
                         messages.append("【大话骰子】报名超时，本局已自动取消。")
+                    return messages
+                if game.state == "dealing":
+                    if game.dealing_deadline is None:
+                        round_record = self._liar_dice_current_round(
+                            session, game.id
+                        )
+                        started_at = (
+                            now if round_record is None else round_record.started_at
+                        )
+                        game.dealing_deadline = started_at + timedelta(
+                            seconds=_LIAR_DICE_DEAL_TIMEOUT_SECONDS
+                        )
+                    if now < game.dealing_deadline:
+                        return messages
+                    pending_players = list(
+                        session.scalars(
+                            select(LiarDicePlayerRecord)
+                            .where(
+                                LiarDicePlayerRecord.game_id == game.id,
+                                LiarDicePlayerRecord.state == "active",
+                                LiarDicePlayerRecord.hand_delivery_state.in_(
+                                    (None, "pending")
+                                ),
+                            )
+                            .with_for_update()
+                        )
+                    )
+                    for player in pending_players:
+                        player.hand_delivery_state = "failed"
+                        if player.hand_outbound_id is None:
+                            continue
+                        outbound = session.get(
+                            OutboundRecord,
+                            player.hand_outbound_id,
+                            with_for_update=True,
+                        )
+                        if outbound is None or outbound.status not in {
+                            "pending",
+                            "leased",
+                        }:
+                            continue
+                        outbound.status = "failed"
+                        outbound.lease_worker_id = None
+                        outbound.lease_token = None
+                        outbound.lease_expires_at = None
+                    self._start_liar_dice_calling_locked(session, game, now)
                     return messages
                 if game.state != "calling" or game.turn_deadline is None:
                     return messages

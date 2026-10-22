@@ -26,6 +26,7 @@ from .schema import (
 
 
 COIN_STAKES = {5, 10, 20}
+ACTIVE_PHASES = ("waiting", "selecting", "drawing", "revealing")
 
 
 class DrawguessRateLimitError(ValueError):
@@ -115,6 +116,7 @@ class DrawguessRepositoryMixin:
                     raise ValueError("群聊或入站消息不可用")
             room = session.scalar(select(Room).where(Room.inbound_id == inbound_id)) if inbound_id else None
             if room is None:
+                self._ensure_club_player_available(session, user.id, now)
                 account = None
                 if room_type == "coin":
                     account = self._dg_account(session, user, lock=True)
@@ -297,12 +299,12 @@ class DrawguessRepositoryMixin:
     def list_drawguess_rooms(self, platform_id, now):
         with self.transaction(), self._session() as session:
             user = self._club_player(session, platform_id, now)
-            rooms = session.scalars(select(Room).where(Room.phase.notin_(("closed",)))
+            rooms = session.scalars(select(Room).where(Room.phase.in_(ACTIVE_PHASES))
                 .order_by(Room.created_at.desc()).limit(100)).all()
             result = []
             for room in rooms:
                 self._dg_advance(session, room, now)
-                if room.phase == "closed" or not self._dg_announced(session, room):
+                if room.phase not in ACTIVE_PHASES or not self._dg_announced(session, room):
                     continue
                 seats = room.state["seats"]
                 host = session.get(ClubPlayerRecord, room.creator_id)
@@ -374,6 +376,10 @@ class DrawguessRepositoryMixin:
                             raise ValueError("群消息尚未送达")
                         if room.inbound_id is not None and payload.get("code") != room.active_code:
                             raise ValueError("入座码错误")
+                        if user_id not in state["seats"]:
+                            self._ensure_club_player_available(
+                                session, user.id, now, exclude=("drawguess", room.id),
+                            )
                         if user_id not in state["seats"] and room.room_type == "coin":
                             account = self._dg_account(session, user, lock=True)
                             if account.balance < room.stake:

@@ -66,6 +66,7 @@ class DoudizhuRepositoryMixin:
                     raise ValueError('群聊或入站消息不可用')
             room = session.scalar(select(Room).where(Room.inbound_id == inbound_id)) if inbound_id else None
             if room is None:
+                self._ensure_club_player_available(session, user.id, now)
                 account = None
                 if room_type == 'coin':
                     account = self._ddz_account(session, user, lock=True)
@@ -250,6 +251,9 @@ class DoudizhuRepositoryMixin:
                         raise ValueError('群消息尚未送达')
                     if seat is not None or None not in seats:
                         raise ValueError('已入座或房间已满')
+                    self._ensure_club_player_available(
+                        session, user.id, now, exclude=('doudizhu', room.id),
+                    )
                     if room.inbound_id is not None and payload.get('code') != room.code:
                         raise ValueError('入座码错误')
                     next_seat = seats.index(None)

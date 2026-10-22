@@ -103,6 +103,7 @@ class MahjongRepositoryMixin:
                 )
                 if existing is not None:
                     return self._mahjong_view(session, existing, player, now)
+                self._ensure_club_player_available(session, player.id, now)
                 if group_chat_id is not None:
                     inbound = session.scalar(select(InboundRecord).where(InboundRecord.id == inbound_id).with_for_update())
                     group = session.get(GroupChatRecord, group_chat_id)
@@ -165,15 +166,15 @@ class MahjongRepositoryMixin:
 
     def _mahjong_messages(self, session, room_id: UUID) -> list[dict]:
         rows = session.execute(
-            select(Message, ClubPlayerRecord.display_name)
+            select(Message, ClubPlayerRecord)
             .join(ClubPlayerRecord, ClubPlayerRecord.id == Message.user_id)
             .where(Message.room_id == room_id)
             .order_by(Message.created_at.desc(), Message.id.desc())
             .limit(100)
         ).all()
         return [
-            {"id": str(message.id), "name": name, "text": message.content, "at": message.created_at.isoformat()}
-            for message, name in reversed(rows)
+            {"id": str(message.id), "name": player.display_name, "player": self._club_player_view(session, player), "text": message.content, "at": message.created_at.isoformat()}
+            for message, player in reversed(rows)
         ]
 
     def _mahjong_view(self, session, room: Room, user: ClubPlayerRecord, now: datetime) -> dict:
@@ -353,6 +354,9 @@ class MahjongRepositoryMixin:
         if action == "claim":
             if seat is not None:
                 return
+            self._ensure_club_player_available(
+                session, user.id, now, exclude=("mahjong", room.id),
+            )
             if room.deadline is None or now >= room.deadline:
                 raise ValueError("房间已过期")
             try:

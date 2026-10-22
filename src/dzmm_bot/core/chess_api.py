@@ -161,6 +161,10 @@ def chess_router(repository: CoreRepository, game_id: str, clock: Callable[[], d
                 await asyncio.sleep(1)
                 current = snapshot(room_id, pid)
 
-        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     return router

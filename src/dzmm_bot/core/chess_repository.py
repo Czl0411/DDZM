@@ -132,6 +132,7 @@ class ChessRepositoryMixin:
             raise ValueError("摸鱼币场仅支持 5、10、20 币")
         with self.transaction(), self._session() as session:
             creator = self._club_player(session, creator_platform_id, now, lock=True)
+            self._ensure_club_player_available(session, creator.id, now)
             if group_chat_id is not None:
                 group = session.get(GroupChatRecord, group_chat_id)
                 inbound = session.get(InboundRecord, inbound_id)
@@ -211,6 +212,9 @@ class ChessRepositoryMixin:
                 )
                 if sent is None:
                     return ChessClaimResult("not_announced")
+            self._ensure_club_player_available(
+                session, user.id, now, exclude=("chess", row.id),
+            )
             if row.room_type == "coin":
                 account = self._chess_account(session, user, lock=True)
                 if account.balance < row.stake:

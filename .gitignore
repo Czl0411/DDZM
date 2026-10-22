@@ -10,3 +10,5 @@ data/
 browser_profile/
 tmp_deploy_staging/
 output/imagegen/mistrealm-expedition/masters/
+outputs/mistrealm-3.19.0-release/
+gamefy/mistrealm/.dzmm/

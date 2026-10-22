@@ -36,6 +36,12 @@ class ChatPayload(BaseModel):
     text: str = Field(min_length=1, max_length=100)
 
 
+class CreateRoomPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    room_type: Literal["casual", "coin"] = "casual"
+    stake: Literal[0, 5, 10, 20] = 0
+
+
 async def room_events(repository, room_id, uid, after, clock, request):
     cursor = after
     last_version = None
@@ -78,19 +84,17 @@ async def room_events(repository, room_id, uid, after, clock, request):
 def drawguess_router(repository, clock):
     router = APIRouter(prefix="/api/drawguess")
 
-    def employee(authorization):
+    def player_uid(authorization):
         if not authorization or not authorization.startswith("DrawguessUid "):
             raise HTTPException(401, "无法读取玩家身份")
         uid = authorization[len("DrawguessUid "):]
         if not uid or len(uid) > 255 or any(char.isspace() for char in uid):
             raise HTTPException(401, "无法读取玩家身份")
-        if repository.find_user(uid) is None:
-            raise HTTPException(403, "请先入职")
         return uid
 
-    def call(function, *args):
+    def call(function, *args, **kwargs):
         try:
-            return function(*args)
+            return function(*args, **kwargs)
         except DrawguessRateLimitError as error:
             raise HTTPException(429, str(error)) from error
         except ValueError as error:
@@ -98,26 +102,35 @@ def drawguess_router(repository, clock):
 
     @router.get("/rooms")
     def rooms(authorization: str | None = Header(None)):
-        return call(repository.list_drawguess_rooms, employee(authorization), clock())
+        return call(repository.list_drawguess_rooms, player_uid(authorization), clock())
+
+    @router.post("/rooms")
+    def create_room(body: CreateRoomPayload, authorization: str | None = Header(None)):
+        return call(
+            repository.create_drawguess_room,
+            player_uid(authorization), None, None, clock(),
+            room_type=body.room_type, stake=body.stake,
+        )
 
     @router.get("/rooms/{room_id}")
     def snapshot(room_id: UUID, authorization: str | None = Header(None)):
-        return call(repository.drawguess_view, room_id, employee(authorization), clock())
+        return call(repository.drawguess_view, room_id, player_uid(authorization), clock())
 
     @router.post("/rooms/{room_id}/actions")
     def action(room_id: UUID, body: ActionPayload, authorization: str | None = Header(None)):
-        fields = {"claim": {"code"}, "choose": {"word_id"}, "guess": {"text"}}.get(body.action, set())
-        if set(body.payload) != fields:
+        fields = {"choose": {"word_id"}, "guess": {"text"}}.get(body.action, set())
+        valid = set(body.payload) in (set(), {"code"}) if body.action == "claim" else set(body.payload) == fields
+        if not valid:
             raise HTTPException(422, "操作参数不正确")
         return call(
-            repository.drawguess_action, room_id, employee(authorization), body.turn_id,
+            repository.drawguess_action, room_id, player_uid(authorization), body.turn_id,
             body.version, body.request_id, body.action, body.payload, clock(),
         )
 
     @router.post("/rooms/{room_id}/strokes")
     def strokes(room_id: UUID, body: StrokePayload, authorization: str | None = Header(None)):
         return call(
-            repository.drawguess_strokes, room_id, employee(authorization), body.turn_id,
+            repository.drawguess_strokes, room_id, player_uid(authorization), body.turn_id,
             body.request_id, body.operations, clock(),
         )
 
@@ -126,14 +139,14 @@ def drawguess_router(repository, clock):
         if not body.text.strip():
             raise HTTPException(422, "请输入消息")
         return call(
-            repository.drawguess_chat, room_id, employee(authorization), body.turn_id,
+            repository.drawguess_chat, room_id, player_uid(authorization), body.turn_id,
             body.request_id, body.text, clock(),
         )
 
     @router.get("/rooms/{room_id}/events")
     async def events(room_id: UUID, request: Request, after: int = Query(0, ge=0),
                      authorization: str | None = Header(None)):
-        uid = employee(authorization)
+        uid = player_uid(authorization)
         await asyncio.to_thread(call, repository.drawguess_view, room_id, uid, clock())
         return StreamingResponse(
             room_events(repository, room_id, uid, after, clock, request),

@@ -74,6 +74,7 @@ _COMMANDS.add("/随机事件时间表")
 _COMMANDS.add("/象棋")
 _COMMANDS.add("/斗地主")
 _COMMANDS.add("/你画我猜")
+_COMMANDS.update({"/club", "/摸鱼Club", "/麻将"})
 _COMMANDS.add("/q")
 _COMMANDS.update({"/黑历史", "/删除黑历史", "/下一页"})
 _COMMANDS.update({"/ban", "/是"})
@@ -127,6 +128,8 @@ class GroupCommandHandler:
         doudizhu_public_api_url: str | None = None, doudizhu_chatroom_id: str | None = None,
         drawguess_game_id: str | None = None, drawguess_game_url: str | None = None,
         drawguess_public_api_url: str | None = None, drawguess_chatroom_id: str | None = None,
+        club_game_id: str | None = None, club_game_url: str | None = None,
+        club_public_api_url: str | None = None, club_chatroom_id: str | None = None,
     ) -> None:
         self._repository = repository
         self._chess_game_id = chess_game_id
@@ -141,6 +144,10 @@ class GroupCommandHandler:
         self._drawguess_game_url = drawguess_game_url
         self._drawguess_public_api_url = drawguess_public_api_url
         self._drawguess_chatroom_id = drawguess_chatroom_id
+        self._club_game_id = club_game_id
+        self._club_game_url = club_game_url
+        self._club_public_api_url = club_public_api_url
+        self._club_chatroom_id = club_chatroom_id
 
     def handle(self, message: InboundMessage) -> str | list[str] | None:
         content = canonicalize_command_content(message.content).strip()
@@ -173,6 +180,8 @@ class GroupCommandHandler:
             command = "/人气榜"
         if command == "/我的发情值":
             command = "/我的凿"
+        if command == "/摸鱼Club":
+            command = "/club"
         if command not in _COMMANDS:
             dice_reply = self._liar_dice_call_step(message, content)
             if dice_reply is not None:
@@ -200,69 +209,24 @@ class GroupCommandHandler:
             else None
         )
         group_chat_id = None if group is None else group.id
-        if command == "/你画我猜":
-            if group_chat_id is None:
-                return "请在已监听的群聊发送 /你画我猜。"
-            if not self._drawguess_chatroom_id or message.chatroom_id != self._drawguess_chatroom_id:
-                return "你画我猜暂未在本群开放。"
-            if self._repository.find_user(message.sender_platform_id) is None:
-                return "请先用 /入职 名称 加入摸鱼公司。"
-            if not self._drawguess_game_id or not all(
+        if command in {"/club", "/麻将", "/你画我猜", "/斗地主", "/象棋"}:
+            if not self._club_game_id or not all(
                 url and urlsplit(url).scheme == "https"
-                for url in (self._drawguess_game_url, self._drawguess_public_api_url)
+                for url in (self._club_game_url, self._club_public_api_url)
             ):
-                return "你画我猜入口尚未配置完成。"
-            inbound_id = self._repository.chess_inbound_id(group_chat_id, message.platform_message_id)
-            if inbound_id is None:
-                raise RuntimeError("你画我猜发起消息尚未入站")
-            room = self._repository.create_drawguess_room(
-                message.sender_platform_id, group_chat_id, inbound_id, received_at,
-            )
+                return "摸鱼 Club 入口尚未配置完成。"
+            labels = {
+                "/club": "四款游戏",
+                "/麻将": "摸鱼麻将",
+                "/象棋": "群聊象棋",
+                "/斗地主": "斗地主",
+                "/你画我猜": "你画我猜",
+            }
             return [
-                CommandReply(self._drawguess_game_id, content_type="character"),
+                CommandReply(self._club_game_id, content_type="character"),
                 CommandReply(
-                    f"🎨 你画我猜房间已创建 · {room['short_id']}\n"
-                    f"入座码：{room['code']}（10 分钟有效）\n"
-                    "打开上方游戏卡片，3～8 人已入职群友输入入座码加入；全员准备后由房主开始，中途进入可观战。"
-                ),
-            ]
-        if command == "/斗地主":
-            if group_chat_id is None:
-                return "请在已监听的群聊发送 /斗地主。"
-            if not self._doudizhu_chatroom_id or message.chatroom_id != self._doudizhu_chatroom_id:
-                return "斗地主暂未在本群开放。"
-            if self._repository.find_user(message.sender_platform_id) is None:
-                return "请先用 /入职 名称 加入摸鱼公司。"
-            if not self._doudizhu_game_id or not all(url and urlsplit(url).scheme == 'https' for url in (self._doudizhu_game_url, self._doudizhu_public_api_url)):
-                return "斗地主入口尚未配置完成。"
-            inbound_id = self._repository.chess_inbound_id(group_chat_id, message.platform_message_id)
-            if inbound_id is None:
-                raise RuntimeError("斗地主发起消息尚未入站")
-            room = self._repository.create_doudizhu_room(message.sender_platform_id, group_chat_id, inbound_id, received_at)
-            return [CommandReply(self._doudizhu_game_id, content_type='character'), CommandReply(
-                f"🃏 斗地主房间已创建 · {room['short_id']}\n入座码：{room['code']}（10 分钟有效）\n"
-                "打开上方游戏卡片，选择对应房间。另两位已入职群友输入入座码，先到先得；三人准备后开局，其余群友可观战。")]
-        if command == "/象棋":
-            if group_chat_id is None:
-                return "请在已监听的群聊发送 /象棋。"
-            if self._chess_test_chatroom_id and message.chatroom_id != self._chess_test_chatroom_id:
-                return "象棋目前仅在测试群开放。"
-            if self._repository.find_user(message.sender_platform_id) is None:
-                return "请先用 /入职 名称 加入摸鱼公司。"
-            url = self._chess_game_url
-            if not self._chess_game_id or not url or not self._chess_public_api_url or urlsplit(url).scheme != "https" or urlsplit(self._chess_public_api_url).scheme != "https":
-                return "象棋入口尚未配置完成。"
-            inbound_id = self._repository.chess_inbound_id(group_chat_id, message.platform_message_id)
-            if inbound_id is None:
-                raise RuntimeError("象棋发起消息尚未入站")
-            game = self._repository.create_chess_game(message.sender_platform_id, group_chat_id, inbound_id, received_at)
-            return [
-                CommandReply(self._chess_game_id, content_type="character"),
-                CommandReply(
-                    f"♟ 象棋对局已创建 · {str(game.id)[:8]}\n"
-                    f"入座码：{game.code}（10 分钟有效）\n"
-                    "打开上方象棋卡片，选择对应编号的棋局。\n"
-                    "另一位已入职群友输入入座码先输入先得；其余已入职群友可直接观战。"
+                    f"🎮 摸鱼 Club 已打开 · {labels[command]}\n"
+                    "打开上方卡片后选择游戏和牌桌。休闲场可直接加入；已入职员工还可参加摸鱼币场。"
                 ),
             ]
         if command in {"/ban", "/是"}:
@@ -5604,15 +5568,22 @@ class GroupCommandHandler:
             ),
             "象棋": (
                 "【象棋】",
-                (("/象棋", "/象棋：在群里创建可并行的 H5 对局；第二位棋手凭 4 位码抢座，其他人可观战"),),
+                (("/象棋", "/象棋：分享摸鱼 Club，在大厅创建或加入象棋对局"),),
             ),
             "斗地主": (
                 "【斗地主】",
-                (("/斗地主", "/斗地主：创建三人 H5 牌局；凭 4 位码入座，三人准备后开局，可观战"),),
+                (("/斗地主", "/斗地主：分享摸鱼 Club，在大厅创建或加入三人牌局"),),
             ),
             "你画我猜": (
                 "【你画我猜】",
-                (("/你画我猜", "/你画我猜：创建 3～8 人轮流作画猜词房间；凭 4 位码入座，可观战"),),
+                (("/你画我猜", "/你画我猜：分享摸鱼 Club，在大厅创建或加入 3～8 人房间"),),
+            ),
+            "摸鱼Club": (
+                "【摸鱼 Club】",
+                (
+                    ("/club", "/club：打开统一游戏大厅，可选择已接入的 H5 游戏"),
+                    ("/麻将", "/麻将：分享摸鱼 Club；在大厅选择休闲场或 5/10/20 摸鱼币场"),
+                ),
             ),
             "大话骰子": (
                 "【大话骰子】",
@@ -5790,6 +5761,7 @@ class GroupCommandHandler:
                     "象棋",
                     "斗地主",
                     "你画我猜",
+                    "摸鱼Club",
                     "我有你没有",
                     "真心换真心",
                     "暗网交易所",

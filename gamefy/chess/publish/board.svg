@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1000">
+<defs><linearGradient id="wood" x2="1" y2="1"><stop stop-color="#f3dcb0"/><stop offset="1" stop-color="#dfba7e"/></linearGradient></defs>
+<rect width="900" height="1000" rx="12" fill="url(#wood)"/>
+<g fill="none" stroke="#795332" stroke-width="2"><rect x="40" y="40" width="820" height="920" stroke-width="3"/>
+<path d="M50 50H850V950H50Z M50 150H850 M50 250H850 M50 350H850 M50 450H850 M50 550H850 M50 650H850 M50 750H850 M50 850H850 M150 50V450 M250 50V450 M350 50V450 M450 50V450 M550 50V450 M650 50V450 M750 50V450 M150 550V950 M250 550V950 M350 550V950 M450 550V950 M550 550V950 M650 550V950 M750 550V950 M350 50L550 250 M550 50L350 250 M350 750L550 950 M550 750L350 950"/></g>
+<g fill="#795332" font-family="STKaiti, KaiTi, serif" font-size="43" letter-spacing="25" text-anchor="middle"><text x="250" y="515">楚河</text><text x="650" y="515">汉界</text></g></svg>

@@ -31,6 +31,7 @@ def test_pr6_migrations_merge_into_deployed_main_chain_without_second_head():
     assert script.get_revision("20261013_107").down_revision == (
         "20261013_106", "20261013_102"
     )
+    assert script.get_revision("20261021_126").down_revision == "20261020_125"
 
 
 def test_pr5_backfill_preserves_live_economy_settings(monkeypatch):

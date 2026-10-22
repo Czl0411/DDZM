@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>群聊象棋</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./config.js"></script>
+  <script type="module" src="./game.js"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="game-header"><div class="brand"><span class="seal">棋</span><div><h1>群聊象棋</h1><small>以棋会友 · 落子有声</small></div></div><a class="club-link" href="../../index.html">返回 Club</a><p id="status">正在连接棋局…</p></header>
+    <section id="lobby" class="lobby" hidden>
+      <div class="lobby-hero"><span class="eyebrow">CHINESE CHESS</span><h2>一局好棋，等你落子</h2><p>直接开房，第二位玩家先到先得，其他人可观战。</p><div class="create-strip"><button type="button" data-create-room="casual" data-stake="0">休闲局</button><button type="button" data-create-room="coin" data-stake="5">5 币场</button><button type="button" data-create-room="coin" data-stake="10">10 币场</button><button type="button" data-create-room="coin" data-stake="20">20 币场</button></div></div>
+      <div class="lobby-panel"><div class="section-heading"><div><span class="eyebrow">OPEN TABLES</span><h2>当前棋局</h2></div><button id="refresh-rooms" type="button">刷新棋局</button></div><div id="rooms"></div></div>
+    </section>
+    <section class="layout">
+      <div class="table board-stage">
+        <div class="table-toolbar"><button id="back-to-rooms" type="button">‹ 棋局列表</button><div class="step-clock">本步 <b id="move-clock">60</b> 秒</div></div>
+        <div id="players" class="sr-only">红方 · 黑方</div>
+        <div id="black-player" class="player"><span class="avatar black">將</span><div class="player-info"><small id="black-side">黑方</small><strong id="black-name">等待入座</strong></div><b id="black-clock" class="clock">15:00</b></div>
+        <div id="board" aria-label="中国象棋棋盘"></div>
+        <div id="move-notice" role="status" hidden></div>
+        <section id="result" role="status" hidden><strong id="result-title"></strong><span id="result-reason"></span></section>
+        <div id="red-player" class="player"><span class="avatar red">帥</span><div class="player-info"><small id="red-side">红方</small><strong id="red-name">等待入座</strong></div><b id="red-clock" class="clock">15:00</b></div>
+        <div id="claim-panel" hidden><span>空位先到先得</span><button id="claim-seat" type="button">抢第二席</button></div>
+        <p id="feedback" role="status"></p>
+        <div id="actions" hidden><button data-action="offer_undo">请求悔棋</button><button data-action="offer_draw">求和</button><button data-action="resign">认输</button></div>
+        <div id="respond" hidden><span id="offer-label"></span><button data-action="accept_undo">同意悔棋</button><button data-action="decline_undo">拒绝悔棋</button><button data-action="accept_draw">同意和棋</button><button data-action="decline_draw">拒绝和棋</button></div>
+      </div>
+      <aside class="side-panel"><details class="moves" open><summary>着法与对局记录</summary><div id="moves-list"></div></details><div class="chat-heading"><h2>棋桌闲聊</h2><small>棋手与观众均可发言</small></div><div id="chat-list" aria-live="polite"></div><div id="chat-form"><input id="chat-input" aria-label="聊天内容" maxlength="300" placeholder="聊聊这盘棋…"><button id="chat-send" type="button">发送</button></div></aside>
+    </section>
+  </main>
+</body>
+</html>

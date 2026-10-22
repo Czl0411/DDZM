@@ -1,0 +1,37 @@
+[
+  {
+    "revision": "1792490158269",
+    "deployedAt": "2026-10-20T09:54:56.240Z",
+    "label": "摸鱼 Club 首版",
+    "gitHead": "a5472f1"
+  },
+  {
+    "revision": "1792491428177",
+    "deployedAt": "2026-10-20T10:16:06.302Z",
+    "label": "横屏沉浸版",
+    "gitHead": "0833e1f"
+  },
+  {
+    "revision": "1792492343799",
+    "deployedAt": "2026-10-20T10:31:22.731Z",
+    "label": "Club 美术升级版",
+    "gitHead": "5ef7e97"
+  },
+  {
+    "revision": "1792492926390",
+    "deployedAt": "2026-10-20T10:41:05.287Z",
+    "label": "麻将牌桌 UI 升级版",
+    "gitHead": "1f4081a"
+  },
+  {
+    "revision": "1792519131263",
+    "deployedAt": "2026-10-20T17:57:50.278Z",
+    "gitHead": "cf54ef1"
+  },
+  {
+    "revision": "1792528691183",
+    "deployedAt": "2026-10-20T20:37:12.966Z",
+    "label": "Club 全功能整合版",
+    "gitHead": "abe0143"
+  }
+]

@@ -12,8 +12,8 @@ from tests.core.test_drawguess_repository import NOW, game
 
 def service(repo, **changes):
     config = dict(
-        drawguess_game_id="draw-card", drawguess_game_url="https://www.aikda.com/chat?card=draw-card",
-        drawguess_public_api_url="https://api.example.com", drawguess_chatroom_id="drawguess",
+        club_game_id="draw-card", club_game_url="https://www.aikda.com/chat?card=draw-card",
+        club_public_api_url="https://api.example.com",
     )
     config.update(changes)
     return CoreService(repo, GroupCommandHandler(repo, **config))
@@ -32,16 +32,16 @@ def test_command_shares_character_card_then_text(game):
     with factory() as session:
         rooms = session.scalars(select(DrawguessRoomRecord)).all()
         messages = session.scalars(select(OutboundRecord).order_by(OutboundRecord.created_at, OutboundRecord.reply_index)).all()
-    assert len(rooms) == 1
+    assert rooms == []
     assert [message.content_type for message in messages] == ["character", "text"]
     assert messages[0].text == "draw-card"
-    assert "入座码" in messages[1].text and "3～8 人" in messages[1].text
+    assert "你画我猜" in messages[1].text and "选择游戏和牌桌" in messages[1].text
     assert "https://" not in messages[1].text
 
 
-def test_command_requires_config_employee_and_exact_group(game):
+def test_command_requires_config_but_allows_guests_and_other_monitored_groups(game):
     repo, factory, _ = game
-    send(service(repo, drawguess_game_id=None))
+    send(service(repo, club_game_id=None))
     send(service(repo), uid="unknown", number=2)
     repo.create_group_chat("其他群", "https://www.aikda.com/chat?c=other", True, True, False, False, NOW)
     send(service(repo), group="other", number=3)

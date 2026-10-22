@@ -13,6 +13,7 @@ from sqlalchemy import delete, select
 from .drawguess_state import advance, apply_action, new_state
 from .drawguess_words import WORDS, word_matches
 from .schema import (
+    ClubPlayerRecord,
     DrawguessEventRecord as Event,
     DrawguessMessageRecord as Message,
     DrawguessRequestRecord as Receipt,
@@ -22,6 +23,9 @@ from .schema import (
     OutboundRecord,
     UserRecord,
 )
+
+
+COIN_STAKES = {5, 10, 20}
 
 
 class DrawguessRateLimitError(ValueError):
@@ -36,12 +40,15 @@ class DrawguessRepositoryMixin:
         return int(now.timestamp() * 1000)
 
     @staticmethod
-    def _dg_employee(session, platform_id):
-        if not isinstance(platform_id, str) or not platform_id or len(platform_id) > 255 or any(char.isspace() for char in platform_id):
-            raise ValueError("无法读取玩家身份")
-        user = session.scalar(select(UserRecord).where(UserRecord.platform_id == platform_id))
+    def _dg_account(session, player, *, lock=False):
+        if player.user_id is None:
+            raise ValueError("摸鱼币场仅限已入职员工")
+        query = select(UserRecord).where(UserRecord.id == player.user_id)
+        if lock:
+            query = query.with_for_update()
+        user = session.scalar(query)
         if user is None:
-            raise ValueError("请先入职")
+            raise ValueError("摸鱼币场仅限已入职员工")
         return user
 
     @staticmethod
@@ -53,6 +60,8 @@ class DrawguessRepositoryMixin:
 
     @staticmethod
     def _dg_announced(session, room):
+        if room.inbound_id is None:
+            return True
         return session.scalar(select(OutboundRecord.id).where(
             OutboundRecord.inbound_message_id == room.inbound_id,
             OutboundRecord.group_chat_id == room.group_chat_id,
@@ -88,26 +97,45 @@ class DrawguessRepositoryMixin:
                 return code
         raise ValueError("暂时无法生成入座码")
 
-    def create_drawguess_room(self, platform_id, group_chat_id, inbound_id, now):
-        with self._session() as session:
-            user = self._dg_employee(session, platform_id)
-            inbound = session.scalar(select(InboundRecord).where(InboundRecord.id == inbound_id).with_for_update())
-            group = session.get(GroupChatRecord, group_chat_id)
-            if (not inbound or inbound.group_chat_id != group_chat_id or
-                    inbound.sender_platform_id != platform_id or not group or not group.listening_enabled):
-                raise ValueError("群聊或入站消息不可用")
-            room = session.scalar(select(Room).where(Room.inbound_id == inbound_id))
+    def create_drawguess_room(self, platform_id, group_chat_id=None, inbound_id=None, now=None, *, room_type="casual", stake=0):
+        if room_type not in {"casual", "coin"}:
+            raise ValueError("房间类型无效")
+        if room_type == "casual":
+            stake = 0
+        elif stake not in COIN_STAKES:
+            raise ValueError("摸鱼币场仅支持 5、10、20 币")
+        with self.transaction():
+          with self._session() as session:
+            user = self._club_player(session, platform_id, now, lock=True)
+            if group_chat_id is not None:
+                inbound = session.scalar(select(InboundRecord).where(InboundRecord.id == inbound_id).with_for_update())
+                group = session.get(GroupChatRecord, group_chat_id)
+                if (not inbound or inbound.group_chat_id != group_chat_id or
+                        inbound.sender_platform_id != platform_id or not group or not group.listening_enabled):
+                    raise ValueError("群聊或入站消息不可用")
+            room = session.scalar(select(Room).where(Room.inbound_id == inbound_id)) if inbound_id else None
             if room is None:
+                account = None
+                if room_type == "coin":
+                    account = self._dg_account(session, user, lock=True)
+                    if account.balance < stake:
+                        raise ValueError(f"余额不足，需要{stake}摸鱼币")
                 state = new_state(str(user.id), self._dg_ms(now))
                 room = Room(
                     group_chat_id=group_chat_id, inbound_id=inbound_id, creator_id=user.id,
                     short_id=uuid4().hex[:12], active_code=self._dg_code(session), state=state,
+                    room_type=room_type, stake=stake,
+                    escrowed=[room_type == "coin"], settled=False,
                     cursor=0, phase="waiting", created_at=now,
                     deadline=now + timedelta(minutes=10),
                 )
                 session.add(room)
                 session.flush()
-            return {**self._dg_view(session, room, user, now), "code": room.active_code}
+                if account is not None:
+                    self._apply_balance_change(account, -stake, "drawguess_buy_in", now,
+                                               memo=f"你画我猜房间 {room.short_id} 入场托管")
+            view = self._dg_view(session, room, user, now)
+            return {**view, "code": room.active_code} if room.inbound_id is not None else view
 
     def _dg_advance(self, session, room, now):
         now_ms = self._dg_ms(now)
@@ -127,6 +155,58 @@ class DrawguessRepositoryMixin:
             raise ValueError("房间状态推进过多，请稍后重试")
         if state != room.state:
             self._dg_sync_room(room, state)
+            if state["phase"] == "closed":
+                self._refund_drawguess_room(session, room, now, "房间等待超时")
+            self._settle_drawguess_room(session, room, state, now)
+
+    def _refund_drawguess_room(self, session, room, now, reason):
+        if room.room_type != "coin":
+            return
+        escrowed = list(room.escrowed or [])
+        for seat, held in enumerate(escrowed):
+            if not held or seat >= len(room.state["seats"]):
+                continue
+            player = session.get(ClubPlayerRecord, UUID(room.state["seats"][seat]))
+            account = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
+            if account is not None:
+                self._apply_balance_change(
+                    account, room.stake, "drawguess_refund", now,
+                    memo=f"你画我猜房间 {room.short_id}：{reason}",
+                )
+            escrowed[seat] = False
+        room.escrowed = escrowed
+
+    def _settle_drawguess_room(self, session, room, state, now):
+        if room.settled or state["phase"] != "finished":
+            return
+        winners = [
+            state["seats"].index(item["player"])
+            for item in state["ranking"]
+            if item["rank"] == 1
+        ]
+        payouts = [0] * len(state["seats"])
+        if room.room_type == "coin":
+            if len(room.escrowed) != len(state["seats"]) or not all(room.escrowed):
+                raise RuntimeError("你画我猜奖池托管不完整")
+            pot = room.stake * len(state["seats"])
+            for winner_index, seat in enumerate(winners):
+                player = session.get(ClubPlayerRecord, UUID(state["seats"][seat]))
+                account = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
+                if account is None:
+                    raise RuntimeError("你画我猜结算玩家不存在")
+                payout = pot // len(winners) + (1 if winner_index < pot % len(winners) else 0)
+                payouts[seat] = payout
+                self._apply_balance_change(
+                    account, payout, "drawguess_settlement", now,
+                    memo=f"你画我猜房间 {room.short_id} 胜方结算",
+                )
+        room.escrowed = [False] * len(state["seats"])
+        room.settled = True
+        room.settlement = {
+            "winner_seats": winners,
+            "payouts": payouts,
+            "outcomes": ["win" if seat in winners else "loss" for seat in range(len(state["seats"]))],
+        }
 
     @staticmethod
     def _dg_canvas(session, room):
@@ -151,12 +231,12 @@ class DrawguessRepositoryMixin:
         seat_ids = state["seats"]
         self_id = str(user.id)
         self_seat = seat_ids.index(self_id) if self_id in seat_ids else None
-        people = {uid: session.get(UserRecord, UUID(uid)) for uid in seat_ids}
+        people = {uid: session.get(ClubPlayerRecord, UUID(uid)) for uid in seat_ids}
         players = []
         for index, uid in enumerate(seat_ids):
             person = people[uid]
             players.append({
-                "name": person.display_name if person else "已离职玩家",
+                "id": uid, "name": person.display_name if person else "已离开玩家",
                 "ready": state["ready"][index] if index < len(state["ready"]) else False,
                 "score": state["scores"].get(uid, 0), "is_host": uid == state["host"],
                 "guessed": uid in state.get("guessed", []),
@@ -189,31 +269,34 @@ class DrawguessRepositoryMixin:
                 public["answer"] = state["answer"]
         elif state["phase"] in {"revealing", "finished"} and state.get("answer"):
             public["answer"] = state["answer"]
-        message_rows = session.execute(select(Message, UserRecord.display_name).join(
-            UserRecord, UserRecord.id == Message.user_id,
+        message_rows = session.execute(select(Message, ClubPlayerRecord.display_name).join(
+            ClubPlayerRecord, ClubPlayerRecord.id == Message.user_id,
         ).where(Message.room_id == room.id)
             .order_by(Message.created_at.desc(), Message.id.desc()).limit(100)).all()
         messages = [
             {"id": str(message.id), "name": name, "text": message.content}
             for message, name in reversed(message_rows)
         ]
+        creator = session.get(ClubPlayerRecord, room.creator_id)
         return {
-            "room_id": str(room.id), "short_id": room.short_id, "cursor": room.cursor,
+            "room_id": str(room.id), "short_id": room.short_id,
+            "creator_name": creator.display_name if creator else "玩家", "cursor": room.cursor,
+            "room_type": room.room_type, "stake": room.stake, "settlement": room.settlement,
             "server_time_ms": self._dg_ms(now), "self_seat": self_seat, "state": public,
             "canvas": self._dg_canvas(session, room), "messages": messages,
-            "code": room.active_code if self_seat is not None and state["phase"] == "waiting" else None,
+            "code": room.active_code if room.inbound_id is not None and self_seat is not None and state["phase"] == "waiting" else None,
         }
 
     def drawguess_view(self, room_id, platform_id, now):
-        with self._session() as session:
-            user = self._dg_employee(session, platform_id)
+        with self.transaction(), self._session() as session:
+            user = self._club_player(session, platform_id, now)
             room = self._dg_room(session, room_id)
             self._dg_advance(session, room, now)
             return self._dg_view(session, room, user, now)
 
     def list_drawguess_rooms(self, platform_id, now):
-        with self._session() as session:
-            user = self._dg_employee(session, platform_id)
+        with self.transaction(), self._session() as session:
+            user = self._club_player(session, platform_id, now)
             rooms = session.scalars(select(Room).where(Room.phase.notin_(("closed",)))
                 .order_by(Room.created_at.desc()).limit(100)).all()
             result = []
@@ -222,8 +305,11 @@ class DrawguessRepositoryMixin:
                 if room.phase == "closed" or not self._dg_announced(session, room):
                     continue
                 seats = room.state["seats"]
+                host = session.get(ClubPlayerRecord, room.creator_id)
                 result.append({
                     "room_id": str(room.id), "short_id": room.short_id, "phase": room.phase,
+                    "creator_name": host.display_name if host else "玩家",
+                    "room_type": room.room_type, "stake": room.stake,
                     "occupied": len(seats), "capacity": 8,
                     "mine": str(user.id) in seats,
                 })
@@ -232,8 +318,8 @@ class DrawguessRepositoryMixin:
     def drawguess_action(self, room_id, platform_id, turn_id, version, request_id, action, payload, now):
         digest = sha256(json.dumps([turn_id, version, action, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         expired = False
-        with self._session() as session:
-            user = self._dg_employee(session, platform_id)
+        with self.transaction(), self._session() as session:
+            user = self._club_player(session, platform_id, now, lock=True)
             room = self._dg_room(session, room_id)
             receipt = session.scalar(select(Receipt).where(
                 Receipt.room_id == room_id, Receipt.user_id == user.id, Receipt.request_id == request_id,
@@ -258,6 +344,19 @@ class DrawguessRepositoryMixin:
                     if state["phase"] != "finished" or user_id != state["host"]:
                         raise ValueError("只有房主可发起下一局")
                     fresh = new_state(state["host"], self._dg_ms(now))
+                    if room.room_type == "coin":
+                        accounts = []
+                        for raw_player_id in state["seats"]:
+                            player = session.get(ClubPlayerRecord, UUID(raw_player_id))
+                            account = self._dg_account(session, player, lock=True)
+                            if account.balance < room.stake:
+                                raise ValueError(f"{player.display_name}余额不足，无法续局")
+                            accounts.append(account)
+                        for account in accounts:
+                            self._apply_balance_change(
+                                account, -room.stake, "drawguess_buy_in", now,
+                                memo=f"你画我猜房间 {room.short_id} 续局托管",
+                            )
                     fresh.update(
                         seats=list(state["seats"]), ready=[False] * len(state["seats"]),
                         scores={uid: 0 for uid in state["seats"]}, match_id=state["match_id"],
@@ -266,20 +365,43 @@ class DrawguessRepositoryMixin:
                     session.execute(delete(Event).where(Event.room_id == room.id))
                     session.execute(delete(Receipt).where(Receipt.room_id == room.id))
                     room.active_code = self._dg_code(session)
+                    room.escrowed = [room.room_type == "coin"] * len(state["seats"])
+                    room.settled, room.settlement = False, None
                     self._dg_sync_room(room, fresh)
                 else:
                     if state["phase"] == "waiting" and action == "claim":
-                        if not self._dg_announced(session, room):
+                        if room.inbound_id is not None and not self._dg_announced(session, room):
                             raise ValueError("群消息尚未送达")
-                        if payload.get("code") != room.active_code:
+                        if room.inbound_id is not None and payload.get("code") != room.active_code:
                             raise ValueError("入座码错误")
+                        if user_id not in state["seats"] and room.room_type == "coin":
+                            account = self._dg_account(session, user, lock=True)
+                            if account.balance < room.stake:
+                                raise ValueError(f"余额不足，需要{room.stake}摸鱼币")
+                            self._apply_balance_change(
+                                account, -room.stake, "drawguess_buy_in", now,
+                                memo=f"你画我猜房间 {room.short_id} 入场托管",
+                            )
+                            room.escrowed = list(room.escrowed) + [True]
                     elif state["phase"] != "waiting" and action == "claim":
                         raise ValueError("游戏进行中，仅可观战")
                     candidates = self._dg_candidates(state) if action == "start" else list(state.get("candidates", []))
                     changed = apply_action(state, user_id, action, payload, self._dg_ms(now), candidates)
+                    if state["phase"] == "waiting" and action == "leave" and user_id in state["seats"]:
+                        seat = state["seats"].index(user_id)
+                        if room.room_type == "coin" and room.escrowed[seat]:
+                            account = self._dg_account(session, user, lock=True)
+                            self._apply_balance_change(
+                                account, room.stake, "drawguess_refund", now,
+                                memo=f"你画我猜房间 {room.short_id} 离开等待房间",
+                            )
+                        escrowed = list(room.escrowed)
+                        escrowed.pop(seat)
+                        room.escrowed = escrowed
                     if changed.get("turn_id") != state.get("turn_id"):
                         self._dg_prune_turn(session, room.id, changed["turn_id"])
                     self._dg_sync_room(room, changed)
+                    self._settle_drawguess_room(session, room, changed, now)
                 session.add(Receipt(
                     room_id=room_id, user_id=user.id, request_id=request_id,
                     digest=digest, turn_id=turn_id, created_at=now,
@@ -336,7 +458,7 @@ class DrawguessRepositoryMixin:
         operations = self._dg_validate_operations(operations)
         digest = sha256(json.dumps(["strokes", turn_id, operations], sort_keys=True).encode()).hexdigest()
         with self._session() as session:
-            user = self._dg_employee(session, platform_id)
+            user = self._club_player(session, platform_id, now)
             room = self._dg_room(session, room_id)
             receipt = session.scalar(select(Receipt).where(
                 Receipt.room_id == room_id, Receipt.user_id == user.id, Receipt.request_id == request_id,
@@ -378,7 +500,7 @@ class DrawguessRepositoryMixin:
             raise ValueError("消息需要 1～100 字")
         digest = sha256(json.dumps(["chat", turn_id, content], ensure_ascii=False).encode()).hexdigest()
         with self._session() as session:
-            user = self._dg_employee(session, platform_id)
+            user = self._club_player(session, platform_id, now)
             room = self._dg_room(session, room_id)
             receipt = session.scalar(select(Receipt).where(
                 Receipt.room_id == room_id, Receipt.user_id == user.id, Receipt.request_id == request_id,
@@ -465,14 +587,14 @@ class DrawguessRepositoryMixin:
     def drawguess_events(self, room_id, platform_id, after, now):
         if type(after) is not int or after < 0:
             raise ValueError("事件游标不正确")
-        with self._session() as session:
-            user = self._dg_employee(session, platform_id)
+        with self.transaction(), self._session() as session:
+            user = self._club_player(session, platform_id, now)
             room = self._dg_room(session, room_id)
             self._dg_advance(session, room, now)
             return self._dg_events_result(session, room, user, after, now)
 
     def advance_drawguess_deadlines(self, now):
-        with self._session() as session:
+        with self.transaction(), self._session() as session:
             rooms = session.scalars(select(Room).where(
                 Room.deadline <= now, Room.phase.in_(("waiting", "selecting", "drawing", "revealing")),
             ).order_by(Room.deadline).limit(100).with_for_update(skip_locked=True)).all()

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import jwt
@@ -43,9 +44,9 @@ def test_bot_to_gamefy_two_rooms_spectator_reconnect_and_final_notice(tmp_path, 
 
     clock = [NOW]
     service = CoreService(repo, GroupCommandHandler(
-        repo, chess_game_id="chess-game",
-        chess_game_url="https://www.aikda.com/chat?card=chess-card",
-        chess_public_api_url="https://chess.example.com",
+        repo, club_game_id="club-game",
+        club_game_url="https://www.aikda.com/chat?card=club-card",
+        club_public_api_url="https://chess.example.com",
     ))
     client = TestClient(create_app(repo, "core", clock=lambda: clock[0], chess_game_id="chess-game"))
     for number in (1, 2):
@@ -54,15 +55,17 @@ def test_bot_to_gamefy_two_rooms_spectator_reconnect_and_final_notice(tmp_path, 
             source_type="group", chatroom_id="chess",
         ))
     with factory.begin() as session:
-        games = session.scalars(select(ChessGameRecord).order_by(ChessGameRecord.created_at)).all()
         replies = session.scalars(select(OutboundRecord).order_by(OutboundRecord.created_at)).all()
-        assert len(games) == 2 and len(replies) == 4
-        ids = [game.id for game in games]
-        codes = [game.code for game in games]
-        for game, reply in zip(games, replies[1::2]):
-            assert str(game.id)[:8] in reply.text
+        assert session.scalars(select(ChessGameRecord)).all() == []
+        assert len(replies) == 4
         for reply in replies:
             reply.status = "sent"
+
+    created = [
+        client.post("/api/chess/rooms", headers=header("creator"), json={}).json()
+        for _ in range(2)
+    ]
+    ids = [UUID(item["game"]["id"]) for item in created]
 
     rooms = client.get("/api/chess/rooms", headers=header("spectator")).json()
     assert {room["id"] for room in rooms} == {str(room_id) for room_id in ids}
@@ -70,8 +73,8 @@ def test_bot_to_gamefy_two_rooms_spectator_reconnect_and_final_notice(tmp_path, 
     first = f"/api/chess/{ids[0]}"
     second = f"/api/chess/{ids[1]}"
     clock[0] = NOW + timedelta(seconds=3)
-    assert client.post(first + "/claim", headers=header("opponent"), json={"code": codes[0]}).status_code == 200
-    assert client.post(second + "/claim", headers=header("opponent"), json={"code": codes[1]}).status_code == 200
+    assert client.post(first + "/claim", headers=header("opponent"), json={}).status_code == 200
+    assert client.post(second + "/claim", headers=header("opponent"), json={}).status_code == 200
     a = client.get(first, headers=header("creator")).json()
     b = client.get(second, headers=header("creator")).json()
     assert a["game"]["version"] == b["game"]["version"] == 1
@@ -92,4 +95,4 @@ def test_bot_to_gamefy_two_rooms_spectator_reconnect_and_final_notice(tmp_path, 
     assert repo.advance_chess_deadlines(clock[0] + timedelta(minutes=1)) == 1  # only the second room times out
     with factory() as session:
         notices = session.scalars(select(OutboundRecord).where(OutboundRecord.inbound_message_id.is_(None))).all()
-    assert len(notices) == 2
+    assert notices == []

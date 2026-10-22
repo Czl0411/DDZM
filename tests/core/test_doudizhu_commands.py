@@ -11,8 +11,8 @@ from tests.core.test_doudizhu_repository import dealt, act
 
 
 def service(repo, **changes):
-    config = dict(doudizhu_game_id='new-card', doudizhu_game_url='https://www.aikda.com/chat?card=new-card',
-                  doudizhu_public_api_url='https://api.example.com', doudizhu_chatroom_id='test-ddz')
+    config = dict(club_game_id='new-card', club_game_url='https://www.aikda.com/chat?card=new-card',
+                  club_public_api_url='https://api.example.com')
     config.update(changes)
     return CoreService(repo, GroupCommandHandler(repo, **config))
 
@@ -30,16 +30,16 @@ def test_command_shares_card_then_text(ddz):
     with factory() as s:
         rooms = s.scalars(select(DoudizhuRoomRecord)).all()
         messages = s.scalars(select(OutboundRecord).order_by(OutboundRecord.created_at, OutboundRecord.reply_index)).all()
-    assert len(rooms) == 2
+    assert rooms == []
     assert [m.content_type for m in messages] == ['character', 'text', 'character', 'text']
     assert messages[0].text == 'new-card'
-    assert '10 分钟' in messages[1].text and '两位' in messages[1].text
+    assert '斗地主' in messages[1].text and '选择游戏和牌桌' in messages[1].text
     assert 'https://' not in messages[1].text
 
 
-def test_command_requires_config_employee_and_allowed_group(ddz):
+def test_command_requires_config_but_allows_guests_and_other_monitored_groups(ddz):
     repo, factory, _ = ddz
-    send(service(repo, doudizhu_game_id=None))
+    send(service(repo, club_game_id=None))
     send(service(repo), uid='nobody', number=2)
     repo.create_group_chat('其他群', 'https://www.aikda.com/chat?c=other', True, True, False, False, NOW)
     send(service(repo), group='other', number=3)

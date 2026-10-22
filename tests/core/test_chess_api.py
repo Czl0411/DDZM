@@ -105,14 +105,14 @@ def headers(token):
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_uid_mode_is_explicit_and_retains_employee_and_player_checks(api):
+def test_uid_mode_is_explicit_and_allows_guest_players(api):
     secure, repo, game, _ = api
     uid = lambda value: {"Authorization": f"ChessUid {value}"}
     assert secure.get('/api/chess/rooms', headers=uid('creator')).status_code == 401
     client = TestClient(create_app(repo, 'core', clock=lambda: NOW,
         chess_game_id='3761638', chess_allow_uid=True))
     assert client.get('/api/chess/rooms').status_code == 401
-    assert client.get('/api/chess/rooms', headers=uid('stranger')).status_code == 403
+    assert client.get('/api/chess/rooms', headers=uid('stranger')).status_code == 200
     assert client.get('/api/chess/rooms', headers=uid('creator')).status_code == 200
     path = f'/api/chess/{game.id}'
     assert client.post(path+'/claim', headers=uid('opponent'), json={'code':game.code}).status_code == 200
@@ -130,25 +130,28 @@ def test_card_id_and_signed_game_audience_are_separate(api):
     assert client.get("/api/chess/rooms", headers=headers(token(aud="another-game"))).status_code == 401
 
 
-def test_lobby_requires_employee_and_does_not_leak_codes(api):
+def test_lobby_requires_identity_and_does_not_leak_codes(api):
     client, repo, game, token = api
     path = "/api/chess/rooms"
     assert client.get(path).status_code == 401
-    assert client.get(path, headers=headers(token("stranger"))).status_code == 403
+    assert client.get(path, headers=headers(token("stranger"))).status_code == 200
     response = client.get(path, headers=headers(token("spectator")))
     assert response.status_code == 200
-    assert response.json() == [{"id": str(game.id), "creator_name": "creator", "status": "waiting"}]
+    assert response.json() == [{
+        "id": str(game.id), "creator_name": "creator", "status": "waiting",
+        "room_type": "casual", "stake": 0,
+    }]
     repo.claim_chess_seat(game.id, "opponent", game.code, NOW)
     assert client.get(path, headers=headers(token("spectator"))).json()[0]["status"] == "playing"
     repo.settle_chess_deadline(game.id, NOW + timedelta(minutes=1))
     assert client.get(path, headers=headers(token("spectator"))).json() == []
 
 
-def test_api_requires_joined_identity_and_protects_code(api):
+def test_api_requires_identity_and_protects_code(api):
     client, _, game, token = api
     path = f"/api/chess/{game.id}"
     assert client.get(path).status_code == 401
-    assert client.get(path, headers=headers(token("stranger"))).status_code == 403
+    assert client.get(path, headers=headers(token("stranger"))).status_code == 200
     res = client.get(path, headers=headers(token("spectator")))
     assert res.status_code == 200
     assert "code" not in res.json()["game"]

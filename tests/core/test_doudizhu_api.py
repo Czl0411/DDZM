@@ -19,7 +19,7 @@ def test_uid_and_public_private_views(ddz):
     client = TestClient(create_app(repo, 'internal', clock=lambda: NOW, doudizhu_game_id='new-card'))
     path = '/api/doudizhu/rooms/' + room['id']
     assert client.get(path).status_code == 401
-    assert client.get(path, headers=headers('nobody')).status_code == 403
+    assert client.get(path, headers=headers('nobody')).status_code == 200
     hands = []
     for uid in ('host', 'alice', 'bob', 'viewer'):
         res = client.get(path, headers=headers(uid))
@@ -30,7 +30,10 @@ def test_uid_and_public_private_views(ddz):
         hands.append(set(data['hand']))
     assert not hands[0] & hands[1] and not hands[1] & hands[2]
     listing = client.get('/api/doudizhu/rooms', headers=headers('viewer')).json()
-    assert set(listing[0]) == {'id', 'short_id', 'phase', 'occupied'}
+    assert set(listing[0]) == {
+        'id', 'short_id', 'creator_name', 'room_type', 'stake', 'phase', 'occupied'
+    }
+    assert listing[0]['creator_name'] == 'host'
     assert client.get('/internal/status', headers=headers('host')).status_code in (401, 403)
     preflight = client.options(path, headers={'Origin': 'null', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type'})
     assert preflight.status_code == 200
@@ -75,10 +78,8 @@ def test_sse_reconnect_is_recipient_scoped(ddz):
         assert len(data['hand']) == (17 if uid == 'host' else 0)
 
 
-def test_sse_stops_when_viewer_removed_or_disconnected(ddz):
-    from sqlalchemy import delete
+def test_sse_keeps_guest_identity_and_stops_when_disconnected(ddz):
     from dzmm_bot.core.doudizhu_api import room_events
-    from dzmm_bot.core.schema import UserRecord
     repo, factory, _ = ddz
     room = dealt(ddz)
     class Request:
@@ -89,11 +90,7 @@ def test_sse_stops_when_viewer_removed_or_disconnected(ddz):
         request = Request()
         stream = room_events(repo, UUID(room['id']), 'viewer', lambda: NOW, request)
         assert 'event: snapshot' in await anext(stream)
-        with factory.begin() as s:
-            s.execute(delete(UserRecord).where(UserRecord.platform_id == 'viewer'))
-        assert 'event: unavailable' in await anext(stream)
-        with pytest.raises(StopAsyncIteration):
-            await anext(stream)
+        assert 'event: snapshot' in await anext(stream)
         request.disconnected = True
         stream = room_events(repo, UUID(room['id']), 'host', lambda: NOW, request)
         with pytest.raises(StopAsyncIteration):

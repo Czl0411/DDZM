@@ -144,12 +144,12 @@ def test_resignation_needs_no_opponent_approval(active):
     ("resign", "黑方认输"), ("long_check", "黑方长将判负"), ("long_chase", "黑方长捉判负"),
 ])
 def test_chess_notice_uses_display_names_and_chinese_reasons(active, reason, description):
-    from dzmm_bot.core.schema import ChessGameRecord, UserRecord
+    from dzmm_bot.core.schema import ChessGameRecord, ClubPlayerRecord
     repo, factory, game = active
     with factory.begin() as session:
         row = session.get(ChessGameRecord, game.id)
-        session.get(UserRecord, row.red_user_id).display_name = "小红"
-        session.get(UserRecord, row.black_user_id).display_name = "小黑"
+        session.get(ClubPlayerRecord, row.red_user_id).display_name = "小红"
+        session.get(ClubPlayerRecord, row.black_user_id).display_name = "小黑"
         repo._finish_chess(session, row, f"red:{reason}", NOW)
     with factory() as session:
         notice = session.scalar(select(OutboundRecord).where(OutboundRecord.inbound_message_id.is_(None)))

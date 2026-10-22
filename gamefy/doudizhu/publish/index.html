@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>群友斗地主</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="game-header"><div class="brand"><span class="brand-mark">♠</span><div><small>好友牌局 · 经典三人</small><h1>群友斗地主</h1></div></div><a class="club-link" href="../../index.html">返回 Club</a><button id="refresh" class="quiet">刷新</button></header>
+    <p id="feedback" role="status" aria-live="polite">正在读取玩家身份…</p>
+    <section id="lobby" class="lobby">
+      <div class="lobby-hero"><span class="eyebrow">DOU DIZHU</span><h2>三人一桌，随时开局</h2><p>经典叫分、顺子、飞机与炸弹。直接开房，旁观者也能一起聊天。</p><div class="create-strip"><button type="button" data-create-room="casual" data-stake="0">休闲局</button><button type="button" data-create-room="coin" data-stake="5">5 币场</button><button type="button" data-create-room="coin" data-stake="10">10 币场</button><button type="button" data-create-room="coin" data-stake="20">20 币场</button></div></div>
+      <div class="lobby-panel"><div class="section-title"><div><span class="eyebrow">OPEN TABLES</span><h2>牌局大厅</h2></div><span>休闲 / 摸鱼币</span></div><p class="muted">空位先到先得；摸鱼币场由获胜一方获得奖池，农民胜利时平分。</p><div id="rooms"></div></div>
+    </section>
+    <section id="table" class="game-table" hidden>
+      <nav class="table-nav"><button id="back" class="quiet">‹ 房间列表</button><div><strong id="room-label"></strong><span id="multiplier" class="gold"></span></div></nav>
+      <div class="table-layout">
+        <div class="play-stage">
+          <div id="opponents"></div>
+          <section class="felt"><div id="bottom"></div><div id="phase-label"></div><div id="countdown" aria-live="off"></div><div id="plays"></div><div id="result" hidden></div><div class="watermark">群友斗地主</div></section>
+          <div id="self"></div>
+          <div class="control-dock">
+            <div id="claim-panel" hidden><span>空位先到先得</span><button id="claim">立即入座</button></div>
+            <div id="actions"></div>
+            <div id="play-actions" hidden><button id="pass" class="quiet">不出</button><button id="hint" class="quiet">提示</button><button id="play">出牌</button></div>
+          </div>
+          <div id="hand" aria-label="我的手牌"></div>
+        </div>
+        <details id="chat" class="chat-panel"><summary>本局聊天 <span>玩家与观众都可发言</span></summary><div id="messages" aria-live="polite"></div><div class="chat-compose"><input id="chat-input" maxlength="300" placeholder="聊聊这手牌…" aria-label="聊天消息"><button id="chat-send">发送</button></div></details>
+      </div>
+    </section>
+    <footer>经典叫分 · 三人准备开局 · 断线可重连</footer>
+  </main>
+  <script src="./config.js"></script><script type="module" src="./game.js"></script>
+</body>
+</html>

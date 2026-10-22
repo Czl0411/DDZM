@@ -1,0 +1,55 @@
+[
+  {
+    "revision": "1791886092467",
+    "deployedAt": "2026-10-13T10:07:10.507Z",
+    "label": "chess-test-957c9cb",
+    "gitHead": "957c9cb"
+  },
+  {
+    "revision": "1791887526949",
+    "deployedAt": "2026-10-13T10:31:05.049Z",
+    "label": "chess-share-a863e03",
+    "gitHead": "a863e03"
+  },
+  {
+    "revision": "1791888250165",
+    "deployedAt": "2026-10-13T10:43:08.121Z",
+    "label": "chess-auth-cooldown",
+    "gitHead": "617194e"
+  },
+  {
+    "revision": "1791888982769",
+    "deployedAt": "2026-10-13T10:55:20.804Z",
+    "label": "chess-token-reuse",
+    "gitHead": "5ffe8ce"
+  },
+  {
+    "revision": "1791889862431",
+    "deployedAt": "2026-10-13T11:10:00.486Z",
+    "label": "chess-uid-ba50ff9",
+    "gitHead": "ba50ff9"
+  },
+  {
+    "revision": "1791890740214",
+    "deployedAt": "2026-10-13T11:24:38.455Z",
+    "label": "chess-sandbox-cf6fcda",
+    "gitHead": "cf6fcda"
+  },
+  {
+    "revision": "1791891516025",
+    "deployedAt": "2026-10-13T11:37:34.145Z",
+    "label": "chess-ui-ac8f805",
+    "gitHead": "ac8f805"
+  },
+  {
+    "revision": "1791892591490",
+    "deployedAt": "2026-10-13T11:55:29.815Z",
+    "label": "chess-events-134ca08",
+    "gitHead": "134ca08"
+  },
+  {
+    "revision": "1792519098372",
+    "deployedAt": "2026-10-20T17:57:17.304Z",
+    "gitHead": "cf54ef1"
+  }
+]

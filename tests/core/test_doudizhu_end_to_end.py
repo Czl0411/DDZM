@@ -4,23 +4,21 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from dzmm_bot.core.app import create_app
-from dzmm_bot.core.schema import BalanceTransactionRecord, DoudizhuRoomRecord, OutboundRecord, UserRecord
+from dzmm_bot.core.schema import BalanceTransactionRecord, OutboundRecord, UserRecord
 from tests.core.test_doudizhu_api import headers
-from tests.core.test_doudizhu_commands import service, send
 from tests.core.test_doudizhu_repository import ddz, NOW
 
 
 def test_group_to_complete_game_and_rematch_without_currency(ddz):
     repo, factory, _ = ddz
-    send(service(repo))
+    client = TestClient(create_app(repo, 'internal', clock=lambda: NOW, doudizhu_game_id='new-card'))
+    created = client.post('/api/doudizhu/rooms', headers=headers('host'), json={})
+    assert created.status_code == 200
+    room = created.json()
     with factory.begin() as s:
-        row = s.scalars(select(DoudizhuRoomRecord)).one()
-        rid, code = str(row.id), row.code
-        for message in s.scalars(select(OutboundRecord)).all():
-            message.status = 'sent'
+        rid = room['id']
         balances = [(u.id, u.balance) for u in s.scalars(select(UserRecord)).all()]
         ledger_ids = list(s.scalars(select(BalanceTransactionRecord.id)))
-    client = TestClient(create_app(repo, 'internal', clock=lambda: NOW, doudizhu_game_id='new-card'))
     path = '/api/doudizhu/rooms/' + rid
     users = ['host', 'alice', 'bob']
 
@@ -38,7 +36,7 @@ def test_group_to_complete_game_and_rematch_without_currency(ddz):
         return response.json()
 
     for uid in users[1:]:
-        action(uid, 'claim', {'code': code})
+        action(uid, 'claim')
     for uid in users:
         state = action(uid, 'ready')
     first_round = state['round_id']
@@ -66,9 +64,7 @@ def test_group_to_complete_game_and_rematch_without_currency(ddz):
     repo.advance_doudizhu_deadlines(NOW)
     with factory() as s:
         notices = s.scalars(select(OutboundRecord).where(OutboundRecord.inbound_message_id.is_(None))).all()
-        assert len(notices) == 1
-        assert all(uid in notices[0].text for uid in users)
-        assert '胜利' in notices[0].text and '落败' in notices[0].text and rid not in notices[0].text
+        assert notices == []
         assert [(u.id, u.balance) for u in s.scalars(select(UserRecord)).all()] == balances
         assert list(s.scalars(select(BalanceTransactionRecord.id))) == ledger_ids
     action('host', 'rematch')

@@ -19,7 +19,7 @@ def test_auth_validation_projection_and_no_cache(game):
     client = TestClient(create_app(repo, "internal", clock=lambda: NOW, drawguess_game_id="draw-card"))
     path = f"/api/drawguess/rooms/{room['room_id']}"
     assert client.get(path).status_code == 401
-    assert client.get(path, headers=headers("unknown")).status_code == 403
+    assert client.get(path, headers=headers("unknown")).status_code == 200
     response = client.get(path, headers=headers("p1"))
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
@@ -57,6 +57,7 @@ def test_action_chat_and_stroke_payloads_are_strict(game):
     assert spectator_chat.json()["text"] == "旁观发言"
     listing = client.get("/api/drawguess/rooms", headers=headers("viewer"))
     assert listing.status_code == 200
+    assert listing.json()[0]["creator_name"] == "host"
     assert "answer" not in repr(listing.json())
 
 

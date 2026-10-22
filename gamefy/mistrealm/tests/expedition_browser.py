@@ -24,6 +24,9 @@ with sync_playwright() as pw:
         assert page.locator('[data-xp="pick"][aria-pressed="true"]').count()==1
         if i==0:page.screenshot(path=str(output/'draft-desktop.png'))
         page.locator('[data-xp="confirm-choice"]').click()
+    page.locator('.xp-route').wait_for()
+    assert page.locator('[data-hand]').count()==0
+    page.locator('.xp-route button').filter(has_text='战斗').first.click()
     page.locator('[data-hand]').first.wait_for()
     page.locator('#pause-expedition').click()
     page.reload();page.locator('#enter-game').click()

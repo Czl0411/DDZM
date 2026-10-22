@@ -20,7 +20,7 @@ def drafted(seed=0):
 
 def test_draft_pools_and_pvp_isolation():
     r=drafted()
-    assert r['phase']=='battle' and r['battle_step']=='wave' and len(r['deck'])==5
+    assert r['phase']=='route' and r['battle'] is None and len(r['deck'])==5
     assert not set(x.pool()) & set(x.CARDS)
     for f in x.FACTIONS:
         faction_cards=[d for d in x.CARDS.values() if d['faction']==f]
@@ -90,13 +90,14 @@ def test_shop_and_upgrade_preserve_card_identity_and_gold():
     r=drafted();r.update(phase='shop',offers=['xb01','xv01','xa01'],gold=30)
     r=x.act(r,'a','buy',{'index':0},0,Random(0))
     assert r['gold']==15 and len(r['deck'])==6 and 'xb01' not in r['offers']
-    uid=r['deck'][-1]['id'];r=x.act(r,'a','remove',{'card':uid},0,Random(0))
-    assert r['gold']==5 and len(r['deck'])==5
-    with pytest.raises(ValueError):x.act(r,'a','remove',{'card':r['deck'][0]['id']},0,Random(0))
+    uid=r['deck'][-1]['id'];r=x.act(r,'a','sell',{'card':uid},0,Random(0))
+    assert r['gold']==20 and len(r['deck'])==5
+    with pytest.raises(ValueError):x.act(r,'a','sell',{'card':r['deck'][0]['id']},0,Random(0))
     r.update(phase='upgrade');x.add_card(r,'xb01');uid=r['deck'][-1]['id']
     r=x.act(r,'a','upgrade',{'card':uid},0,Random(0))
     c=next(c for c in r['deck'] if c['id']==uid)
     assert definition(c)['power']==5 and x.CARDS['xb01']['power']==3
+    assert r['gold']==10 and r['phase']=='route'
 
 
 @pytest.mark.parametrize('cid',[cid for cid,d in x.CARDS.items() if d['type']!='leader'])
@@ -154,7 +155,7 @@ def test_auto_opponent_completes_a_single_round_and_no_leader_action():
 
 
 def test_card_choices_are_two_units_one_spell_and_heroes_only_after_boss():
-    rng=Random(17);hero_seen=False
+    rng=Random(17)
     for f in (None,*x.FACTIONS):
         for _ in range(100):
             ordinary=x.offers(rng,f)
@@ -162,9 +163,10 @@ def test_card_choices_are_two_units_one_spell_and_heroes_only_after_boss():
             assert sum(x.CATALOGUE[c]['type']=='special' for c in ordinary)==1
             assert not any(x.CATALOGUE[c]['hero'] for c in ordinary)
             boss=x.offers(rng,f,boss=True)
-            hero_seen|=any(x.CATALOGUE[c]['hero'] for c in boss)
+            assert sum(x.CATALOGUE[c]['hero'] for c in boss)==1
+            assert sum(x.CATALOGUE[c]['type']=='unit' and not x.CATALOGUE[c]['hero'] for c in boss)==1
+            assert sum(x.CATALOGUE[c]['type']=='special' for c in boss)==1
             assert len(set(boss))==3
-    assert hero_seen
 
 
 def victory(r,rng):
@@ -174,88 +176,133 @@ def victory(r,rng):
 
 
 def claim(r,rng):
-    payload={'index':0}
-    try:return x.act(r,'a','choose',payload,0,rng)
-    except ValueError:
-        for c in r['deck']:
-            try:return x.act(r,'a','choose',{**payload,'replace':c['id']},0,rng)
-            except ValueError:pass
-        raise AssertionError('reward has no legal replacement')
+    return x.act(r,'a','choose',{'index':0},0,rng)
 
 
-def test_wave_reward_then_route_and_elite_is_extra_battle():
-    rng=Random(3);r=drafted();gold=r['gold']
-    assert r['battle_kind']=='normal' and r['offers']==[]
-    r=victory(r,rng);assert r['gold']==gold+10 and r['phase']=='reward'
-    r=claim(r,rng);assert r['phase']=='route' and r['completed']==0
-    assert 'shop' not in r['offers']
-    r['offers']=['elite'];first=r['battle_serial']
-    r=x.act(r,'a','choose',{'index':0},0,rng)
-    assert r['battle_kind']=='elite' and r['battle_step']=='route' and r['battle_serial']==first+1
-    assert all(c['expedition_upgrade']==1 for c in r['battle']['players'][1]['hand'])
-    r=victory(r,rng);assert r['gold']==gold+28
+@pytest.mark.parametrize('kind,gold,boost',[('normal',10,0),('elite',18,1)])
+def test_route_combat_reward_then_next_route(kind,gold,boost):
+    rng=Random(3);r=drafted();assert r['battle'] is None
+    r['offers']=[kind];r=x.act(r,'a','choose',{'index':0},0,rng)
+    assert r['battle_kind']==kind and r['battle_step']=='route' and r['battle_serial']==1
+    assert all(c['expedition_upgrade']==boost for c in r['battle']['players'][1]['hand'])
+    r=victory(r,rng);assert r['gold']==20+gold and r['phase']=='reward'
     r=claim(r,rng)
-    assert r['phase']=='battle' and r['battle_step']=='wave' and r['completed']==1
-    assert len(r['log'])==2
+    assert r['phase']=='route' and r['completed']==1 and r['battle'] is None
+    assert len(r['log'])==1
 
 
 @pytest.mark.parametrize('kind',['shop','upgrade','event'])
-def test_noncombat_choice_follows_reward_and_next_node_starts_with_wave(kind):
-    rng=Random(4);r=claim(victory(drafted(),rng),rng)
-    r['offers']=[kind];r=x.act(r,'a','choose',{'index':0},0,rng)
+def test_noncombat_nodes_do_not_start_a_battle(kind):
+    rng=Random(4);r=drafted();r['offers']=[kind]
+    r=x.act(r,'a','choose',{'index':0},0,rng)
     assert r['phase']==kind and r['battle'] is None
     if kind=='event':
+        assert len(r['offers'])==1
         r['offers']=['gold'];r=x.act(r,'a','choose',{'index':0},0,rng)
+        assert r['gold']==35
     else:r=x.act(r,'a','leave',{},0,rng)
-    assert r['phase']=='battle' and r['battle_step']=='wave' and r['node']==1
-    r=claim(victory(r,rng),rng)
+    assert r['phase']=='route' and r['battle'] is None and r['node']==1
     if kind=='shop':assert 'shop' not in r['offers']
 
 
-def test_complete_63_nodes_with_54_waves_and_nine_bosses():
+def test_complete_63_nodes_without_forced_waves_and_nine_distinct_bosses():
     rng=Random(19);r=drafted();heroes=[]
     for _ in range(63):
-        assert r['phase'] in ('battle','route')
+        assert r['phase']=='route' and r['battle'] is None
         if r['node']==6:
             assert r['offers']==['boss'];heroes.append(r['bosses'][x.faction(r)][r['stage']])
             r=x.act(r,'a','choose',{'index':0},0,rng)
             assert r['battle_kind']=='boss'
             r=claim(victory(r,rng),rng)
         else:
-            assert r['battle_step']=='wave'
-            r=claim(victory(r,rng),rng)
             r['offers']=['upgrade'];r=x.act(r,'a','choose',{'index':0},0,rng)
             r=x.act(r,'a','leave',{},0,rng)
     assert r['phase']=='finished' and r['completed']==63
-    assert len(heroes)==len(set(heroes))==9 and len(r['log'])==63
-    assert sum(e['step']=='wave' for e in r['log'])==54
-    assert r['gold']==20+54*10+9*25
+    assert len(heroes)==len(set(heroes))==9 and len(r['log'])==9
+    assert all(e['step']=='route' for e in r['log'])
+    assert r['gold']==20+9*25
 
 
-def test_deck_limits_replacement_and_shop_failure_atomicity():
-    r=drafted();r['deck']=[]
-    for _ in range(6):x.add_card(r,'xb01')
-    x.add_card(r,'xb13')
-    for _ in range(3):x.add_card(r,'xb09')
-    assert len(r['deck'])==10
-    for cid in ('xb01','xb13','xb09'):
-        with pytest.raises(ValueError,match='替换'):x.add_card(r,cid)
-    old=r['deck'][0]['id'];x.add_card(r,'xa01',old)
-    assert len(r['deck'])==10 and all(c['id']!=old for c in r['deck'])
-    with pytest.raises(ValueError):x.add_card(r,'xv13',r['deck'][0]['id'])
-    hero=next(c for c in r['deck'] if x.CATALOGUE[c['card']]['hero'])
-    x.add_card(r,'xv13',hero['id'])
-    r.update(phase='shop',offers=['xb09'],gold=20);before=deepcopy(r)
-    with pytest.raises(ValueError):x.act(r,'a','buy',{'index':0},0,Random(1))
-    assert r==before
-    spell=next(c for c in r['deck'] if x.CATALOGUE[c['card']]['type']=='special')
-    result=x.act(r,'a','buy',{'index':0,'replace':spell['id']},0,Random(1))
-    assert result['gold']==5 and len(result['deck'])==10 and result['offers']==[]
+def test_unlimited_deck_rewards_and_shop_purchases_keep_existing_entities():
+    r=drafted();original=deepcopy(r['deck'])
+    for _ in range(12):
+        for cid in ('xb01','xb13','xb09'):x.add_card(r,cid)
+    assert r['deck'][:5]==original and len(r['deck'])==41
+    r.update(phase='reward',offers=['xb13'])
+    r=claim(r,Random(1));assert len(r['deck'])==42
+    r.update(phase='shop',offers=['xb09'],gold=20)
+    r=x.act(r,'a','buy',{'index':0},0,Random(1))
+    assert r['gold']==5 and len(r['deck'])==43 and r['offers']==[]
+    assert r['deck'][:5]==original
 
 
-def test_starting_draft_cannot_exceed_three_spells_and_still_finishes_in_five_picks():
+def test_starting_draft_can_pick_five_spells_but_cannot_skip():
     rng=Random(2);r=x.new_run(rng)
-    for _ in range(3):r=x.act(r,'a','choose',{'index':2},0,rng)
-    assert all(x.CATALOGUE[c]['type']=='unit' for c in r['offers'])
-    for _ in range(2):r=x.act(r,'a','choose',{'index':0},0,rng)
-    assert len(r['deck'])==5 and r['phase']=='battle'
+    for _ in range(5):
+        before=deepcopy(r)
+        with pytest.raises(ValueError):x.act(r,'a','skip',{},0,rng)
+        assert r==before
+        r=x.act(r,'a','choose',{'index':2},0,rng)
+    assert len(r['deck'])==5 and r['phase']=='route'
+    assert all(x.CATALOGUE[c['card']]['type']=='special' for c in r['deck'])
+
+
+def test_skip_keeps_gold_and_deck_and_cannot_repeat():
+    rng=Random(7);r=drafted();x.begin_battle(r,'a',0,rng,'boss','route')
+    r=victory(r,rng);original=deepcopy(r['deck'])
+    r=x.act(r,'a','skip',{},0,rng)
+    assert r['gold']==45 and r['deck']==original and r['completed']==1
+    assert r['phase']=='route' and r['battle'] is None
+    with pytest.raises(ValueError):x.act(r,'a','skip',{},0,rng)
+
+
+def test_shop_upgrade_once_cost_and_sell_floor_are_authoritative():
+    rng=Random(1);r=drafted();r.update(phase='shop',gold=10,offers=['xb01'])
+    cid=r['deck'][0]['id'];original=deepcopy(r)
+    with pytest.raises(ValueError):x.act(r,'a','buy',{'index':0},0,rng)
+    with pytest.raises(ValueError):x.act(r,'a','sell',{'card':cid},0,rng)
+    assert r==original
+    r=x.act(r,'a','upgrade',{'card':cid},0,rng)
+    assert r['gold']==0 and r['phase']=='shop' and r['deck'][0]['expedition_upgrade']==2
+    r['gold']=100;before=deepcopy(r)
+    with pytest.raises(ValueError,match='已购买'):x.act(r,'a','upgrade',{'card':cid},0,rng)
+    assert r==before and x.project(r)['upgrade_bought']
+    r=x.act(r,'a','leave',{},0,rng);r['offers']=['upgrade']
+    r=x.act(r,'a','choose',{'index':0},0,rng)
+    r=x.act(r,'a','upgrade',{'card':cid},0,rng)
+    assert r['deck'][0]['expedition_upgrade']==4 and r['gold']==90 and r['phase']=='route'
+
+
+def test_upgrade_invalid_target_or_insufficient_gold_is_atomic():
+    rng=Random(2);r=drafted();x.add_card(r,'xb09');r.update(phase='upgrade',gold=9)
+    for cid in (r['deck'][0]['id'],r['deck'][-1]['id'],'missing'):
+        before=deepcopy(r)
+        with pytest.raises(ValueError):x.act(r,'a','upgrade',{'card':cid},0,rng)
+        assert r==before
+
+
+def test_existing_wave_and_events_continue_without_resetting_progress():
+    rng=Random(7);r=drafted();r.update(completed=9,node=2,stage=1,gold=50)
+    x.begin_battle(r,'a',0,rng,'normal','wave');old_deck=deepcopy(r['deck'])
+    r=victory(r,rng);r=x.act(r,'a','skip',{},0,rng)
+    assert r['completed']==9 and r['node']==2 and r['gold']==60 and r['deck']==old_deck
+    assert r['phase']=='route'
+    r.update(phase='event',offers=['gold','cache'])
+    assert x.project(r)['offers']==['gold']
+    with pytest.raises(ValueError):x.act(r,'a','choose',{'index':1},0,rng)
+    r=x.act(r,'a','choose',{'index':0},0,rng)
+    assert r['phase']=='route' and r['gold']==75 and r['completed']==10
+
+
+@pytest.mark.parametrize('event',['gold','cache','training'])
+def test_single_event_resolves_and_can_continue(event):
+    rng=Random(3);r=drafted();r.update(phase='event',offers=[event])
+    r=x.act(r,'a','choose',{'index':0},0,rng)
+    if event=='cache':
+        assert r['phase']=='reward' and not any(x.CATALOGUE[c]['hero'] for c in r['offers'])
+        r=x.act(r,'a','skip',{},0,rng)
+    elif event=='training':
+        assert r['phase']=='upgrade'
+        r=x.act(r,'a','upgrade',{'card':r['deck'][0]['id']},0,rng)
+        assert r['gold']==10
+    assert r['phase']=='route' and r['completed']==1 and r['battle'] is None

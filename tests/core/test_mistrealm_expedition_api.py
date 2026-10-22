@@ -32,3 +32,40 @@ def test_invalid_draft_does_not_spend_gold_or_change_version(client):
         assert response.status_code==409
     assert req(client,'a','/expedition').json()==r
     assert client.get('/api/mistrealm/v3/expedition').status_code==401
+
+
+def test_shop_transactions_survive_reload_and_reject_replay(client,monkeypatch):
+    from random import Random
+    from dzmm_bot.core import mistrealm_expedition as x
+    run=x.new_run(Random(3));run.update(phase='shop',offers=['xb01'],gold=20)
+    for _ in range(6):x.add_card(run,'xb01')
+    cid=run['deck'][0]['id'];monkeypatch.setattr(x,'new_run',lambda rng:run)
+    current=req(client,'a','/expedition/start',{}).json()
+    for action,payload in [('sell',{'card':cid}),('upgrade',{'card':run['deck'][1]['id']})]:
+        body=dict(run_id=current['id'],version=current['version'],action=action,payload=payload)
+        response=req(client,'a','/expedition/actions',body)
+        assert response.status_code==200,response.text
+        current=response.json()
+        assert req(client,'a','/expedition').json()==current
+        assert req(client,'a','/expedition/actions',body).status_code==409
+    assert current['gold']==15 and len(current['deck'])==5 and current['upgrade_bought']
+    body.update(version=current['version'])
+    assert req(client,'a','/expedition/actions',body).status_code==409
+    assert req(client,'a','/expedition').json()==current
+
+
+def test_reward_skip_persists_without_losing_gold_or_cards(client,monkeypatch):
+    from random import Random
+    from dzmm_bot.core import mistrealm_expedition as x
+    run=x.new_run(Random(3));run.update(phase='reward',gold=45)
+    for _ in range(5):x.add_card(run,'xb01')
+    monkeypatch.setattr(x,'new_run',lambda rng:run)
+    current=req(client,'a','/expedition/start',{}).json()
+    body=dict(run_id=current['id'],version=current['version'],action='skip',payload={})
+    response=req(client,'a','/expedition/actions',body)
+    assert response.status_code==200,response.text
+    result=response.json()
+    assert result['deck']==current['deck'] and result['gold']==45 and result['completed']==1
+    assert result['phase']=='route' and result['battle'] is None
+    assert req(client,'a','/expedition').json()==result
+    assert req(client,'a','/expedition/actions',body).status_code==409

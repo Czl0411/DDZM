@@ -86,7 +86,7 @@ class StoryStart(ClassicQueue):
 class ExpeditionAction(Body):
     run_id: UUID
     version: StrictInt = Field(ge=0)
-    action: Literal['choose','battle','buy','remove','upgrade','leave','restart']
+    action: Literal['choose','battle','buy','sell','upgrade','skip','leave','restart']
     payload: dict = Field(default_factory=dict)
 
 

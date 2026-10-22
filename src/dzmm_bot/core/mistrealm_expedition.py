@@ -16,12 +16,13 @@ def pool(faction=None):
     return [cid for cid,d in CATALOGUE.items() if d['type']!='leader' and (cid in BASE_CARDS or d['faction']==faction)]
 
 
-def offers(rng, faction=None, *, boss=False, deck=None):
+def offers(rng, faction=None, *, boss=False):
     cards=pool(faction)
-    units=[cid for cid in cards if CATALOGUE[cid]['type']=='unit' and (boss or not CATALOGUE[cid]['hero'])]
+    units=[cid for cid in cards if CATALOGUE[cid]['type']=='unit' and not CATALOGUE[cid]['hero']]
     spells=[cid for cid in cards if CATALOGUE[cid]['type']=='special']
-    if deck is not None and sum(CATALOGUE[c['card']]['type']=='special' for c in deck)>=3:
-        return rng.sample(units,3)
+    if boss:
+        heroes=[cid for cid in cards if CATALOGUE[cid]['hero']]
+        return rng.sample(heroes,1)+rng.sample(units,1)+rng.sample(spells,1)
     return rng.sample(units,2)+rng.sample(spells,1)
 
 
@@ -36,15 +37,8 @@ def faction(run):
     return list(FACTIONS)[run['chapter']]
 
 
-def add_card(run,cid,replace=None):
-    deck=run['deck']
-    if replace is not None:
-        if not any(c['id']==replace for c in deck):raise ValueError('请选择牌组中要替换的卡牌')
-        deck=[c for c in deck if c['id']!=replace]
-    cards=[CATALOGUE[c['card']] for c in deck]+[CATALOGUE[cid]]
-    if sum(c['type']=='unit' for c in cards)>7 or sum(c['type']=='special' for c in cards)>3 or sum(c['hero'] for c in cards)>1:
-        raise ValueError('牌组最多7张单位（含1张英雄）、3张术卡，请选择替换旧牌')
-    run['deck']=[*deck,dict(id=str(uuid4()),card=cid,expedition_upgrade=0)]
+def add_card(run,cid):
+    run['deck'].append(dict(id=str(uuid4()),card=cid,expedition_upgrade=0))
 
 
 def route(run,rng):
@@ -61,8 +55,7 @@ def advance(run,rng):
         run['stage']=0;run['chapter']+=1
     if run['chapter']==3:
         run.update(phase='finished',offers=[])
-    elif run['node']==6:route(run,rng)
-    else:run.update(phase='encounter',offers=[])
+    else:route(run,rng)
 
 
 def begin_battle(run,uid,now_ms,rng,kind,step):
@@ -137,6 +130,8 @@ def _index(payload, values):
 
 def act(run,uid,action,payload,now_ms,rng):
     r=deepcopy(run);phase=r['phase']
+    # Older saves offered two randomly ordered events; keep the first result.
+    if phase=='event':r['offers']=r['offers'][:1]
     if action=='restart':
         if payload:raise ValueError('无效参数')
         fresh=new_run(rng);fresh['version']=r['version']+1;return fresh
@@ -146,45 +141,48 @@ def act(run,uid,action,payload,now_ms,rng):
         battle_result(r,rng)
     elif action=='choose':
         if phase not in ('draft','route','reward','event'):raise ValueError('当前无需选择路线或卡牌')
-        if set(payload)-{'index','replace'} or ('replace' in payload and phase!='reward'):raise ValueError('无效选择参数')
-        choice=r['offers'][_index({'index':payload.get('index')},r['offers'])]
+        choice=r['offers'][_index(payload,r['offers'])]
         if phase in ('draft','reward'):
-            add_card(r,choice,payload.get('replace'))
+            add_card(r,choice)
             if phase=='reward':finish_reward(r,rng)
-            elif len(r['deck'])==5:r.update(phase='encounter',offers=[])
-            else:r['offers']=offers(rng,deck=r['deck'])
+            elif len(r['deck'])==5:route(r,rng)
+            else:r['offers']=offers(rng)
         elif phase=='route':
-            r['last_node']=choice;r['offers']=[];r['last_result']=None
+            r['last_node']=choice;r['offers']=[];r['last_result']=None;r['upgrade_bought']=False
             if choice in ('normal','elite','boss'):
                 begin_battle(r,uid,now_ms,rng,choice,'route')
             elif choice=='shop':r.update(phase='shop',offers=offers(rng,faction(r)))
             elif choice=='upgrade':r['phase']='upgrade'
-            else:r.update(phase='event',offers=rng.sample(['gold','cache','training'],2))
+            else:r.update(phase='event',offers=rng.sample(['gold','cache','training'],1))
         else:
             if choice=='gold':r['gold']+=15;advance(r,rng)
             elif choice=='cache':r.update(phase='reward',offers=offers(rng,faction(r)),reward_next='advance')
             else:r['phase']='upgrade'
     elif action=='buy':
         if phase!='shop':raise ValueError('当前不在商店')
-        if set(payload)-{'index','replace'}:raise ValueError('无效购买参数')
-        index=_index({'index':payload.get('index')},r['offers'])
+        index=_index(payload,r['offers'])
         if r['gold']<15:raise ValueError('金币不足，需要15金币')
-        add_card(r,r['offers'].pop(index),payload.get('replace'));r['gold']-=15
-    elif action in ('upgrade','remove'):
-        if phase!=('shop' if action=='remove' else 'upgrade') or set(payload)!={'card'}:raise ValueError('当前不可修改牌组')
+        add_card(r,r['offers'].pop(index));r['gold']-=15
+    elif action in ('upgrade','sell'):
+        if phase not in (('shop',) if action=='sell' else ('shop','upgrade')) or set(payload)!={'card'}:raise ValueError('当前不可修改牌组')
         c=next((c for c in r['deck'] if c['id']==payload['card']),None)
         if not c:raise ValueError('牌组中没有这张卡')
-        if action=='remove':
-            if r['gold']<10 or len(r['deck'])<=5:raise ValueError('移除需要10金币，且牌组至少保留5张')
-            r['deck'].remove(c);r['gold']-=10
+        if action=='sell':
+            if len(r['deck'])<=5:raise ValueError('出售后牌组至少保留5张')
+            r['deck'].remove(c);r['gold']+=5
         else:
             if CATALOGUE[c['card']]['type']!='unit':raise ValueError('请选择单位牌强化')
-            c['expedition_upgrade']+=2;advance(r,rng)
+            if r.get('upgrade_bought'):raise ValueError('本节点已购买过强化')
+            if r['gold']<10:raise ValueError('金币不足，需要10金币')
+            c['expedition_upgrade']+=2;r['gold']-=10;r['upgrade_bought']=True
+            if phase=='upgrade':advance(r,rng)
+    elif action=='skip':
+        if phase!='reward' or payload:raise ValueError('当前不可跳过选卡')
+        finish_reward(r,rng)
     elif action=='leave':
         if phase not in ('shop','upgrade') or payload:raise ValueError('当前不可跳过')
         advance(r,rng)
     else:raise ValueError('无效远征操作')
-    if r['phase']=='encounter':begin_battle(r,uid,now_ms,rng,'normal','wave')
     r['version']+=1
     return r
 
@@ -192,6 +190,8 @@ def act(run,uid,action,payload,now_ms,rng):
 def project(run):
     if run is None:return None
     result={k:deepcopy(run[k]) for k in ('id','version','phase','deck','gold','chapter','stage','node','completed','offers','last_result','last_node','log')}
+    if run['phase']=='event':result['offers']=result['offers'][:1]
+    result['upgrade_bought']=run.get('upgrade_bought',False)
     result['battle_serial']=run.get('battle_serial',0)
     result['faction']=faction(run) if run['chapter']<3 else None
     result['boss']=run['bosses'][faction(run)][run['stage']] if run['chapter']<3 else None

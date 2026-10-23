@@ -228,7 +228,7 @@ class ClubCardRepositoryMixin:
     def _apply_club_card_action(self, session, room, player, action, payload, now):
         raw = str(player.id)
         if action == "claim":
-            if room.phase != "waiting": raise ValueError("牌局已经开始")
+            if room.phase not in {"waiting", "hand_finished"}: raise ValueError("请等待本手结束后再上桌")
             if raw in room.seats: return
             self._ensure_club_card_player_free(session, player.id, now, exclude=room.id)
             if len(room.seats) >= PLAYER_LIMITS[room.game][1]: raise ValueError("牌桌已满")

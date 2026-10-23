@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-from dzmm_bot.core.schema import UserRecord
+from dzmm_bot.core.schema import ClubCardRoomRecord, UserRecord
 from tests.core.test_mahjong_repository import NOW, mahjong
 
 
@@ -95,6 +95,31 @@ def test_finished_hand_stays_on_settlement_until_everyone_readies(mahjong):
     assert room["players"][0]["name"] == "host"
     assert room["players"][1]["name"] == "alice"
     assert room["ready"] == []
+
+
+@pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack"])
+def test_spectator_can_join_after_a_hand_for_the_next_hand(mahjong, game):
+    repo, factory = mahjong
+    room = repo.create_club_card_room(
+        game, "host", NOW, room_type="casual", stake=0, request_id=uuid4(),
+    )
+    room = act(repo, room, "alice", "claim")
+    with factory.begin() as session:
+        record = session.get(ClubCardRoomRecord, UUID(room["id"]))
+        record.phase = "hand_finished"
+        record.state = {
+            "phase": "hand_finished", "players": list(record.seats),
+            "hands": {}, "winners": [], "payouts": {},
+        }
+        record.version += 1
+
+    spectator = repo.club_card_view(game, UUID(room["id"]), "bob", NOW)
+    joined = act(repo, spectator, "bob", "claim")
+
+    assert joined["phase"] == "hand_finished"
+    assert [player["uid"] for player in joined["players"]] == ["host", "alice", "bob"]
+    assert joined["ready"] == []
+    assert joined["state"]["players"] == spectator["state"]["players"]
 
 
 def test_card_turn_times_out_and_auto_folds_when_a_call_is_required(mahjong):

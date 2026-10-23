@@ -92,6 +92,23 @@ def card_waiting_snapshot(game):
     return value
 
 
+def card_finished_spectator_snapshot(game):
+    value = card_snapshot(game)
+    hand_players = list(value["state"]["players"])
+    value.update(
+        phase="hand_finished", version=5, ready=[],
+        me={"id": "44444444-4444-4444-8444-444444444444", "name": "旁观者", "avatar_url": None},
+    )
+    value["state"].update(
+        phase="hand_finished", turn=None, winners=[hand_players[0]], payouts={},
+        hand_ranks={player_id: "已摊牌" for player_id in hand_players},
+        totals={player_id: 20 for player_id in hand_players},
+        results={player_id: "胜" if index == 0 else "负" for index, player_id in enumerate(hand_players)},
+    )
+    value["state"].pop("turn_deadline", None)
+    return value
+
+
 @pytest.mark.parametrize(("width", "height"), [(320, 700), (390, 844), (844, 390), (1280, 720)])
 def test_club_and_table_stay_in_one_viewport(width, height):
     publish = Path(__file__).resolve().parents[1] / "publish"
@@ -537,6 +554,50 @@ def test_card_table_reflows_after_orientation_change():
         assert all(item["left"] >= -1 and item["right"] <= 845
                    and item["top"] >= -1 and item["bottom"] <= 391
                    for item in layout["children"])
+        browser.close()
+
+
+@pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack"])
+def test_spectator_can_join_finished_card_table_for_next_hand(game):
+    publish = Path(__file__).resolve().parents[1] / "publish"
+    snapshot = card_finished_spectator_snapshot(game)
+    actions = []
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        context = browser.new_context(viewport={"width": 390, "height": 844})
+        context.add_init_script("window.dzmm={user:{info:async()=>({id:'spectator-user'})},loading:{ready(){},error(){}}};")
+
+        def route(request):
+            path = urlsplit(request.request.url).path
+            headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
+            if request.request.method == "OPTIONS":
+                request.fulfill(status=204, headers=headers)
+            elif path.endswith("/api/club/session"):
+                request.fulfill(json=snapshot["me"], headers=headers)
+            elif path.endswith("/events"):
+                request.fulfill(body="", headers={**headers, "Content-Type": "text/event-stream"})
+            elif path.endswith("/actions"):
+                body = request.request.post_data_json
+                actions.append(body["action"])
+                if body["action"] == "claim":
+                    snapshot["players"].append(snapshot["me"])
+                    snapshot["version"] += 1
+                request.fulfill(json=snapshot, headers=headers)
+            elif path.endswith(f"/api/club/cards/{game}/rooms/{ROOM_ID}"):
+                request.fulfill(json=snapshot, headers=headers)
+            else:
+                request.fulfill(path=str(publish / (path.strip("/") or "games/card-table/index.html")), headers=headers)
+
+        context.route("**/*", route)
+        page = context.new_page()
+        page.goto(f"https://club.test/games/card-table/index.html?game={game}&room={ROOM_ID}")
+
+        expect(page.locator("#result")).to_be_visible()
+        expect(page.locator(".showdown-row")).to_have_count(2)
+        page.get_by_role("button", name="加入下一手", exact=True).click()
+        expect(page.get_by_role("button", name="准备下一手", exact=True)).to_be_visible()
+        expect(page.locator(".showdown-row")).to_have_count(2)
+        assert actions == ["claim"]
         browser.close()
 
 

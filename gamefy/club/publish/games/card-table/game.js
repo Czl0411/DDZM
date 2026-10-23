@@ -11,9 +11,9 @@ const sdk = window.MoyuClubRuntime?.sdk || window.dzmm;
 const runtime = window.MoyuClubRuntime;
 const $ = selector => document.querySelector(selector);
 const GAMES = {
-  texas: {name: "德州扑克", mark: "德", subtitle: "无限注德州 · 连续牌桌", description: "2～8 人，大小盲、公共牌、边池与全下完整结算。", art: "../../assets/game-texas-table-v1.webp", limits: "2～8 人"},
-  zhajinhua: {name: "炸金花", mark: "金", subtitle: "经典三张 · 看牌比牌", description: "2～6 人，闷牌、看牌、跟注、加注、弃牌与比牌。", art: "../../assets/game-zhajinhua-table-v1.webp", limits: "2～6 人"},
-  blackjack: {name: "21 点", mark: "21", subtitle: "多人竞技 · 点数对决", description: "2～5 人轮流行动，可连续要牌；最高且不爆牌者赢得本手。", art: "../../assets/game-blackjack-table-v1.webp", limits: "2～5 人"},
+  texas: {name: "德州扑克", mark: "德", subtitle: "无限注德州 · 连续牌桌", description: "2～8 人，大小盲、公共牌、边池与全下完整结算。", art: "../../assets/game-texas-table-v1.webp", limits: "2～8 人", maximum: 8},
+  zhajinhua: {name: "炸金花", mark: "金", subtitle: "经典三张 · 看牌比牌", description: "2～6 人，闷牌、看牌、跟注、加注、弃牌与比牌。", art: "../../assets/game-zhajinhua-table-v1.webp", limits: "2～6 人", maximum: 6},
+  blackjack: {name: "21 点", mark: "21", subtitle: "多人竞技 · 点数对决", description: "2～5 人轮流行动，可连续要牌；最高且不爆牌者赢得本手。", art: "../../assets/game-blackjack-table-v1.webp", limits: "2～5 人", maximum: 5},
 };
 const META = GAMES[game] || null;
 let uid = null, identity = null, rooms = [], room = null, followController = null, countdown = null, busy = false, layoutObserver = null;
@@ -83,7 +83,10 @@ function gamePlayer(raw) { return room.players.find(player => player.id === raw)
 function roomCard(item) {
   const button = document.createElement("button"); button.type = "button"; button.className = "room-card";
   const copy = document.createElement("div"); const title = document.createElement("strong"); title.textContent = `${item.creator_name}的牌桌`; const meta = document.createElement("small"); meta.textContent = `${item.room_type === "coin" ? `${item.stake} 币场` : "休闲场"} · ${item.occupied}/${item.maximum} 人${item.mine ? " · 我在桌上" : ""}`; copy.append(title, meta);
-  const phase = document.createElement("b"); phase.textContent = {waiting: "候场", playing: "牌局中", hand_finished: "本手结束"}[item.phase] || "牌桌";
+  const phase = document.createElement("b");
+  phase.textContent = item.phase === "hand_finished" && !item.mine && item.occupied < item.maximum
+    ? "可加入下一手"
+    : {waiting: "候场", playing: "牌局中", hand_finished: item.mine ? "等待下一手" : "本手结束"}[item.phase] || "牌桌";
   button.append(copy, phase); button.addEventListener("click", () => enterRoom(item.id)); return button;
 }
 function renderRooms() {
@@ -193,7 +196,8 @@ function renderResult() {
   const holder = $("#result"); if (room.phase !== "hand_finished") { holder.hidden = true; return; } holder.hidden = false; holder.replaceChildren();
   const head = document.createElement("header"); const copy = document.createElement("div"); const eyebrow = document.createElement("span"); eyebrow.textContent = `第 ${room.hand_number} 手 · 结算`; const title = document.createElement("h3"); title.textContent = room.state.result_label || "本手结算"; copy.append(eyebrow, title); const winner = document.createElement("b"); winner.textContent = (room.state.winners || []).includes(room.me.id) ? "胜" : "结"; head.append(copy, winner); holder.append(head);
   const rows = document.createElement("div"); rows.className = "showdown-list";
-  room.players.forEach(player => {
+  const handPlayers = new Set(room.state.players || []);
+  room.players.filter(player => handPlayers.has(player.id)).forEach(player => {
     const id = player.id; const won = (room.state.winners || []).includes(id); const row = document.createElement("article"); row.className = won ? "showdown-row winner" : "showdown-row";
     const avatar = avatarButton(player); const info = document.createElement("div"); const name = document.createElement("strong"); name.textContent = `${player.name}${id === room.me.id ? " · 你" : ""}`;
     const rank = document.createElement("small"); const folded = (room.state.folded || []).includes(id); const total = room.state.totals?.[id]; rank.textContent = game === "blackjack" ? `${total ?? "—"} 点 · ${room.state.results?.[id] || "已结算"}` : folded ? "已弃牌" : room.state.hand_ranks?.[id] || (won ? "胜出" : "未摊牌"); info.append(name, rank);
@@ -204,8 +208,14 @@ function renderResult() {
   holder.append(rows);
   const readyList = document.createElement("div"); readyList.className = "next-ready"; room.players.forEach(player => { const item = document.createElement("span"); item.className = room.ready.includes(player.id) ? "ready" : ""; item.textContent = `${player.name} ${room.ready.includes(player.id) ? "已准备" : "未准备"}`; readyList.append(item); }); holder.append(readyList);
   const mine = room.players.some(player => player.id === room.me.id); const ready = room.ready.includes(room.me.id); const allReady = room.players.length > 0 && room.players.every(player => room.ready.includes(player.id)); const footer = document.createElement("footer");
-  if (mine) footer.append(actionButton(ready ? "取消准备" : "准备下一手", ready ? "unready" : "ready", {}, !ready));
-  footer.append(actionButton("退出牌桌", "leave"));
+  if (mine) {
+    footer.append(actionButton(ready ? "取消准备" : "准备下一手", ready ? "unready" : "ready", {}, !ready));
+    footer.append(actionButton("退出牌桌", "leave"));
+  } else if (room.players.length < META.maximum) {
+    footer.append(actionButton("加入下一手", "claim", {}, true));
+  } else {
+    footer.append(actionButton("牌桌已满", "claim", {}, false, true));
+  }
   if (room.me.id === room.creator_id) footer.append(actionButton(allReady ? "开始下一手" : `等待准备 ${room.ready.length}/${room.players.length}`, "start", {}, true, !allReady));
   holder.append(footer);
 }

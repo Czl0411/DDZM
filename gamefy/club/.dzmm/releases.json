@@ -104,5 +104,11 @@
     "deployedAt": "2026-10-23T04:56:44.685Z",
     "label": "club-20261023-gameplay-fixes",
     "gitHead": "47e8a6b"
+  },
+  {
+    "revision": "1792740353963",
+    "deployedAt": "2026-10-23T07:24:59.021Z",
+    "label": "club-20261023-between-hands-join",
+    "gitHead": "0a930c6"
   }
 ]

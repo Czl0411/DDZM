@@ -11,11 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_unified_club_is_the_only_migration_head():
     scripts = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert scripts.get_heads() == ["20261021_129"]
+    assert scripts.get_heads() == ["20261022_mr_expedition"]
     assert scripts.get_revision("20261021_126").down_revision == "20261020_125"
     assert scripts.get_revision("20261021_127").down_revision == "20261021_126"
     assert scripts.get_revision("20261021_128").down_revision == "20261021_127"
     assert scripts.get_revision("20261021_129").down_revision == "20261021_128"
+    assert scripts.get_revision("20261022_mr_expedition").down_revision == "20261021_129"
 
 
 def test_club_card_tables_generate_postgresql_upgrade_sql():

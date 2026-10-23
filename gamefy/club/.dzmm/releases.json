@@ -98,5 +98,11 @@
     "revision": "1792667206022",
     "deployedAt": "2026-10-22T11:05:48.914Z",
     "gitHead": "1c722f3"
+  },
+  {
+    "revision": "1792731461954",
+    "deployedAt": "2026-10-23T04:56:44.685Z",
+    "label": "club-20261023-gameplay-fixes",
+    "gitHead": "47e8a6b"
   }
 ]

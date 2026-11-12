@@ -414,51 +414,51 @@ class AdminCorePort(Protocol):
 
 
 class CoreClient:
-    def gamefy_workstation_action(self, token: str, payload: dict, *, quote=False) -> dict:
+    def gamefy_workstation_action(self, authorization: str, payload: dict, *, quote=False) -> dict:
         response = self._client.post('/internal/gamefy/workstation/' + ('quote' if quote else 'actions'),
-            headers={"Authorization": f"Bearer {token}"}, json=payload)
+            headers={"Authorization": authorization}, json=payload)
         response.raise_for_status()
         return response.json()
 
-    def list_gamefy_workstations(self, token: str, query: str, page: int) -> dict:
+    def list_gamefy_workstations(self, authorization: str, query: str, page: int) -> dict:
         response = self._client.get(
             "/internal/gamefy/workstation/lobby", params={"query": query, "page": page},
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": authorization},
         )
         response.raise_for_status()
         return response.json()
 
-    def get_gamefy_employee_workstation(self, token: str, employee_number: int) -> dict:
+    def get_gamefy_employee_workstation(self, authorization: str, employee_number: int) -> dict:
         response = self._client.get(
             f"/internal/gamefy/workstation/employees/{employee_number}",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": authorization},
         )
         response.raise_for_status()
         return response.json()
 
-    def share_gamefy_workstation(self, token: str, payload: dict) -> dict:
+    def share_gamefy_workstation(self, authorization: str, payload: dict) -> dict:
         response = self._client.post(
-            "/internal/gamefy/workstation/share", headers={"Authorization": f"Bearer {token}"}, json=payload,
+            "/internal/gamefy/workstation/share", headers={"Authorization": authorization}, json=payload,
         )
         response.raise_for_status()
         return response.json()
 
-    def gamefy_workstation_share_status(self, token: str, request_id: str) -> dict:
+    def gamefy_workstation_share_status(self, authorization: str, request_id: str) -> dict:
         response = self._client.get(
-            f"/internal/gamefy/workstation/shares/{request_id}", headers={"Authorization": f"Bearer {token}"},
+            f"/internal/gamefy/workstation/shares/{request_id}", headers={"Authorization": authorization},
         )
         response.raise_for_status()
         return response.json()
 
-    def get_gamefy_workstation(self, token: str) -> dict:
+    def get_gamefy_workstation(self, authorization: str) -> dict:
         response = self._client.get(
-            "/internal/gamefy/workstation", headers={"Authorization": f"Bearer {token}"},
+            "/internal/gamefy/workstation", headers={"Authorization": authorization},
         )
         response.raise_for_status()
         return response.json()
 
-    def get_gamefy_workstation_shop(self, token: str) -> dict:
-        response = self._client.get("/internal/gamefy/workstation/shop", headers={"Authorization": f"Bearer {token}"})
+    def get_gamefy_workstation_shop(self, authorization: str) -> dict:
+        response = self._client.get("/internal/gamefy/workstation/shop", headers={"Authorization": authorization})
         response.raise_for_status()
         return response.json()
 

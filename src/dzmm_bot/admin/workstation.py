@@ -63,10 +63,12 @@ def install_workstation_routes(app, core):
 
     def gamefy_response(request, operation):
         authorization = request.headers.get("authorization", "")
-        if not authorization.startswith("Bearer ") or not 0 < len(authorization[7:]) <= 8192:
+        bearer = authorization.startswith("Bearer ") and 0 < len(authorization[7:]) <= 8192
+        workstation_uid = authorization.startswith("WorkstationUid ") and 0 < len(authorization[len("WorkstationUid "):]) <= 255
+        if not bearer and not workstation_uid:
             return JSONResponse({"detail": "请先登录 DZMM，再打开工位游戏。"}, status_code=401, headers=gamefy_headers)
         try:
-            return JSONResponse(operation(authorization[7:]), headers=gamefy_headers)
+            return JSONResponse(operation(authorization), headers=gamefy_headers)
         except WorkstationActionError as error:
             return JSONResponse({'detail': str(error)}, status_code=error.code, headers=gamefy_headers)
         except httpx.HTTPStatusError as error:

@@ -12,8 +12,8 @@ def test_platform_identity_coalesces_requests_expires_and_recovers():
 const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
-let clock = 0, calls = 0, nextStatus = 200, loggedIn = true, hasToken = true;
-let hangFetch = false, hangBody = false, requestPaths = [];
+let clock = 0, calls = 0, nextStatus = 200, loggedIn = true;
+let hangFetch = false, hangBody = false, requestPaths = [], authorizations = [];
 const nodes = new Map();
 const node = id => {
   if (!nodes.has(id)) nodes.set(id, {addEventListener(){}, value:''});
@@ -24,44 +24,46 @@ const context = vm.createContext({
   setTimeout: (fn, ms) => setTimeout(fn, ms === 30000 ? 20 : ms),
   Date: {now: () => clock},
   document: {getElementById:node},
-  fetch:async (url) => {
+  fetch:async (url, options = {}) => {
     requestPaths.push(new URL(url).pathname + new URL(url).search);
+    authorizations.push(options.headers?.Authorization);
     if (hangFetch) return new Promise(()=>{});
     return {ok:nextStatus===200,status:nextStatus,json:async()=>hangBody?new Promise(()=>{}):({})};
   },
   window:{workstationConfig:{apiBaseUrl:'https://example.com'},
     workstationArt:{categories:[]},
-    dzmm:{user:{info:async()=>{calls++;await Promise.resolve();return {id:loggedIn?'owner':null,token:hasToken?'test-token':null};}}}},
+    dzmm:{user:{info:async()=>{calls++;await Promise.resolve();return {id:loggedIn?'owner':null};}}}},
 });
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 const source = context.window.workstationSource;
 (async () => {
   await Promise.all([source.load(), source.shop(), source.lobby({query:'',page:1})]);
-  assert.equal(calls,1,'concurrent reads request one platform token');
+  assert.equal(calls,1,'concurrent reads request one platform identity');
+  assert.deepEqual(authorizations.slice(0,3),Array(3).fill('WorkstationUid owner'));
   await source.load();
-  assert.equal(calls,1,'reuse token across views');
+  assert.equal(calls,1,'reuse identity across views');
   clock+=300001;
   await source.load();
-  assert.equal(calls,2,'refresh cached token after five minutes');
+  assert.equal(calls,2,'refresh cached identity after five minutes');
   nextStatus=401;
   await assert.rejects(source.load());
   nextStatus=200;
   await source.load();
-  assert.equal(calls,3,'401 invalidates the token');
+  assert.equal(calls,3,'401 invalidates the identity');
   clock+=300001;
-  hasToken=false;
-  await assert.rejects(source.load(), /平台暂未提供登录凭证/);
+  loggedIn=false;
+  await assert.rejects(source.load(), /请先登录 DZMM/);
   const before=calls;
-  await assert.rejects(source.shop(), /平台暂未提供登录凭证/);
+  await assert.rejects(source.shop(), /请先登录 DZMM/);
   assert.equal(calls,before,'failed identity has a cooldown');
   clock+=30001;
-  hasToken=true;
+  loggedIn=true;
   await source.load();
   assert.equal(calls,before+1,'retry recovers after cooldown');
   clock+=300001;
-  hasToken=false;loggedIn=false;
+  loggedIn=false;
   await assert.rejects(source.load(), /请先登录 DZMM/);
-  clock+=30001;hasToken=true;loggedIn=true;
+  clock+=30001;loggedIn=true;
   hangFetch=true;
   await assert.rejects(source.preview(1), /加载超时/);
   hangFetch=false;hangBody=true;

@@ -32,14 +32,14 @@
       ? new Error("加载超时，请检查网络后重试；完整工位原图较大，请耐心等待。") : error;
   }
 
-  let identityToken = null;
+  let identityAuthorization = null;
   let identityValidUntil = 0;
   let identityPending = null;
   let identityRetryAfter = 0;
   let identityFailure = null;
 
-  async function platformToken() {
-    if (identityToken && Date.now() < identityValidUntil) return identityToken;
+  async function platformAuthorization() {
+    if (identityAuthorization && Date.now() < identityValidUntil) return identityAuthorization;
     if (identityPending) return identityPending;
     if (Date.now() < identityRetryAfter) throw identityFailure;
     identityPending = (async () => {
@@ -51,15 +51,13 @@
             timer = setTimeout(() => reject(new Error("登录信息读取超时，请稍后刷新游戏重试。")), 15000);
           }),
         ]);
-        if (!identity?.token) {
-          throw new Error(identity?.id
-            ? "平台暂未提供登录凭证，可能已达请求上限，请稍后重新打开游戏。"
-            : "请先登录 DZMM，再打开工位游戏。");
+        if (!identity?.id) {
+          throw new Error("请先登录 DZMM，再打开工位游戏。");
         }
-        identityToken = identity.token;
+        identityAuthorization = `WorkstationUid ${identity.id}`;
         identityValidUntil = Date.now() + 5 * 60 * 1000;
         identityFailure = null;
-        return identityToken;
+        return identityAuthorization;
       } catch (error) {
         identityFailure = error instanceof Error ? error : new Error("暂时无法读取登录信息，请稍后刷新游戏重试。");
         identityRetryAfter = Date.now() + 30000;
@@ -85,7 +83,7 @@
     if (typeof window.dzmm?.user?.info !== "function") {
       throw new Error("请从 DZMM 平台打开工位游戏，以读取你的真实装备。");
     }
-    const token = await platformToken();
+    const authorization = await platformAuthorization();
     const controller = new AbortController();
     let timer;
     // Bound the full response, including JSON body transfer, even in sandboxes
@@ -99,12 +97,12 @@
     const request = async () => {
       const response = await fetch(`${endpoint.href.replace(/\/$/, "")}/api/gamefy/workstation${path}`, {
         ...options,
-        headers: {Authorization: `Bearer ${token}`, ...(options.body ? {"Content-Type": "application/json"} : {})},
+        headers: {Authorization: authorization, ...(options.body ? {"Content-Type": "application/json"} : {})},
         credentials: "omit", cache: "no-store", signal: controller.signal,
       }).catch(error => { throw requestError(error); });
       if (!response.ok) {
         if (response.status === 401) {
-          identityToken = null;
+          identityAuthorization = null;
           identityValidUntil = 0;
         }
         const messages = {

@@ -223,9 +223,21 @@ def test_authentication_and_read_only_access(gamefy_context, signing_key):
         assert response.headers["access-control-allow-origin"] == "*"
     token = signed_token(signing_key)
     assert context.internal.get("/internal/gamefy/workstation", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+    assert context.internal.get("/internal/gamefy/workstation", headers={"Authorization": f"WorkstationUid {OWNER}"}).status_code == 401
     assert context.public.get(path, headers={"Authorization": f"Bearer {signed_token(signing_key, sub=str(uuid4()))}"}).status_code == 404
     assert context.public.post(path, headers={"Authorization": f"Bearer {token}"}, json={"equipped": [1]}).status_code == 405
     assert context.public.get("/api/status", headers={"X-Admin-Token": token}).status_code == 401
+
+
+def test_workstation_uid_authentication_matches_existing_games(gamefy_context):
+    context = gamefy_context
+    path = "/api/gamefy/workstation"
+    response = context.public.get(path, headers={"Authorization": f"WorkstationUid {OWNER}"})
+    assert response.status_code == 200
+    assert response.json()["display_name"] == "糯糯"
+    for value in ["WorkstationUid ", "WorkstationUid bad uid", "WorkstationUid " + "a" * 256]:
+        assert context.public.get(path, headers={"Authorization": value}).status_code == 401
+    assert context.public.get(path, headers={"Authorization": "WorkstationUid unknown"}).status_code == 404
 
 
 def test_lobby_lists_public_workstations_including_empty_and_searches_literally(gamefy_context, signing_key):

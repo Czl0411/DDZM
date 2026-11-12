@@ -93,14 +93,21 @@ def install_gamefy_routes(app, repository, authorize, game_id):
         _: Annotated[None, Depends(authorize)],
         authorization: Annotated[str | None, Header()] = None,
     ):
-        if verifier is None:
-            raise HTTPException(503, "平台工位尚未开放，请管理员配置游戏 ID。")
-        if not authorization or not authorization.startswith("Bearer "):
+        if authorization and authorization.startswith("WorkstationUid "):
+            platform_id = authorization[len("WorkstationUid "):]
+            if not platform_id or len(platform_id) > 255 or any(
+                char.isspace() or ord(char) < 32 or ord(char) == 127 for char in platform_id
+            ):
+                raise HTTPException(401, "玩家身份无效，请刷新游戏重新登录。")
+        elif authorization and authorization.startswith("Bearer "):
+            if verifier is None:
+                raise HTTPException(503, "平台工位尚未开放，请管理员配置游戏 ID。")
+            token = authorization[7:]
+            if not token or len(token) > 8192:
+                raise HTTPException(401, "玩家身份无效，请刷新游戏重新登录。")
+            platform_id = verifier.verify(token)
+        else:
             raise HTTPException(401, "请先登录 DZMM，再打开工位游戏。")
-        token = authorization[7:]
-        if not token or len(token) > 8192:
-            raise HTTPException(401, "玩家身份无效，请刷新游戏重新登录。")
-        platform_id = verifier.verify(token)
         user = repository.find_user(platform_id)
         if user is None:
             raise HTTPException(404, "尚未找到你的员工档案，请先在群里发送 /入职 名字。")

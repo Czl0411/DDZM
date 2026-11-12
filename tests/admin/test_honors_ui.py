@@ -64,6 +64,7 @@ const report = {week_start: "2026-10-05", config_version: 1, can_settle: true,
   assert.ok(node("#honors-panel").innerHTML.includes("S1 赛季永久称号"));
   assert.ok(!node("#honors-panel").innerHTML.includes('value="current"'));
   assert.ok(node("#honors-panel").innerHTML.includes("已发放名单与修改状态"));
+  assert.ok(node("#honors-panel").innerHTML.includes("仅按 S1 历史结季名单发放"));
   context.seasonItems = [{winner_name: "糯糯", user_id: "one", name: "<unsafe-title>", season_info: {
     closing_department: "历史部门", closing_rank: "部门副总监", status: "available", qualification_note: "符合资格",
     customized: true, customized_at: "2026-10-05", original_name: "<unsafe-original>",
@@ -72,9 +73,9 @@ const report = {week_start: "2026-10-05", config_version: 1, can_settle: true,
   assert.ok(seasonHtml.includes("已修改") && seasonHtml.includes("机会已用完") && seasonHtml.includes("修改前"));
   assert.ok(seasonHtml.includes("不可佩戴") && seasonHtml.includes("未修改") && seasonHtml.includes("当前不可修改"));
   assert.ok(!seasonHtml.includes("<unsafe-title>") && !seasonHtml.includes("<unsafe-original>"));
-  assert.ok(!node("#honors-panel").innerHTML.includes("粘贴历史名单"));
-  assert.ok(!node("#honors-panel").innerHTML.includes("预览名单"));
-  assert.ok(!node("#honors-panel").innerHTML.includes("确认批量发放"));
+  assert.ok(node("#honors-panel").innerHTML.includes("粘贴历史名单"));
+  assert.ok(node("#honors-panel").innerHTML.includes("预览名单"));
+  assert.ok(node("#honors-panel").innerHTML.includes("确认批量发放"));
   let refreshes = 0;
   context.loadSeasonHonors = async () => {refreshes++;};
   node("#honor-season-refresh").listeners.click();
@@ -93,9 +94,31 @@ const report = {week_start: "2026-10-05", config_version: 1, can_settle: true,
   await node("#honor-season-settings").listeners.submit({preventDefault() {}});
   assert.deepEqual(savedThreshold, {minimum_rank_order: 9, expected_version: 3});
 
+  const season = node("#honor-season-preview");
+  season.elements.roster.value = "#0012\t原部门\t总监\n#0013\t\t职员";
+  const seasonReport = {rows: [{employee_number: 12, name: "糯糯", department: "原部门", rank: "总监", title: "<unsafe-title>"}],
+    skipped: [{employee_number: 13, reason: "缺少部门或职位"}], preview_digest: "b".repeat(64)};
+  context.requestGame = async (path, options) => {
+    assert.ok(path.endsWith("/seasons/s1/preview"));
+    assert.deepEqual(JSON.parse(options.body).roster, [
+      {employee_number: 12, department: "原部门", rank: "总监"},
+      {employee_number: 13, department: "", rank: "职员"},
+    ]);
+    return seasonReport;
+  };
+  await season.listeners.submit({preventDefault() {}, submitter: {}});
+  assert.equal(node("#honor-season-issue").disabled, false);
+  assert.ok(node("#honor-season-results").innerHTML.includes("可发放 1 人 · 跳过 1 人"));
+  assert.ok(!node("#honor-season-results").innerHTML.includes("<unsafe-title>"));
+  season.listeners.input();
+  assert.equal(node("#honor-season-issue").disabled, true);
+  assert.equal(node("#honor-season-results").innerHTML, "");
+
   const requests = [];
   context.requestGame = async (path, options) => {
     requests.push(new Request(`https://admin.test${path}`, options));
+    if (path.endsWith("/preview")) return seasonReport;
+    if (path.endsWith("/issue")) return {count: 1, issued_at: "2026-10-05", actor: "admin"};
     return {};
   };
   context.loadHonorHistory = async () => {};
@@ -108,10 +131,13 @@ const report = {week_start: "2026-10-05", config_version: 1, can_settle: true,
   grant.elements.employee_number.selectedOptions = [{text: "#12 糯糯"}];
   grant.reset = () => {};
   await grant.listeners.submit({preventDefault() {}, submitter: {}});
+  await season.listeners.submit({preventDefault() {}, submitter: {}});
+  await node("#honor-season-issue").listeners.click();
   context.revokeForm = {elements: {reason: {value: "撤回原因"}}, dataset: {honorRevoke: "award-1"}};
   await vm.runInContext("revokePermanentHonor({preventDefault() {}, currentTarget: revokeForm, submitter: {}})", context);
   assert.deepEqual(requests.map((request) => new URL(request.url).pathname), [
-    "/api/game/honors/permanent/grant", "/api/game/honors/permanent/award-1/revoke",
+    "/api/game/honors/permanent/grant", "/api/game/honors/seasons/s1/preview",
+    "/api/game/honors/seasons/s1/issue", "/api/game/honors/permanent/award-1/revoke",
   ]);
   for (const request of requests) {
     assert.equal(request.headers.get("content-type"), "application/json", request.url);

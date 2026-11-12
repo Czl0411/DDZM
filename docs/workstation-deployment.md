@@ -12,7 +12,7 @@
 | `DZMM_CORE_TOKEN`、`DZMM_ADMIN_TOKEN` | 服务鉴权密钥，仅后端使用 |
 | `DZMM_WORKSTATION_PUBLIC_URL` | 普通签名工位页的公开HTTPS基地址，可留空关闭普通网页入口 |
 | `DZMM_GAMEFY_GAME_ID` | 平台签发JWT的游戏audience，按照该平台游戏配置填写，可为规范数字或UUID |
-| `DZMM_WORKSTATION_GAME_URL` | 群聊发送的游戏入口，例如`https://www.dzmm.ai/character/123456` |
+| `DZMM_WORKSTATION_GAME_URL` | 群聊发送的游戏入口，例如`https://www.aikda.com/character/123456` |
 | `DZMM_WORKSTATION_API_BASE_URL` | 小游戏构建使用的公开HTTPS后端地址 |
 | `DZMM_GAMEFY_CARD_ID` | 小游戏构建和上传使用的数字游戏卡ID，与JWT audience分别配置 |
 | `DZMM_PUBLIC_HOST` | Caddy使用的稳定DNS域名 |

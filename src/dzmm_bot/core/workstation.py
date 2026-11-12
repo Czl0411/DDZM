@@ -64,7 +64,7 @@ class WorkstationLinks:
         card = re.fullmatch(r"/character/([1-9][0-9]*)", game.path) if game else None
         self.game_card_id = (
             card.group(1)
-            if card and game.hostname in {"dzmm.ai", "www.dzmm.ai"} and game.port in {None, 443}
+            if card and game.hostname in {"aikda.com", "www.aikda.com"} and game.port in {None, 443}
             else None
         )
 

@@ -30,7 +30,7 @@ from dzmm_bot.runtime.settings import Settings
 NOW = datetime(2026, 10, 15, 12, tzinfo=ZoneInfo("Asia/Shanghai"))
 SECRET = "workstation-test-core-secret"
 PUBLIC_URL = "https://workstation.example.test"
-GAME_URL = "https://www.dzmm.ai/character/3772306"
+GAME_URL = "https://www.aikda.com/character/3772306"
 
 
 @pytest.fixture
@@ -231,12 +231,12 @@ def test_game_entry_uses_platform_identity_without_changing_existing_personal_li
 
 @pytest.mark.parametrize(("url", "card_id"), [
     (GAME_URL, "3772306"),
-    ("https://dzmm.ai/character/3772306/", "3772306"),
-    ("https://www.dzmm.ai/character/0", None),
-    ("https://www.dzmm.ai/character/3772306/extra", None),
-    ("https://www.dzmm.ai/character/8c0c9601-1a72-42f7-b379-120adf63886d", None),
+    ("https://aikda.com/character/3772306/", "3772306"),
+    ("https://www.aikda.com/character/0", None),
+    ("https://www.aikda.com/character/3772306/extra", None),
+    ("https://www.aikda.com/character/8c0c9601-1a72-42f7-b379-120adf63886d", None),
     ("https://example.test/character/3772306", None),
-    ("https://www.dzmm.ai:8443/character/3772306", None),
+    ("https://www.aikda.com:8443/character/3772306", None),
     (None, None),
 ])
 def test_game_card_id_is_only_derived_from_platform_card_url(url, card_id):
@@ -415,7 +415,7 @@ def test_settings_supports_optional_url_and_proxy_prefix(monkeypatch):
     assert Settings.from_environment().workstation_game_url == GAME_URL
 
 
-@pytest.mark.parametrize("value", ["http://www.dzmm.ai/character/3772306", "https://user:password@example.test", "https://example.test?token=private"])
+@pytest.mark.parametrize("value", ["http://www.aikda.com/character/3772306", "https://user:password@example.test", "https://example.test?token=private"])
 def test_settings_rejects_unsafe_game_entry_url(monkeypatch, value):
     monkeypatch.setenv("DZMM_DATABASE_URL", "sqlite://")
     monkeypatch.setenv("DZMM_CORE_TOKEN", SECRET)

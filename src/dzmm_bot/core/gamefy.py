@@ -12,7 +12,7 @@ from .workstation_share import available_share_groups, enqueue_workstation_share
 from .workstation_actions import WorkstationActionError
 
 
-JWKS_URL = "https://www.dzmm.ai/api/gamefy/.well-known/jwks.json"
+JWKS_URL = "https://www.aikda.com/api/gamefy/.well-known/jwks.json"
 logger = logging.getLogger(__name__)
 
 

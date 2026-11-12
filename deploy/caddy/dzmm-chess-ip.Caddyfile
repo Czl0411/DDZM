@@ -41,6 +41,14 @@ https://49.234.20.159 {
         }
     }
 
+    handle /api/gamefy/workstation* {
+        reverse_proxy 127.0.0.1:18080
+    }
+
+    handle /static/workstation/* {
+        reverse_proxy 127.0.0.1:18080
+    }
+
     handle /api/integration/* {
         reverse_proxy 127.0.0.1:18080
     }

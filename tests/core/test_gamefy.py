@@ -67,6 +67,7 @@ def gamefy_keys(signing_key, monkeypatch):
 
 
 def test_rs256_verification_uses_fixed_jwks_and_caches_public_keys(signing_key, gamefy_keys):
+    assert JWKS_URL == "https://www.aikda.com/api/gamefy/.well-known/jwks.json"
     verifier = GamefyIdentityVerifier(GAME_ID)
     token = signed_token(signing_key)
     assert verifier.verify(token) == OWNER

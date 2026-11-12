@@ -15,5 +15,7 @@ def test_public_game_routes_are_streamed_to_core():
         ("/api/club/*", "127.0.0.1:18120", "-1"),
         ("/api/mistrealm/*", "127.0.0.1:18120", "-1"),
     }
+    assert re.search(r"handle /api/gamefy/workstation\* \{\s*reverse_proxy 127\.0\.0\.1:18080\s*\}", config)
+    assert re.search(r"handle /static/workstation/\* \{\s*reverse_proxy 127\.0\.0\.1:18080\s*\}", config)
     assert re.search(r"handle /api/integration/\* \{\s*reverse_proxy 127\.0\.0\.1:18080\s*\}", config)
     assert re.search(r"handle \{\s*respond 404\s*\}", config)

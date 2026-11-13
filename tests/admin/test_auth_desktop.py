@@ -27,6 +27,10 @@ async def no_delay(_seconds):
     return None
 
 
+async def close_browser():
+    return None
+
+
 def make_controller(tmp_path, process_factory, **overrides):
     from dzmm_bot.auth_desktop import AuthDesktopController
 
@@ -43,6 +47,8 @@ def make_controller(tmp_path, process_factory, **overrides):
         "readiness_probe": lambda _pids: True,
         "process_alive": lambda _pid: False,
         "process_group_alive": lambda _pgid: False,
+        "graceful_browser_close": close_browser,
+        "browser_readiness_probe": lambda: False,
         "sleep": no_delay,
     }
     options.update(overrides)
@@ -97,6 +103,57 @@ def test_start_spawns_isolated_desktop_and_loopback_novnc(tmp_path):
         "process_groups": [3101, 3102, 3103, 3104, 3105],
         "pids": [3001, 3002, 3003, 3004, 3005],
     }
+
+
+def test_start_closes_browser_and_removes_stale_profile_locks(tmp_path):
+    factory = ProcessFactory()
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        (profile / name).symlink_to("stale")
+    browser_running = True
+    events = []
+
+    async def close_stale_browser():
+        nonlocal browser_running
+        events.append("close")
+        browser_running = False
+
+    controller = make_controller(
+        tmp_path,
+        factory,
+        graceful_browser_close=close_stale_browser,
+        browser_readiness_probe=lambda: browser_running,
+    )
+
+    controller.start()
+
+    assert events == ["close"]
+    assert not any(
+        (profile / name).is_symlink()
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket")
+    )
+    assert len(factory.calls) == 5
+
+
+def test_start_keeps_profile_locks_when_browser_does_not_stop(tmp_path):
+    factory = ProcessFactory()
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    lock = profile / "SingletonLock"
+    lock.symlink_to("active")
+    controller = make_controller(
+        tmp_path,
+        factory,
+        browser_readiness_probe=lambda: True,
+        shutdown_attempts=1,
+    )
+
+    with pytest.raises(RuntimeError, match="did not release"):
+        controller.start()
+
+    assert lock.is_symlink()
+    assert factory.calls == []
 
 
 def test_start_uses_the_configured_browser_executable(tmp_path):

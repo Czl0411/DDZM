@@ -276,6 +276,31 @@ def test_stop_releases_browser_and_playwright(tmp_path):
     assert playwright.stopped is True
 
 
+def test_stop_releases_context_and_playwright_when_gateway_close_fails(tmp_path):
+    context = FakeContext("https://chat.example/room")
+    playwright = FakePlaywright(FakeChromium(context))
+    session = BrowserSession(
+        tmp_path / "profile", None, playwright_factory=lambda: playwright
+    )
+    session.start_headless()
+
+    class FailingGateway:
+        def close(self):
+            raise RuntimeError("socket close failed")
+
+    session.chat_url = "https://chat.example/chat"
+    session._gateway = FailingGateway()
+
+    with pytest.raises(RuntimeError, match="socket close failed"):
+        session.stop()
+
+    assert context.closed is True
+    assert playwright.stopped is True
+    assert session._gateway is None
+    assert session._context is None
+    assert session._playwright is None
+
+
 def test_configured_session_uses_socket_gateway_instead_of_dom_chat_controls(tmp_path):
     page = FakePage("https://chat.example/chat")
     socket = FakeSocket()

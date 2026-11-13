@@ -15,6 +15,7 @@ class ChildProcess(Protocol):
 ProcessFactory = Callable[..., Awaitable[ChildProcess]]
 ReadinessProbe = Callable[[list[int]], bool]
 XReadinessProbe = Callable[[int], bool]
+BrowserReadinessProbe = Callable[[], bool]
 AsyncSleep = Callable[[float], Awaitable[None]]
 
 
@@ -37,6 +38,7 @@ class AuthDesktopController:
         process_alive: Callable[[int], bool] | None = None,
         process_group_alive: Callable[[int], bool] | None = None,
         graceful_browser_close: Callable[[], Awaitable[None]] | None = None,
+        browser_readiness_probe: BrowserReadinessProbe | None = None,
         sleep: AsyncSleep = asyncio.sleep,
         readiness_attempts: int = 100,
         shutdown_attempts: int = 50,
@@ -55,6 +57,9 @@ class AuthDesktopController:
         self._process_group_alive = process_group_alive or _group_alive
         self._graceful_browser_close = (
             graceful_browser_close or _close_desktop_browser
+        )
+        self._browser_readiness_probe = (
+            browser_readiness_probe or (lambda: _port_ready(19222))
         )
         self._x_readiness_probe = x_readiness_probe or (
             lambda pid: self._process_alive(pid)
@@ -100,6 +105,7 @@ class AuthDesktopController:
 
             self._runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             self._profile_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            await self._prepare_profile()
             display_environment = {**os.environ, "DISPLAY": ":99"}
             commands = [
                 (("Xvfb", ":99", "-screen", "0", "1280x800x24"), {}),
@@ -170,6 +176,17 @@ class AuthDesktopController:
             except Exception:
                 await self._terminate(groups)
                 raise
+
+    async def _prepare_profile(self) -> None:
+        await self._graceful_browser_close()
+        for _ in range(self._shutdown_attempts):
+            if not self._browser_readiness_probe():
+                break
+            await self._sleep(0.1)
+        if self._browser_readiness_probe():
+            raise RuntimeError("browser did not release the authentication profile")
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            (self._profile_dir / name).unlink(missing_ok=True)
 
     def stop(self) -> None:
         self._loop.run_until_complete(self._stop())

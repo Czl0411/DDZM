@@ -327,16 +327,22 @@ class BrowserSession:
         return _location(self._active_page().url) != _location(self.login_url)
 
     def stop(self) -> None:
-        if self._gateway is not None and self.chat_url is not None:
-            self._gateway.close()
-        if self._context is not None and not self._attached:
-            self._context.close()
-        if self._playwright is not None:
-            self._playwright.stop()
-        self._gateway = None
-        self._context = None
-        self._attached = False
-        self._playwright = None
+        try:
+            if self._gateway is not None and self.chat_url is not None:
+                self._gateway.close()
+        finally:
+            try:
+                if self._context is not None and not self._attached:
+                    self._context.close()
+            finally:
+                try:
+                    if self._playwright is not None:
+                        self._playwright.stop()
+                finally:
+                    self._gateway = None
+                    self._context = None
+                    self._attached = False
+                    self._playwright = None
 
     def login_state(self) -> LoginState:
         if self._gateway is None:

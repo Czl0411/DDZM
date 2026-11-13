@@ -1225,6 +1225,26 @@ def test_worker_retries_a_temporarily_rejected_non_dark_market_outbound(context)
     assert core.failed == []
 
 
+def test_worker_stops_retrying_a_temporarily_rejected_outbound_at_limit(context):
+    worker, gateway, _, _, core, _ = context
+    core.pending = [
+        OutboundClaim(
+            OUTBOUND_ID,
+            "in-1",
+            "reply",
+            LEASE,
+            attempt_count=3,
+        )
+    ]
+    gateway.send_error = AikdaMessageRejectedError("消息发送失败，请稍后再试")
+
+    worker.run_once()
+
+    assert core.failed_event.wait(timeout=1)
+    assert core.failed == [(OUTBOUND_ID, "worker-a", LEASE, NOW)]
+    assert core.released == []
+
+
 def test_worker_releases_main_account_send_until_next_token():
     current_time = [0.0]
     sleeps = []

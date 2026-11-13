@@ -184,13 +184,22 @@ def test_custom_command_core_api_rejects_bad_share_and_builtin_delete(client, he
     ).status_code == 404
 
 
-def test_custom_command_core_api_normalizes_aikda_game_card_url(client, headers):
+@pytest.mark.parametrize(
+    "game_url",
+    [
+        "https://www.aikda.com/chat?card=3799452",
+        "https://www.aikda.com/character/3799452",
+    ],
+)
+def test_custom_command_core_api_normalizes_aikda_game_card_url(
+    client, headers, game_url
+):
     created = client.post(
         "/internal/game/custom-commands", headers=headers,
         json={
             "command": "/游戏", "description": "游戏入口", "enabled": True,
             "reply_type": "character",
-            "content": "https://www.aikda.com/chat?card=3799452",
+            "content": game_url,
         },
     )
 

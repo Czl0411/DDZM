@@ -4226,24 +4226,34 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
                 parsed = urlsplit(content.strip())
                 hostname = (parsed.hostname or "").lower()
                 query = parse_qs(parsed.query, keep_blank_values=True)
-                card_ids = query.get("card", [])
                 port = parsed.port
             except ValueError:
                 raise ValueError("游戏卡链接格式不正确") from None
+            chat_card_ids = query.get("card", [])
+            character_card = re.fullmatch(
+                r"/character/([1-9][0-9]*)", parsed.path.rstrip("/")
+            )
+            resource_id = None
+            if (
+                parsed.path.rstrip("/") == "/chat"
+                and set(query) == {"card"}
+                and len(chat_card_ids) == 1
+                and re.fullmatch(r"[A-Za-z0-9_-]+", chat_card_ids[0]) is not None
+            ):
+                resource_id = chat_card_ids[0]
+            elif character_card is not None and not query:
+                resource_id = character_card.group(1)
             if (
                 parsed.scheme != "https"
                 or hostname not in {"aikda.com", "www.aikda.com"}
                 or port is not None
                 or parsed.username is not None
                 or parsed.password is not None
-                or parsed.path.rstrip("/") != "/chat"
                 or parsed.fragment
-                or set(query) != {"card"}
-                or len(card_ids) != 1
-                or re.fullmatch(r"[A-Za-z0-9_-]+", card_ids[0]) is None
+                or resource_id is None
             ):
                 raise ValueError("游戏卡链接格式不正确")
-            return card_ids[0]
+            return resource_id
         raise ValueError("不支持的回复类型")
 
     def create_custom_command(

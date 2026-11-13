@@ -61,7 +61,7 @@ _BROWSER_SEND_INTERVAL_SECONDS = 1.0
 _MAIN_ACCOUNT_TOKEN_CAPACITY = 1
 _MAIN_ACCOUNT_TOKEN_REFILL_SECONDS = 2.0
 _RATE_LIMIT_RETRY_DELAY_SECONDS = 60
-_MAX_TEMPORARY_REJECTION_ATTEMPTS = 3
+_MAX_TEMPORARY_REJECTIONS = 3
 
 
 class MainAccountSendDeferred(RuntimeError):
@@ -131,6 +131,7 @@ class BrowserWorker:
         self._main_account_send_tokens = float(_MAIN_ACCOUNT_TOKEN_CAPACITY)
         self._main_account_tokens_updated_at = self._monotonic()
         self._main_account_cooldown_until = 0.0
+        self._temporary_rejection_counts: dict[UUID, int] = {}
         self._paused_messages: list[InboundMessage] = []
         self._paused_messages_lock = Lock()
         self._pending_referrals: list[InboundMessage] = []
@@ -591,24 +592,36 @@ class BrowserWorker:
                 "outbound send rejected: %s: %s", outbound.id, error
             )
             if outbound.is_dark_market_list:
+                self._temporary_rejection_counts.pop(outbound.id, None)
                 self._core.mark_outbound_failed(
                     outbound.id,
                     self._worker_id,
                     outbound.lease_token,
                     self._clock(),
                 )
-            elif (
-                "请稍后再试" in str(error)
-                and outbound.attempt_count < _MAX_TEMPORARY_REJECTION_ATTEMPTS
-            ):
-                self._core.release_outbound(
-                    outbound.id,
-                    self._worker_id,
-                    outbound.lease_token,
-                    self._clock(),
-                    retry_delay_seconds=_RATE_LIMIT_RETRY_DELAY_SECONDS,
+            elif "请稍后再试" in str(error):
+                rejection_count = (
+                    self._temporary_rejection_counts.get(outbound.id, 0) + 1
                 )
+                if rejection_count >= _MAX_TEMPORARY_REJECTIONS:
+                    self._temporary_rejection_counts.pop(outbound.id, None)
+                    self._core.mark_outbound_failed(
+                        outbound.id,
+                        self._worker_id,
+                        outbound.lease_token,
+                        self._clock(),
+                    )
+                else:
+                    self._temporary_rejection_counts[outbound.id] = rejection_count
+                    self._core.release_outbound(
+                        outbound.id,
+                        self._worker_id,
+                        outbound.lease_token,
+                        self._clock(),
+                        retry_delay_seconds=_RATE_LIMIT_RETRY_DELAY_SECONDS,
+                    )
             else:
+                self._temporary_rejection_counts.pop(outbound.id, None)
                 self._core.mark_outbound_failed(
                     outbound.id,
                     self._worker_id,
@@ -644,6 +657,7 @@ class BrowserWorker:
                 self._clock(),
             )
             return False
+        self._temporary_rejection_counts.pop(outbound.id, None)
         self._core.confirm_sent(
             outbound.id,
             self._worker_id,

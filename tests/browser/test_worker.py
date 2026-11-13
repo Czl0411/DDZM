@@ -1225,24 +1225,31 @@ def test_worker_retries_a_temporarily_rejected_non_dark_market_outbound(context)
     assert core.failed == []
 
 
-def test_worker_stops_retrying_a_temporarily_rejected_outbound_at_limit(context):
+def test_worker_stops_after_three_temporary_rejections(context):
     worker, gateway, _, _, core, _ = context
-    core.pending = [
-        OutboundClaim(
-            OUTBOUND_ID,
-            "in-1",
-            "reply",
-            LEASE,
-            attempt_count=3,
-        )
+    outbound = OutboundClaim(
+        OUTBOUND_ID,
+        "in-1",
+        "reply",
+        LEASE,
+        attempt_count=99,
+    )
+    gateway.send_errors = [
+        AikdaMessageRejectedError("消息发送失败，请稍后再试")
+        for _ in range(3)
     ]
-    gateway.send_error = AikdaMessageRejectedError("消息发送失败，请稍后再试")
 
-    worker.run_once()
+    for _ in range(3):
+        worker._main_account_cooldown_until = 0
+        worker._main_account_send_tokens = 1
+        assert worker._send_one_outbound(gateway, outbound) is False
 
-    assert core.failed_event.wait(timeout=1)
     assert core.failed == [(OUTBOUND_ID, "worker-a", LEASE, NOW)]
-    assert core.released == []
+    assert core.released == [
+        (OUTBOUND_ID, "worker-a", LEASE, NOW),
+        (OUTBOUND_ID, "worker-a", LEASE, NOW),
+    ]
+    assert core.release_delays == [60, 60]
 
 
 def test_worker_releases_main_account_send_until_next_token():

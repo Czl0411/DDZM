@@ -1,7 +1,7 @@
 {
-  "revision": "1793005372595",
+  "revision": "1794572405414",
   "source": "workspace",
-  "pulledAt": "2026-10-26T09:01:58.399Z",
+  "pulledAt": "2026-11-13T12:19:10.318Z",
   "files": [
     "assets/club-hero-v2.webp",
     "assets/game-blackjack-table-v1.webp",
@@ -46,6 +46,7 @@
     "games/drawguess/game.js",
     "games/drawguess/index.html",
     "games/drawguess/style.css",
+    "games/economy.js",
     "games/module-document.js",
     "games/runtime-bootstrap.js",
     "games/runtime.js",

@@ -164,5 +164,11 @@
     "deployedAt": "2026-10-26T09:01:58.810Z",
     "label": "club-20261026-niuniu",
     "gitHead": "c0cf189"
+  },
+  {
+    "revision": "1794572405414",
+    "deployedAt": "2026-11-13T12:19:10.391Z",
+    "label": "club-20261113-recovery",
+    "gitHead": "f8f3f2d"
   }
 ]

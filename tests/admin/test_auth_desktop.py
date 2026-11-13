@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 import signal
 
 import pytest
@@ -49,6 +50,7 @@ def make_controller(tmp_path, process_factory, **overrides):
         "process_group_alive": lambda _pgid: False,
         "graceful_browser_close": close_browser,
         "browser_readiness_probe": lambda: False,
+        "profile_in_use_probe": lambda: False,
         "sleep": no_delay,
     }
     options.update(overrides)
@@ -154,6 +156,47 @@ def test_start_keeps_profile_locks_when_browser_does_not_stop(tmp_path):
 
     assert lock.is_symlink()
     assert factory.calls == []
+
+
+def test_start_keeps_profile_locks_when_process_still_uses_profile(tmp_path):
+    factory = ProcessFactory()
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    lock = profile / "SingletonLock"
+    lock.symlink_to("active")
+    controller = make_controller(
+        tmp_path,
+        factory,
+        browser_readiness_probe=lambda: False,
+        profile_in_use_probe=lambda: True,
+        shutdown_attempts=1,
+    )
+
+    with pytest.raises(RuntimeError, match="did not release"):
+        controller.start()
+
+    assert lock.is_symlink()
+    assert factory.calls == []
+
+
+def test_profile_in_use_detects_chromium_user_data_dir(tmp_path, monkeypatch):
+    from dzmm_bot.auth_desktop import _profile_in_use
+
+    profile = tmp_path / "profile"
+    command_line = tmp_path / "cmdline"
+    command_line.write_bytes(
+        b"chromium\0" + f"--user-data-dir={profile}".encode() + b"\0"
+    )
+    original_glob = Path.glob
+    monkeypatch.setattr(
+        Path,
+        "glob",
+        lambda path, pattern: [command_line]
+        if path == Path("/proc")
+        else original_glob(path, pattern),
+    )
+
+    assert _profile_in_use(profile) is True
 
 
 def test_start_uses_the_configured_browser_executable(tmp_path):

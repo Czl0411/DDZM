@@ -16,6 +16,7 @@ ProcessFactory = Callable[..., Awaitable[ChildProcess]]
 ReadinessProbe = Callable[[list[int]], bool]
 XReadinessProbe = Callable[[int], bool]
 BrowserReadinessProbe = Callable[[], bool]
+ProfileInUseProbe = Callable[[], bool]
 AsyncSleep = Callable[[float], Awaitable[None]]
 
 
@@ -39,6 +40,7 @@ class AuthDesktopController:
         process_group_alive: Callable[[int], bool] | None = None,
         graceful_browser_close: Callable[[], Awaitable[None]] | None = None,
         browser_readiness_probe: BrowserReadinessProbe | None = None,
+        profile_in_use_probe: ProfileInUseProbe | None = None,
         sleep: AsyncSleep = asyncio.sleep,
         readiness_attempts: int = 100,
         shutdown_attempts: int = 50,
@@ -60,6 +62,9 @@ class AuthDesktopController:
         )
         self._browser_readiness_probe = (
             browser_readiness_probe or (lambda: _port_ready(19222))
+        )
+        self._profile_in_use_probe = (
+            profile_in_use_probe or (lambda: _profile_in_use(self._profile_dir))
         )
         self._x_readiness_probe = x_readiness_probe or (
             lambda pid: self._process_alive(pid)
@@ -180,13 +185,16 @@ class AuthDesktopController:
     async def _prepare_profile(self) -> None:
         await self._graceful_browser_close()
         for _ in range(self._shutdown_attempts):
-            if not self._browser_readiness_probe():
+            if not self._browser_or_profile_active():
                 break
             await self._sleep(0.1)
-        if self._browser_readiness_probe():
+        if self._browser_or_profile_active():
             raise RuntimeError("browser did not release the authentication profile")
         for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
             (self._profile_dir / name).unlink(missing_ok=True)
+
+    def _browser_or_profile_active(self) -> bool:
+        return self._browser_readiness_probe() or self._profile_in_use_probe()
 
     def stop(self) -> None:
         self._loop.run_until_complete(self._stop())
@@ -310,6 +318,25 @@ def _port_ready(port: int) -> bool:
             return True
     except OSError:
         return False
+
+
+def _profile_in_use(profile_dir: Path) -> bool:
+    profile_argument = os.fsencode(f"--user-data-dir={profile_dir}")
+    split_argument = os.fsencode(str(profile_dir))
+    for command_line in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            arguments = command_line.read_bytes().split(b"\0")
+        except (OSError, PermissionError):
+            continue
+        if profile_argument in arguments:
+            return True
+        for index, argument in enumerate(arguments[:-1]):
+            if (
+                argument == b"--user-data-dir"
+                and arguments[index + 1] == split_argument
+            ):
+                return True
+    return False
 
 
 async def _close_desktop_browser() -> None:

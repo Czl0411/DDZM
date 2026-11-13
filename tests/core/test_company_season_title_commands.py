@@ -165,6 +165,9 @@ def test_only_define_season_title_is_player_entry():
 def test_basic_help_only_lists_current_season_title_command():
     service, _, factory = _season_context(8)
 
+    _receive(service, "season-help-index", "season-player", "/帮助", NOW)
+    assert "/帮助 基础：入职、资产、荣誉与赛季称号" in _latest_reply(factory)
+
     _receive(service, "season-help", "season-player", "/帮助 基础", NOW)
     lines = _latest_reply(factory).splitlines()
 

@@ -720,6 +720,7 @@ def test_texas_holdem_settings_core_api_round_trip_and_validates_ranges(client, 
         "action_timeout_seconds": 120,
         "small_blind_percent": 5,
         "big_blind_percent": 10,
+        "rake_percent": 20,
     }
     payload = {
         "enabled": False,
@@ -732,6 +733,7 @@ def test_texas_holdem_settings_core_api_round_trip_and_validates_ranges(client, 
         "action_timeout_seconds": 90,
         "small_blind_percent": 4,
         "big_blind_percent": 8,
+        "rake_percent": 35,
     }
     assert client.patch(
         "/internal/game/texas-holdem/settings", headers=headers, json=payload
@@ -740,6 +742,80 @@ def test_texas_holdem_settings_core_api_round_trip_and_validates_ranges(client, 
     assert client.patch(
         "/internal/game/texas-holdem/settings", headers=headers, json=invalid
     ).status_code == 422
+
+
+def test_club_game_economy_settings_core_api_round_trip(client, headers):
+    assert client.get(
+        "/internal/game/club/economy-settings"
+    ).status_code == 401
+    initial = client.get(
+        "/internal/game/club/economy-settings", headers=headers
+    )
+    assert initial.status_code == 200
+    assert initial.json() == {
+        "items": [
+            {"game": game, "coin_stakes": [5, 10, 20], "rake_percent": 20}
+            for game in (
+                "mahjong",
+                "chess",
+                "doudizhu",
+                "drawguess",
+                "texas",
+                "zhajinhua",
+                "blackjack",
+            )
+        ]
+    }
+
+    changed = client.patch(
+        "/internal/game/club/economy-settings",
+        headers=headers,
+        json={
+            "game": "texas",
+            "coin_stakes": [10, 50, 100],
+            "rake_percent": 35,
+        },
+    )
+    assert changed.json() == {
+        "game": "texas",
+        "coin_stakes": [10, 50, 100],
+        "rake_percent": 35,
+    }
+    assert client.get(
+        "/internal/game/texas-holdem/settings", headers=headers
+    ).json()["rake_percent"] == 35
+
+    for coin_stakes in (
+        [], [5, 5], [20, 10], [0, 10], [5, 100000], [1, 2, 3, 4, 5, 6, 7],
+    ):
+        assert client.patch(
+            "/internal/game/club/economy-settings",
+            headers=headers,
+            json={
+                "game": "mahjong",
+                "coin_stakes": coin_stakes,
+                "rake_percent": 20,
+            },
+        ).status_code == 422
+
+
+def test_legacy_texas_settings_updates_shared_club_rake(client, headers):
+    payload = client.get(
+        "/internal/game/texas-holdem/settings", headers=headers
+    ).json()
+    payload["rake_percent"] = 15
+    assert client.patch(
+        "/internal/game/texas-holdem/settings", headers=headers, json=payload
+    ).status_code == 200
+    settings = client.get(
+        "/internal/game/club/economy-settings", headers=headers
+    ).json()["items"]
+    texas = next(item for item in settings if item["game"] == "texas")
+    assert texas == {
+        "game": "texas",
+        "coin_stakes": [5, 10, 20],
+        "rake_percent": 15,
+    }
 
 
 def test_dark_market_core_api_configures_lists_details_and_force_delists(
@@ -2119,7 +2195,7 @@ def test_game_management_lists_commands_employees_and_shop_items(client, headers
     assert actual_commands == {
             "/工位背包", "/工位收益表", "/升级工位", "/精修工位", "/切换工位", "/购买装备", "/升级装备", "/装备", "/卸下", "/我的工位", "/工位游戏",
             "/事件投票", "/事件投票情况", "/随机事件时间表", "/象棋", "/斗地主", "/你画我猜", "/club", "/麻将", "/q", "/ban", "/是", "/黑历史", "/删除黑历史", "/下一页",
-            "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史", "/赛季称号", "/修改赛季称号", "/跳开",
+            "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史", "/赛季称号", "/修改赛季称号", "/定义赛季称号", "/跳开",
             "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/跳过", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/投稿", "/我的投稿", "/撤回投稿", "/上一步", "/取消投稿", "/确认取消投稿", "/确认投稿", "/继续添加", "/事件完成", "/修改身份", "/删除身份", "/修改事件", "/删除事件", "/设置生日", "/我的生日", "/本月生日", "/随礼", "/大话骰子", "/开骰", "/看骰", "/牌局", "/大话骰子数据", "/真心换真心", "/真心换真心数据", "/问题", "/真心", "/罚款", "/我的罚款", "/我的津贴", "/凿", "/允许被凿", "/拒绝被凿", "/我的凿", "/人气榜", "/设置性别"
             }
     command_records = {record["command"]: record for record in commands.json()}
@@ -2408,6 +2484,8 @@ def test_game_settings_can_be_read_and_updated(client, headers):
         "onboarding_bonus": 0,
         "checkin_reward": 5,
         "weekly_attendance_reward": 5,
+        "season_title_minimum_rank_order": 8,
+        "season_title_daily_reward": 5,
         "company_story_novel_url": None,
         "reset_time_label": "北京时间 00:00",
     }
@@ -2416,6 +2494,8 @@ def test_game_settings_can_be_read_and_updated(client, headers):
         "onboarding_bonus": 3,
         "checkin_reward": 7,
         "weekly_attendance_reward": 9,
+        "season_title_minimum_rank_order": 8,
+        "season_title_daily_reward": 5,
         "company_story_novel_url": None,
         "reset_time_label": "北京时间 00:00",
     }

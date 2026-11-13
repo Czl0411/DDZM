@@ -5,7 +5,7 @@ import json
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
@@ -17,7 +17,7 @@ class CreateRoomPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: UUID
     room_type: Literal["casual", "coin"] = "coin"
-    stake: Literal[0, 5, 10, 20] = 10
+    stake: StrictInt = Field(default=10, ge=0, le=99999)
     match_mode: Literal["east", "south"] = "east"
 
 
@@ -61,7 +61,7 @@ class CardRoomPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: UUID
     room_type: Literal["casual", "coin"] = "coin"
-    stake: Literal[0, 5, 10, 20] = 10
+    stake: StrictInt = Field(default=10, ge=0, le=99999)
 
 
 class CardActionPayload(BaseModel):
@@ -153,6 +153,18 @@ async def club_card_events(repository, game, room_id, uid, clock, request):
 
 def club_router(repository, clock):
     router = APIRouter(prefix="/api/club")
+
+    @router.get("/economy-settings")
+    def economy_settings(response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return [
+            {
+                "game": setting.game,
+                "coin_stakes": list(setting.coin_stakes),
+                "rake_percent": setting.rake_percent,
+            }
+            for setting in repository.list_club_game_economy_settings()
+        ]
 
     @router.get("/mahjong/rooms")
     def rooms(authorization: str | None = Header(None)):

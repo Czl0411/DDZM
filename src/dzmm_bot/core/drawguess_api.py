@@ -39,7 +39,7 @@ class ChatPayload(BaseModel):
 class CreateRoomPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     room_type: Literal["casual", "coin"] = "casual"
-    stake: Literal[0, 5, 10, 20] = 0
+    stake: StrictInt = Field(default=0, ge=0, le=99999)
 
 
 async def room_events(repository, room_id, uid, after, clock, request):

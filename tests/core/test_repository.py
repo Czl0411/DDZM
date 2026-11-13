@@ -689,6 +689,7 @@ def test_texas_holdem_signup_snapshots_limits_blinds_and_action_timeout(
         action_timeout_seconds=30,
         small_blind_percent=20,
         big_blind_percent=40,
+        rake_percent=50,
     )
 
     started = texas_repository.start_texas_holdem_hand(
@@ -702,6 +703,7 @@ def test_texas_holdem_signup_snapshots_limits_blinds_and_action_timeout(
     with session_factory() as session:
         game = session.get(TexasHoldemGameRecord, started.game_id)
     assert (game.small_blind_amount, game.big_blind_amount) == (1, 2)
+    assert game.rake_percent_snapshot == 50
 
 
 def test_texas_holdem_signup_snapshots_table_capacity(texas_repository, now):
@@ -722,6 +724,7 @@ def test_texas_holdem_signup_snapshots_table_capacity(texas_repository, now):
         action_timeout_seconds=120,
         small_blind_percent=5,
         big_blind_percent=10,
+        rake_percent=20,
     )
 
     assert texas_repository.join_texas_holdem(
@@ -1074,15 +1077,104 @@ def test_texas_holdem_last_unfolded_player_wins_without_public_hole_cards(
         f"{winner_name}：带入20｜牌局投入2｜结算返还21｜净收益 +1"
         in result.public_message
     )
-    assert "系统抽成：0" in result.public_message
+    assert "系统抽水：0（20%）" in result.public_message
     assert "本局资金总额：40" in result.public_message
-    assert "流水校验：收入与支出平衡" in result.public_message
+    assert "流水校验：玩家结算40+系统抽水0=本局资金总额40" in result.public_message
     assert texas_repository.find_user(folding).balance == 99
     assert texas_repository.find_user(winner).balance == 101
     with texas_repository._session() as session:
         game = session.get(TexasHoldemGameRecord, started.game_id)
         assert game.state == "settled"
         assert game.settlement_complete is True
+        assert game.rake_percent_snapshot == 20
+        assert game.rake_amount == 0
+
+
+def test_texas_holdem_rake_setting_changes_only_affect_new_hands(
+    texas_repository, now
+):
+    started = _start_two_player_texas_hand(texas_repository, now)
+    texas_repository.set_texas_holdem_settings(
+        enabled=True,
+        minimum_players=2,
+        maximum_players=9,
+        minimum_buy_in=20,
+        maximum_buy_in=200,
+        daily_start_limit=1,
+        signup_timeout_seconds=120,
+        action_timeout_seconds=120,
+        small_blind_percent=5,
+        big_blind_percent=10,
+        rake_percent=100,
+    )
+
+    folding = _texas_current_player(texas_repository, now).platform_id
+    result = _texas_act(texas_repository, folding, "fold", now)
+
+    assert "系统抽水：0（20%）" in result.public_message
+    with texas_repository._session() as session:
+        game = session.get(TexasHoldemGameRecord, started.game_id)
+        assert game.rake_percent_snapshot == 20
+        assert game.rake_amount == 0
+
+
+def test_texas_holdem_tied_winners_split_rake_deterministically_without_touching_stacks(
+    texas_repository, now, monkeypatch
+):
+    from dzmm_bot.core.texas_holdem import HandRank
+
+    _prepare_texas_users(
+        texas_repository, now, "texas-p1", "texas-p2", "texas-p3"
+    )
+    texas_repository.start_texas_holdem_signup(
+        "texas-p1", 20, now, PRIMARY_GROUP_CHAT_ID
+    )
+    texas_repository.join_texas_holdem("texas-p2", now, PRIMARY_GROUP_CHAT_ID)
+    texas_repository.join_texas_holdem("texas-p3", now, PRIMARY_GROUP_CHAT_ID)
+    started = texas_repository.start_texas_holdem_hand(
+        "texas-p1", now, PRIMARY_GROUP_CHAT_ID
+    )
+
+    def tied_rank(cards):
+        return HandRank(0, (14, 13, 12, 11, 9)), tuple(cards[:5])
+
+    monkeypatch.setattr(
+        "dzmm_bot.core.repository.evaluate_best_five", tied_rank
+    )
+    with texas_repository.transaction():
+        with texas_repository._session() as session:
+            game = session.get(TexasHoldemGameRecord, started.game_id)
+            rows = texas_repository._texas_players(session, game.id, lock=True)
+            for player, _ in rows:
+                player.stack = 18
+                player.street_contribution = 2
+                player.total_contribution = 2
+                player.state = "active"
+            first = texas_repository._settle_texas_holdem(
+                session, game, rows, now, reason="showdown"
+            )
+            repeated = texas_repository._settle_texas_holdem(
+                session, game, rows, now, reason="showdown"
+            )
+
+    assert first.status == repeated.status == "settled"
+    assert "系统抽水：1（20%）" in first.public_message
+    assert sorted(
+        texas_repository.find_user(platform_id).balance
+        for platform_id in ("texas-p1", "texas-p2", "texas-p3")
+    ) == [99, 100, 100]
+    with texas_repository._session() as session:
+        game = session.get(TexasHoldemGameRecord, started.game_id)
+        players = list(
+            session.scalars(
+                select(TexasHoldemPlayerRecord)
+                .where(TexasHoldemPlayerRecord.game_id == started.game_id)
+                .order_by(TexasHoldemPlayerRecord.seat_number)
+            )
+        )
+        assert game.rake_amount == 1
+        assert [player.stack for player in players] == [19, 20, 20]
+        assert all(player.stack >= 18 for player in players)
 
 
 def test_texas_holdem_timeout_folds_when_facing_blind(texas_repository, now):
@@ -1151,6 +1243,7 @@ def test_texas_holdem_forced_all_in_blinds_run_out_and_settle(
         action_timeout_seconds=120,
         small_blind_percent=99,
         big_blind_percent=100,
+        rake_percent=20,
     )
     texas_repository.start_texas_holdem_signup(
         "texas-p1", 1, now, PRIMARY_GROUP_CHAT_ID

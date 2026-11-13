@@ -13,9 +13,6 @@ from .schema import (DoudizhuRoomRecord as Room, DoudizhuRoundRecord as Round,
                      ClubPlayerRecord, GroupChatRecord, InboundRecord, OutboundRecord, UserRecord)
 
 
-COIN_STAKES = {5, 10, 20}
-
-
 class DoudizhuRateLimitError(ValueError):
     pass
 
@@ -54,8 +51,11 @@ class DoudizhuRepositoryMixin:
             raise ValueError('房间类型无效')
         if room_type == 'casual':
             stake = 0
-        elif stake not in COIN_STAKES:
-            raise ValueError('摸鱼币场仅支持 5、10、20 币')
+        else:
+            coin_stakes = tuple(self.get_club_game_economy_settings('doudizhu').coin_stakes)
+            if stake not in coin_stakes:
+                choices = '、'.join(str(value) for value in coin_stakes)
+                raise ValueError(f'摸鱼币场仅支持 {choices} 币')
         with self.transaction():
           with self._session() as session:
             user = self._club_player(session, platform_id, now, lock=True)
@@ -114,6 +114,7 @@ class DoudizhuRepositoryMixin:
             'room_type': room.room_type, 'stake': room.stake, 'settlement': room.settlement,
             'rematch_waiting': room.phase == 'waiting' and room.round_number > 0,
             'deadline': room.deadline.isoformat() if room.deadline else None, 'server_time': now.isoformat(),
+            'rake_percent': int(state.get('rake_percent', 0)) if state else 0,
             'hand': list(state['hands'][seat]) if state and seat is not None else [],
             'final_hands': [list(hand) for hand in state['hands']] if state and state['phase'] == 'finished' else [],
             'bottom': list(state['bottom']) if state and state['landlord'] is not None else [],
@@ -149,11 +150,13 @@ class DoudizhuRepositoryMixin:
             session.add(OutboundRecord(group_chat_id=group.id, destination_chatroom_id=group.chatroom_id,
                 delivery_key=group.chatroom_id, delivery_kind='group', text=text))
 
-    def _ddz_deal(self, session, room, now):
+    def _ddz_deal(self, session, room, now, rake_percent):
         deck = list(range(54))
         SystemRandom().shuffle(deck)
         room.round_number += 1
-        row = Round(room_id=room.id, number=room.round_number, state=new_round(tuple(deck), randbelow(3), now))
+        state = new_round(tuple(deck), randbelow(3), now)
+        state['rake_percent'] = int(rake_percent)
+        row = Round(room_id=room.id, number=room.round_number, state=state)
         session.add(row)
         session.flush()
         room.round_id = row.id
@@ -167,7 +170,7 @@ class DoudizhuRepositoryMixin:
         if state['phase'] == 'redeal':
             room.redeals += 1
             if room.redeals < 3:
-                self._ddz_deal(session, room, now)
+                self._ddz_deal(session, room, now, state.get('rake_percent', 0))
                 return
             room.phase, room.deadline = 'cancelled', None
             self._refund_doudizhu_room(session, room, now, '连续无人叫分')
@@ -213,16 +216,23 @@ class DoudizhuRepositoryMixin:
             return
         winners = list(state['result']['winners'])
         payouts = [0, 0, 0]
+        gross_payouts = [0, 0, 0]
+        rake_percent = 0
+        rake_amount = 0
         if room.room_type == 'coin':
             if not all(room.escrowed):
                 raise RuntimeError('斗地主奖池托管不完整')
             pot = room.stake * 3
+            rake_percent = int(state.get('rake_percent', 0))
+            rake_amount = pot * rake_percent // 100
+            net_pot = pot - rake_amount
             for index, seat in enumerate(winners):
                 player = session.get(ClubPlayerRecord, UUID(room.seats[seat]))
                 account = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
                 if account is None:
                     raise RuntimeError('斗地主结算玩家不存在')
-                payout = pot // len(winners) + (1 if index < pot % len(winners) else 0)
+                gross_payouts[seat] = pot // len(winners) + (1 if index < pot % len(winners) else 0)
+                payout = net_pot // len(winners) + (1 if index < net_pot % len(winners) else 0)
                 payouts[seat] = payout
                 self._apply_balance_change(account, payout, 'doudizhu_settlement', now,
                                            memo=f'斗地主房间 {room.short_id} 胜方结算')
@@ -231,6 +241,9 @@ class DoudizhuRepositoryMixin:
         room.settlement = {
             'winner_seats': winners,
             'payouts': payouts,
+            'gross_payouts': gross_payouts,
+            'rake_percent': rake_percent,
+            'rake_amount': rake_amount,
             'outcomes': ['win' if seat in winners else 'loss' for seat in range(3)],
         }
 
@@ -297,7 +310,11 @@ class DoudizhuRepositoryMixin:
                 room.seats, room.ready = seats, ready
                 if None not in seats and all(ready):
                     room.code = ''
-                    self._ddz_deal(session, room, now)
+                    rake_percent = (
+                        self.get_club_game_economy_settings('doudizhu').rake_percent
+                        if room.room_type == 'coin' else 0
+                    )
+                    self._ddz_deal(session, room, now, rake_percent)
             else:
                 if seat is None or room.phase == 'cancelled':
                     raise ValueError('当前不能进行该操作')
@@ -331,7 +348,11 @@ class DoudizhuRepositoryMixin:
                     room.escrowed = [room.room_type == 'coin'] * 3
                     room.redeals = 0
                     room.code = ''
-                    self._ddz_deal(session, room, now)
+                    rake_percent = (
+                        self.get_club_game_economy_settings('doudizhu').rake_percent
+                        if room.room_type == 'coin' else 0
+                    )
+                    self._ddz_deal(session, room, now, rake_percent)
                 else:
                     row.state = apply_action(row.state, seat, 'takeover' if action == 'leave' else action, payload, now)
                     self._ddz_sync(session, room, row, now)

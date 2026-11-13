@@ -12,9 +12,6 @@ from .chess_rules import (
 from .schema import ClubPlayerRecord, ChessGameRecord, ChessMessageRecord, ChessMoveRecord, GroupChatRecord, InboundRecord, OutboundRecord, UserRecord
 
 
-COIN_STAKES = {5, 10, 20}
-
-
 @dataclass(frozen=True)
 class ChessGameView:
     id: UUID
@@ -142,8 +139,11 @@ class ChessRepositoryMixin:
             raise ValueError("房间类型无效")
         if room_type == "casual":
             stake = 0
-        elif stake not in COIN_STAKES:
-            raise ValueError("摸鱼币场仅支持 5、10、20 币")
+        else:
+            coin_stakes = tuple(self.get_club_game_economy_settings("chess").coin_stakes)
+            if stake not in coin_stakes:
+                choices = "、".join(str(value) for value in coin_stakes)
+                raise ValueError(f"摸鱼币场仅支持 {choices} 币")
         with self.transaction(), self._session() as session:
             creator = self._club_player(session, creator_platform_id, now, lock=True)
             self._ensure_club_player_available(session, creator.id, now)
@@ -236,12 +236,19 @@ class ChessRepositoryMixin:
                 self._apply_balance_change(account, -row.stake, "chess_buy_in", now,
                                            memo=f"象棋房间 {row.id} 入场托管")
             creator_red = randbelow(2) == 0
+            rake_percent = (
+                self.get_club_game_economy_settings("chess").rake_percent
+                if row.room_type == "coin" else 0
+            )
             values = {
                 "opponent_user_id": user.id,
                 "red_user_id": row.creator_user_id if creator_red else user.id,
                 "black_user_id": user.id if creator_red else row.creator_user_id,
                 "status": "playing", "turn_started_at": now, "version": 1,
-                "position": self._position_data(initial_position()),
+                "position": {
+                    **self._position_data(initial_position()),
+                    "rake_percent": rake_percent,
+                },
                 "escrowed": [row.room_type == "coin", row.room_type == "coin"],
                 "code": "",  # Used code is never usable again.
             }
@@ -290,20 +297,28 @@ class ChessRepositoryMixin:
             return
         winner, _ = result.split(":", 1)
         payouts = {"red": 0, "black": 0}
+        gross_payouts = {"red": 0, "black": 0}
         outcomes = {"red": "draw", "black": "draw"}
+        rake_percent = 0
+        rake_amount = 0
         if row.room_type == "coin":
             if not all(row.escrowed):
                 raise RuntimeError("象棋奖池托管不完整")
+            rake_percent = int((row.position or {}).get("rake_percent", 0))
             if winner == "draw":
                 self._refund_chess_room(session, row, now, "和棋退还")
                 payouts = {"red": row.stake, "black": row.stake}
+                gross_payouts = dict(payouts)
             else:
                 player_id = row.red_user_id if winner == "red" else row.black_user_id
                 player = session.get(ClubPlayerRecord, player_id)
                 account = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
                 if account is None:
                     raise RuntimeError("象棋结算玩家不存在")
-                payout = row.stake * 2
+                gross_pool = row.stake * 2
+                rake_amount = gross_pool * rake_percent // 100
+                gross_payouts[winner] = gross_pool
+                payout = gross_pool - rake_amount
                 payouts[winner] = payout
                 self._apply_balance_change(
                     account, payout, "chess_settlement", now,
@@ -314,7 +329,14 @@ class ChessRepositoryMixin:
             loser = "black" if winner == "red" else "red"
             outcomes = {winner: "win", loser: "loss"}
         row.settled = True
-        row.settlement = {"winner": winner, "payouts": payouts, "outcomes": outcomes}
+        row.settlement = {
+            "winner": winner,
+            "payouts": payouts,
+            "gross_payouts": gross_payouts,
+            "rake_percent": rake_percent,
+            "rake_amount": rake_amount,
+            "outcomes": outcomes,
+        }
 
     def _finish_chess(self, session, row: ChessGameRecord, result: str, now: datetime) -> None:
         if row.status != "playing":
@@ -403,7 +425,10 @@ class ChessRepositoryMixin:
                 row.red_remaining_ms -= elapsed
             else:
                 row.black_remaining_ms -= elapsed
-            row.position = self._position_data(next_position)
+            row.position = {
+                **self._position_data(next_position),
+                "rake_percent": int(row.position.get("rake_percent", 0)),
+            }
             row.turn_started_at = now
             row.version += 1
             row.pending_offer = None
@@ -411,7 +436,11 @@ class ChessRepositoryMixin:
             move_record = ChessMoveRecord(
                 game_id=game_id, ply=len(records) + 1,
                 from_x=move.from_x, from_y=move.from_y, to_x=move.to_x, to_y=move.to_y,
-                position_before=self._position_data(position), created_at=now,
+                position_before={
+                    **self._position_data(position),
+                    "rake_percent": int(row.position.get("rake_percent", 0)),
+                },
+                created_at=now,
             )
             session.add(move_record)
             session.flush()
@@ -465,7 +494,14 @@ class ChessRepositoryMixin:
                                                    memo=f"象棋房间 {row.id} 续局托管")
                 session.execute(delete(ChessMoveRecord).where(ChessMoveRecord.game_id == row.id))
                 row.status = "playing"
-                row.position = self._position_data(initial_position())
+                rake_percent = (
+                    self.get_club_game_economy_settings("chess").rake_percent
+                    if row.room_type == "coin" else 0
+                )
+                row.position = {
+                    **self._position_data(initial_position()),
+                    "rake_percent": rake_percent,
+                }
                 row.red_remaining_ms = row.black_remaining_ms = 900000
                 row.turn_started_at = now
                 row.version += 1

@@ -1,6 +1,7 @@
 import {ClubClient} from "./client.js";
 import {CONFIG} from "./config.js";
 import {createTileFace, tileLabel, tileSuit} from "./mahjong-faces.js";
+import {loadEconomy} from "./games/economy.js";
 
 const $ = selector => document.querySelector(selector);
 const sdk = window.dzmm;
@@ -13,6 +14,7 @@ let socialVersion = null, socialRefreshTimer = null, channelRenderVersion = 0, d
 let actionBusy = false, handGesture = null, handHoldTimer = null, ignoreTileClickUntil = 0;
 let presenceTimer = null;
 let activeClubModule = null, clubModuleVersion = 0, clubModuleRoom = null;
+let mahjongEconomy = {coin_stakes: [5, 10, 20], rake_percent: 20};
 const roomSharePrefix = "MoyuClubRoom:";
 const gameNames = {mahjong: "摸鱼麻将", chess: "群聊象棋", doudizhu: "斗地主", drawguess: "你画我猜", texas: "德州扑克", zhajinhua: "炸金花", blackjack: "21 点"};
 const clubModules = {
@@ -279,6 +281,7 @@ async function boot(refresh = false) {
   feedback("正在进入 Club…"); sdk?.loading?.progress?.({phase: "runtime_initializing", progress: 20, message: "正在进入摸鱼 Club"});
   try {
     await client.identity(refresh); $("#identity").textContent = "在线"; startPresenceHeartbeat(); startSocialFollowing();
+    await refreshMahjongEconomy();
     renderGames();
     await refreshChannelPreview();
     const launch = await sdk?.getLaunchParams?.().catch?.(() => null);
@@ -362,7 +365,7 @@ function renderRooms() {
     const art = document.createElement("span"); art.className = "room-empty-art"; art.textContent = "🀄";
     const title = document.createElement("b"); title.textContent = "今晚还没有牌桌";
     const copy = document.createElement("span"); copy.textContent = "开一桌，邀请群友直接入座";
-    const button = document.createElement("button"); button.type = "button"; button.className = "primary gold compact"; button.textContent = "开第一桌"; button.addEventListener("click", () => $("#create-dialog").showModal());
+    const button = document.createElement("button"); button.type = "button"; button.className = "primary gold compact"; button.textContent = "开第一桌"; button.addEventListener("click", () => void openMahjongCreateDialog());
     empty.append(art, title, copy, button); list.append(empty); return;
   }
   for (const item of rooms) {
@@ -448,7 +451,7 @@ function resultCopy(result) {
 function renderResult() {
   const holder = $("#result"); holder.replaceChildren(); const resultKey = JSON.stringify([room.phase, room.version, room.game?.result, room.settlement]);
   if (!room.game?.result || !["hand_finished", "match_finished"].includes(room.phase) || dismissedResult === resultKey) { show("#result", false); return; }
-  show("#result"); const heading = document.createElement("header"); const headingCopy = document.createElement("div"); const eyebrow = document.createElement("span"); eyebrow.textContent = room.phase === "match_finished" ? "MATCH RESULT" : "ROUND RESULT"; const title = document.createElement("h2"); title.textContent = resultCopy(room.game.result); const subtitle = document.createElement("small"); subtitle.textContent = room.phase === "match_finished" ? "本场最终排名" : "本局点数变化"; headingCopy.append(eyebrow, title, subtitle); const mark = document.createElement("b"); mark.textContent = room.phase === "match_finished" ? "终" : "局"; heading.append(headingCopy, mark);
+  show("#result"); const heading = document.createElement("header"); const headingCopy = document.createElement("div"); const eyebrow = document.createElement("span"); eyebrow.textContent = room.phase === "match_finished" ? "MATCH RESULT" : "ROUND RESULT"; const title = document.createElement("h2"); title.textContent = resultCopy(room.game.result); const subtitle = document.createElement("small"); const rakeCopy = room.room_type === "coin" && room.settlement ? ` · 抽水 ${room.settlement.rake_amount || 0} 币（${room.settlement.rake_percent || 0}%）` : ""; subtitle.textContent = (room.phase === "match_finished" ? "本场最终排名" : "本局点数变化") + rakeCopy; headingCopy.append(eyebrow, title, subtitle); const mark = document.createElement("b"); mark.textContent = room.phase === "match_finished" ? "终" : "局"; heading.append(headingCopy, mark);
   const rows = document.createElement("div"); rows.className = "result-rows";
   const lastHand = room.game.last_hand_result;
   if (lastHand?.winners?.length) {
@@ -481,7 +484,7 @@ function renderGame() {
   document.body.dataset.tablePhase = "game";
   show("#waiting", false); show("#mahjong-table"); const order = seatOrder(); renderPlayer("#opponent-left", order.left); renderPlayer("#opponent-top", order.top); renderPlayer("#opponent-right", order.right); renderPlayer("#self-player", order.self);
   const round = `${winds[room.game.round_wind - 27] || "东"}${room.game.hand_number}局`;
-  $("#round-label").textContent = `${round} · ${room.game.honba}本场`; $("#center-round").textContent = round; $("#remaining-count").textContent = `余 ${room.game.remaining} 张`; $("#turn-status").textContent = room.game.turn === room.seat ? "轮到你出牌" : `${room.players[room.game.turn]?.name || "玩家"} 思考中`;
+  const rakeCopy = room.room_type === "coin" ? ` · 抽水 ${room.rake_percent}%` : ""; $("#round-label").textContent = `${round} · ${room.game.honba}本场${rakeCopy}`; $("#center-round").textContent = round; $("#remaining-count").textContent = `余 ${room.game.remaining} 张`; $("#turn-status").textContent = room.game.turn === room.seat ? "轮到你出牌" : `${room.players[room.game.turn]?.name || "玩家"} 思考中`;
   const dora = $("#dora"); dora.replaceChildren(document.createTextNode("宝牌指示 ")); room.game.dora_indicators.forEach(id => { const node = tileNode(id, true); node.disabled = true; dora.append(node); });
   renderRivers(); renderMelds(); renderHand(); renderActions(); renderResult();
 }
@@ -544,27 +547,53 @@ function syncCustomSelect(root) {
 }
 function syncCreateEconomy() {
   const coin = $("#room-type").value === "coin"; show("#stake-field", coin); show(".prize-panel", coin);
-  if (coin) { const stake = Number($("#stake").value); $("#prize-copy").textContent = `每人 ${stake} 币，共 ${stake * 4} 币；最终第一名获得奖池，同分则平分。`; }
+  if (coin) {
+    const stake = Number($("#stake").value); const pool = stake * 4;
+    const rake = Math.floor(pool * mahjongEconomy.rake_percent / 100);
+    $("#prize-copy").textContent = `每人 ${stake} 币，共 ${pool} 币；结算抽水 ${rake} 币（${mahjongEconomy.rake_percent}%），其余由第一名获得，同分则平分。`;
+  }
 }
 function openCustomSelect(root, focusOption = false) {
   closeCustomSelects(root); const menu = root.querySelector(".custom-select-menu");
   root.classList.add("open"); menu.hidden = false; root.querySelector(".custom-select-trigger").setAttribute("aria-expanded", "true");
   if (focusOption) (menu.querySelector('[aria-selected="true"]') || menu.querySelector("[role=option]"))?.focus();
 }
+function bindCustomSelectOption(root, option) {
+  const select = $(`#${root.dataset.selectFor}`);
+  option.addEventListener("click", () => { select.value = option.dataset.value; select.dispatchEvent(new Event("change", {bubbles: true})); closeCustomSelect(root, true); });
+  option.addEventListener("keydown", event => {
+    const options = [...root.querySelectorAll("[role=option]")]; const index = options.indexOf(event.currentTarget);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); options[(index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length].focus(); }
+    if (event.key === "Escape") { event.preventDefault(); closeCustomSelect(root, true); }
+  });
+}
 customSelects.forEach(root => {
-  const select = $(`#${root.dataset.selectFor}`); const trigger = root.querySelector(".custom-select-trigger"); const options = [...root.querySelectorAll("[role=option]")];
+  const select = $(`#${root.dataset.selectFor}`); const trigger = root.querySelector(".custom-select-trigger");
   syncCustomSelect(root); select.addEventListener("change", () => syncCustomSelect(root));
   trigger.addEventListener("click", () => root.classList.contains("open") ? closeCustomSelect(root) : openCustomSelect(root));
   trigger.addEventListener("keydown", event => { if (["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); openCustomSelect(root, true); } });
-  options.forEach(option => {
-    option.addEventListener("click", () => { select.value = option.dataset.value; select.dispatchEvent(new Event("change", {bubbles: true})); closeCustomSelect(root, true); });
-    option.addEventListener("keydown", event => {
-      const index = options.indexOf(event.currentTarget);
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); options[(index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length].focus(); }
-      if (event.key === "Escape") { event.preventDefault(); closeCustomSelect(root, true); }
-    });
-  });
+  root.querySelectorAll("[role=option]").forEach(option => bindCustomSelectOption(root, option));
 });
+function applyMahjongEconomy() {
+  const select = $("#stake"); const menu = document.querySelector('[data-select-for="stake"] .custom-select-menu');
+  const preferred = mahjongEconomy.coin_stakes.includes(10) ? 10 : mahjongEconomy.coin_stakes[0];
+  select.replaceChildren(...mahjongEconomy.coin_stakes.map(stake => {
+    const option = document.createElement("option"); option.value = String(stake); option.textContent = `${stake} 摸鱼币`; option.selected = stake === preferred; return option;
+  }));
+  menu.replaceChildren(...mahjongEconomy.coin_stakes.map(stake => {
+    const option = document.createElement("button"); option.type = "button"; option.setAttribute("role", "option"); option.dataset.value = String(stake);
+    const copy = document.createElement("span"); const title = document.createElement("b"); title.textContent = `${stake} 摸鱼币`; const note = document.createElement("small"); note.textContent = `奖池共 ${stake * 4} 币`; copy.append(title, note); option.append(copy); bindCustomSelectOption(menu.closest(".custom-select"), option); return option;
+  }));
+  syncCustomSelect(menu.closest(".custom-select")); syncCreateEconomy();
+}
+async function refreshMahjongEconomy() {
+  mahjongEconomy = await loadEconomy(CONFIG.apiBase, "mahjong");
+  applyMahjongEconomy();
+}
+async function openMahjongCreateDialog() {
+  await refreshMahjongEconomy();
+  $("#create-dialog").showModal();
+}
 document.addEventListener("pointerdown", event => { if (!event.target.closest(".custom-select")) closeCustomSelects(); });
 $("#create-dialog").addEventListener("close", () => closeCustomSelects());
 $("#room-type").addEventListener("change", syncCreateEconomy); $("#stake").addEventListener("change", syncCreateEconomy); syncCreateEconomy();
@@ -585,7 +614,7 @@ document.addEventListener("pointerup", event => {
 document.addEventListener("pointercancel", event => { if (handGesture?.pointerId === event.pointerId) clearHandGesture(); });
 
 $("#refresh").addEventListener("click", () => boot(true)); $("#home").addEventListener("click", openHome); $("#home-nav").addEventListener("click", openHome); $("#club-back").addEventListener("click", openHome); $("#lobby-back").addEventListener("click", returnToLobby);
-$("#create-room").addEventListener("click", () => $("#create-dialog").showModal()); $("#cancel-create").addEventListener("click", () => $("#create-dialog").close()); $("#confirm-create").addEventListener("click", event => { event.preventDefault(); void enterFullscreen(true); createRoom(); });
+$("#create-room").addEventListener("click", () => void openMahjongCreateDialog()); $("#cancel-create").addEventListener("click", () => $("#create-dialog").close()); $("#confirm-create").addEventListener("click", event => { event.preventDefault(); void enterFullscreen(true); createRoom(); });
 $("#claim").addEventListener("click", () => perform("claim")); $("#ready").addEventListener("click", () => perform($("#ready").dataset.action || "ready")); $("#start").addEventListener("click", () => perform("start")); $("#leave").addEventListener("click", () => perform("leave"));
 $("#share-room").addEventListener("click", shareRoom);
 $("#share-room-channel").addEventListener("click", () => shareRoomToChannel().catch(error => feedback(error.message || "分享失败，请重试", "error")));

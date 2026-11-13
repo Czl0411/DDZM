@@ -188,6 +188,10 @@ class AdminCorePort(Protocol):
 
     def set_texas_holdem_settings(self, settings: dict) -> dict: ...
 
+    def get_club_economy_settings(self) -> dict: ...
+
+    def set_club_economy_settings(self, settings: dict) -> dict: ...
+
     def get_dark_market_settings(self) -> dict: ...
 
     def set_dark_market_settings(self, settings: dict) -> dict: ...
@@ -829,6 +833,16 @@ class CoreClient:
     def set_texas_holdem_settings(self, settings: dict) -> dict:
         response = self._client.patch(
             "/internal/game/texas-holdem/settings", json=settings
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_club_economy_settings(self) -> dict:
+        return self._get("/internal/game/club/economy-settings")
+
+    def set_club_economy_settings(self, settings: dict) -> dict:
+        response = self._client.patch(
+            "/internal/game/club/economy-settings", json=settings
         )
         response.raise_for_status()
         return response.json()

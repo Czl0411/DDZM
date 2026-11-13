@@ -3,6 +3,7 @@ import {createClient} from './client.js';
 import {CONFIG} from './config.js';
 import {platformLoading} from '../runtime.js';
 import {moduleEnvironment} from '../module-document.js';
+import {loadEconomy, renderCreateStrip} from '../economy.js';
 
 const environment=moduleEnvironment();
 const document=environment.document;
@@ -38,6 +39,7 @@ async function boot(refresh=false){
   const token=++generation;feedback('正在读取玩家身份…');loading?.progress?.({phase:'runtime_initializing',progress:20,message:'正在进入游戏'});
   followStop?.();followStop=null;clearPrivateRoom();
   try{
+    renderCreateStrip(document.querySelector('.create-strip'),await loadEconomy(CONFIG.apiBase,'drawguess'),document);
     const uid=await client.identity(refresh);if(token!==generation)return;
     feedback('正在获取房间…');rooms=await client.rooms();if(token!==generation)return;
     const activeRooms=rooms.filter(item=>!['finished','closed'].includes(item.phase));
@@ -122,10 +124,11 @@ function renderChatContext(){
 
 function renderRoom(){
   document.body.classList.add('room-open');show('#lobby',false);show('#room-view');const state=room.state;
+  const rakeText=room.room_type==='coin'?`抽水 ${room.settlement?.rake_percent??state.rake_percent??0}%`:'休闲局不抽水';
   window.MoyuClubRuntime?.setRoomContext?.({game:'drawguess',roomId:room.room_id,host:room.creator_name||state.players.find(player=>player?.is_host)?.name||'玩家'});
   const titles={waiting:'候场房间',selecting:'选择题目',drawing:'正在作画',revealing:'答案揭晓',finished:'本局排行'};
   $('#phase-label').textContent=phaseText(state.phase);$('#room-title').textContent=titles[state.phase]||'游戏房间';$('#room-code').textContent=`${room.creator_name||'玩家'}的房间`;
-  $('#round-label').textContent=state.phase==='waiting'?'准备入座':state.phase==='finished'?'最终排名':`第 ${state.turn_index+1}/${state.players.length*2} 题`;
+  $('#round-label').textContent=state.phase==='waiting'?'准备入座':`${state.phase==='finished'?'最终排名':`第 ${state.turn_index+1}/${state.players.length*2} 题`} · ${rakeText}`;
   renderPlayers();
   for(const id of ['#waiting','#choosing','#play-area','#reveal','#ranking'])show(id,false);
   if(state.phase==='waiting')renderWaiting();
@@ -178,7 +181,7 @@ $('#refresh').addEventListener('click',()=>boot(true));$('#room-refresh').addEve
 $('#draw-chat-toggle').addEventListener('click',()=>setChatOpen(!$('#draw-chat').classList.contains('open')));$('#draw-chat-close').addEventListener('click',()=>setChatOpen(false));
 $('#back').addEventListener('click',async()=>{if(room&&!['waiting','finished','closed'].includes(room.state.phase)&&!confirm('本局尚未结束。返回后轮次倒计时仍会继续，重新进入 Club 会回到本局。确定返回吗？'))return;generation++;followStop?.();followStop=null;try{if(room?.state.phase==='waiting'&&room.self_seat!==null)await client.action(room.room_id,{turn_id:room.state.turn_id,version:room.state.version,action:'leave',payload:{}});}catch(error){feedback(error.message);}const uid=await client.identity();await client.kvPut(`drawguess:last-room:${uid}`,null);room=null;rooms=await client.rooms();renderLobby();feedback();});
 $('#claim').addEventListener('click',()=>sendAction('claim'));
-document.querySelectorAll('[data-create-room]').forEach(button=>button.addEventListener('click',async()=>{button.disabled=true;try{const next=await client.create(button.dataset.createRoom,Number(button.dataset.stake));await enterRoom(next.room_id);}catch(error){feedback(error.message);}finally{button.disabled=false;}}));
+document.querySelector('.create-strip').addEventListener('click',async event=>{const button=event.target.closest('[data-create-room]');if(!button)return;button.disabled=true;try{const latest=await loadEconomy(CONFIG.apiBase,'drawguess');if(button.dataset.createRoom==='coin'&&!latest.coin_stakes.includes(Number(button.dataset.stake))){renderCreateStrip(document.querySelector('.create-strip'),latest,document);feedback('场次配置已更新，请重新选择');return;}const next=await client.create(button.dataset.createRoom,Number(button.dataset.stake));await enterRoom(next.room_id);}catch(error){feedback(error.message);}finally{button.disabled=false;}});
 $('#ready').addEventListener('click',()=>sendAction($('#ready').dataset.action||'ready'));$('#start').addEventListener('click',()=>sendAction('start'));
 $('#chat-send').addEventListener('click',sendChat);$('#chat-input').addEventListener('compositionstart',()=>{composing=true;});$('#chat-input').addEventListener('compositionend',()=>{composing=false;});$('#chat-input').addEventListener('keydown',event=>{if(event.key==='Enter'&&!composing&&!event.isComposing){event.preventDefault();sendChat();}});
 for(const button of document.querySelectorAll('[data-color]'))button.addEventListener('click',()=>{currentTool={...currentTool,tool:'pen',color:button.dataset.color};board.setTool(currentTool);document.querySelectorAll('[data-color]').forEach(item=>item.classList.toggle('active',item===button));$('#eraser').classList.remove('active');});

@@ -186,7 +186,7 @@
               <section id="mistrealm-view" class="dashboard-view panel" hidden><div class="panel-heading"><div><h2>雾境公共频道</h2><p class="muted">查看公开发言与约战；可删除消息或禁言玩家。</p></div><button id="refresh-mistrealm-channel" class="secondary" type="button">刷新频道</button></div><div id="mistrealm-channel-list" class="data-list" aria-live="polite"></div></section>
               <section id="texas-holdem-view" class="dashboard-view panel" hidden>
                 <p class="eyebrow">多人现金桌</p>
-                <div class="panel-heading"><div><h2>德州扑克</h2><p class="muted">系统只负责发牌与裁判，不参赌、不抽成；底牌不会出现在管理端。</p></div><button id="edit-texas-holdem-settings" class="primary" type="button">编辑德州规则</button></div>
+                <div class="panel-heading"><div><h2>德州扑克</h2><p class="muted">群聊指令局与 Club 摸鱼币场按后台比例抽水，Club 休闲场不抽水；底牌不会出现在管理端。</p></div><button id="edit-texas-holdem-settings" class="primary" type="button">编辑德州规则</button></div>
                 <div id="texas-holdem-settings-card" class="settings-card" aria-live="polite"></div>
                 <hr>
                 <div class="panel-heading"><div><h2>当前公开牌局</h2><p class="muted">仅展示公共牌、底池、行动位和公开筹码。</p></div></div>
@@ -228,7 +228,7 @@
               <section id="settings-view" class="dashboard-view panel" hidden>
                 <p class="eyebrow">玩法配置</p>
                 <nav class="management-tabs" data-management-tabs="settings" aria-label="玩法配置分类"><button class="management-tab active" data-management-tab="economy" type="button">经济</button><button class="management-tab" data-management-tab="activity" type="button">活跃度与收益</button><button class="management-tab" data-management-tab="minigames" type="button">小游戏</button></nav>
-                <section class="management-pane" data-management-pane="economy"><div class="panel-heading"><div><h2>经济规则</h2><p class="muted">修改后会立即影响后续入职与打卡，不会改动已有员工余额。</p></div><button id="edit-settings" class="primary" type="button">编辑经济规则</button></div><div id="settings-card" class="settings-card" aria-live="polite"></div><hr><div class="panel-heading"><div><h2>个人档案</h2><p class="muted">玩家编辑档案会消耗个人货币和全公司共享的人力。</p></div><button id="edit-profile-settings" class="primary" type="button">编辑档案设置</button></div><div id="profile-settings-card" class="settings-card" aria-live="polite"></div></section>
+                <section class="management-pane" data-management-pane="economy"><div class="panel-heading"><div><h2>经济规则</h2><p class="muted">修改后会立即影响后续入职与打卡，不会改动已有员工余额。</p></div><button id="edit-settings" class="primary" type="button">编辑经济规则</button></div><div id="settings-card" class="settings-card" aria-live="polite"></div><hr><div class="panel-heading"><div><h2>个人档案</h2><p class="muted">玩家编辑档案会消耗个人货币和全公司共享的人力。</p></div><button id="edit-profile-settings" class="primary" type="button">编辑档案设置</button></div><div id="profile-settings-card" class="settings-card" aria-live="polite"></div><hr><div class="panel-heading"><div><h2>Club 场次与抽水</h2><p class="muted">每个游戏独立配置摸鱼币场可选档位和结算抽水；修改只影响之后创建的新房间或新一手。</p></div></div><div id="club-economy-settings-card" class="data-list" aria-live="polite"><p class="muted">正在读取 Club 配置。</p></div></section>
                 <section class="management-pane" data-management-pane="activity" hidden><div class="panel-heading"><div><h2>日活跃度</h2><p class="muted">配置等级门槛、每日奖励与今日收益榜推送时段。</p></div><button id="edit-activity-settings" class="primary" type="button">编辑日活跃度</button></div><div id="activity-settings-card" class="settings-card" aria-live="polite"></div></section>
                 <section class="management-pane" data-management-pane="minigames" hidden><div class="panel-heading"><div><h2>蹦蹦数字炸弹</h2><p class="muted">不限人数，参与者手动 /开始；每轮私聊报数，开局后不因无操作解散。</p></div><button id="edit-number-bomb-settings" class="primary" type="button">编辑小游戏规则</button></div><div id="number-bomb-settings-card" class="settings-card" aria-live="polite"></div><hr><div class="panel-heading"><div><h2>我有你没有</h2><p class="muted">轮流发言、回应扣心；半数玩家出局后进入自由惩罚阶段。</p></div><button id="edit-never-have-i-ever-settings" class="primary" type="button">编辑玩法规则</button></div><div id="never-have-i-ever-settings-card" class="settings-card" aria-live="polite"></div><div class="panel-heading"><div><h3>历史对局</h3><p class="muted">保留报名、出局与最终心数。</p></div><button id="refresh-never-have-i-ever-history" class="secondary" type="button">刷新历史</button></div><div id="never-have-i-ever-history" class="data-list"></div><hr><div class="panel-heading"><div><h2>国王游戏</h2><p class="muted">国王在公开编号前自由发布命令；系统只负责抽号、公开与轮次。</p></div><button id="edit-king-game-settings" class="primary" type="button">编辑玩法规则</button></div><div id="king-game-settings-card" class="settings-card" aria-live="polite"></div><hr><div class="panel-heading"><div><h2>随机运气红包</h2><p class="muted">红包独立于游戏和随机事件；过期后自动退还尚未领取的金额。</p></div><button id="edit-red-packet-settings" class="primary" type="button">编辑红包规则</button></div><div id="red-packet-settings-card" class="settings-card" aria-live="polite"></div></section>
               </section>
@@ -486,6 +486,12 @@
         <label for="settings-weekly-attendance-reward">每周全勤奖</label>
         <input id="settings-weekly-attendance-reward" type="number" min="0" max="999" required>
         <small class="muted">上一自然周每日均打卡的员工，于周一自动领取。</small>
+        <label for="settings-season-title-minimum-rank">赛季称号最低结季职位</label>
+        <select id="settings-season-title-minimum-rank" required></select>
+        <small class="muted">按当前赛季开始时保存的上赛季结季职位判断资格。</small>
+        <label for="settings-season-title-daily-reward">赛季称号每日权益</label>
+        <input id="settings-season-title-daily-reward" type="number" min="0" max="999" required>
+        <small class="muted">已定义当前赛季称号的玩家，首次成功打卡时额外获得。</small>
         <label for="settings-company-story-novel-url">公司故事集小说链接</label>
         <input id="settings-company-story-novel-url" type="url" maxlength="4096" placeholder="https://www.ivorune.xyz/novel/...">
         <small class="muted">玩家发送 /公司的故事集 时，将发送这本小说的分享卡；留空则暂不开放。</small>
@@ -546,7 +552,7 @@
     <div id="texas-holdem-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="texas-holdem-settings-modal-title" hidden>
       <div class="template-modal-backdrop" data-close-texas-holdem-settings-modal></div>
       <section class="template-modal-card">
-        <div class="template-modal-heading"><div><p class="eyebrow">多人现金桌</p><h2 id="texas-holdem-settings-modal-title">编辑德州扑克</h2><p class="muted">盲注按带入金额计算；修改仅影响之后创建的新牌局。</p></div><button class="text-button" data-close-texas-holdem-settings-modal type="button">关闭</button></div>
+        <div class="template-modal-heading"><div><p class="eyebrow">多人现金桌</p><h2 id="texas-holdem-settings-modal-title">编辑德州扑克</h2><p class="muted">盲注按带入金额计算；抽水在开局时锁定，修改不影响已开始的牌局。</p></div><button class="text-button" data-close-texas-holdem-settings-modal type="button">关闭</button></div>
         <label><input id="texas-holdem-enabled" type="checkbox"> 启用德州扑克</label>
         <div class="event-input-grid">
           <label>最少人数<input id="texas-holdem-minimum-players" type="number" min="2" max="9" required></label>
@@ -558,8 +564,23 @@
           <label>行动时限（秒）<input id="texas-holdem-action-timeout" type="number" min="10" max="3600" required></label>
           <label>小盲（带入 %）<input id="texas-holdem-small-blind" type="number" min="1" max="99" required></label>
           <label>大盲（带入 %）<input id="texas-holdem-big-blind" type="number" min="2" max="100" required></label>
+          <label>德州扑克抽水（%）<input id="texas-holdem-rake" type="number" min="0" max="100" required></label>
         </div>
+        <small class="muted">从群聊指令局与 Club 摸鱼币场奖池中按整数币向下取整抽取；Club 休闲场不抽水。</small>
         <div class="template-modal-actions"><button class="secondary" data-close-texas-holdem-settings-modal type="button">取消</button><button id="save-texas-holdem-settings" class="primary" type="button">保存设置</button></div>
+      </section>
+    </div>
+    <div id="club-economy-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="club-economy-settings-modal-title" hidden>
+      <div class="template-modal-backdrop" data-close-club-economy-settings-modal></div>
+      <section class="template-modal-card">
+        <div class="template-modal-heading"><div><p class="eyebrow">摸鱼 Club</p><h2 id="club-economy-settings-modal-title">编辑游戏场次</h2><p class="muted">填写 1～6 个档位，用英文逗号分隔并按从小到大排列；档位影响新房间，抽水从下一手或下一局开始生效。</p></div><button class="text-button" data-close-club-economy-settings-modal type="button">关闭</button></div>
+        <input id="club-economy-game" type="hidden">
+        <div class="event-input-grid">
+          <label>摸鱼币档位<input id="club-economy-stakes" type="text" inputmode="numeric" placeholder="5, 10, 20" required></label>
+          <label>抽水比例（%）<input id="club-economy-rake" type="number" min="0" max="100" required></label>
+        </div>
+        <small class="muted">休闲局、退款局以及没有胜者的局不抽水；抽水按整数币向下取整。</small>
+        <div class="template-modal-actions"><button class="secondary" data-close-club-economy-settings-modal type="button">取消</button><button id="save-club-economy-settings" class="primary" type="button">保存设置</button></div>
       </section>
     </div>
     <div id="dark-market-settings-modal" class="template-modal" role="dialog" aria-modal="true" aria-labelledby="dark-market-settings-modal-title" hidden>

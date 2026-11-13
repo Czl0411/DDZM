@@ -14,6 +14,7 @@ let profileSettings = null;
 let activitySettings = null;
 let numberBombSettings = null;
 let texasHoldemSettings = null;
+let clubEconomySettings = [];
 let darkMarketSettings = null;
 let performanceSettings = null;
 let performances = [];
@@ -333,6 +334,8 @@ const settingsCurrencyName = document.querySelector("#settings-currency-name");
 const settingsOnboardingBonus = document.querySelector("#settings-onboarding-bonus");
 const settingsCheckinReward = document.querySelector("#settings-checkin-reward");
 const settingsWeeklyAttendanceReward = document.querySelector("#settings-weekly-attendance-reward");
+const settingsSeasonTitleMinimumRank = document.querySelector("#settings-season-title-minimum-rank");
+const settingsSeasonTitleDailyReward = document.querySelector("#settings-season-title-daily-reward");
 const settingsCompanyStoryNovelUrl = document.querySelector("#settings-company-story-novel-url");
 const activitySettingsModal = document.querySelector("#activity-settings-modal");
 const activityRuleInputs = document.querySelector("#activity-rule-inputs");
@@ -341,6 +344,7 @@ const numberBombSettingsModal = document.querySelector("#number-bomb-settings-mo
 const neverHaveIEverSettingsModal = document.querySelector("#never-have-i-ever-settings-modal");
 const kingGameSettingsModal = document.querySelector("#king-game-settings-modal");
 const texasHoldemSettingsModal = document.querySelector("#texas-holdem-settings-modal");
+const clubEconomySettingsModal = document.querySelector("#club-economy-settings-modal");
 const darkMarketSettingsModal = document.querySelector("#dark-market-settings-modal");
 const darkMarketDetailModal = document.querySelector("#dark-market-detail-modal");
 const companyLotterySettingsModal = document.querySelector("#company-lottery-settings-modal");
@@ -533,6 +537,10 @@ function closeTexasHoldemSettingsModal() {
   texasHoldemSettingsModal.hidden = true;
 }
 
+function closeClubEconomySettingsModal() {
+  clubEconomySettingsModal.hidden = true;
+}
+
 function closeDarkMarketSettingsModal() {
   darkMarketSettingsModal.hidden = true;
 }
@@ -577,6 +585,8 @@ function renderSettings(settings) {
     <article><span>入职初始余额</span><strong>${settings.onboarding_bonus}</strong><small>仅影响之后新入职的员工</small></article>
     <article><span>默认打卡奖励</span><strong>${settings.checkin_reward}</strong><small>现有职位奖励请在职位配置中设置</small></article>
     <article><span>每周全勤奖</span><strong>${settings.weekly_attendance_reward}</strong><small>上周全勤于周一自动入账</small></article>
+    <article><span>赛季称号门槛</span><strong>LV${settings.season_title_minimum_rank_order}</strong><small>按上赛季结季职位判断</small></article>
+    <article><span>赛季称号权益</span><strong>${settings.season_title_daily_reward} / 日</strong><small>定义称号后随首次成功打卡入账</small></article>
     <article><span>公司故事集</span><strong>${settings.company_story_novel_url ? "已配置" : "未配置"}</strong><small>发送 /公司的故事集 分享小说</small></article>`;
 }
 
@@ -620,7 +630,23 @@ function renderTexasHoldemSettings(settings) {
     <article><span>带入范围</span><strong>${settings.minimum_buy_in}–${settings.maximum_buy_in}</strong><small>真实摸鱼币带入</small></article>
     <article><span>报名 / 行动</span><strong>${settings.signup_timeout_seconds} / ${settings.action_timeout_seconds} 秒</strong><small>超时自动处理</small></article>
     <article><span>盲注比例</span><strong>${settings.small_blind_percent}% / ${settings.big_blind_percent}%</strong><small>小盲 / 大盲，按带入金额计算</small></article>
+    <article><span>德州抽水</span><strong>${settings.rake_percent}%</strong><small>群聊指令局与 Club 摸鱼币场；休闲场不抽水</small></article>
     <article><span>每日发起</span><strong>${settings.daily_start_limit} 次</strong><small>按发起人统计</small></article>`;
+}
+
+const clubEconomyGameNames = {
+  mahjong: "摸鱼麻将", chess: "群聊象棋", doudizhu: "斗地主",
+  drawguess: "你画我猜", texas: "德州扑克", zhajinhua: "炸金花",
+  blackjack: "21 点",
+};
+
+function renderClubEconomySettings(items) {
+  const container = document.querySelector("#club-economy-settings-card");
+  container.innerHTML = items.map(item => `
+    <article class="data-row">
+      <div><b>${escapeHtml(clubEconomyGameNames[item.game] || item.game)}</b><small>摸鱼币档位：${item.coin_stakes.join(" / ")} · 抽水：${item.rake_percent}%</small></div>
+      <button class="secondary" data-edit-club-economy="${escapeHtml(item.game)}" type="button">编辑</button>
+    </article>`).join("");
 }
 
 function darkMarketStateLabel(state) {
@@ -1742,6 +1768,14 @@ async function loadTexasHoldemSettings() {
   return texasHoldemSettings;
 }
 
+async function loadClubEconomySettings() {
+  const response = await requestGame("/api/game/club/economy-settings");
+  clubEconomySettings = response.items;
+  configurationVersion = response.version;
+  renderClubEconomySettings(clubEconomySettings);
+  return clubEconomySettings;
+}
+
 async function loadDarkMarketSettings() {
   if (!groupChats.length) await loadGroupChats();
   darkMarketSettings = await requestGame("/api/game/dark-market/settings");
@@ -1831,8 +1865,21 @@ async function openTexasHoldemSettingsModal() {
   document.querySelector("#texas-holdem-action-timeout").value = settings.action_timeout_seconds;
   document.querySelector("#texas-holdem-small-blind").value = settings.small_blind_percent;
   document.querySelector("#texas-holdem-big-blind").value = settings.big_blind_percent;
+  document.querySelector("#texas-holdem-rake").value = settings.rake_percent;
   texasHoldemSettingsModal.hidden = false;
   document.querySelector("#texas-holdem-minimum-players").focus();
+}
+
+async function openClubEconomySettingsModal(game) {
+  const settings = clubEconomySettings.find(item => item.game === game)
+    || (await loadClubEconomySettings()).find(item => item.game === game);
+  if (!settings) throw new Error("未找到 Club 游戏配置");
+  document.querySelector("#club-economy-game").value = game;
+  document.querySelector("#club-economy-settings-modal-title").textContent = `编辑${clubEconomyGameNames[game] || game}场次`;
+  document.querySelector("#club-economy-stakes").value = settings.coin_stakes.join(", ");
+  document.querySelector("#club-economy-rake").value = settings.rake_percent;
+  clubEconomySettingsModal.hidden = false;
+  document.querySelector("#club-economy-stakes").focus();
 }
 
 async function openDarkMarketSettingsModal() {
@@ -1885,6 +1932,14 @@ async function openSettingsModal() {
   settingsOnboardingBonus.value = settings.onboarding_bonus;
   settingsCheckinReward.value = settings.checkin_reward;
   settingsWeeklyAttendanceReward.value = settings.weekly_attendance_reward;
+  if (!rankDefinitions.length) {
+    rankDefinitions = await requestGame("/api/game/ranks");
+  }
+  settingsSeasonTitleMinimumRank.innerHTML = rankDefinitions
+    .map((rank) => `<option value="${rank.sort_order}">${escapeHtml(rank.level_label)} · ${escapeHtml(rank.name)}</option>`)
+    .join("");
+  settingsSeasonTitleMinimumRank.value = settings.season_title_minimum_rank_order;
+  settingsSeasonTitleDailyReward.value = settings.season_title_daily_reward;
   settingsCompanyStoryNovelUrl.value = settings.company_story_novel_url || "";
   settingsModal.hidden = false;
   settingsCurrencyName.focus();
@@ -3256,7 +3311,7 @@ async function loadGameView(view) {
   try {
     if (view === "overview") return refresh();
     if (view === "settings") {
-      await Promise.all([loadSettings(), loadProfileSettings(), loadActivitySettings(), loadNumberBombSettings(), loadNeverHaveIEverSettings(), loadNeverHaveIEverHistory(), loadKingGameSettings(), loadRedPacketSettings()]);
+      await Promise.all([loadSettings(), loadProfileSettings(), loadClubEconomySettings(), loadActivitySettings(), loadNumberBombSettings(), loadNeverHaveIEverSettings(), loadNeverHaveIEverHistory(), loadKingGameSettings(), loadRedPacketSettings()]);
       return;
     }
     if (view === "events") return loadRandomEvents();
@@ -3556,6 +3611,10 @@ document.querySelector("#edit-never-have-i-ever-settings").addEventListener("cli
 document.querySelector("#edit-king-game-settings").addEventListener("click", () => void openKingGameSettingsModal());
 document.querySelector("#refresh-never-have-i-ever-history").addEventListener("click", () => void loadNeverHaveIEverHistory());
 document.querySelector("#edit-texas-holdem-settings").addEventListener("click", () => void openTexasHoldemSettingsModal());
+document.querySelector("#club-economy-settings-card").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-edit-club-economy]");
+  if (button) void openClubEconomySettingsModal(button.dataset.editClubEconomy);
+});
 document.querySelector("#edit-dark-market-settings").addEventListener("click", () => void openDarkMarketSettingsModal());
 document.querySelector("#refresh-dark-market").addEventListener("click", (event) => void runMutation(event.currentTarget, "刷新中…", () => loadDarkMarketListings()));
 document.querySelector("#dark-market-status-filter").addEventListener("change", () => void loadDarkMarketListings(1));
@@ -4115,6 +4174,8 @@ settingsModal.addEventListener("click", async (event) => {
           onboarding_bonus: Number(settingsOnboardingBonus.value),
           checkin_reward: Number(settingsCheckinReward.value),
           weekly_attendance_reward: Number(settingsWeeklyAttendanceReward.value),
+          season_title_minimum_rank_order: Number(settingsSeasonTitleMinimumRank.value),
+          season_title_daily_reward: Number(settingsSeasonTitleDailyReward.value),
           company_story_novel_url: settingsCompanyStoryNovelUrl.value.trim() || null,
         }),
       });
@@ -4369,6 +4430,7 @@ texasHoldemSettingsModal.addEventListener("click", async (event) => {
     action_timeout_seconds: Number(document.querySelector("#texas-holdem-action-timeout").value),
     small_blind_percent: Number(document.querySelector("#texas-holdem-small-blind").value),
     big_blind_percent: Number(document.querySelector("#texas-holdem-big-blind").value),
+    rake_percent: Number(document.querySelector("#texas-holdem-rake").value),
   };
   const valid = Object.entries(payload).every(([key, value]) => key === "enabled" || Number.isInteger(value))
     && payload.minimum_players >= 2 && payload.maximum_players <= 9 && payload.minimum_players <= payload.maximum_players
@@ -4376,7 +4438,8 @@ texasHoldemSettingsModal.addEventListener("click", async (event) => {
     && payload.daily_start_limit >= 1 && payload.daily_start_limit <= 100
     && payload.signup_timeout_seconds >= 10 && payload.signup_timeout_seconds <= 3600
     && payload.action_timeout_seconds >= 10 && payload.action_timeout_seconds <= 3600
-    && payload.small_blind_percent >= 1 && payload.small_blind_percent < payload.big_blind_percent && payload.big_blind_percent <= 100;
+    && payload.small_blind_percent >= 1 && payload.small_blind_percent < payload.big_blind_percent && payload.big_blind_percent <= 100
+    && payload.rake_percent >= 0 && payload.rake_percent <= 100;
   if (!valid) {
     setResult("德州扑克设置范围无效，请检查人数、带入、时限与盲注比例", "error");
     return;
@@ -4391,9 +4454,51 @@ texasHoldemSettingsModal.addEventListener("click", async (event) => {
       });
       configurationVersion = texasHoldemSettings.version;
       renderTexasHoldemSettings(texasHoldemSettings);
+      clubEconomySettings = clubEconomySettings.map(item => item.game === "texas" ? {...item, rake_percent: texasHoldemSettings.rake_percent} : item);
+      if (clubEconomySettings.length) renderClubEconomySettings(clubEconomySettings);
       closeTexasHoldemSettingsModal();
     });
     setResult("德州扑克设置已保存", "success");
+  } catch (error) {
+    setResult(`保存失败（${error.message}）`, "error");
+  }
+});
+clubEconomySettingsModal.addEventListener("click", async (event) => {
+  if (event.target.closest("[data-close-club-economy-settings-modal]")) {
+    closeClubEconomySettingsModal();
+    return;
+  }
+  if (event.target.id !== "save-club-economy-settings") return;
+  const rawStakes = document.querySelector("#club-economy-stakes").value
+    .split(",").map(value => value.trim());
+  const coin_stakes = rawStakes.map(Number);
+  const rake_percent = Number(document.querySelector("#club-economy-rake").value);
+  const game = document.querySelector("#club-economy-game").value;
+  const valid = rawStakes.length >= 1 && rawStakes.length <= 6 && rawStakes.every(Boolean)
+    && coin_stakes.every(value => Number.isInteger(value) && value >= 1 && value <= 99999)
+    && coin_stakes.every((value, index) => index === 0 || coin_stakes[index - 1] < value)
+    && Number.isInteger(rake_percent) && rake_percent >= 0 && rake_percent <= 100;
+  if (!valid) {
+    setResult("请填写 1–6 个 1–99999 的升序唯一整数档位；抽水必须是 0–100 的整数", "error");
+    return;
+  }
+  try {
+    await runMutation(event.target, "保存中…", async () => {
+      const updated = await requestGame("/api/game/club/economy-settings", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json", ...configurationHeaders()},
+        body: JSON.stringify({game, coin_stakes, rake_percent}),
+      });
+      configurationVersion = updated.version;
+      clubEconomySettings = clubEconomySettings.map(item => item.game === game ? updated : item);
+      renderClubEconomySettings(clubEconomySettings);
+      if (game === "texas" && texasHoldemSettings) {
+        texasHoldemSettings = {...texasHoldemSettings, rake_percent};
+        renderTexasHoldemSettings(texasHoldemSettings);
+      }
+      closeClubEconomySettingsModal();
+    });
+    setResult("Club 场次与抽水已保存", "success");
   } catch (error) {
     setResult(`保存失败（${error.message}）`, "error");
   }
@@ -5467,6 +5572,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !neverHaveIEverSettingsModal.hidden) closeNeverHaveIEverSettingsModal();
   if (event.key === "Escape" && !kingGameSettingsModal.hidden) closeKingGameSettingsModal();
   if (event.key === "Escape" && !texasHoldemSettingsModal.hidden) closeTexasHoldemSettingsModal();
+  if (event.key === "Escape" && !clubEconomySettingsModal.hidden) closeClubEconomySettingsModal();
   if (event.key === "Escape" && !darkMarketSettingsModal.hidden) closeDarkMarketSettingsModal();
   if (event.key === "Escape" && !darkMarketDetailModal.hidden) closeDarkMarketDetailModal();
   if (event.key === "Escape" && !companyLotterySettingsModal.hidden) closeCompanyLotterySettingsModal();

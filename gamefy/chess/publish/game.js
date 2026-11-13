@@ -1,5 +1,27 @@
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+async function loadEconomy(apiBase) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(`${apiBase.replace(/\/$/, '')}/api/club/economy-settings`, {cache: 'no-store', signal: controller.signal});
+    if (!response.ok) throw new Error('无法读取 Club 场次设置');
+    const setting = (await response.json()).find(item => item.game === 'chess');
+    if (!setting?.coin_stakes?.length) throw new Error('Club 场次设置不完整');
+    return setting;
+  } catch { return { game: 'chess', coin_stakes: [5, 10, 20], rake_percent: 20 }; }
+  finally { clearTimeout(timer); }
+}
+
+function renderCreateStrip(container, setting) {
+  const create = (roomType, stake, label) => {
+    const button = document.createElement('button'); button.type = 'button';
+    button.dataset.createRoom = roomType; button.dataset.stake = String(stake); button.textContent = label;
+    return button;
+  };
+  container.replaceChildren(create('casual', 0, '休闲局'), ...setting.coin_stakes.map(stake => create('coin', stake, `${stake} 币场`)));
+}
+
 export function resolveRoomId(gp, hash) {
   if (gp != null) {
     try {
@@ -146,6 +168,7 @@ async function boot() {
   let lastRoomKey;
   try { lastRoomKey = `chess:last-room:${await client.identity()}`; }
   catch (error) { status.textContent = error.message; showReady(); return; }
+  renderCreateStrip(document.querySelector('.create-strip'), await loadEconomy(window.CHESS_API_BASE));
   if (!roomId && location.hash !== '#lobby') {
     try {
       const saved = (await window.dzmm.kv.get(lastRoomKey))?.value;
@@ -188,14 +211,22 @@ async function boot() {
         } catch (error) { status.textContent = error.message; }
       };
       document.querySelector('#refresh-rooms').addEventListener('click', refresh);
-      document.querySelectorAll('[data-create-room]').forEach(button => button.addEventListener('click', async () => {
+      document.querySelector('.create-strip').addEventListener('click', async event => {
+        const button = event.target.closest('[data-create-room]');
+        if (!button) return;
         button.disabled = true;
         try {
+          const latest = await loadEconomy(window.CHESS_API_BASE);
+          if (button.dataset.createRoom === 'coin' && !latest.coin_stakes.includes(Number(button.dataset.stake))) {
+            renderCreateStrip(document.querySelector('.create-strip'), latest);
+            status.textContent = '场次配置已更新，请重新选择。';
+            return;
+          }
           const next = await client.create(button.dataset.createRoom, Number(button.dataset.stake));
           resolve(next.game.id);
         } catch (error) { status.textContent = error.message; }
         finally { button.disabled = false; }
-      }));
+      });
       refresh();
     });
     client.selectRoom(roomId);
@@ -272,6 +303,7 @@ async function boot() {
     state = next;
     serverOffset = Date.now() - Date.parse(next.server_time || new Date().toISOString());
     const game = next.game;
+    const rakeText = game.room_type === 'coin' ? `抽水 ${game.settlement?.rake_percent ?? game.position?.rake_percent ?? 0}%` : '休闲局不抽水';
     const events = game.events || [];
     const notice = document.querySelector('#move-notice');
     const message = moveNotice(lastEventSeq, events);
@@ -287,7 +319,7 @@ async function boot() {
     if (!result.hidden) {
       const outcome = resultNotice(game.result, next.role);
       document.querySelector('#result-title').textContent = outcome.title;
-      document.querySelector('#result-reason').textContent = outcome.reason;
+      document.querySelector('#result-reason').textContent = `${outcome.reason} · ${rakeText}`;
       notice.hidden = true;
     }
     document.querySelector('#players').textContent = `红方 ${game.red_name || '待定'} · 黑方 ${game.black_name || '待定'}`;
@@ -299,7 +331,7 @@ async function boot() {
     }
     board.before(document.querySelector(next.role === 'black' ? '#red-player' : '#black-player'));
     board.after(document.querySelector(next.role === 'black' ? '#black-player' : '#red-player'));
-    status.textContent = error ? '正在重新连接…' : game.status === 'waiting' ? '等待第二位棋手入座' : game.status === 'cancelled' ? '棋局已取消' : game.status === 'finished' ? resultNotice(game.result, next.role).title : `${game.check_square ? '将军！' : '进行中'} · 你是${next.role === 'spectator' ? '观众' : next.role === 'red' ? '红方' : '黑方'}`;
+    status.textContent = error ? '正在重新连接…' : game.status === 'waiting' ? '等待第二位棋手入座' : game.status === 'cancelled' ? '棋局已取消' : game.status === 'finished' ? resultNotice(game.result, next.role).title : `${game.check_square ? '将军！' : '进行中'} · 你是${next.role === 'spectator' ? '观众' : next.role === 'red' ? '红方' : '黑方'} · ${rakeText}`;
     document.querySelector('#claim-panel').hidden = game.status !== 'waiting' || next.role !== 'spectator';
     document.querySelector('#actions').hidden = !['red', 'black'].includes(next.role) || game.status !== 'playing';
     document.querySelector('#respond').hidden = !game.pending_offer || next.offer_mine || !['red', 'black'].includes(next.role);

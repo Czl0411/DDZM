@@ -242,6 +242,12 @@ class GameSettingsRecord(Base):
     onboarding_bonus: Mapped[int] = mapped_column(Integer, nullable=False)
     checkin_reward: Mapped[int] = mapped_column(Integer, nullable=False)
     weekly_attendance_reward: Mapped[int] = mapped_column(Integer, nullable=False)
+    season_title_minimum_rank_order: Mapped[int] = mapped_column(
+        Integer, default=8, server_default="8", nullable=False
+    )
+    season_title_daily_reward: Mapped[int] = mapped_column(
+        Integer, default=5, server_default="5", nullable=False
+    )
     company_story_novel_url: Mapped[str | None] = mapped_column(String(4096))
 
 
@@ -1333,6 +1339,27 @@ class TexasHoldemSettingsRecord(Base):
     big_blind_percent: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
 
 
+class ClubGameEconomySettingRecord(Base):
+    __tablename__ = "club_game_economy_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "game IN ('mahjong', 'chess', 'doudizhu', 'drawguess', "
+            "'texas', 'zhajinhua', 'blackjack')",
+            name="ck_club_game_economy_settings_game",
+        ),
+        CheckConstraint(
+            "rake_percent >= 0 AND rake_percent <= 100",
+            name="ck_club_game_economy_settings_rake_percent",
+        ),
+    )
+
+    game: Mapped[str] = mapped_column(String(16), primary_key=True)
+    coin_stakes: Mapped[list[int]] = mapped_column(JSON, nullable=False)
+    rake_percent: Mapped[int] = mapped_column(
+        Integer, default=20, server_default="20", nullable=False
+    )
+
+
 class TexasHoldemGameRecord(Base):
     __tablename__ = "texas_holdem_games"
     __table_args__ = (
@@ -1342,6 +1369,13 @@ class TexasHoldemGameRecord(Base):
             unique=True,
             sqlite_where=text("active_key IS NOT NULL"),
             postgresql_where=text("active_key IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "rake_percent_snapshot >= 0 AND rake_percent_snapshot <= 100",
+            name="ck_texas_holdem_games_rake_percent_snapshot",
+        ),
+        CheckConstraint(
+            "rake_amount >= 0", name="ck_texas_holdem_games_rake_amount"
         ),
     )
 
@@ -1372,6 +1406,12 @@ class TexasHoldemGameRecord(Base):
     )
     big_blind_percent_snapshot: Mapped[int] = mapped_column(
         Integer, default=10, nullable=False
+    )
+    rake_percent_snapshot: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    rake_amount: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
     )
     deck: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     board: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
@@ -2622,6 +2662,26 @@ class HonorSeasonRecord(Base):
     issued_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class CompanySeasonTitleRecord(Base):
+    __tablename__ = "company_season_titles"
+    __table_args__ = (
+        UniqueConstraint(
+            "season_code", "user_id", name="uq_company_season_title_user"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    # The database migration owns the foreign key to company_seasons.  That
+    # existing audit table intentionally is not part of Base.metadata.
+    season_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    title_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    defined_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
+
+
 class HonorAwardRecord(Base):
     __tablename__ = "honor_awards"
     __table_args__ = (
@@ -2844,7 +2904,14 @@ class ClubCardMessageRecord(Base):
 
 class ClubCardHandRecord(Base):
     __tablename__ = "club_card_hands"
-    __table_args__ = (UniqueConstraint("room_id", "hand_number"),)
+    __table_args__ = (
+        UniqueConstraint("room_id", "hand_number"),
+        CheckConstraint(
+            "rake_percent >= 0 AND rake_percent <= 100",
+            name="ck_club_card_hands_rake_percent",
+        ),
+        CheckConstraint("rake_amount >= 0", name="ck_club_card_hands_rake_amount"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     room_id: Mapped[UUID] = mapped_column(ForeignKey("club_card_rooms.id"), nullable=False)
@@ -2853,6 +2920,12 @@ class ClubCardHandRecord(Base):
     players: Mapped[list] = mapped_column(JSON, nullable=False)
     outcomes: Mapped[dict] = mapped_column(JSON, nullable=False)
     payouts: Mapped[dict] = mapped_column(JSON, nullable=False)
+    rake_percent: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    rake_amount: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(BeijingDateTime, nullable=False)
 
 

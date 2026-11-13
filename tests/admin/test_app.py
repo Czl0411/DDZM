@@ -87,6 +87,8 @@ class FakeCore:
             "onboarding_bonus": 0,
             "checkin_reward": 5,
             "weekly_attendance_reward": 5,
+            "season_title_minimum_rank_order": 8,
+            "season_title_daily_reward": 5,
             "company_story_novel_url": None,
             "reset_time_label": "北京时间 00:00",
         }
@@ -132,6 +134,18 @@ class FakeCore:
             "action_timeout_seconds": 120,
             "small_blind_percent": 5,
             "big_blind_percent": 10,
+            "rake_percent": 20,
+        }
+    )
+    club_economy_settings: dict = field(
+        default_factory=lambda: {
+            "items": [
+                {"game": game, "coin_stakes": [5, 10, 20], "rake_percent": 20}
+                for game in (
+                    "mahjong", "chess", "doudizhu", "drawguess",
+                    "texas", "zhajinhua", "blackjack",
+                )
+            ]
         }
     )
     dark_market_settings: dict = field(
@@ -943,6 +957,16 @@ class FakeCore:
     def set_texas_holdem_settings(self, settings):
         self.texas_holdem_settings = settings
         return self.texas_holdem_settings
+
+    def get_club_economy_settings(self):
+        return self.club_economy_settings
+
+    def set_club_economy_settings(self, settings):
+        self.club_economy_settings["items"] = [
+            settings if item["game"] == settings["game"] else item
+            for item in self.club_economy_settings["items"]
+        ]
+        return settings
 
     def get_dark_market_settings(self):
         return self.dark_market_settings
@@ -3242,6 +3266,33 @@ def test_concrete_core_client_gets_and_sets_texas_holdem_settings():
     assert methods == ["GET", "PATCH"]
 
 
+def test_concrete_core_client_gets_and_sets_club_economy_settings():
+    from dzmm_bot.admin.core_client import CoreClient
+
+    listing = {"items": [{"game": "mahjong", "coin_stakes": [5, 10, 20], "rake_percent": 20}]}
+    update = {"game": "mahjong", "coin_stakes": [10, 50], "rake_percent": 15}
+
+    def handle(request):
+        assert request.headers["X-Core-Token"] == "core-secret"
+        assert request.url.path == "/internal/game/club/economy-settings"
+        if request.method == "PATCH":
+            assert json.loads(request.content) == update
+            return httpx.Response(200, json=update)
+        return httpx.Response(200, json=listing)
+
+    core = CoreClient(
+        "unused", "unused",
+        client=httpx.Client(
+            base_url="http://127.0.0.1:18120",
+            headers={"X-Core-Token": "core-secret"},
+            transport=httpx.MockTransport(handle),
+        ),
+    )
+
+    assert core.get_club_economy_settings() == listing
+    assert core.set_club_economy_settings(update) == update
+
+
 def test_concrete_core_client_uses_dark_market_contract_paths():
     from dzmm_bot.admin.core_client import CoreClient
 
@@ -4124,6 +4175,53 @@ def test_admin_rejects_invalid_texas_holdem_settings_before_relay(client, header
     assert core.texas_holdem_settings == original
 
 
+def test_admin_proxies_versioned_club_economy_settings(client, headers, core):
+    initial = client.get("/api/game/club/economy-settings", headers=headers)
+    assert initial.status_code == 200
+    assert len(initial.json()["items"]) == 7
+    payload = {"game": "mahjong", "coin_stakes": [10, 50, 100], "rake_percent": 15}
+
+    updated = client.patch(
+        "/api/game/club/economy-settings",
+        headers={
+            **headers,
+            "If-Match": str(initial.json()["version"]),
+            "Idempotency-Key": "club-economy-mahjong-1",
+        },
+        json=payload,
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["coin_stakes"] == [10, 50, 100]
+    assert core.club_economy_settings["items"][0] == payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"game": "unknown", "coin_stakes": [5], "rake_percent": 20},
+        {"game": "mahjong", "coin_stakes": [10, 5], "rake_percent": 20},
+        {"game": "mahjong", "coin_stakes": [5, 5], "rake_percent": 20},
+        {"game": "mahjong", "coin_stakes": [1, 2, 3, 4, 5, 6, 7], "rake_percent": 20},
+        {"game": "mahjong", "coin_stakes": [5], "rake_percent": 101},
+    ],
+)
+def test_admin_rejects_invalid_club_economy_settings(client, headers, core, payload):
+    initial = client.get("/api/game/club/economy-settings", headers=headers)
+    original = json.loads(json.dumps(core.club_economy_settings))
+    response = client.patch(
+        "/api/game/club/economy-settings",
+        headers={
+            **headers,
+            "If-Match": str(initial.json()["version"]),
+            "Idempotency-Key": f"club-economy-invalid-{payload['game']}-{payload['rake_percent']}",
+        },
+        json=payload,
+    )
+    assert response.status_code == 422
+    assert core.club_economy_settings == original
+
+
 def test_admin_proxies_dark_market_settings_history_and_force_delist(
     client, headers, core
 ):
@@ -4462,6 +4560,20 @@ def test_texas_holdem_admin_surface_has_settings_and_public_table_state():
     assert '.filter((item) => item.game_type === "texas_holdem")' in script
     assert "games.map((game) =>" in script
     assert "hole_cards" not in script
+
+
+def test_club_economy_admin_surface_has_all_game_controls():
+    root = Path(__file__).resolve().parents[2]
+    page = (root / "src/dzmm_bot/admin/templates/index.html").read_text(encoding="utf-8")
+    script = (root / "src/dzmm_bot/admin/static/admin.js").read_text(encoding="utf-8")
+
+    assert 'id="club-economy-settings-card"' in page
+    assert 'id="club-economy-settings-modal"' in page
+    assert 'id="club-economy-stakes"' in page
+    assert 'id="club-economy-rake"' in page
+    assert "/api/game/club/economy-settings" in script
+    for label in ("摸鱼麻将", "群聊象棋", "斗地主", "你画我猜", "德州扑克", "炸金花", "21 点"):
+        assert label in script
 
 
 def test_memory_guild_admin_surface_has_current_history_and_force_end_controls():

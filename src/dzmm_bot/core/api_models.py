@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Any, Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from dzmm_bot.runtime.contracts import LoginState
 from .ai_knowledge import KNOWLEDGE_TOPICS
@@ -712,6 +712,8 @@ class GameSettingsResponse(ApiModel):
     onboarding_bonus: int
     checkin_reward: int
     weekly_attendance_reward: int
+    season_title_minimum_rank_order: int
+    season_title_daily_reward: int
     company_story_novel_url: str | None
     reset_time_label: str = "北京时间 00:00"
 
@@ -721,6 +723,10 @@ class SetGameSettingsRequest(ApiModel):
     onboarding_bonus: int = Field(ge=0, le=999)
     checkin_reward: int = Field(ge=0, le=999)
     weekly_attendance_reward: int = Field(ge=0, le=999)
+    season_title_minimum_rank_order: int | None = Field(
+        default=None, ge=1, le=1000
+    )
+    season_title_daily_reward: int | None = Field(default=None, ge=0, le=999)
     company_story_novel_url: str | None = Field(default=None, max_length=4096)
 
 
@@ -1127,6 +1133,7 @@ class TexasHoldemSettingsResponse(ApiModel):
     action_timeout_seconds: int
     small_blind_percent: int
     big_blind_percent: int
+    rake_percent: int
 
 
 class SetTexasHoldemSettingsRequest(ApiModel):
@@ -1140,6 +1147,7 @@ class SetTexasHoldemSettingsRequest(ApiModel):
     action_timeout_seconds: int = Field(ge=10, le=3600)
     small_blind_percent: int = Field(ge=1, le=99)
     big_blind_percent: int = Field(ge=2, le=100)
+    rake_percent: int | None = Field(default=None, ge=0, le=100)
 
     @model_validator(mode="after")
     def validate_ranges(self):
@@ -1149,6 +1157,44 @@ class SetTexasHoldemSettingsRequest(ApiModel):
             raise ValueError("minimum_buy_in must not exceed maximum_buy_in")
         if self.small_blind_percent >= self.big_blind_percent:
             raise ValueError("small blind must be below big blind")
+        return self
+
+
+ClubEconomyGame = Literal[
+    "mahjong",
+    "chess",
+    "doudizhu",
+    "drawguess",
+    "texas",
+    "zhajinhua",
+    "blackjack",
+]
+
+
+class ClubGameEconomySettingResponse(ApiModel):
+    game: ClubEconomyGame
+    coin_stakes: list[int]
+    rake_percent: int
+
+
+class ClubGameEconomySettingsResponse(ApiModel):
+    items: list[ClubGameEconomySettingResponse]
+
+
+class SetClubGameEconomySettingRequest(ApiModel):
+    game: ClubEconomyGame
+    coin_stakes: list[StrictInt] = Field(min_length=1, max_length=6)
+    rake_percent: StrictInt = Field(ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_coin_stakes(self):
+        if (
+            any(value < 1 or value > 99999 for value in self.coin_stakes)
+            or sorted(set(self.coin_stakes)) != self.coin_stakes
+        ):
+            raise ValueError(
+                "coin_stakes must be 1 to 6 unique ascending values from 1 to 99999"
+            )
         return self
 
 

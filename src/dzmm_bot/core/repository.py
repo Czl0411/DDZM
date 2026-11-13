@@ -56,6 +56,7 @@ from .ai_knowledge import (
 from .ai_mentions import normalize_ai_mention
 from .bot_accounts import BOT_PLATFORM_IDS, is_bot_platform_id
 from .chinese_input import canonicalize_command_name
+from .club_economy import ClubEconomyMixin
 from .game_statistics import (
     other_game_users, record_game_participations, resolved_game_users, truth_trade_game_users,
 )
@@ -178,6 +179,7 @@ from .shop_effects import default_effect_config, effect_definition, effective_co
 from .shop_management import ShopManagementMixin
 from .equipment import EquipmentMixin, EQUIPMENT_COMMAND_DEFINITIONS
 from .honors import HonorsMixin
+from .season_titles import SeasonTitlesMixin
 from .red_packet import RandomSource, generate_red_packet_allocation
 from .texas_holdem import (
     BettingPlayer,
@@ -588,9 +590,12 @@ _DEFAULT_CURRENCY_NAME = "摸鱼币"
 _DEFAULT_ONBOARDING_BONUS = 0
 _DEFAULT_CHECKIN_REWARD = 5
 _DEFAULT_WEEKLY_ATTENDANCE_REWARD = 5
+_DEFAULT_SEASON_TITLE_MINIMUM_RANK_ORDER = 8
+_DEFAULT_SEASON_TITLE_DAILY_REWARD = 5
 _BALANCE_SOURCE_LABELS = {
     "onboarding": "入职奖励",
     "checkin": "每日打卡",
+    "season_title_daily": "赛季称号每日权益",
     "checkin_backfill": "每日打卡（补录）",
     "weekly_attendance": "周全勤奖励",
     "activity_reward": "活跃度奖励",
@@ -1825,6 +1830,7 @@ class TexasHoldemSettings:
     action_timeout_seconds: int
     small_blind_percent: int
     big_blind_percent: int
+    rake_percent: int
 
 
 @dataclass(frozen=True)
@@ -2721,6 +2727,7 @@ _COMMAND_DEFINITIONS = (
     ("/我的称号", "/我的称号", "查看当前可佩戴称号和历史获得次数"),
     ("/赛季称号", "/赛季称号", "查看S1赛季永久称号及一次修改资格，按结季职级判断"),
     ("/修改赛季称号", "/修改赛季称号 新称号", "S1结季职级达到后台门槛可自定义一次赛季永久称号"),
+    ("/定义赛季称号", "/定义赛季称号 称号", "达到上赛季结季职位门槛后，定义当前赛季专属称号与每日权益"),
     ("/佩戴称号", "/佩戴称号 序号", "选择佩戴称号（/装备称号、/编辑称号 等效），序号 0 取消佩戴"),
     ("/荣誉榜", "/荣誉榜", "查看当前周期的荣誉称号获得者"),
     ("/荣誉历史", "/荣誉历史", "查看个人历史荣誉记录"),
@@ -3095,7 +3102,7 @@ class CompanyLotteryOverview:
     employees: tuple[CompanyLotteryEmployeeTotal, ...]
 
 
-class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongRepositoryMixin, MistrealmRepositoryMixin, DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin, EquipmentMixin):
+class CoreRepository(ClubRepositoryMixin, ClubEconomyMixin, ClubCardRepositoryMixin, MahjongRepositoryMixin, MistrealmRepositoryMixin, DrawguessRepositoryMixin, DoudizhuRepositoryMixin, ChessRepositoryMixin, ShopManagementMixin, HonorsMixin, SeasonTitlesMixin, EquipmentMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -4474,6 +4481,10 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
                     onboarding_bonus=_DEFAULT_ONBOARDING_BONUS,
                     checkin_reward=_DEFAULT_CHECKIN_REWARD,
                     weekly_attendance_reward=_DEFAULT_WEEKLY_ATTENDANCE_REWARD,
+                    season_title_minimum_rank_order=(
+                        _DEFAULT_SEASON_TITLE_MINIMUM_RANK_ORDER
+                    ),
+                    season_title_daily_reward=_DEFAULT_SEASON_TITLE_DAILY_REWARD,
                     company_story_novel_url=None,
                 )
                 session.add(record)
@@ -11190,6 +11201,7 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
                 return DarkMarketDisclosureResult("revealed")
 
     def get_texas_holdem_settings(self) -> TexasHoldemSettings:
+        rake_percent = self.get_club_game_economy_settings("texas").rake_percent
         with self._session() as session:
             record = session.get(TexasHoldemSettingsRecord, 1)
             if record is None:
@@ -11207,6 +11219,7 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
                 action_timeout_seconds=record.action_timeout_seconds,
                 small_blind_percent=record.small_blind_percent,
                 big_blind_percent=record.big_blind_percent,
+                rake_percent=rake_percent,
             )
 
     def set_texas_holdem_settings(
@@ -11222,6 +11235,7 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
         action_timeout_seconds: int,
         small_blind_percent: int,
         big_blind_percent: int,
+        rake_percent: int,
     ) -> TexasHoldemSettings:
         if not isinstance(enabled, bool):
             raise ValueError("启用状态必须是布尔值")
@@ -11237,7 +11251,10 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
             raise ValueError("行动时限无效")
         if not 1 <= small_blind_percent < big_blind_percent <= 100:
             raise ValueError("盲注比例无效")
+        if not 0 <= rake_percent <= 100:
+            raise ValueError("德州扑克抽水比例无效")
         self.get_texas_holdem_settings()
+        texas_economy = self.get_club_game_economy_settings("texas")
         with self._session() as session:
             record = session.get(TexasHoldemSettingsRecord, 1)
             if record is None:
@@ -11253,6 +11270,11 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
             record.small_blind_percent = small_blind_percent
             record.big_blind_percent = big_blind_percent
             session.flush()
+        self.set_club_game_economy_settings(
+            "texas",
+            coin_stakes=texas_economy.coin_stakes,
+            rake_percent=rake_percent,
+        )
         return self.get_texas_holdem_settings()
 
     @staticmethod
@@ -11554,6 +11576,7 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
                 ):
                     return TexasHoldemResult("daily_limit", game.id, len(rows))
                 game.start_quota_source = "base" if use_base_quota else "bonus"
+                game.rake_percent_snapshot = self.get_texas_holdem_settings().rake_percent
 
                 deck = list(build_deck())
                 self._texas_holdem_random.shuffle(deck)
@@ -11906,11 +11929,33 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
             player.original_buy_in for player, _ in rows
         ):
             raise RuntimeError("德州扑克筹码不守恒")
+        rake_percent = int(game.rake_percent_snapshot or 0)
+        total_pot = sum(winnings.values())
+        rake_amount = min(total_pot, total_pot * rake_percent // 100)
+        rake_deductions = {
+            seat: rake_amount * amount // total_pot
+            for seat, amount in winnings.items()
+        } if total_pot else {}
+        remaining_rake = rake_amount - sum(rake_deductions.values())
+        rake_order = sorted(
+            winnings,
+            key=lambda seat: (
+                -(rake_amount * winnings[seat] % total_pot),
+                seat,
+            ),
+        ) if total_pot else []
+        for seat in rake_order[:remaining_rake]:
+            rake_deductions[seat] += 1
+        net_winnings = {
+            seat: amount - rake_deductions.get(seat, 0)
+            for seat, amount in winnings.items()
+        }
+        game.rake_amount = rake_amount
         winner_names: list[str] = []
         payouts: dict[int, int] = {}
         for player, user in rows:
             seat = player.seat_number or 0
-            payout = player.stack + winnings[seat]
+            payout = player.stack + net_winnings[seat]
             payouts[seat] = payout
             self._apply_balance_change(user, payout, "texas_holdem_settlement", now)
             if winnings[seat] > 0:
@@ -11968,12 +12013,14 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
                 f"净收益 {net_text}"
             )
         total_funds = sum(player.original_buy_in for player, _ in rows)
+        total_payouts = sum(payouts.values())
         message += (
             "\n\n【摸鱼币流水】\n"
             + "\n".join(flow_lines)
-            + "\n\n系统抽成：0"
+            + f"\n\n系统抽水：{rake_amount}（{rake_percent}%）"
             + f"\n本局资金总额：{total_funds}"
-            + "\n流水校验：收入与支出平衡"
+            + f"\n流水校验：玩家结算{total_payouts}+系统抽水{rake_amount}="
+            + f"本局资金总额{total_funds}"
         )
         return TexasHoldemResult("settled", game.id, len(rows), public_message=message)
 
@@ -31448,6 +31495,9 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
         checkin_reward: int,
         weekly_attendance_reward: int,
         company_story_novel_url: str | None | object = _UNSET,
+        *,
+        season_title_minimum_rank_order: int | None = None,
+        season_title_daily_reward: int | None = None,
     ) -> GameSettingsRecord:
         currency_name = currency_name.strip()
         if not 1 <= len(currency_name) <= 12:
@@ -31466,12 +31516,49 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
         with self._session() as session:
             record = session.get(GameSettingsRecord, 1)
             if record is None:
-                record = GameSettingsRecord(id=1)
+                record = GameSettingsRecord(
+                    id=1,
+                    currency_name=currency_name,
+                    onboarding_bonus=onboarding_bonus,
+                    checkin_reward=checkin_reward,
+                    weekly_attendance_reward=weekly_attendance_reward,
+                    season_title_minimum_rank_order=(
+                        _DEFAULT_SEASON_TITLE_MINIMUM_RANK_ORDER
+                    ),
+                    season_title_daily_reward=(
+                        _DEFAULT_SEASON_TITLE_DAILY_REWARD
+                    ),
+                    company_story_novel_url=None,
+                )
                 session.add(record)
+            minimum_rank_order = (
+                record.season_title_minimum_rank_order
+                if season_title_minimum_rank_order is None
+                else season_title_minimum_rank_order
+            )
+            daily_reward = (
+                record.season_title_daily_reward
+                if season_title_daily_reward is None
+                else season_title_daily_reward
+            )
+            if not 1 <= minimum_rank_order <= 1000:
+                raise ValueError("赛季称号最低职位等级无效")
+            if not 0 <= daily_reward <= 999:
+                raise ValueError("赛季称号每日权益需在 0 至 999 之间")
+            if session.scalar(
+                select(RankRecord.id).where(
+                    RankRecord.sort_order == minimum_rank_order
+                )
+            ) is None:
+                raise ValueError("赛季称号最低职位不存在")
             record.currency_name = currency_name
             record.onboarding_bonus = onboarding_bonus
             record.checkin_reward = checkin_reward
             record.weekly_attendance_reward = weekly_attendance_reward
+            record.season_title_minimum_rank_order = (
+                minimum_rank_order
+            )
+            record.season_title_daily_reward = daily_reward
             if normalized_novel_url is not _UNSET:
                 record.company_story_novel_url = normalized_novel_url
             session.flush()
@@ -33144,6 +33231,7 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
         reward: int,
         *,
         group_chat_id: UUID | None = None,
+        season_title_reward: int = 0,
     ) -> bool:
         if is_bot_platform_id(user.platform_id):
             return False
@@ -33176,6 +33264,13 @@ class CoreRepository(ClubRepositoryMixin, ClubCardRepositoryMixin, MahjongReposi
                 if inserted_id is None:
                     return False
                 self._apply_balance_change(employee, reward, "checkin", checked_in_at)
+                if season_title_reward > 0:
+                    self._apply_balance_change(
+                        employee,
+                        season_title_reward,
+                        "season_title_daily",
+                        checked_in_at,
+                    )
                 self._grant_department_allowance(
                     session,
                     employee,

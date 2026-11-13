@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from dzmm_bot.core.repository import CoreRepository
-from dzmm_bot.core.schema import Base, InboundRecord, OutboundRecord, PRIMARY_GROUP_CHAT_ID
+from dzmm_bot.core.schema import Base, InboundRecord, OutboundRecord, PRIMARY_GROUP_CHAT_ID, UserRecord
 
 
 NOW = datetime(2026, 10, 13, 12, tzinfo=ZoneInfo("Asia/Shanghai"))
@@ -92,3 +92,51 @@ def test_finished_game_stays_in_room_until_both_players_ready(chess_repo):
     assert game.status == "playing"
     assert game.rematch_ready == ()
     assert [message["text"] for message in repo.chess_messages(game.id)] == ["下一盘继续"]
+
+
+def test_coin_game_uses_configured_stake_and_locked_rake(chess_repo, monkeypatch):
+    repo, factory, _ = chess_repo
+    with factory.begin() as session:
+        for account in session.scalars(select(UserRecord)).all():
+            account.balance = 100
+    monkeypatch.setattr(
+        repo,
+        "get_club_game_economy_settings",
+        lambda game: type("Settings", (), {"coin_stakes": (7,), "rake_percent": 25})(),
+    )
+    with pytest.raises(ValueError, match="7"):
+        repo.create_chess_game("creator", now=NOW, room_type="coin", stake=10)
+
+    game = repo.create_chess_game("creator", now=NOW, room_type="coin", stake=7)
+    game = repo.claim_chess_seat(game.id, "alice", game.code, NOW).game
+    monkeypatch.setattr(
+        repo,
+        "get_club_game_economy_settings",
+        lambda game: type("Settings", (), {"coin_stakes": (7,), "rake_percent": 0})(),
+    )
+    game = repo.chess_action(game.id, "creator", "resign", NOW, game.version)
+
+    assert sum(game.settlement["gross_payouts"].values()) == 14
+    assert sum(game.settlement["payouts"].values()) == 11
+    assert game.settlement["rake_percent"] == 25
+    assert game.settlement["rake_amount"] == 3
+
+
+def test_coin_draw_refunds_both_players_without_rake(chess_repo, monkeypatch):
+    repo, factory, _ = chess_repo
+    with factory.begin() as session:
+        for account in session.scalars(select(UserRecord)).all():
+            account.balance = 100
+    monkeypatch.setattr(
+        repo,
+        "get_club_game_economy_settings",
+        lambda game: type("Settings", (), {"coin_stakes": (10,), "rake_percent": 20})(),
+    )
+    game = repo.create_chess_game("creator", now=NOW, room_type="coin", stake=10)
+    game = repo.claim_chess_seat(game.id, "alice", game.code, NOW).game
+    game = repo.chess_action(game.id, "creator", "offer_draw", NOW, game.version)
+    game = repo.chess_action(game.id, "alice", "accept_draw", NOW, game.version)
+
+    assert game.settlement["payouts"] == {"red": 10, "black": 10}
+    assert game.settlement["gross_payouts"] == {"red": 10, "black": 10}
+    assert game.settlement["rake_amount"] == 0

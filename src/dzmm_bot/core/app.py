@@ -109,6 +109,8 @@ from .api_models import (
     NeverHaveIEverSettingsResponse,
     KingGameSettingsResponse,
     TexasHoldemSettingsResponse,
+    ClubGameEconomySettingResponse,
+    ClubGameEconomySettingsResponse,
     DarkMarketSettingsResponse,
     DarkMarketRankLimitResponse,
     SetDarkMarketSettingsRequest,
@@ -145,6 +147,7 @@ from .api_models import (
     SetNeverHaveIEverSettingsRequest,
     SetKingGameSettingsRequest,
     SetTexasHoldemSettingsRequest,
+    SetClubGameEconomySettingRequest,
     SetRedPacketSettingsRequest,
     SetAIAssistantSettingsRequest,
     SetAIKnowledgeCardRequest,
@@ -1976,6 +1979,10 @@ def create_app(
                 request.onboarding_bonus,
                 request.checkin_reward,
                 request.weekly_attendance_reward,
+                season_title_minimum_rank_order=(
+                    request.season_title_minimum_rank_order
+                ),
+                season_title_daily_reward=request.season_title_daily_reward,
                 **(
                     {"company_story_novel_url": request.company_story_novel_url}
                     if "company_story_novel_url" in request.model_fields_set
@@ -2551,6 +2558,43 @@ def create_app(
         }
 
     @app.get(
+        "/internal/game/club/economy-settings",
+        response_model=ClubGameEconomySettingsResponse,
+    )
+    def club_game_economy_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> ClubGameEconomySettingsResponse:
+        return ClubGameEconomySettingsResponse(
+            items=[
+                ClubGameEconomySettingResponse(
+                    game=setting.game,
+                    coin_stakes=list(setting.coin_stakes),
+                    rake_percent=setting.rake_percent,
+                )
+                for setting in repository.list_club_game_economy_settings()
+            ]
+        )
+
+    @app.patch(
+        "/internal/game/club/economy-settings",
+        response_model=ClubGameEconomySettingResponse,
+    )
+    def set_club_game_economy_settings(
+        request: SetClubGameEconomySettingRequest,
+        _: Annotated[None, Depends(authorize)],
+    ) -> ClubGameEconomySettingResponse:
+        setting = repository.set_club_game_economy_settings(
+            request.game,
+            coin_stakes=request.coin_stakes,
+            rake_percent=request.rake_percent,
+        )
+        return ClubGameEconomySettingResponse(
+            game=setting.game,
+            coin_stakes=list(setting.coin_stakes),
+            rake_percent=setting.rake_percent,
+        )
+
+    @app.get(
         "/internal/game/texas-holdem/settings",
         response_model=TexasHoldemSettingsResponse,
     )
@@ -2569,9 +2613,12 @@ def create_app(
         request: SetTexasHoldemSettingsRequest,
         _: Annotated[None, Depends(authorize)],
     ) -> TexasHoldemSettingsResponse:
-        settings = repository.set_texas_holdem_settings(
-            **request.model_dump()
-        )
+        values = request.model_dump()
+        if values["rake_percent"] is None:
+            values["rake_percent"] = (
+                repository.get_texas_holdem_settings().rake_percent
+            )
+        settings = repository.set_texas_holdem_settings(**values)
         return TexasHoldemSettingsResponse(**settings.__dict__)
 
     @app.get(
@@ -4599,6 +4646,10 @@ def _game_settings_response(record) -> GameSettingsResponse:
         onboarding_bonus=record.onboarding_bonus,
         checkin_reward=record.checkin_reward,
         weekly_attendance_reward=record.weekly_attendance_reward,
+        season_title_minimum_rank_order=(
+            record.season_title_minimum_rank_order
+        ),
+        season_title_daily_reward=record.season_title_daily_reward,
         company_story_novel_url=record.company_story_novel_url,
     )
 

@@ -1,4 +1,4 @@
-import {DoudizhuClient,withTimeout} from './client.js';
+import {DoudizhuClient,loadEconomy,renderCreateStrip,withTimeout} from './client.js';
 import {cardElement,cardLabel,selectGesture,toggleSelection} from './cards.js';
 
 const $=id=>document.getElementById(id);
@@ -38,13 +38,14 @@ function render(next,error){
   if(state?.round_id!==next.round_id){selected.clear();hintIndex=0;}
   if(state&&next.round_id===state.round_id&&next.version<state.version)return;
   state=next;clockOffset=Date.parse(next.server_time)-Date.now();
+  const rakeText=state.room_type==='coin'?`抽水 ${state.settlement?.rake_percent??state.rake_percent??0}%`:'休闲局不抽水';
   selected=new Set([...selected].filter(c=>state.hand.includes(c)));
   document.body.classList.add('table-open');$('lobby').hidden=true;$('table').hidden=false;
   text('room-label',`${state.creator_name||'玩家'}的房间`);text('multiplier',`× ${state.multiplier}`);
   const self=state.seat,others=self===null?[0,1,2]:[(self+1)%3,(self+2)%3];
   $('opponents').replaceChildren(...others.map(player));$('self').replaceChildren(...(self===null?[]:[player(self)]));
   $('bottom').replaceChildren(...(state.bottom.length?state.bottom.map(id=>cardElement(id,true)):Array.from({length:3},()=>{const el=document.createElement('span');el.className='card small';el.textContent='♠';return el;})));
-  text('phase-label',phases[state.phase]);tick();
+  text('phase-label',`${phases[state.phase]}${['bidding','playing'].includes(state.phase)?` · ${rakeText}`:''}`);tick();
   $('plays').replaceChildren(...state.table.map((p,i)=>{const el=document.createElement('div');el.className='play';const name=document.createElement('small');name.textContent=state.players[i]?.name||'';el.append(name);const value=document.createElement('span');value.textContent=p?(p.kind==='pass'?'不出':`${kinds[p.kind]} ${p.cards.map(cardLabel).join(' ')}`):' ';el.append(value);return el;}));
   const key=JSON.stringify([state.phase,state.seat,state.version]);
   if(key!==controlsKey){
@@ -61,7 +62,7 @@ function render(next,error){
   $('messages').replaceChildren(...state.messages.map(m=>{const el=document.createElement('p');el.textContent=`${m.name}：${m.text}`;return el;}));
   const canChat=['waiting','bidding','playing'].includes(state.phase);$('chat-input').disabled=!canChat;$('chat-send').disabled=!canChat;
   $('result').hidden=!state.result;
-  if(state.result){const title=document.createElement('h2');title.textContent=self===null?(state.result.winner==='landlord'?'地主胜利':'农民胜利'):(state.result.winners.includes(self)?'胜利！':'本局落败');const detail=document.createElement('p');detail.textContent=state.result.winners.map(i=>state.players[i]?.name).join('、')+' 获胜'+(state.result.spring==='spring'?' · 春天':state.result.spring==='reverse_spring'?' · 反春':'');$('result').replaceChildren(title,detail);}
+  if(state.result){const title=document.createElement('h2');title.textContent=self===null?(state.result.winner==='landlord'?'地主胜利':'农民胜利'):(state.result.winners.includes(self)?'胜利！':'本局落败');const detail=document.createElement('p');detail.textContent=state.result.winners.map(i=>state.players[i]?.name).join('、')+' 获胜'+(state.result.spring==='spring'?' · 春天':state.result.spring==='reverse_spring'?' · 反春':'')+` · ${rakeText}`;$('result').replaceChildren(title,detail);}
   if(lastVersion!==null&&lastVersion!==state.version){const event=state.events.at(-1);if(event?.play)feedback(`${state.players[event.seat]?.name} · ${kinds[event.play.kind]}`,['straight','pair_straight','airplane','airplane_single','airplane_pair','bomb','rocket'].includes(event.play.kind));if(state.result?.spring)feedback(state.result.spring==='spring'?'春天！':'反春！',true);}
   lastVersion=state.version;
 }
@@ -116,7 +117,7 @@ async function lobby(restore=false){
   if(!rooms.length)text('rooms','暂无牌局，可以先开一桌');feedback('');
 }
 $('claim').onclick=()=>perform('claim');
-document.querySelectorAll('[data-create-room]').forEach(button=>button.onclick=async()=>{button.disabled=true;try{const next=await client.create(button.dataset.createRoom,Number(button.dataset.stake));await enter(next.id);}catch(error){feedback(error.message);}finally{button.disabled=false;}});
+document.querySelector('.create-strip').addEventListener('click',async event=>{const button=event.target.closest('[data-create-room]');if(!button)return;button.disabled=true;try{const latest=await loadEconomy(window.DOUDIZHU_CONFIG.apiBase);if(button.dataset.createRoom==='coin'&&!latest.coin_stakes.includes(Number(button.dataset.stake))){renderCreateStrip(document.querySelector('.create-strip'),latest);feedback('场次配置已更新，请重新选择');return;}const next=await client.create(button.dataset.createRoom,Number(button.dataset.stake));await enter(next.id);}catch(error){feedback(error.message);}finally{button.disabled=false;}});
 $('play').onclick=()=>{if(!selected.size){feedback('请先选择要出的牌');return;}perform('play',{cards:[...selected]});};
 $('pass').onclick=()=>perform('pass');
 $('hint').onclick=async()=>{try{const id=roomId,version=state.version,plays=await client.suggestions(id);if(id!==roomId||version!==state.version)return;if(!plays.length){feedback('没有能压过的牌，可以选择不出');return;}selected=new Set(plays[hintIndex++%plays.length].cards);paintHand();}catch(e){feedback(e.message);}};
@@ -139,6 +140,7 @@ async function boot(){
     if(!window.DOUDIZHU_CONFIG?.apiBase)throw new Error('游戏后端尚未配置');
     if(!window.dzmm?.user)throw new Error('请从平台游戏卡进入');
     if(!client)client=new DoudizhuClient({sdk:window.dzmm,apiBase:window.DOUDIZHU_CONFIG.apiBase});
+    renderCreateStrip(document.querySelector('.create-strip'),await loadEconomy(window.DOUDIZHU_CONFIG.apiBase));
     await lobby(true);
     window.dzmm?.log?.info?.('斗地主启动完成',{elapsedMs:Date.now()-bootStarted},'DDZ_BOOT_READY');
     window.dzmm?.loading?.ready?.();

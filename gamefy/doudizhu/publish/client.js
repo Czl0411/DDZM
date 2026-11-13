@@ -4,6 +4,22 @@ export async function withTimeout(promise,label){
   finally{clearTimeout(timer);}
 }
 
+export async function loadEconomy(apiBase){
+  try{
+    const response=await withTimeout(fetch(apiBase.replace(/\/$/,'')+'/api/club/economy-settings',{cache:'no-store'}),'读取 Club 场次设置');
+    if(!response.ok)throw new Error('无法读取 Club 场次设置');
+    const setting=(await response.json()).find(item=>item.game==='doudizhu');
+    if(!setting?.coin_stakes?.length)throw new Error('Club 场次设置不完整');
+    return setting;
+  }catch{return {game:'doudizhu',coin_stakes:[5,10,20],rake_percent:20};}
+}
+
+export function renderCreateStrip(container,setting){
+  const document=container.ownerDocument;
+  const create=(roomType,stake,label)=>{const button=document.createElement('button');button.type='button';button.dataset.createRoom=roomType;button.dataset.stake=String(stake);button.textContent=label;return button;};
+  container.replaceChildren(create('casual',0,'休闲局'),...setting.coin_stakes.map(stake=>create('coin',stake,`${stake} 币场`)));
+}
+
 export class DoudizhuClient {
   constructor({sdk,fetchImpl=fetch,apiBase}){this.sdk=sdk;this.fetchImpl=fetchImpl.bind(globalThis);this.root=apiBase.replace(/\/$/,'')+'/api/doudizhu';this.uid=null;this.pending=null;this.state=null;this.stop=null;}
   async identity(refresh=false){

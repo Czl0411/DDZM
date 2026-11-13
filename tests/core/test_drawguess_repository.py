@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from dzmm_bot.core.repository import CoreRepository
 from dzmm_bot.core.schema import (
-    Base, DrawguessRoomRecord, InboundRecord, OutboundRecord, PRIMARY_GROUP_CHAT_ID,
+    Base, DrawguessRoomRecord, InboundRecord, OutboundRecord, PRIMARY_GROUP_CHAT_ID, UserRecord,
 )
 
 
@@ -250,3 +250,56 @@ def test_stroke_order_limits_clear_and_incremental_events(game):
     incremental = repo.drawguess_events(UUID(room["room_id"]), "p1", 1, NOW)
     assert incremental["reset"] is False
     assert "snapshot" not in incremental
+
+
+def test_coin_room_uses_configured_stake_and_splits_net_pool(game, monkeypatch):
+    repo, factory, inbound = game
+    with factory.begin() as session:
+        for account in session.scalars(select(UserRecord)).all():
+            account.balance = 100
+    monkeypatch.setattr(
+        repo,
+        "get_club_game_economy_settings",
+        lambda game: type("Settings", (), {"coin_stakes": (7,), "rake_percent": 20})(),
+    )
+    with pytest.raises(ValueError, match="7"):
+        repo.create_drawguess_room("host", now=NOW, room_type="coin", stake=10)
+
+    room = repo.create_drawguess_room(
+        "host", PRIMARY_GROUP_CHAT_ID, inbound, NOW, room_type="coin", stake=7,
+    )
+    with factory.begin() as session:
+        session.add(OutboundRecord(
+            inbound_message_id=inbound, group_chat_id=PRIMARY_GROUP_CHAT_ID,
+            text="入座码", status="sent", content_type="text",
+        ))
+    for uid in ("p1", "p2"):
+        room = action(repo, room, uid, "claim", {"code": room["code"]})
+    for uid in ("host", "p1", "p2"):
+        room = action(repo, room, uid, "ready")
+    room = action(repo, room, "host", "start")
+    monkeypatch.setattr(
+        repo,
+        "get_club_game_economy_settings",
+        lambda game: type("Settings", (), {"coin_stakes": (7,), "rake_percent": 0})(),
+    )
+    winners = [
+        item["id"] for item in room["state"]["players"] if item["name"] in {"p1", "p2"}
+    ]
+    with factory.begin() as session:
+        row = session.get(DrawguessRoomRecord, UUID(room["room_id"]))
+        row.state = {
+            **row.state,
+            "phase": "finished",
+            "ranking": [
+                {"player": winner, "score": 100, "rank": 1} for winner in winners
+            ],
+        }
+        row.phase = "finished"
+        row.deadline = None
+    room = repo.drawguess_view(UUID(room["room_id"]), "host", NOW)
+
+    assert room["settlement"]["gross_payouts"] == [0, 11, 10]
+    assert room["settlement"]["payouts"] == [0, 9, 8]
+    assert room["settlement"]["rake_percent"] == 20
+    assert room["settlement"]["rake_amount"] == 4

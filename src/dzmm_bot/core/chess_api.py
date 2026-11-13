@@ -13,7 +13,7 @@ import jwt
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 from .chess_auth import verify_gamefy_token
 from .chess_repository import ChessRateLimitError
@@ -27,7 +27,7 @@ class ClaimPayload(BaseModel):
 
 class CreateRoomPayload(BaseModel):
     room_type: Literal["casual", "coin"] = "casual"
-    stake: Literal[0, 5, 10, 20] = 0
+    stake: StrictInt = Field(default=0, ge=0, le=99999)
 
 
 class MovePayload(BaseModel):

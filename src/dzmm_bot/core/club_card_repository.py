@@ -21,7 +21,6 @@ from .schema import (
 )
 
 
-STAKES = {5, 10, 20}
 TURN_TIMEOUT_SECONDS = 30
 
 
@@ -120,8 +119,11 @@ class ClubCardRepositoryMixin:
             raise ValueError("房间类型无效")
         if room_type == "casual":
             stake = 0
-        elif stake not in STAKES:
-            raise ValueError("摸鱼币场仅支持 5、10、20 币")
+        else:
+            coin_stakes = self.get_club_game_economy_settings(game).coin_stakes
+            if stake not in coin_stakes:
+                choices = "、".join(str(item) for item in coin_stakes)
+                raise ValueError(f"摸鱼币场仅支持 {choices} 币")
         with self.transaction():
             with self._session() as session:
                 player = self._club_player(session, platform_id, now, lock=True)
@@ -269,10 +271,13 @@ class ClubCardRepositoryMixin:
                     account = self._club_card_account(session, seated, lock=True)
                     self._apply_balance_change(account, -room.stake, f"{room.game}_buy_in", now,
                                                memo=f"{room.game} 第 {room.hand_number + 1} 手入场")
-            room.state = self._set_club_card_turn_deadline(
-                new_hand(room.game, list(room.seats), room.stake, self._club_card_random),
-                now,
+            state = new_hand(room.game, list(room.seats), room.stake, self._club_card_random)
+            state["rake_percent"] = (
+                self.get_club_game_economy_settings(room.game).rake_percent
+                if room.room_type == "coin"
+                else 0
             )
+            room.state = self._set_club_card_turn_deadline(state, now)
             room.ready = []; room.escrowed = list(room.seats); room.hand_settled = False
             room.phase = "playing"; room.hand_number += 1
             return
@@ -289,8 +294,60 @@ class ClubCardRepositoryMixin:
 
     def _settle_club_card_hand(self, session, room, now):
         if room.hand_settled: return
+        gross_payouts = {
+            raw: int(amount) for raw, amount in room.state.get("payouts", {}).items()
+        }
+        rake_percent = (
+            int(room.state.get("rake_percent", 0))
+            if room.room_type == "coin"
+            else 0
+        )
+        rake_amount = 0
+        payouts = gross_payouts
+        has_winner_and_loser = (
+            any(amount > room.stake for amount in gross_payouts.values())
+            and any(amount < room.stake for amount in gross_payouts.values())
+        )
+        rakeable_result = room.game in {"texas", "zhajinhua"} or has_winner_and_loser
+        if rake_percent > 0 and rakeable_result:
+            chips = room.state.get("chips", {}) if room.game != "blackjack" else {}
+            gross_winnings = {
+                raw: max(0, amount - int(chips.get(raw, 0)))
+                for raw, amount in gross_payouts.items()
+            }
+            total_winnings = sum(gross_winnings.values())
+            requested_rake = min(
+                int(room.state.get("pot", 0)),
+                int(room.state.get("pot", 0)) * rake_percent // 100,
+            )
+            rake_amount = min(requested_rake, total_winnings)
+            deductions = {
+                raw: rake_amount * winnings // total_winnings
+                for raw, winnings in gross_winnings.items()
+            } if total_winnings else {}
+            remaining = rake_amount - sum(deductions.values())
+            order = sorted(
+                gross_winnings,
+                key=lambda raw: (
+                    -(rake_amount * gross_winnings[raw] % total_winnings),
+                    raw,
+                ),
+            ) if total_winnings else []
+            for raw in order[:remaining]:
+                deductions[raw] += 1
+            payouts = {
+                raw: amount - deductions.get(raw, 0)
+                for raw, amount in gross_payouts.items()
+            }
+        room.state = {
+            **room.state,
+            "gross_payouts": gross_payouts,
+            "rake_percent": rake_percent,
+            "rake_amount": rake_amount,
+            "payouts": payouts,
+        }
         if room.room_type == "coin":
-            for raw, amount in room.state.get("payouts", {}).items():
+            for raw, amount in payouts.items():
                 if amount <= 0: continue
                 player = session.get(ClubPlayerRecord, UUID(raw))
                 account = self._club_card_account(session, player, lock=True)
@@ -307,7 +364,7 @@ class ClubCardRepositoryMixin:
         session.add(Hand(
             room_id=room.id, game=room.game, hand_number=room.hand_number,
             players=list(room.seats), outcomes=outcomes,
-            payouts={raw: int(amount) for raw, amount in room.state.get("payouts", {}).items()},
+            payouts=payouts, rake_percent=rake_percent, rake_amount=rake_amount,
             created_at=now,
         ))
         room.hand_settled = True

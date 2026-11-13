@@ -4,6 +4,22 @@ export async function withTimeout(promise,label,timeoutMs=8000){
   finally{clearTimeout(timer);}
 }
 
+export async function loadEconomy(apiBase){
+  try{
+    const response=await withTimeout(fetch(apiBase.replace(/\/$/,'')+'/api/club/economy-settings',{cache:'no-store'}),'读取 Club 场次设置');
+    if(!response.ok)throw new Error('无法读取 Club 场次设置');
+    const setting=(await response.json()).find(item=>item.game==='drawguess');
+    if(!setting?.coin_stakes?.length)throw new Error('Club 场次设置不完整');
+    return setting;
+  }catch{return {game:'drawguess',coin_stakes:[5,10,20],rake_percent:20};}
+}
+
+export function renderCreateStrip(container,setting){
+  const document=container.ownerDocument;
+  const create=(roomType,stake,label)=>{const button=document.createElement('button');button.type='button';button.dataset.createRoom=roomType;button.dataset.stake=String(stake);button.textContent=label;return button;};
+  container.replaceChildren(create('casual',0,'休闲局'),...setting.coin_stakes.map(stake=>create('coin',stake,`${stake} 币场`)));
+}
+
 function requestId(){
   if(globalThis.crypto?.randomUUID)return globalThis.crypto.randomUUID();
   const bytes=new Uint8Array(16);globalThis.crypto?.getRandomValues?.(bytes);

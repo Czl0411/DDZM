@@ -1263,6 +1263,15 @@ def create_app(
         if not all(key in request for key in required):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings")
         settings = {key: request[key] for key in required}
+        current = core.get_game_settings()
+        settings["season_title_minimum_rank_order"] = request.get(
+            "season_title_minimum_rank_order",
+            current.get("season_title_minimum_rank_order", 8),
+        )
+        settings["season_title_daily_reward"] = request.get(
+            "season_title_daily_reward",
+            current.get("season_title_daily_reward", 5),
+        )
         if "company_story_novel_url" in request:
             settings["company_story_novel_url"] = request["company_story_novel_url"]
         return versioned_configuration_response(
@@ -1587,11 +1596,19 @@ def create_app(
             "action_timeout_seconds",
             "small_blind_percent",
             "big_blind_percent",
+            "rake_percent",
         }
-        if set(request) != required:
+        legacy_required = required - {"rake_percent"}
+        if not legacy_required <= set(request) or not set(request) <= required:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings"
             )
+        if "rake_percent" not in request:
+            current = _relay_core(core.get_texas_holdem_settings)
+            request = {
+                **request,
+                "rake_percent": current.get("rake_percent", 20),
+            }
         integer_fields = required - {"enabled"}
         if not isinstance(request["enabled"], bool) or any(
             not isinstance(request[key], int) or isinstance(request[key], bool)
@@ -1613,6 +1630,7 @@ def create_app(
             <= request["small_blind_percent"]
             < request["big_blind_percent"]
             <= 100
+            and 0 <= request["rake_percent"] <= 100
         ):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings"
@@ -1627,6 +1645,62 @@ def create_app(
                 )
             ),
             scope="texas-holdem-settings",
+        )
+
+    @app.get("/api/game/club/economy-settings")
+    def club_economy_settings(
+        _: Annotated[None, Depends(authorize)],
+    ) -> dict:
+        return {
+            **_relay_core(core.get_club_economy_settings),
+            "version": repository.config_version(),
+        }
+
+    @app.patch("/api/game/club/economy-settings")
+    def set_club_economy_settings(
+        request: dict,
+        identity: Annotated[AdminIdentity, Depends(authorize)],
+        idempotency_key: Annotated[
+            str | None, Header(alias="Idempotency-Key")
+        ] = None,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> JSONResponse:
+        games = {
+            "mahjong", "chess", "doudizhu", "drawguess",
+            "texas", "zhajinhua", "blackjack",
+        }
+        if set(request) != {"game", "coin_stakes", "rake_percent"}:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings"
+            )
+        stakes = request["coin_stakes"]
+        rake = request["rake_percent"]
+        if (
+            request["game"] not in games
+            or not isinstance(stakes, list)
+            or not 1 <= len(stakes) <= 6
+            or any(
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or not 1 <= value <= 99999
+                for value in stakes
+            )
+            or sorted(set(stakes)) != stakes
+            or not isinstance(rake, int)
+            or isinstance(rake, bool)
+            or not 0 <= rake <= 100
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid settings"
+            )
+        return versioned_configuration_response(
+            identity,
+            idempotency_key,
+            if_match,
+            lambda: _relay_core(
+                lambda: core.set_club_economy_settings(request)
+            ),
+            scope=f"club-economy-settings:{request['game']}",
         )
 
     @app.get("/api/game/dark-market/settings")

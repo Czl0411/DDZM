@@ -136,9 +136,14 @@ def test_reaction_action_is_accepted_by_repository(mahjong, monkeypatch):
     assert room["phase"] == "playing"
 
 
-def test_match_settlement_pays_winner_the_zero_sum_pot_once(mahjong):
+def test_match_settlement_locks_rake_and_pays_net_pot_once(mahjong, monkeypatch):
     repo, factory = mahjong
     room = seated(mahjong)
+    monkeypatch.setattr(
+        repo,
+        "get_club_game_economy_settings",
+        lambda game: type("Settings", (), {"coin_stakes": (10,), "rake_percent": 0})(),
+    )
     from dzmm_bot.core.schema import MahjongRoomRecord
     with factory.begin() as session:
         row = session.get(MahjongRoomRecord, UUID(room["id"]))
@@ -157,11 +162,14 @@ def test_match_settlement_pays_winner_the_zero_sum_pot_once(mahjong):
         row.deadline = NOW - timedelta(seconds=1)
     settled = repo.mahjong_view(UUID(room["id"]), "host", NOW)
     assert settled["phase"] == "match_finished"
-    assert settled["settlement"]["payouts"] == [40, 0, 0, 0]
+    assert settled["settlement"]["gross_payouts"] == [40, 0, 0, 0]
+    assert settled["settlement"]["payouts"] == [32, 0, 0, 0]
+    assert settled["settlement"]["rake_percent"] == 20
+    assert settled["settlement"]["rake_amount"] == 8
     assert settled["settlement"]["outcomes"] == ["win", "loss", "loss", "loss"]
-    assert [balance(factory, uid) for uid in ("host", "alice", "bob", "carol")] == [1030, 990, 990, 990]
+    assert [balance(factory, uid) for uid in ("host", "alice", "bob", "carol")] == [1022, 990, 990, 990]
     repo.mahjong_view(UUID(room["id"]), "host", NOW + timedelta(minutes=1))
-    assert [balance(factory, uid) for uid in ("host", "alice", "bob", "carol")] == [1030, 990, 990, 990]
+    assert [balance(factory, uid) for uid in ("host", "alice", "bob", "carol")] == [1022, 990, 990, 990]
 
     for uid in ("host", "alice", "bob", "carol"):
         settled = act(repo, settled, uid, "ready")
@@ -174,3 +182,20 @@ def test_casual_room_never_moves_balance(mahjong):
     room = seated(mahjong, "casual")
     assert room["buy_in"] == 0
     assert [balance(mahjong[1], uid) for uid in ("host", "alice", "bob", "carol")] == [1000] * 4
+
+
+def test_coin_room_uses_configured_stakes(mahjong, monkeypatch):
+    repo, _ = mahjong
+    monkeypatch.setattr(
+        repo,
+        "get_club_game_economy_settings",
+        lambda game: type("Settings", (), {"coin_stakes": (7, 21), "rake_percent": 20})(),
+    )
+
+    with pytest.raises(ValueError, match="7、21"):
+        create(repo)
+    room = repo.create_mahjong_room(
+        "host", NOW, room_type="coin", stake=7, match_mode="east", request_id=uuid4(),
+    )
+
+    assert room["buy_in"] == 7

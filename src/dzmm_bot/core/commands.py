@@ -63,7 +63,7 @@ from .service import CommandReply
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _COMMANDS = {
     "/事件投票", "/事件投票情况",
-    "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史", "/赛季称号", "/修改赛季称号",
+    "/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史", "/赛季称号", "/修改赛季称号", "/定义赛季称号",
     "/入职", "/我的物品", "/购买", "/使用", "/邀请参与", "/取消使用", "/同意使用", "/拒绝使用", "/打卡", "/余额", "/修改名称", "/编辑档案", "/编辑档案形象", "/我的档案", "/公司的故事集", "/发奖金", "/发红包", "/抢红包", "/打赏", "/我", "/商店", "/帮助", "/当前游戏", "/加入", "/退出", "/开始", "/摸鱼躲猫猫", "/记忆考核", "/答案", "/继续", "/收手", "/投降", "/队伍1", "/队伍2", "/队伍1人员", "/队伍2人员", "/公会赛场次", "/开始对战", "/上场", "/部门", "/部门人数", "/我的部门人数", "/加入部门", "/切换部门", "/部门申请列表", "/同意部门", "/全部同意部门", "/拒绝部门", "/全部拒绝部门", "/职位", "/晋升", "/晋升申请列表", "/同意", "/全部同意", "/拒绝", "/全部拒绝", "/谁是卧底", "/开始投票", "/投票", "/退出谁是卧底", "/结束游戏", "/甩锅游戏", "/甩锅", "/退出甩锅", "/我有你没有", "/发言", "/扣", "/不扣", "/国王游戏", "/国王游戏数据", "/蹦蹦数字炸弹", "/报数", "/跳过", "/德州扑克", "/看牌", "/过牌", "/跟注", "/加注", "/全下", "/弃牌", "/上架暗网", "/取消上架", "/确认", "/报价", "/公开", "/不公开", "/查看暗网", "/确认收货", "/投诉", "/预约公演", "/我的公演预约", "/取消公演预约", "/公演日程", "/延期", "/end", "/购买彩票", "/彩票", "/我的彩票", "/确认彩票", "/取消彩票", "/彩票验证",
     "/设置生日", "/我的生日", "/本月生日",
     "/随礼",
@@ -377,7 +377,7 @@ class GroupCommandHandler:
                 lines.append("发送 /下一页 查看更多。")
             lines.append("发送 /删除黑历史 编号 删除。")
             return "\n".join(lines)
-        if command in {"/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史", "/赛季称号", "/修改赛季称号"}:
+        if command in {"/我的称号", "/佩戴称号", "/荣誉榜", "/荣誉历史", "/赛季称号", "/修改赛季称号", "/定义赛季称号"}:
             return self._honors(message, command, content, received_at)
         if command in _LOTTERY_COMMANDS:
             return self._company_lottery(
@@ -2647,8 +2647,15 @@ class GroupCommandHandler:
         birthday = self._repository.birthday_settings_for(employee.id, received_at)
         if birthday is not None and birthday.checkin_multiplier > 1:
             reward = reward * birthday.checkin_multiplier
+        season_title_reward = self._repository.season_title_daily_reward(
+            platform_id, received_at
+        )
         if not self._repository.check_in(
-            employee, received_at, reward, group_chat_id=group_chat_id
+            employee,
+            received_at,
+            reward,
+            group_chat_id=group_chat_id,
+            season_title_reward=season_title_reward,
         ):
             return self._reply(
                 "/打卡", "already_checked_in", received_at, {"{昵称}": employee.display_name}
@@ -2666,9 +2673,11 @@ class GroupCommandHandler:
             {
                 "{昵称}": employee.display_name,
                 "{余额}": current_employee.balance,
-                "{打卡奖励}": reward,
+                "{打卡奖励}": reward + season_title_reward,
             },
         )
+        if season_title_reward:
+            reply += f"\n赛季称号权益：+{season_title_reward} 摸鱼币。"
         if weekly_reward is not None:
             reply += (
                 f"\n已连续打卡 7 天，获得本周全勤奖，职位是{profile.rank.name}，"
@@ -2786,6 +2795,14 @@ class GroupCommandHandler:
                 f"今日收益：{self._repository.today_income(employee.id, received_at)} {currency}。",
             ]
         )
+        season_title = self._repository.current_season_title(
+            platform_id, received_at
+        )
+        if season_title is not None:
+            lines.insert(
+                6,
+                f"赛季称号（{season_title['season_code']}）：{season_title['title_name']}",
+            )
         allowance = self._repository.department_allowance_summary(
             platform_id, received_at
         )
@@ -2799,6 +2816,27 @@ class GroupCommandHandler:
 
     def _honors(self, message, command, content, now):
         platform_id = message.sender_platform_id
+        if command == "/定义赛季称号":
+            name = content[len(command):].strip()
+            if not name:
+                return "用法：/定义赛季称号 称号"
+            try:
+                state = self._repository.define_season_title(
+                    platform_id, name, now
+                )
+            except ValueError as error:
+                return str(error)
+            if state["status"] == "not_joined":
+                return "请先用 /入职 名字 加入摸鱼公司。"
+            if state["status"] == "no_season":
+                return "当前公司赛季尚未开启。"
+            if state["status"] == "not_qualified":
+                return "上个赛季你的职位等级不允许你有赛季称号，这个赛季努努力吧"
+            return (
+                f"{state['season_code']} 赛季称号已定义为：{state['title_name']}。\n"
+                f"本赛季每日首次成功打卡时额外获得 {state['daily_reward']} 摸鱼币，"
+                "可在 /我 中查看。"
+            )
         if command in {"/赛季称号", "/修改赛季称号"}:
             if command == "/赛季称号" and len(content.split()) != 1:
                 return "用法：/赛季称号"
@@ -5508,6 +5546,7 @@ class GroupCommandHandler:
                     ("/我的称号", "/我的称号：查看可佩戴称号、永久赛季称号、有效期与累计获得次数"),
                     ("/赛季称号", "/赛季称号：查看S1赛季永久称号；资格按结季职级判断"),
                     ("/修改赛季称号", "/修改赛季称号 新称号：S1结季职级达到后台门槛可自定义一次"),
+                    ("/定义赛季称号", "/定义赛季称号 称号：达到上赛季结季职位门槛后，定义本赛季专属称号与每日权益"),
                     ("/佩戴称号", "/佩戴称号 序号：佩戴一个称号；/装备称号、/编辑称号 等效，序号 0 取消佩戴"),
                     ("/荣誉榜", "/荣誉榜：查看本周荣誉称号获得者"),
                     ("/荣誉历史", "/荣誉历史：查看自己的历史获奖记录"),
@@ -5660,7 +5699,7 @@ class GroupCommandHandler:
                 "【摸鱼 Club】",
                 (
                     ("/club", "/club：打开统一游戏大厅，可选择已接入的 H5 游戏"),
-                    ("/麻将", "/麻将：分享摸鱼 Club；在大厅选择休闲场或 5/10/20 摸鱼币场"),
+                    ("/麻将", "/麻将：分享摸鱼 Club；在大厅选择休闲场或后台当前开放的摸鱼币场"),
                 ),
             ),
             "大话骰子": (

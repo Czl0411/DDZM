@@ -25,7 +25,6 @@ from .schema import (
 )
 
 
-COIN_STAKES = {5, 10, 20}
 ACTIVE_PHASES = ("waiting", "selecting", "drawing", "revealing")
 
 
@@ -103,8 +102,11 @@ class DrawguessRepositoryMixin:
             raise ValueError("房间类型无效")
         if room_type == "casual":
             stake = 0
-        elif stake not in COIN_STAKES:
-            raise ValueError("摸鱼币场仅支持 5、10、20 币")
+        else:
+            coin_stakes = tuple(self.get_club_game_economy_settings("drawguess").coin_stakes)
+            if stake not in coin_stakes:
+                choices = "、".join(str(value) for value in coin_stakes)
+                raise ValueError(f"摸鱼币场仅支持 {choices} 币")
         with self.transaction():
           with self._session() as session:
             user = self._club_player(session, platform_id, now, lock=True)
@@ -189,16 +191,27 @@ class DrawguessRepositoryMixin:
             if item["rank"] == 1
         ]
         payouts = [0] * len(state["seats"])
+        gross_payouts = [0] * len(state["seats"])
+        rake_percent = 0
+        rake_amount = 0
         if room.room_type == "coin":
             if len(room.escrowed) != len(state["seats"]) or not all(room.escrowed):
                 raise RuntimeError("你画我猜奖池托管不完整")
             pot = room.stake * len(state["seats"])
+            rake_percent = int(state.get("rake_percent", 0))
+            rake_amount = pot * rake_percent // 100
+            net_pot = pot - rake_amount
             for winner_index, seat in enumerate(winners):
                 player = session.get(ClubPlayerRecord, UUID(state["seats"][seat]))
                 account = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
                 if account is None:
                     raise RuntimeError("你画我猜结算玩家不存在")
-                payout = pot // len(winners) + (1 if winner_index < pot % len(winners) else 0)
+                gross_payouts[seat] = pot // len(winners) + (
+                    1 if winner_index < pot % len(winners) else 0
+                )
+                payout = net_pot // len(winners) + (
+                    1 if winner_index < net_pot % len(winners) else 0
+                )
                 payouts[seat] = payout
                 self._apply_balance_change(
                     account, payout, "drawguess_settlement", now,
@@ -211,6 +224,9 @@ class DrawguessRepositoryMixin:
         room.settlement = {
             "winner_seats": winners,
             "payouts": payouts,
+            "gross_payouts": gross_payouts,
+            "rake_percent": rake_percent,
+            "rake_amount": rake_amount,
             "outcomes": ["win" if seat in winners else "loss" for seat in range(len(state["seats"]))],
         }
 
@@ -250,6 +266,7 @@ class DrawguessRepositoryMixin:
         public = {
             "phase": state["phase"], "version": state["version"],
             "match_id": state["match_id"], "turn_id": state["turn_id"],
+            "rake_percent": int(state.get("rake_percent", 0)),
             "turn_index": state["turn_index"], "deadline_ms": state.get("deadline_ms"),
             "players": players, "host_name": people[state["host"]].display_name if state["host"] in people else "已离职玩家",
             "drawer_seat": state["turn_index"] % len(seat_ids) if seat_ids and state["phase"] not in {"waiting", "finished", "closed"} else None,
@@ -380,6 +397,10 @@ class DrawguessRepositoryMixin:
                     fresh = apply_action(
                         fresh, user_id, "start", {}, self._dg_ms(now), self._dg_candidates(fresh),
                     )
+                    fresh["rake_percent"] = (
+                        self.get_club_game_economy_settings("drawguess").rake_percent
+                        if room.room_type == "coin" else 0
+                    )
                     session.execute(delete(Event).where(Event.room_id == room.id))
                     session.execute(delete(Receipt).where(Receipt.room_id == room.id))
                     room.active_code = ""
@@ -409,6 +430,11 @@ class DrawguessRepositoryMixin:
                         raise ValueError("游戏进行中，仅可观战")
                     candidates = self._dg_candidates(state) if action == "start" else list(state.get("candidates", []))
                     changed = apply_action(state, user_id, action, payload, self._dg_ms(now), candidates)
+                    if state["phase"] == "waiting" and action == "start":
+                        changed["rake_percent"] = (
+                            self.get_club_game_economy_settings("drawguess").rake_percent
+                            if room.room_type == "coin" else 0
+                        )
                     if state["phase"] == "waiting" and action == "leave" and user_id in state["seats"]:
                         seat = state["seats"].index(user_id)
                         if room.room_type == "coin" and room.escrowed[seat]:

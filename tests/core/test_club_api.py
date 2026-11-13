@@ -22,6 +22,23 @@ def headers(uid):
     return {"Authorization": f"ClubUid {uid}"}
 
 
+def test_public_club_economy_settings(mahjong):
+    repo, _ = mahjong
+    repo.set_club_game_economy_settings(
+        "mahjong", coin_stakes=[10, 50], rake_percent=15
+    )
+    client = TestClient(create_app(repo, "internal", clock=lambda: NOW, club_game_id="club"))
+
+    response = client.get("/api/club/economy-settings")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert len(response.json()) == 7
+    assert response.json()[0] == {
+        "game": "mahjong", "coin_stakes": [10, 50], "rake_percent": 15,
+    }
+
+
 def test_create_list_claim_and_payload_validation(mahjong):
     repo, _ = mahjong
     client = TestClient(create_app(repo, "internal", clock=lambda: NOW, club_game_id="club"))

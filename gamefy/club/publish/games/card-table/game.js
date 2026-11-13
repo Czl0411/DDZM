@@ -1,10 +1,12 @@
 import {moduleEnvironment} from "../module-document.js";
+import {loadEconomy, renderStakeChoices} from "../economy.js";
 
 const environment = moduleEnvironment();
 const document = environment.document;
 const location = environment.location;
 const moduleContext = environment.context;
-const API_BASE = "https://49.234.20.159/api/club/cards";
+const CLUB_API_BASE = "https://49.234.20.159";
+const API_BASE = `${CLUB_API_BASE}/api/club/cards`;
 const params = new URLSearchParams(location.search);
 const game = params.get("game");
 const sdk = window.MoyuClubRuntime?.sdk || window.dzmm;
@@ -17,6 +19,13 @@ const GAMES = {
 };
 const META = GAMES[game] || null;
 let uid = null, identity = null, rooms = [], room = null, followController = null, countdown = null, busy = false, layoutObserver = null;
+let economy = {coin_stakes: [5, 10, 20], rake_percent: 20};
+
+async function refreshEconomy() {
+  economy = await loadEconomy(CLUB_API_BASE, game);
+  renderStakeChoices(document.querySelector("#stake-field .stakes"), economy.coin_stakes, document);
+  document.querySelector(".economy-note").textContent = `摸鱼币场每手按奖池 ${economy.rake_percent}% 向下取整抽水；休闲场不结算摸鱼币。`;
+}
 
 function syncLayout() {
   const bounds = document.body.getBoundingClientRect();
@@ -223,7 +232,7 @@ function renderMessages() {
   const list = $("#messages"); list.replaceChildren(); (room.messages || []).forEach(item => { const row = document.createElement("article"); row.className = "message"; const avatar = avatarButton(item.player, "chat-player"); const copy = document.createElement("div"); const name = document.createElement("b"); name.textContent = item.player.name; name.role = "button"; name.tabIndex = 0; name.addEventListener("click", () => runtime?.openProfile?.(item.player)); const text = document.createElement("p"); text.textContent = item.text; copy.append(name, text); row.append(avatar, copy); list.append(row); }); list.scrollTop = list.scrollHeight;
 }
 function renderRoom() {
-  $("#room-title").textContent = `${room.players.find(player => player.id === room.creator_id)?.name || "玩家"}的牌桌`; $("#hand-label").textContent = `第 ${Math.max(1, room.hand_number)} 手 · ${{waiting: "候场", playing: "进行中", hand_finished: "已结算"}[room.phase]}`;
+  $("#room-title").textContent = `${room.players.find(player => player.id === room.creator_id)?.name || "玩家"}的牌桌`; const rakeCopy = room.room_type === "coin" && room.state?.rake_percent !== undefined ? ` · 抽水 ${room.state.rake_percent}%` : ""; $("#hand-label").textContent = `第 ${Math.max(1, room.hand_number)} 手 · ${{waiting: "候场", playing: "进行中", hand_finished: "已结算"}[room.phase]}${rakeCopy}`;
   runtime?.setRoomContext?.({game, roomId: room.id, host: room.players.find(player => player.id === room.creator_id)?.name || "玩家"});
   if (room.phase === "waiting") renderWaiting(); else renderBoard(); renderMessages();
 }
@@ -235,7 +244,10 @@ async function sendChat() { const input = $("#chat-input"); const text = input.v
 async function boot() {
   if (!META) { feedback("无法识别游戏类型，请返回 Club 重新进入", "error"); sdk?.loading?.error?.("CARD_TABLE_GAME_MISSING", "无法识别游戏类型"); return; }
   document.documentElement.style.setProperty("--table-art", `url("${META.art}")`); $("#game-title").textContent = META.name; $("#game-mark").textContent = META.mark; $("#game-subtitle").textContent = META.subtitle; $("#game-description").textContent = META.description; $("#create-title").textContent = `新建${META.name}房`;
-  try { await identify(); const roomId = params.get("room"); if (roomId) await enterRoom(roomId); else await restoreRoomOrLobby(); sdk?.loading?.ready?.(); } catch (error) { feedback(error.message, "error"); sdk?.loading?.error?.("CARD_TABLE_BOOT_FAILED", error.message); }
+  try {
+    await refreshEconomy();
+    await identify(); const roomId = params.get("room"); if (roomId) await enterRoom(roomId); else await restoreRoomOrLobby(); sdk?.loading?.ready?.();
+  } catch (error) { feedback(error.message, "error"); sdk?.loading?.error?.("CARD_TABLE_BOOT_FAILED", error.message); }
 }
 
 $("#back").addEventListener("click", () => {
@@ -251,7 +263,7 @@ $("#back").addEventListener("click", () => {
   else parent.postMessage({type: "moyu-club-close"}, "*");
 });
 $("#refresh").addEventListener("click", () => room ? enterRoom(room.id) : openLobby()); $("#public-channel").addEventListener("click", () => runtime?.openChannel?.());
-$("#create").addEventListener("click", () => $("#create-dialog").showModal()); $("#cancel-create").addEventListener("click", () => $("#create-dialog").close());
+$("#create").addEventListener("click", async () => { await refreshEconomy(); $("#create-dialog").showModal(); }); $("#cancel-create").addEventListener("click", () => $("#create-dialog").close());
 $("#confirm-create").addEventListener("click", async () => { const roomType = document.querySelector('[name="room-type"]:checked').value; const stake = roomType === "coin" ? Number(document.querySelector('[name="stake"]:checked').value) : 0; try { const created = await api.create(roomType, stake); $("#create-dialog").close(); await enterRoom(created.id, created); } catch (error) { feedback(error.message, "error"); } });
 document.querySelectorAll('[name="room-type"]').forEach(input => input.addEventListener("change", () => $("#stake-field").hidden = input.checked && input.value === "casual"));
 $("#share").addEventListener("click", async () => { if (!room) return; try { await runtime?.shareRoom?.({game, roomId: room.id, host: room.players.find(player => player.id === room.creator_id)?.name || "玩家"}); } catch (error) { feedback(error.message || "分享失败", "error"); } });

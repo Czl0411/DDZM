@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from dzmm_bot.core.repository import CoreRepository
-from dzmm_bot.core.schema import Base, InboundRecord, OutboundRecord, PRIMARY_GROUP_CHAT_ID
+from dzmm_bot.core.schema import Base, InboundRecord, OutboundRecord, PRIMARY_GROUP_CHAT_ID, UserRecord
 
 NOW = datetime(2026, 10, 13, tzinfo=timezone.utc)
 
@@ -157,3 +157,49 @@ def test_rematch_cannot_bypass_settlement_readiness(ddz):
         row.state = {**row.state, 'phase': 'finished', 'result': {'winner': 'farmers', 'winners': [1, 2], 'spring': None}}
     with pytest.raises(ValueError, match='所有玩家准备'):
         act(repo, room, 'host', 'rematch')
+
+
+def test_coin_room_uses_configured_stake_and_locked_rake(ddz, monkeypatch):
+    from dzmm_bot.core.schema import DoudizhuRoundRecord
+
+    repo, factory, inbound = ddz
+    with factory.begin() as session:
+        for account in session.scalars(select(UserRecord)).all():
+            account.balance = 100
+    monkeypatch.setattr(
+        repo,
+        'get_club_game_economy_settings',
+        lambda game: type('Settings', (), {'coin_stakes': (7,), 'rake_percent': 20})(),
+    )
+    with pytest.raises(ValueError, match='7'):
+        repo.create_doudizhu_room('host', now=NOW, room_type='coin', stake=10)
+
+    room = repo.create_doudizhu_room('host', PRIMARY_GROUP_CHAT_ID, inbound, NOW, room_type='coin', stake=7)
+    with factory.begin() as session:
+        session.add(OutboundRecord(
+            inbound_message_id=inbound, group_chat_id=PRIMARY_GROUP_CHAT_ID,
+            text='邀请码', status='sent', content_type='text',
+        ))
+    code = room['code']
+    for uid in ('alice', 'bob'):
+        room = act(repo, room, uid, 'claim', {'code': code})
+    for uid in ('host', 'alice', 'bob'):
+        room = act(repo, room, uid, 'ready')
+    monkeypatch.setattr(
+        repo,
+        'get_club_game_economy_settings',
+        lambda game: type('Settings', (), {'coin_stakes': (7,), 'rake_percent': 0})(),
+    )
+    with factory.begin() as session:
+        row = session.get(DoudizhuRoundRecord, UUID(room['round_id']))
+        row.state = {
+            **row.state,
+            'phase': 'finished',
+            'result': {'winner': 'farmers', 'winners': [1, 2], 'spring': None},
+        }
+    room = act(repo, room, 'host', 'ready')
+
+    assert room['settlement']['gross_payouts'] == [0, 11, 10]
+    assert room['settlement']['payouts'] == [0, 9, 8]
+    assert room['settlement']['rake_percent'] == 20
+    assert room['settlement']['rake_amount'] == 4

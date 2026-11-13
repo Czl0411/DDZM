@@ -20,9 +20,6 @@ from .schema import (
     UserRecord,
 )
 
-COIN_STAKES = {5, 10, 20}
-
-
 class MahjongRateLimitError(ValueError):
     pass
 
@@ -91,8 +88,11 @@ class MahjongRepositoryMixin:
             raise ValueError("房间类型无效")
         if room_type == "casual":
             stake = 0
-        elif stake not in COIN_STAKES:
-            raise ValueError("摸鱼币场仅支持 5、10、20 币")
+        else:
+            coin_stakes = tuple(self.get_club_game_economy_settings("mahjong").coin_stakes)
+            if stake not in coin_stakes:
+                choices = "、".join(str(value) for value in coin_stakes)
+                raise ValueError(f"摸鱼币场仅支持 {choices} 币")
         if match_mode not in {"east", "south"}:
             raise ValueError("场次类型无效")
         with self.transaction():
@@ -208,6 +208,10 @@ class MahjongRepositoryMixin:
             "players": players,
             "deadline": room.deadline.isoformat() if room.deadline else None,
             "server_time": now.isoformat(),
+            "rake_percent": (
+                int((room.state or {}).get("rake_percent", 0))
+                if room.room_type == "coin" else 0
+            ),
             "messages": self._mahjong_messages(session, room.id),
             "settlement": room.settlement,
         }
@@ -364,6 +368,10 @@ class MahjongRepositoryMixin:
                                 )
                         state = new_match(self._mahjong_wall(), now, mode=room.match_mode)
                         state["version"] = room.version + 1
+                        state["rake_percent"] = (
+                            self.get_club_game_economy_settings("mahjong").rake_percent
+                            if room.room_type == "coin" else 0
+                        )
                         room.state = state
                         room.phase = state["phase"]
                         room.version = state["version"]
@@ -444,6 +452,10 @@ class MahjongRepositoryMixin:
                 raise ValueError("需要四人全部准备")
             state = new_match(self._mahjong_wall(), now, mode=room.match_mode)
             state["version"] = room.version + 1
+            state["rake_percent"] = (
+                self.get_club_game_economy_settings("mahjong").rake_percent
+                if room.room_type == "coin" else 0
+            )
             room.state = state
             room.phase = state["phase"]
             room.version = state["version"]
@@ -475,18 +487,29 @@ class MahjongRepositoryMixin:
             return
         order = room.state["result"]["order"]
         payouts = [0, 0, 0, 0]
+        gross_payouts = [0, 0, 0, 0]
+        rake_percent = 0
+        rake_amount = 0
         top_score = max(room.state["points"])
         winner_seats = [seat for seat in order if room.state["points"][seat] == top_score]
         if room.room_type == "coin":
             if not all(room.escrowed):
                 raise RuntimeError("麻将奖池托管不完整")
             pot = room.stake * 4
+            rake_percent = int(room.state.get("rake_percent", 0))
+            rake_amount = pot * rake_percent // 100
+            net_pot = pot - rake_amount
             for winner_index, seat in enumerate(winner_seats):
                 player = session.get(ClubPlayerRecord, UUID(room.seats[seat]))
                 user = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
                 if user is None:
                     raise RuntimeError("麻将结算玩家不存在")
-                payout = pot // len(winner_seats) + (1 if winner_index < pot % len(winner_seats) else 0)
+                gross_payouts[seat] = pot // len(winner_seats) + (
+                    1 if winner_index < pot % len(winner_seats) else 0
+                )
+                payout = net_pot // len(winner_seats) + (
+                    1 if winner_index < net_pot % len(winner_seats) else 0
+                )
                 payouts[seat] = payout
                 self._apply_balance_change(
                     user, payout, "mahjong_settlement", now,
@@ -497,6 +520,9 @@ class MahjongRepositoryMixin:
         room.settlement = {
             "order": order,
             "payouts": payouts,
+            "gross_payouts": gross_payouts,
+            "rake_percent": rake_percent,
+            "rake_amount": rake_amount,
             "points": room.state["points"],
             "winner_seats": winner_seats,
             "outcomes": ["win" if seat in winner_seats else "loss" for seat in range(4)],

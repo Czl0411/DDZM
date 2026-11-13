@@ -27,9 +27,8 @@ from .mahjong_rules import (
 
 
 TURN_SECONDS = 15
-REACTION_SECONDS = 5
+REACTION_SECONDS = 15
 INITIAL_TIME_BANK_MS = 60_000
-RESULT_SECONDS = 8
 DEAD_WALL_SIZE = 14
 RINSHAN_INDEXES = (0, 1, 2, 3)
 DORA_INDEXES = (4, 6, 8, 10, 12)
@@ -92,6 +91,8 @@ def _deal_hand(match: dict, wall: list[int], now: datetime) -> dict:
         dead_wall=list(wall[-DEAD_WALL_SIZE:]),
         live_trim=0,
         rinshan_draws=0,
+        hand_start_points=list(result["points"]),
+        hand_riichi_paid=[0, 0, 0, 0],
         kan_count=0,
         kan_by_player=[0, 0, 0, 0],
         turn=dealer,
@@ -174,11 +175,13 @@ def action_options(state: dict, seat: int) -> dict:
     if seat not in range(4):
         return {}
     if state["phase"] == "reaction" and state["pending"]:
+        if str(seat) in state["pending"]["decisions"]:
+            return {}
         return deepcopy(state["pending"]["eligible"].get(str(seat), {}))
     if state["phase"] != "playing" or state["turn"] != seat:
         return {}
     hand = state["hands"][seat]
-    result: dict = {"discard": list(hand)}
+    result: dict = {"discard": [state["drawn_tile"]] if state["riichi"][seat] else list(hand)}
     drawn = state.get("drawn_tile")
     if drawn is not None and _value_for(state, seat, drawn, tsumo=True).error is None:
         result["tsumo"] = True
@@ -192,6 +195,12 @@ def action_options(state: dict, seat: int) -> dict:
         if candidates:
             result["riichi"] = sorted(set(candidates), key=tile_sort_key)
     kans = sorted(concealed_kan_types(hand))
+    if state["riichi"][seat]:
+        before = waits([tile for tile in hand if tile != drawn], state["melds"][seat])
+        kans = [kind for kind in kans if waits(
+            [tile for tile in hand if tile_type(tile) != kind],
+            [*state["melds"][seat], {"kind": "ankan", "tiles": [tile for tile in hand if tile_type(tile) == kind], "open": False}],
+        ) == before]
     if kans:
         result["ankan"] = kans
     kakan = []
@@ -210,10 +219,25 @@ def action_options(state: dict, seat: int) -> dict:
     return result
 
 
+def is_current_reaction(state: dict, payload: dict) -> bool:
+    """Allow concurrent replies only within the same discard/rob-kan window."""
+    version = (state.get("pending") or {}).get("version")
+    return (
+        state.get("phase") == "reaction"
+        and type(version) is int
+        and payload.get("reaction_version") == version
+        and type(payload.get("version")) is int
+        and version <= payload["version"] <= state["version"]
+    )
+
+
 def apply_action(state: dict, seat: int, action: str, payload: dict, now: datetime) -> dict:
     if seat not in range(4):
         raise ValueError("无效席位")
-    if payload.get("version") != state.get("version"):
+    same_reaction = is_current_reaction(state, payload)
+    if payload.get("reaction_version") is not None and not same_reaction:
+        raise ValueError("这张牌的回应已结束，请查看当前牌局")
+    if payload.get("version") != state.get("version") and not same_reaction:
         raise ValueError("牌局版本已更新，请刷新")
     if state["phase"] not in {"playing", "reaction"}:
         raise ValueError("当前不能操作")
@@ -266,6 +290,8 @@ def _discard(state: dict, seat: int, tile, declaring_riichi: bool, now: datetime
     if state["riichi"][seat] and tile != state.get("drawn_tile"):
         raise ValueError("立直后只能摸切")
     state["hands"][seat].remove(tile)
+    if state["riichi"][seat]:
+        state["ippatsu"][seat] = False
     if declaring_riichi:
         if state["riichi"][seat] or not is_closed(state["melds"][seat]) or state["points"][seat] < 1000:
             raise ValueError("当前不能立直")
@@ -312,6 +338,7 @@ def _discard_reactions(state: dict, source: int, tile: int, now: datetime) -> di
         return None
     return {
         "kind": "discard",
+        "version": state["version"] + 1,
         "source": source,
         "tile": tile,
         "eligible": eligible,
@@ -333,7 +360,7 @@ def _reaction_action(state: dict, seat: int, action: str, payload: dict, now: da
         if not isinstance(selected, list) or selected not in options[action]:
             raise ValueError("副露选择无效")
         decision["tiles"] = selected
-    if action == "pass" and options.get("ron"):
+    if action != "ron" and options.get("ron"):
         state["temporary_furiten"][seat] = True
     pending["decisions"][str(seat)] = decision
     if len(pending["decisions"]) == len(pending["eligible"]):
@@ -488,7 +515,7 @@ def _kakan(state: dict, seat: int, meld_index, now: datetime) -> None:
         return
     state.update(
         phase="reaction",
-        pending={"kind": "kakan", "source": seat, "tile": extra, "meld_index": meld_index,
+        pending={"kind": "kakan", "version": state["version"] + 1, "source": seat, "tile": extra, "meld_index": meld_index,
                  "eligible": eligible, "decisions": {}, "at": _stamp(now)},
         deadline=_deadline(now, REACTION_SECONDS),
     )
@@ -525,6 +552,7 @@ def _settle_win(
 ) -> None:
     deltas = [0, 0, 0, 0]
     details = []
+    payments = []
     for winner in winners:
         value = _value_for(state, winner, win_tile, tsumo=tsumo, chankan=chankan)
         if value.error:
@@ -537,11 +565,13 @@ def _settle_win(
                 amount += state["honba"] * 100
                 deltas[seat] -= amount
                 deltas[winner] += amount
+                payments.append({"from": seat, "to": winner, "points": amount})
         else:
             assert loser is not None
             amount = value.main + state["honba"] * 300
             deltas[loser] -= amount
             deltas[winner] += amount
+            payments.append({"from": loser, "to": winner, "points": amount})
         details.append({
             "seat": winner,
             "han": value.han,
@@ -563,6 +593,7 @@ def _settle_win(
             "tile": win_tile,
             "deltas": deltas,
             "details": details,
+            "payments": payments,
         },
         state["dealer"] in winners,
         now,
@@ -577,6 +608,7 @@ def _exhaustive_draw(state: dict, now: datetime) -> None:
     ]
     if nagashi:
         deltas = [0, 0, 0, 0]
+        payments = []
         for winner in nagashi:
             for seat in range(4):
                 if seat == winner:
@@ -584,21 +616,27 @@ def _exhaustive_draw(state: dict, now: datetime) -> None:
                 amount = 4000 if winner == state["dealer"] or seat == state["dealer"] else 2000
                 deltas[seat] -= amount
                 deltas[winner] += amount
+                payments.append({"from": seat, "to": winner, "points": amount})
         for seat, amount in enumerate(deltas):
             state["points"][seat] += amount
-        _finish_hand(state, {"kind": "流局满贯", "winners": nagashi, "deltas": deltas}, state["dealer"] in nagashi, now)
+        _finish_hand(state, {"kind": "流局满贯", "winners": nagashi, "deltas": deltas, "payments": payments}, state["dealer"] in nagashi, now)
         return
     tenpai = [seat for seat in range(4) if waits(state["hands"][seat], state["melds"][seat])]
     deltas = [0, 0, 0, 0]
+    payments = []
     if 0 < len(tenpai) < 4:
         gain = 3000 // len(tenpai)
         loss = 3000 // (4 - len(tenpai))
         for seat in range(4):
             deltas[seat] = gain if seat in tenpai else -loss
             state["points"][seat] += deltas[seat]
+        for payer in range(4):
+            if payer not in tenpai:
+                for winner in tenpai:
+                    payments.append({"from": payer, "to": winner, "points": loss // len(tenpai)})
     _finish_hand(
         state,
-        {"kind": "荒牌流局", "tenpai": tenpai, "deltas": deltas},
+        {"kind": "荒牌流局", "tenpai": tenpai, "deltas": deltas, "payments": payments},
         state["dealer"] in tenpai,
         now,
     )
@@ -609,27 +647,36 @@ def _abortive_draw(state: dict, reason: str, now: datetime) -> None:
 
 
 def _finish_hand(state: dict, result: dict, dealer_continues: bool, now: datetime) -> None:
-    result = {**result, "dealer_continues": dealer_continues, "at": _stamp(now)}
+    result = {**result, "dealer": state["dealer"], "honba": state["honba"], "dealer_continues": dealer_continues, "at": _stamp(now),
+              "starting_points": state.get("hand_start_points"), "ending_points": list(state["points"])}
     state["history"] = [*state.get("history", []), result][-32:]
     state.update(
         phase="hand_finished",
         pending=None,
         drawn_tile=None,
-        deadline=_deadline(now, RESULT_SECONDS),
+        deadline=None,
         result=result,
         next={"dealer_continues": dealer_continues},
     )
     if any(points < 0 for points in state["points"]):
         _finish_match(state, now, "击飞")
+    elif not dealer_continues:
+        next_wind = state["round_wind"] + (1 if state["hand_number"] == 4 else 0)
+        if _match_should_end({**state, "round_wind": next_wind}):
+            _finish_match(state, now, "终局")
 
 
 def _finish_match(state: dict, now: datetime, reason: str) -> None:
     order = sorted(range(4), key=lambda seat: (-state["points"][seat], (seat - state["initial_dealer"]) % 4))
+    riichi_recipient = order[0] if state["riichi_sticks"] else None
+    if riichi_recipient is not None:
+        state["points"][riichi_recipient] += state["riichi_sticks"] * 1000
+        state["riichi_sticks"] = 0
     state.update(
         phase="match_finished",
         deadline=None,
         pending=None,
-        result={"kind": "match", "reason": reason, "order": order, "points": list(state["points"]), "at": _stamp(now)},
+        result={"kind": "match", "reason": reason, "order": order, "points": list(state["points"]), "riichi_recipient": riichi_recipient, "at": _stamp(now)},
     )
 
 
@@ -638,7 +685,7 @@ def advance_after_result(state: dict, wall: list[int], now: datetime) -> dict:
         return deepcopy(state)
     if state["phase"] != "hand_finished":
         raise ValueError("当前不在局间结算")
-    if now < datetime.fromisoformat(state["deadline"]):
+    if state.get("deadline") and now < datetime.fromisoformat(state["deadline"]):
         return deepcopy(state)
     result = deepcopy(state)
     dealer_continues = result["next"]["dealer_continues"]
@@ -672,7 +719,7 @@ def apply_timeout(state: dict, now: datetime, wall_factory: Callable[[], list[in
     if state.get("deadline") is None or now < datetime.fromisoformat(state["deadline"]):
         return deepcopy(state)
     if state["phase"] == "hand_finished":
-        return advance_after_result(state, wall_factory(), now)
+        return deepcopy(state)
     result = deepcopy(state)
     if result["phase"] == "reaction":
         pending = result["pending"]

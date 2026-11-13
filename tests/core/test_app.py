@@ -780,6 +780,7 @@ def test_club_game_economy_settings_core_api_round_trip(client, headers):
                 "texas",
                 "zhajinhua",
                 "blackjack",
+                "niuniu",
             )
         ]
     }

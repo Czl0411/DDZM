@@ -110,5 +110,59 @@
     "deployedAt": "2026-10-23T07:24:59.021Z",
     "label": "club-20261023-between-hands-join",
     "gitHead": "0a930c6"
+  },
+  {
+    "revision": "1792746968351",
+    "deployedAt": "2026-10-23T09:15:12.358Z",
+    "label": "club-20261023-ui-interactions",
+    "gitHead": "645b445"
+  },
+  {
+    "revision": "1792748118759",
+    "deployedAt": "2026-10-23T09:34:23.800Z",
+    "label": "club-20261023-card-action-fix",
+    "gitHead": "645b445"
+  },
+  {
+    "revision": "1792753295315",
+    "deployedAt": "2026-10-23T11:00:44.295Z",
+    "label": "club-20261023-mahjong-art",
+    "gitHead": "645b445"
+  },
+  {
+    "revision": "1792755233771",
+    "deployedAt": "2026-10-23T11:32:57.085Z",
+    "label": "club-20261023-mahjong-guidance",
+    "gitHead": "645b445"
+  },
+  {
+    "revision": "1792765810649",
+    "deployedAt": "2026-10-23T14:29:17.405Z",
+    "label": "club-20261023-mahjong-polish",
+    "gitHead": "645b445"
+  },
+  {
+    "revision": "1792980655125",
+    "deployedAt": "2026-10-26T02:09:59.154Z",
+    "label": "club-20261026-wait-status",
+    "gitHead": "645b445"
+  },
+  {
+    "revision": "1792987914203",
+    "deployedAt": "2026-10-26T04:10:58.152Z",
+    "label": "club-20261026-reaction-fix",
+    "gitHead": "c0cf189"
+  },
+  {
+    "revision": "1792991468434",
+    "deployedAt": "2026-10-26T05:10:12.338Z",
+    "label": "club-20261026-hand-settlement",
+    "gitHead": "c0cf189"
+  },
+  {
+    "revision": "1793005372595",
+    "deployedAt": "2026-10-26T09:01:58.810Z",
+    "label": "club-20261026-niuniu",
+    "gitHead": "c0cf189"
   }
 ]

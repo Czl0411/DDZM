@@ -8,6 +8,10 @@ from playwright.sync_api import expect, sync_playwright
 
 
 ROOM_ID = "11111111-1111-4111-8111-111111111111"
+ECONOMY_SETTINGS = [
+    {"game": game, "coin_stakes": [5, 10, 20], "rake_percent": 20}
+    for game in ("mahjong", "chess", "doudizhu", "drawguess", "texas", "zhajinhua", "niuniu", "blackjack")
+]
 
 
 def waiting_snapshot():
@@ -76,7 +80,7 @@ def card_snapshot(game):
     elif game == "zhajinhua":
         common["state"] = {"phase": "playing", "players": [item["id"] for item in players], "turn": players[0]["id"],
                            "hands": {players[0]["id"]: [["hearts", 12], ["clubs", 12], ["spades", 8]], players[1]["id"]: [None, None, None]},
-                           "chips": {players[0]["id"]: 48, players[1]["id"]: 48},
+                           "base_bet": 1, "chips": {players[0]["id"]: 48, players[1]["id"]: 48},
                            "contributions": {players[0]["id"]: 2, players[1]["id"]: 2}, "folded": [], "seen": [], "pot": 4}
     else:
         common["state"] = {"phase": "playing", "players": [item["id"] for item in players], "turn": players[0]["id"],
@@ -128,6 +132,9 @@ def test_club_and_table_stay_in_one_viewport(width, height):
             headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
             if request.request.method == "OPTIONS":
                 request.fulfill(status=204, headers=headers)
+                return
+            if path.endswith("/api/club/economy-settings"):
+                request.fulfill(json=ECONOMY_SETTINGS, headers=headers)
                 return
             if path.endswith("/api/club/session"):
                 request.fulfill(json={
@@ -201,9 +208,10 @@ def test_club_and_table_stay_in_one_viewport(width, height):
             if "/api/club/cards/" in path:
                 game = path.split("/api/club/cards/", 1)[1].split("/", 1)[0]
                 if path.endswith("/rooms"):
+                    maximum = {"texas": 8, "zhajinhua": 6, "niuniu": 6, "blackjack": 5}[game]
                     request.fulfill(json=[{
                         "id": ROOM_ID, "game": game, "creator_name": "房主", "room_type": "casual", "stake": 0,
-                            "phase": "waiting", "occupied": 2, "maximum": 8, "mine": False,
+                            "phase": "waiting", "occupied": 2, "maximum": maximum, "mine": False,
                     }], headers=headers)
                     return
                 if path.endswith("/events"):
@@ -248,7 +256,8 @@ def test_club_and_table_stay_in_one_viewport(width, height):
         page = context.new_page()
         page.goto("https://club.test/index.html")
         expect(page.locator("#club-home")).to_be_visible()
-        expect(page.locator("#game-grid .game-card")).to_have_count(7)
+        assert page.evaluate("typeof window.MoyuClubRuntime.openGameLobby") == "function"
+        expect(page.locator("#game-grid .game-card")).to_have_count(8)
         expect(page.locator("#club-presence")).to_contain_text("8 在线")
         expect(page.locator("#club-presence")).to_contain_text("3 游戏中")
         home_layout = page.evaluate("""
@@ -269,6 +278,13 @@ def test_club_and_table_stay_in_one_viewport(width, height):
         assert home_layout["shellBottom"] <= height + 1
         assert home_layout["navBottom"] <= height + 1
         assert home_layout["shellWidth"] >= width - 1
+        page.route("**/games/chess/game.js?*", lambda request: request.abort())
+        page.locator("#game-grid .game-card").nth(1).click()
+        expect(page.locator(".club-module-loading[data-kind=error]")).to_contain_text("暂时未能载入")
+        page.unroute("**/games/chess/game.js?*")
+        page.get_by_role("button", name="重新加载", exact=True).click()
+        expect(page.locator("#club-game-mount h1")).to_contain_text("群聊象棋")
+        page.locator("#club-module-home").click()
         initial_progress = page.evaluate("clubEvents.filter(event => event[0] === 'progress').length")
         page.locator("#game-grid .game-card").nth(1).click()
         frame = page.locator("#club-game-mount")
@@ -292,7 +308,7 @@ def test_club_and_table_stay_in_one_viewport(width, height):
             expect(frame.locator("#feedback")).not_to_contain_text("Cannot read properties")
             page.locator("#club-module-home").click()
             expect(page.locator("#club-home")).to_be_visible()
-        for index, title in ((4, "德州扑克"), (5, "炸金花"), (6, "21 点")):
+        for index, title in ((4, "德州扑克"), (5, "炸金花"), (6, "斗牛"), (7, "21 点")):
             page.locator("#game-grid .game-card").nth(index).click()
             frame = page.locator("#club-game-mount")
             expect(frame.locator("#lobby")).to_be_visible()
@@ -403,8 +419,12 @@ def test_club_and_table_stay_in_one_viewport(width, height):
         expect(page.locator("#hand .tile svg.tile-face").first).to_have_attribute("data-kind", "man")
         expect(page.locator("#hand .tile").first).to_have_text("一萬")
         expect(page.locator("#remaining-count")).to_have_text("余 69 张")
-        expect(page.locator("#self-player")).to_contain_text("东风 · 14 张")
-        expect(page.locator("#chat-preview")).to_be_visible()
+        expect(page.locator("#self-player")).to_contain_text("东家 · 你")
+        if width>height and height<=520:
+            expect(page.locator("#chat-toggle")).to_be_visible()
+            expect(page.locator("#chat-preview")).to_be_hidden()
+        else:
+            expect(page.locator("#chat-preview")).to_be_visible()
         tile_box = page.locator("#hand .tile").first.bounding_box()
         assert tile_box["y"] + tile_box["height"] <= height, tile_box
         assert tile_box["x"] >= 0, tile_box
@@ -438,11 +458,19 @@ def test_club_and_table_stay_in_one_viewport(width, height):
         browser.close()
 
 
+@pytest.mark.parametrize("full", [False, True])
 @pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack"])
 @pytest.mark.parametrize(("width", "height"), [(320, 700), (390, 844), (844, 390)])
-def test_card_table_modules_fit_phone_viewports(game, width, height):
+def test_card_table_modules_fit_phone_viewports(game, width, height, full):
     publish = Path(__file__).resolve().parents[1] / "publish"
     snapshot = card_snapshot(game)
+    if full:
+        for index in range(2, {"texas": 8, "zhajinhua": 6, "blackjack": 5}[game]):
+            player = {"id": f"player-{index}", "name": f"玩家{index}"}
+            snapshot["players"].append(player)
+            snapshot["state"].setdefault("chips", {})[player["id"]] = 50
+            snapshot["state"]["contributions"][player["id"]] = 5
+    snapshot["state"]["action_history"] = [{"sequence": 1, "player": snapshot["players"][1]["id"], "action": "call", "paid": 2}]
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel="chrome", headless=True)
         context = browser.new_context(viewport={"width": width, "height": height})
@@ -453,6 +481,8 @@ def test_card_table_modules_fit_phone_viewports(game, width, height):
             headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
             if path.endswith("/api/club/session"):
                 request.fulfill(json=snapshot["me"], headers=headers)
+            elif path.endswith("/api/club/economy-settings"):
+                request.fulfill(json=ECONOMY_SETTINGS, headers=headers)
             elif path.endswith(f"/api/club/cards/{game}/rooms"):
                 request.fulfill(json=[{"id": ROOM_ID, "game": game, "creator_name": "房主", "room_type": "casual", "stake": 0,
                                       "phase": "playing", "occupied": 2, "maximum": 8, "mine": True}], headers=headers)
@@ -503,6 +533,19 @@ def test_card_table_modules_fit_phone_viewports(game, width, height):
                    for item in layout["actionChildren"])
         if game == "texas":
             expect(page.locator(".raise-control")).to_be_visible()
+        assert "NaN" not in page.locator("#actions").inner_text()
+        page.locator("#history-toggle").click()
+        expect(page.locator("#action-history")).to_contain_text("牌友 · 跟注 2")
+        page.locator("#history-close").click()
+        overlaps = page.evaluate("""() => {
+          const seats = [...document.querySelectorAll('.seat')];
+          const targets = [...seats, ...document.querySelectorAll('#my-cards, #board, #actions')];
+          return seats.flatMap((seat, index) => targets.filter(other => other !== seat && (!seats.includes(other) || seats.indexOf(other) > index)).filter(other => {
+            const a = seat.getBoundingClientRect(), b = other.getBoundingClientRect();
+            return Math.min(a.right,b.right)-Math.max(a.left,b.left)>1 && Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1;
+          }).map(other => `${seat.innerText} / ${other.id || other.innerText}`));
+        }""")
+        assert overlaps == []
         browser.close()
 
 
@@ -519,6 +562,8 @@ def test_card_table_reflows_after_orientation_change():
             headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
             if path.endswith("/api/club/session"):
                 request.fulfill(json=snapshot["me"], headers=headers)
+            elif path.endswith("/api/club/economy-settings"):
+                request.fulfill(json=ECONOMY_SETTINGS, headers=headers)
             elif path.endswith("/api/club/cards/texas/rooms"):
                 request.fulfill(json=[{"id": ROOM_ID, "game": "texas", "creator_name": "房主",
                                       "room_type": "casual", "stake": 0, "phase": "playing",
@@ -572,6 +617,8 @@ def test_spectator_can_join_finished_card_table_for_next_hand(game):
             headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
             if request.request.method == "OPTIONS":
                 request.fulfill(status=204, headers=headers)
+            elif path.endswith("/api/club/economy-settings"):
+                request.fulfill(json=ECONOMY_SETTINGS, headers=headers)
             elif path.endswith("/api/club/session"):
                 request.fulfill(json=snapshot["me"], headers=headers)
             elif path.endswith("/events"):
@@ -619,6 +666,8 @@ def test_finished_mahjong_launch_keeps_settlement_room_open():
             headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
             if request.request.method == "OPTIONS":
                 request.fulfill(status=204, headers=headers)
+            elif path.endswith("/api/club/economy-settings"):
+                request.fulfill(json=ECONOMY_SETTINGS, headers=headers)
             elif path.endswith("/api/club/session"):
                 request.fulfill(json={
                     "id": "22222222-2222-4222-8222-222222222222",
@@ -666,6 +715,8 @@ def test_club_boot_restores_the_players_active_card_table():
             headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
             if request.request.method == "OPTIONS":
                 request.fulfill(status=204, headers=headers)
+            elif path.endswith("/api/club/economy-settings"):
+                request.fulfill(json=ECONOMY_SETTINGS, headers=headers)
             elif path.endswith("/api/club/session"):
                 request.fulfill(json=snapshot["me"], headers=headers)
             elif path.endswith("/api/club/channel"):
@@ -718,6 +769,8 @@ def test_public_chat_avatar_opens_player_profile_and_friend_action():
             headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
             if request.request.method == "OPTIONS":
                 request.fulfill(status=204, headers=headers)
+            elif path.endswith("/api/club/economy-settings"):
+                request.fulfill(json=ECONOMY_SETTINGS, headers=headers)
             elif path.endswith("/api/club/session"):
                 request.fulfill(json={"id": "22222222-2222-4222-8222-222222222222", "uid": "host-user",
                                       "name": "房主", "avatar_url": None, "employee": True, "balance": 100}, headers=headers)
@@ -785,6 +838,18 @@ def test_public_chat_avatar_opens_player_profile_and_friend_action():
         page.locator("#club-profile .profile-actions button").click()
         expect(page.locator("#club-profile .profile-actions button")).to_have_text("好友申请已发送")
         assert friend_requests == [{"player_id": other_id}]
+        page.locator("#profile-back").click()
+        expect(page.locator("#club-panel-channel")).to_be_visible()
+        page.route("**/api/club/channel", lambda request: request.fulfill(
+            status=429, json={"detail": "发送过于频繁，请稍后重试"},
+            headers={"Access-Control-Allow-Origin": "*"},
+        ) if request.request.method == "POST" else request.fallback())
+        page.locator("#club-channel-input").fill("失败后仍保留的草稿")
+        page.locator("#club-channel-send").click()
+        expect(page.locator("#drawer-feedback")).to_be_visible()
+        expect(page.locator("#drawer-feedback")).to_contain_text("发送过于频繁")
+        expect(page.locator("#club-channel-input")).to_have_value("失败后仍保留的草稿")
+        expect(page.locator("#club-channel-send")).to_be_enabled()
         browser.close()
 
 
@@ -834,6 +899,8 @@ def test_embedded_subgame_keeps_primary_play_area_and_uses_chat_drawer(game, hea
             headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
             if request.request.method == "OPTIONS":
                 request.fulfill(status=204, headers=headers)
+            elif path.endswith("/api/club/economy-settings"):
+                request.fulfill(json=ECONOMY_SETTINGS, headers=headers)
             elif path.endswith(("/api/chess/rooms", "/api/doudizhu/rooms", "/api/drawguess/rooms")):
                 request.fulfill(json=[], headers=headers)
             else:
@@ -898,4 +965,59 @@ def test_embedded_subgame_keeps_primary_play_area_and_uses_chat_drawer(game, hea
         assert drawer_box["x"] + drawer_box["width"] <= width + 1
         assert drawer_box["y"] + drawer_box["height"] <= height + 1
         assert page.evaluate("document.body.scrollWidth <= innerWidth && document.body.scrollHeight <= innerHeight")
+        browser.close()
+
+
+@pytest.mark.parametrize("reduced", [False, True])
+def test_card_action_feedback_persists_without_replaying_on_reopen(reduced):
+    publish = Path(__file__).resolve().parents[1] / "publish"
+    state = card_snapshot("texas")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(channel="chrome", headless=True)
+        context = browser.new_context(viewport={"width": 844, "height": 390}, reduced_motion="reduce" if reduced else "no-preference")
+        context.add_init_script("""
+          window.dzmm={user:{info:async()=>({id:'host-user'})},loading:{ready(){},error(){}}};
+          const fetchRequest=window.fetch;
+          window.fetch=(url,options)=>String(url).endsWith('/events')
+            ? Promise.resolve(new Response(new ReadableStream({start(){}}),{headers:{'Content-Type':'text/event-stream'}}))
+            : fetchRequest(url,options);
+        """)
+
+        def route(request):
+            path = urlsplit(request.request.url).path
+            headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
+            if request.request.method == "OPTIONS":
+                request.fulfill(status=204, headers=headers)
+            elif path.endswith("/api/club/economy-settings"):
+                request.fulfill(json=ECONOMY_SETTINGS, headers=headers)
+            elif path.endswith("/api/club/session"):
+                request.fulfill(json=state["me"], headers=headers)
+            elif path.endswith("/api/club/cards/texas/rooms"):
+                request.fulfill(json=[{"id": ROOM_ID, "game": "texas", "mine": True}], headers=headers)
+            elif "/api/club/cards/texas/rooms/" in path:
+                if path.endswith("/actions"):
+                    assert request.request.post_data_json["action"] == "call"
+                    state["version"] += 1
+                    state["state"]["action_history"] = [{"sequence": 1, "player": state["me"]["id"], "action": "call", "paid": 2}]
+                    state["state"]["turn"] = state["players"][1]["id"]
+                request.fulfill(json=state, headers=headers)
+            else:
+                request.fulfill(path=str(publish / path.lstrip("/")), headers=headers)
+
+        context.route("**/*", route)
+        page = context.new_page()
+        page.goto("https://club.test/games/card-table/index.html?game=texas")
+        page.get_by_role("button", name="跟注 2", exact=True).click()
+        expect(page.locator("#last-action")).to_have_text("房主 · 跟注 2")
+        if reduced:
+            expect(page.locator(".moving-chip")).to_have_count(0)
+        else:
+            expect(page.locator(".moving-chip")).to_have_count(1)
+            expect(page.locator(".moving-chip")).to_have_count(0, timeout=2000)
+        expect(page.locator(".seat.mine .seat-action")).to_have_text("跟注 2")
+        page.reload()
+        expect(page.locator("#last-action")).to_have_text("房主 · 跟注 2")
+        expect(page.locator(".moving-chip")).to_have_count(0)
+        page.locator("#history-toggle").click()
+        expect(page.locator("#action-history")).to_contain_text("房主 · 跟注 2")
         browser.close()

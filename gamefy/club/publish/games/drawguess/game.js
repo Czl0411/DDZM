@@ -44,7 +44,7 @@ async function boot(refresh=false){
     feedback('正在获取房间…');rooms=await client.rooms();if(token!==generation)return;
     const activeRooms=rooms.filter(item=>!['finished','closed'].includes(item.phase));
     const linkedRoom=new URLSearchParams(location.search).get('room');
-    if(typeof linkedRoom==='string'&&activeRooms.some(item=>item.room_id===linkedRoom)){await enterRoom(linkedRoom,token);return;}
+    if(typeof linkedRoom==='string'&&linkedRoom&&await enterRoom(linkedRoom,token))return;
     const stored=await client.kvGet(`drawguess:last-room:${uid}`);if(token!==generation)return;
     const roomId=stored?.value??stored;
     if(typeof roomId==='string'&&activeRooms.some(item=>item.room_id===roomId)){await enterRoom(roomId,token);return;}
@@ -78,8 +78,8 @@ async function enterRoom(roomId,existingToken=null){
       if(update.snapshot){setRoom(update.snapshot);renderRoom();return;}
       room.cursor=update.cursor;board.applyEvents(update.events||[],room.state.turn_id);
     },error=>{if(token===generation)feedback(`${error.message}，正在重连…`);});
-    markReady();
-  }catch(error){if(token===generation)feedback(error.message||'房间加载失败');}
+    markReady();return true;
+  }catch(error){if(token===generation)feedback(error.message||'房间加载失败');return false;}
 }
 
 function renderPlayers(){
@@ -90,14 +90,14 @@ function renderPlayers(){
     const avatar=document.createElement('div');avatar.className='avatar';avatar.textContent=player?player.name.slice(0,1):'+';
     const name=document.createElement('div');name.className='seat-name';name.textContent=player?.name||'空位';
     const meta=document.createElement('div');meta.className='seat-meta';
-    meta.textContent=player?(state.phase==='waiting'?(player.ready?'已准备':player.is_host?'房主':'未准备'):`${player.score} 分`):'等待加入';
+    meta.textContent=player?(state.phase==='waiting'?(player.ready?'已准备':player.is_host?'房主':'未准备'):`${player.score} 分${player.guessed?" · 已猜中":index===state.drawer_seat?" · 画手":" · 猜词中"}`):'等待加入';
     seat.append(avatar,name,meta);holder.append(seat);
   }
 }
 
 function renderMessages(){
-  const list=$('#messages');list.replaceChildren();
-  for(const item of room.messages||[]){const line=document.createElement('div');line.className='message';const name=document.createElement('strong');name.textContent=item.name;const text=document.createElement('span');text.textContent=item.text;line.append(name,text);list.append(line);}list.scrollTop=list.scrollHeight;
+  const list=$('#messages');const bottom=!list.children.length||list.scrollHeight-list.scrollTop-list.clientHeight<48;const scroll=list.scrollTop;list.replaceChildren();
+  for(const item of room.messages||[]){const line=document.createElement('div');line.className='message';const name=document.createElement('strong');name.textContent=item.name;const text=document.createElement('span');text.textContent=item.text;line.append(name,text);list.append(line);}list.scrollTop=bottom?list.scrollHeight:scroll;
 }
 
 function inputPermission(){
@@ -125,7 +125,7 @@ function renderChatContext(){
 function renderRoom(){
   document.body.classList.add('room-open');show('#lobby',false);show('#room-view');const state=room.state;
   const rakeText=room.room_type==='coin'?`抽水 ${room.settlement?.rake_percent??state.rake_percent??0}%`:'休闲局不抽水';
-  window.MoyuClubRuntime?.setRoomContext?.({game:'drawguess',roomId:room.room_id,host:room.creator_name||state.players.find(player=>player?.is_host)?.name||'玩家'});
+  window.MoyuClubRuntime?.setRoomContext?.({game:'drawguess',phase:state.phase,roomId:room.room_id,host:room.creator_name||state.players.find(player=>player?.is_host)?.name||'玩家'});
   const titles={waiting:'候场房间',selecting:'选择题目',drawing:'正在作画',revealing:'答案揭晓',finished:'本局排行'};
   $('#phase-label').textContent=phaseText(state.phase);$('#room-title').textContent=titles[state.phase]||'游戏房间';$('#room-code').textContent=`${room.creator_name||'玩家'}的房间`;
   $('#round-label').textContent=state.phase==='waiting'?'准备入座':`${state.phase==='finished'?'最终排名':`第 ${state.turn_index+1}/${state.players.length*2} 题`} · ${rakeText}`;
@@ -142,7 +142,7 @@ function renderRoom(){
 function renderWaiting(){
   show('#waiting');const self=room.self_seat;$('#waiting-copy').textContent=self===null?'房间还有空位，先到先得。':`已入座 · ${room.state.players.filter(Boolean).length}/8 人`;
   show('#claim-controls',self===null);show('#seat-controls',self!==null);
-  if(self!==null){const player=room.state.players[self];$('#ready').textContent=player.ready?'取消准备':'准备';$('#ready').dataset.action=player.ready?'unready':'ready';const start=$('#start');start.hidden=!player.is_host;const canStart=room.state.players.length>=3&&room.state.players.every(item=>item.ready);start.disabled=!canStart;start.title=canStart?'':'至少三人且所有人准备后才能开始';}
+  if(self!==null){const player=room.state.players[self];$('#ready').textContent=player.ready?'取消准备':'准备';$('#ready').dataset.action=player.ready?'unready':'ready';const start=$('#start');start.hidden=!player.is_host;const canStart=room.state.players.length>=3&&room.state.players.every(item=>item.ready);start.disabled=!canStart;start.title=canStart?'':'至少三人且所有人准备后才能开始';$('#waiting-copy').textContent=room.state.players.length<3?`还差 ${3-room.state.players.length} 人即可开始`:canStart?'全部已准备，等待房主开始':`等待 ${room.state.players.filter(item=>!item.ready).map(item=>item.name).join('、')} 准备`;}
 }
 
 function renderChoosing(){
@@ -179,7 +179,7 @@ function setChatOpen(open){$('#draw-chat').classList.toggle('open',open);$('#dra
 
 $('#refresh').addEventListener('click',()=>boot(true));$('#room-refresh').addEventListener('click',()=>room&&enterRoom(room.room_id));
 $('#draw-chat-toggle').addEventListener('click',()=>setChatOpen(!$('#draw-chat').classList.contains('open')));$('#draw-chat-close').addEventListener('click',()=>setChatOpen(false));
-$('#back').addEventListener('click',async()=>{if(room&&!['waiting','finished','closed'].includes(room.state.phase)&&!confirm('本局尚未结束。返回后轮次倒计时仍会继续，重新进入 Club 会回到本局。确定返回吗？'))return;generation++;followStop?.();followStop=null;try{if(room?.state.phase==='waiting'&&room.self_seat!==null)await client.action(room.room_id,{turn_id:room.state.turn_id,version:room.state.version,action:'leave',payload:{}});}catch(error){feedback(error.message);}const uid=await client.identity();await client.kvPut(`drawguess:last-room:${uid}`,null);room=null;rooms=await client.rooms();renderLobby();feedback();});
+$('#back').addEventListener('click',async()=>{if(room&&!['waiting','finished','closed'].includes(room.state.phase)&&!confirm('本局尚未结束。返回后轮次倒计时仍会继续，重新进入 Club 会回到本局。确定返回吗？'))return;try{if(room?.self_seat!==null&&['waiting','finished'].includes(room.state.phase))await client.action(room.room_id,{turn_id:room.state.turn_id,version:room.state.version,action:'leave',payload:{}});}catch(error){feedback(error.message);return;}generation++;followStop?.();followStop=null;const uid=await client.identity();await client.kvPut(`drawguess:last-room:${uid}`,null);room=null;rooms=await client.rooms();renderLobby();feedback();});
 $('#claim').addEventListener('click',()=>sendAction('claim'));
 document.querySelector('.create-strip').addEventListener('click',async event=>{const button=event.target.closest('[data-create-room]');if(!button)return;button.disabled=true;try{const latest=await loadEconomy(CONFIG.apiBase,'drawguess');if(button.dataset.createRoom==='coin'&&!latest.coin_stakes.includes(Number(button.dataset.stake))){renderCreateStrip(document.querySelector('.create-strip'),latest,document);feedback('场次配置已更新，请重新选择');return;}const next=await client.create(button.dataset.createRoom,Number(button.dataset.stake));await enterRoom(next.room_id);}catch(error){feedback(error.message);}finally{button.disabled=false;}});
 $('#ready').addEventListener('click',()=>sendAction($('#ready').dataset.action||'ready'));$('#start').addEventListener('click',()=>sendAction('start'));

@@ -14,12 +14,12 @@ const PIN_LAYOUTS = {
 };
 
 const SOU_LAYOUTS = {
-  2: [[39, 36], [61, 92]],
-  3: [[33, 30], [67, 30], [50, 91]],
+  2: [[50, 34], [50, 96]],
+  3: [[50, 30], [30, 94], [70, 94]],
   4: [[34, 34], [66, 34], [34, 94], [66, 94]],
   5: [[30, 29], [70, 29], [50, 65], [30, 101], [70, 101]],
   6: [[31, 27], [69, 27], [31, 65], [69, 65], [31, 103], [69, 103]],
-  7: [[28, 24], [50, 24], [72, 24], [35, 63], [65, 63], [35, 102], [65, 102]],
+  7: [[50, 20], [27, 61], [50, 61], [73, 61], [27, 105], [50, 105], [73, 105]],
   8: [[31, 21], [69, 21], [31, 50], [69, 50], [31, 80], [69, 80], [31, 109], [69, 109]],
   9: [[25, 24], [50, 24], [75, 24], [25, 65], [50, 65], [75, 65], [25, 106], [50, 106], [75, 106]],
 };
@@ -62,56 +62,53 @@ function svgNode(documentRef, name, attributes = {}, text = "") {
 
 function drawPinOne(svg, documentRef) {
   const group = svgNode(documentRef, "g", {class: "pin-one", transform: "translate(50 65)"});
-  group.append(svgNode(documentRef, "circle", {class: "pin-one-outer", r: 25}));
-  for (let angle = 0; angle < 360; angle += 45) {
-    group.append(svgNode(documentRef, "ellipse", {class: `pin-one-petal petal-${angle / 45}`, cx: 0, cy: -14, rx: 5.2, ry: 10.5, transform: `rotate(${angle})`}));
+  group.append(svgNode(documentRef, "circle", {class: "pin-ring", r: 36}), svgNode(documentRef, "circle", {class: "pin-ring", r: 31}));
+  for (let angle = 0; angle < 360; angle += 30) {
+    group.append(svgNode(documentRef, "path", {class: "pin-flower", d: "M0 -13 C-11 -19 -7 -29 0 -29 C7 -29 11 -19 0 -13Z", transform: `rotate(${angle})`}));
   }
-  group.append(
-    svgNode(documentRef, "circle", {class: "pin-one-ring", r: 11.5}),
-    svgNode(documentRef, "circle", {class: "pin-one-core", r: 5}),
-  );
+  group.append(svgNode(documentRef, "circle", {class: "pin-ring", r: 12}), svgNode(documentRef, "circle", {class: "pin-center", r: 7}));
   svg.append(group);
 }
 
 function drawPin(svg, documentRef, mark, index, rank) {
   const [x, y] = mark;
-  const tone = rank === 5 && index === 2 ? "red" : index % 3 === 1 ? "green" : "blue";
-  const group = svgNode(documentRef, "g", {class: `pin-dot tone-${tone}`, transform: `translate(${x} ${y})`});
-  group.append(
-    svgNode(documentRef, "circle", {class: "pin-rim", r: 10}),
-    svgNode(documentRef, "circle", {class: "pin-petal", r: 6.2}),
-    svgNode(documentRef, "circle", {class: "pin-core", r: 2.4}),
-  );
+  const radius = rank === 2 ? 17 : rank <= 4 ? 14 : rank <= 6 ? 12 : 10.5;
+  const red = (rank === 3 && index === 1) || (rank === 5 && index === 2) || (rank === 9 && index === 4);
+  const group = svgNode(documentRef, "g", {class: `pin-dot${red ? " pin-red" : ""}`, transform: `translate(${x} ${y}) scale(${radius / 10})`});
+  group.append(svgNode(documentRef, "circle", {class: "pin-ring", r: 10}));
+  for (let angle = 0; angle < 360; angle += 60) {
+    group.append(svgNode(documentRef, "ellipse", {class: "pin-flower", cx: 0, cy: -5.5, rx: 2.1, ry: 3.1, transform: `rotate(${angle})`}));
+  }
+  group.append(svgNode(documentRef, "circle", {class: "pin-center", r: 2}));
   svg.append(group);
 }
 
 function drawBird(svg, documentRef) {
+  // Slender crane engraving: a single dark silhouette with cut feather strokes.
   const bird = svgNode(documentRef, "g", {class: "sou-bird"});
   bird.append(
-    svgNode(documentRef, "path", {class: "bird-branch", d: "M16 105 Q47 93 84 103"}),
-    svgNode(documentRef, "path", {class: "bird-tail", d: "M35 80 Q20 98 24 112 Q36 101 43 87 Z"}),
-    svgNode(documentRef, "ellipse", {class: "bird-body", cx: 50, cy: 72, rx: 22, ry: 31, transform: "rotate(-12 50 72)"}),
-    svgNode(documentRef, "path", {class: "bird-wing", d: "M35 65 Q50 54 64 69 Q51 91 35 88 Q43 77 35 65 Z"}),
-    svgNode(documentRef, "circle", {class: "bird-head", cx: 65, cy: 42, r: 13}),
-    svgNode(documentRef, "circle", {class: "bird-eye", cx: 69, cy: 39, r: 2.2}),
-    svgNode(documentRef, "path", {class: "bird-beak", d: "M77 43 L90 48 L77 52 Z"}),
-    svgNode(documentRef, "path", {class: "bird-crest", d: "M56 31 Q59 18 67 28 Q72 17 74 32"}),
-    svgNode(documentRef, "path", {class: "bird-feet", d: "M45 99 l-4 8 m8-8 l2 8 m10-11 l-2 9 m6-11 l3 8"}),
+    svgNode(documentRef, "path", {class: "crane-tail", d: "M44 74 Q31 101 18 116 Q42 109 52 82 M49 78 Q45 107 37 119 Q57 105 59 81"}),
+    svgNode(documentRef, "path", {class: "crane-body", d: "M31 75 C27 60 36 49 50 49 C61 48 63 41 60 33 C56 21 62 12 70 15 C80 20 74 29 69 31 C73 43 76 55 66 65 C59 78 43 85 31 75Z"}),
+    svgNode(documentRef, "path", {class: "crane-wing", d: "M31 68 Q38 50 57 53 Q59 72 37 79 Q43 71 46 63 Q39 70 31 68Z"}),
+    svgNode(documentRef, "path", {class: "crane-feathers", d: "M37 66 Q43 56 52 57 M38 72 Q48 65 53 59 M42 75 Q55 67 57 59 M42 84 L28 106 M48 87 L41 108"}),
+    svgNode(documentRef, "path", {class: "crane-crown", d: "M62 19 Q66 10 72 17 L72 21 Q67 18 62 22Z"}),
+    svgNode(documentRef, "path", {class: "crane-beak", d: "M74 22 L89 26 L74 28Z"}),
+    svgNode(documentRef, "circle", {class: "crane-eye", cx: 70, cy: 23, r: 1.5}),
+    svgNode(documentRef, "path", {class: "crane-legs", d: "M58 75 L64 96 L55 101 M63 71 L71 91 L80 94 M20 104 Q49 98 81 105"}),
   );
   svg.append(bird);
 }
 
 function drawBamboo(svg, documentRef, mark, index, rank) {
   const [x, y] = mark;
-  const red = (rank === 5 && index === 2) || (rank === 7 && index === 3) || (rank === 9 && index === 4);
-  const angle = index % 2 === 0 ? -4 : 4;
-  const group = svgNode(documentRef, "g", {class: `bamboo-stick ${red ? "tone-red" : "tone-green"}`, transform: `translate(${x} ${y}) rotate(${angle})`});
-  for (const offset of [-17, -5, 7]) {
-    group.append(svgNode(documentRef, "rect", {class: "bamboo-segment", x: -4.5, y: offset, width: 9, height: 10.5, rx: 4}));
-  }
+  const red = (rank === 5 && index === 2) || (rank === 7 && index === 0) || (rank === 9 && index === 4);
+  const angle = rank === 8 ? (index % 2 === 0 ? -22 : 22) : 0;
+  const scale = rank <= 3 ? 1.3 : rank === 8 ? .8 : 1;
+  const group = svgNode(documentRef, "g", {class: `bamboo-stick${red ? " bamboo-red" : ""}`, transform: `translate(${x} ${y}) rotate(${angle}) scale(${scale})`});
   group.append(
-    svgNode(documentRef, "path", {class: "bamboo-highlight", d: "M-1 -14 L-1 14"}),
-    svgNode(documentRef, "path", {class: "bamboo-leaf", d: "M4 -12 Q12 -18 12 -7 Q7 -6 4 -2"}),
+    svgNode(documentRef, "path", {class: "bamboo-stem", d: "M-4 -16 Q0 -13 4 -16 L3 -3 L4 0 L3 3 L4 16 Q0 13 -4 16 L-3 3 L-4 0 L-3 -3Z"}),
+    svgNode(documentRef, "path", {class: "bamboo-joints", d: "M-6 -16 Q0 -13 6 -16 M-5 0 Q0 2 5 0 M-6 16 Q0 13 6 16"}),
+    svgNode(documentRef, "path", {class: "bamboo-cut", d: "M-1 -11 L-1 -4 M-1 5 L-1 11"}),
   );
   svg.append(group);
 }
@@ -121,6 +118,7 @@ export function createTileFace(id, documentRef = document) {
   const svg = svgNode(documentRef, "svg", {
     class: `tile-face ${spec.kind}-face`,
     viewBox: "0 0 100 130",
+    width: 100, height: 130,
     preserveAspectRatio: "xMidYMid meet",
     "aria-hidden": "true",
     focusable: "false",

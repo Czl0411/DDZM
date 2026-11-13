@@ -7,6 +7,7 @@ from sqlalchemy import and_, func, or_, select
 
 from .bot_accounts import is_bot_platform_id
 from .club_card_games import PLAYER_LIMITS
+from .game_statistics import completed_group_game_round_counts
 from .schema import (
     BalanceTransactionRecord,
     ClubDirectMessageRecord,
@@ -59,6 +60,8 @@ CLUB_TRANSACTION_LABELS = {
     "zhajinhua_settlement": "炸金花结算",
     "blackjack_buy_in": "21 点入场",
     "blackjack_settlement": "21 点结算",
+    "niuniu_buy_in": "斗牛托管",
+    "niuniu_settlement": "斗牛结算",
 }
 
 
@@ -177,11 +180,23 @@ class ClubRepositoryMixin:
     def _club_active_room_candidate(self, session, player_id: UUID, now: datetime, *, exclude: tuple[str, UUID] | None = None):
         raw = str(player_id)
         candidates = []
+        terminal_cutoff = now - timedelta(hours=6)
+
+        def recent_terminal(value) -> bool:
+            if not value:
+                return False
+            try:
+                settled_at = datetime.fromisoformat(value)
+            except (TypeError, ValueError):
+                return False
+            if settled_at.tzinfo is None:
+                settled_at = settled_at.replace(tzinfo=BEIJING)
+            return settled_at >= terminal_cutoff
 
         def add(game, room, phase, created_at):
             if exclude == (game, room.id):
                 return
-            priority = 1 if phase not in {"waiting", "hand_finished", "finished"} else 0
+            priority = 1 if phase not in {"waiting", "hand_finished", "match_finished", "finished"} else 0
             candidates.append((priority, created_at, game, room, phase))
 
         for room in session.scalars(select(ClubCardRoomRecord).where(
@@ -191,29 +206,49 @@ class ClubRepositoryMixin:
             if raw in room.seats:
                 add(room.game, room, room.phase, room.updated_at)
         for room in session.scalars(select(MahjongRoomRecord).where(
-            MahjongRoomRecord.phase.in_(("waiting", "playing", "reaction", "hand_finished")),
+            MahjongRoomRecord.phase.in_(("waiting", "playing", "reaction", "hand_finished", "match_finished")),
         )):
             self._settle_mahjong_deadline(session, room, now)
-            if room.phase in {"waiting", "playing", "reaction", "hand_finished"} and raw in room.seats:
+            if (
+                (
+                    room.phase in {"waiting", "playing", "reaction"}
+                    or room.phase in {"hand_finished", "match_finished"}
+                    and recent_terminal((room.settlement or {}).get("settled_at"))
+                )
+                and raw in room.seats
+                and raw not in (room.state or {}).get("left_seats", [])
+            ):
                 add("mahjong", room, room.phase, room.created_at)
         for room in session.scalars(select(DoudizhuRoomRecord).where(
-            DoudizhuRoomRecord.phase.in_(("waiting", "bidding", "playing")),
+            DoudizhuRoomRecord.phase.in_(("waiting", "bidding", "playing", "finished")),
         )):
-            if raw in room.seats and (room.phase != "waiting" or room.deadline is None or room.deadline > now):
+            if (
+                raw in room.seats
+                and (room.phase != "waiting" or room.deadline is None or room.deadline > now)
+                and (room.phase != "finished" or recent_terminal((room.settlement or {}).get("settled_at")))
+            ):
                 add("doudizhu", room, room.phase, room.created_at)
         for room in session.scalars(select(DrawguessRoomRecord).where(
-            DrawguessRoomRecord.phase.in_(("waiting", "selecting", "drawing", "revealing")),
+            DrawguessRoomRecord.phase.in_(("waiting", "selecting", "drawing", "revealing", "finished")),
         )):
-            if raw in (room.state or {}).get("seats", []) and (room.phase != "waiting" or room.deadline is None or room.deadline > now):
+            if (
+                raw in (room.state or {}).get("seats", [])
+                and (room.phase != "waiting" or room.deadline is None or room.deadline > now)
+                and (room.phase != "finished" or recent_terminal((room.settlement or {}).get("settled_at")))
+            ):
                 add("drawguess", room, room.phase, room.created_at)
         for room in session.scalars(select(ChessGameRecord).where(
-            ChessGameRecord.status.in_(("waiting", "playing")),
+            ChessGameRecord.status.in_(("waiting", "playing", "finished")),
         )):
             participants = {
                 room.creator_user_id, room.opponent_user_id,
                 room.red_user_id, room.black_user_id,
             }
-            if player_id in participants and (room.status != "waiting" or room.claim_deadline > now):
+            if (
+                player_id in participants
+                and (room.status != "waiting" or room.claim_deadline > now)
+                and (room.status != "finished" or room.finished_at is not None and room.finished_at >= terminal_cutoff)
+            ):
                 add("chess", room, room.status, room.created_at)
         return max(candidates, key=lambda item: (item[0], item[1])) if candidates else None
 
@@ -224,7 +259,7 @@ class ClubRepositoryMixin:
         labels = {
             "mahjong": "摸鱼麻将", "chess": "群聊象棋", "doudizhu": "斗地主",
             "drawguess": "你画我猜", "texas": "德州扑克", "zhajinhua": "炸金花",
-            "blackjack": "21 点",
+            "blackjack": "21 点", "niuniu": "斗牛",
         }
         raise ValueError(f"你已经在{labels[active[2]]}房间，请先离开当前房间")
 
@@ -235,7 +270,7 @@ class ClubRepositoryMixin:
             if active is None:
                 return None
             _, _, game, room, phase = active
-            if game in {"texas", "zhajinhua", "blackjack"}:
+            if game in {"texas", "zhajinhua", "blackjack", "niuniu"}:
                 self._expire_club_card_turn(session, room, now)
                 phase = room.phase
             return {"game": game, "room_id": str(room.id), "phase": phase}
@@ -315,7 +350,7 @@ class ClubRepositoryMixin:
 
             if room is None or phase in {"closed", "cancelled"}:
                 state, label = "dissolved", "已解散"
-            elif phase in {"finished", "match_finished"}:
+            elif phase in {"hand_finished", "finished", "match_finished"}:
                 state, label = "finished", "已结束"
             elif phase == "waiting":
                 state, label = "waiting", "候场"
@@ -394,7 +429,10 @@ class ClubRepositoryMixin:
         totals = {"played": 0, "wins": 0, "losses": 0, "draws": 0}
         games = {
             key: {"played": 0, "wins": 0, "losses": 0, "draws": 0}
-            for key in ("mahjong", "chess", "doudizhu", "drawguess", "texas", "zhajinhua", "blackjack")
+            for key in (
+                "mahjong", "chess", "doudizhu", "drawguess", "texas",
+                "zhajinhua", "blackjack", "niuniu",
+            )
         }
 
         def record(game: str, outcome: str | None) -> None:
@@ -711,44 +749,130 @@ class ClubRepositoryMixin:
                 }
 
     @staticmethod
+    def _club_round_counts(
+        session,
+        day_start: datetime,
+        day_end: datetime,
+    ) -> dict[UUID, int]:
+        counts: dict[UUID, int] = {}
+
+        def add(player_id: UUID, amount: int = 1) -> None:
+            counts[player_id] = counts.get(player_id, 0) + amount
+
+        for round_row, room in session.execute(
+            select(DoudizhuRoundRecord, DoudizhuRoomRecord)
+            .join(
+                DoudizhuRoomRecord,
+                DoudizhuRoomRecord.id == DoudizhuRoundRecord.room_id,
+            )
+            .where(DoudizhuRoomRecord.created_at < day_end)
+        ):
+            state = round_row.state or {}
+            events = state.get("events") or []
+            if state.get("phase") != "finished" or not events:
+                continue
+            try:
+                finished_at = datetime.fromisoformat(events[-1]["at"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if finished_at.tzinfo is None:
+                finished_at = finished_at.replace(tzinfo=BEIJING)
+            if not day_start <= finished_at < day_end:
+                continue
+            for raw_id in room.seats:
+                if raw_id:
+                    add(UUID(raw_id))
+        for room in session.scalars(select(DrawguessRoomRecord).where(
+            DrawguessRoomRecord.created_at < day_end,
+        )):
+            completed = 0
+            for raw_timestamp in (room.state or {}).get("completed_turns_ms", []):
+                try:
+                    finished_at = datetime.fromtimestamp(
+                        float(raw_timestamp) / 1000, tz=BEIJING
+                    )
+                except (OSError, OverflowError, TypeError, ValueError):
+                    continue
+                if day_start <= finished_at < day_end:
+                    completed += 1
+            for raw_id in (room.state or {}).get("seats", []):
+                if raw_id:
+                    add(UUID(raw_id), completed)
+        for room in session.scalars(select(MahjongRoomRecord).where(
+            MahjongRoomRecord.created_at < day_end,
+        )):
+            completed = 0
+            for result in (room.state or {}).get("history", []):
+                try:
+                    finished_at = datetime.fromisoformat(result["at"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if finished_at.tzinfo is None:
+                    finished_at = finished_at.replace(tzinfo=BEIJING)
+                if day_start <= finished_at < day_end:
+                    completed += 1
+            for raw_id in room.seats:
+                if raw_id:
+                    add(UUID(raw_id), completed)
+
+        card_hands: dict[tuple[UUID, UUID], int] = {}
+        for hand in session.scalars(select(ClubCardHandRecord).where(
+            ClubCardHandRecord.created_at >= day_start,
+            ClubCardHandRecord.created_at < day_end,
+        )):
+            for raw_id in hand.players:
+                key = (hand.room_id, UUID(raw_id))
+                card_hands[key] = card_hands.get(key, 0) + 1
+        for (_, player_id), completed in card_hands.items():
+            add(player_id, completed)
+
+        chess_rounds: dict[UUID, int] = {}
+        for game in session.scalars(select(ChessGameRecord).where(
+            ChessGameRecord.status == "finished",
+            ChessGameRecord.finished_at >= day_start,
+            ChessGameRecord.finished_at < day_end,
+        )):
+            for player_id in (game.red_user_id, game.black_user_id):
+                if player_id is not None:
+                    chess_rounds[player_id] = chess_rounds.get(player_id, 0) + 1
+        for player_id, completed in chess_rounds.items():
+            add(player_id, completed)
+        return counts
+
+    @classmethod
+    def _club_five_round_player_ids(
+        cls,
+        session,
+        day_start: datetime,
+        day_end: datetime,
+    ) -> set[UUID]:
+        club_counts = cls._club_round_counts(session, day_start, day_end)
+        group_counts = completed_group_game_round_counts(
+            session, day_start, day_end
+        )
+        qualified = {
+            player_id for player_id, completed in club_counts.items()
+            if completed >= 5
+        }
+        if group_counts:
+            for player in session.scalars(select(ClubPlayerRecord).where(
+                ClubPlayerRecord.user_id.in_(group_counts),
+            )):
+                if club_counts.get(player.id, 0) + group_counts[player.user_id] >= 5:
+                    qualified.add(player.id)
+        return qualified
+
+    @classmethod
     def _club_five_rounds(
+        cls,
         session,
         player: ClubPlayerRecord,
         day_start: datetime,
         day_end: datetime,
     ) -> bool:
-        raw_id = str(player.id)
-        for room in session.scalars(select(DoudizhuRoomRecord).where(
-            DoudizhuRoomRecord.created_at >= day_start,
-            DoudizhuRoomRecord.created_at < day_end,
-        )):
-            if raw_id not in room.seats:
-                continue
-            completed = sum(
-                (round_row.state or {}).get("phase") == "finished"
-                for round_row in session.scalars(select(DoudizhuRoundRecord).where(
-                    DoudizhuRoundRecord.room_id == room.id,
-                ))
-            )
-            if completed >= 5:
-                return True
-        for room in session.scalars(select(DrawguessRoomRecord).where(
-            DrawguessRoomRecord.created_at >= day_start,
-            DrawguessRoomRecord.created_at < day_end,
-        )):
-            state = room.state or {}
-            if raw_id in state.get("seats", []) and int(state.get("turn_index", 0)) >= 5:
-                return True
-        for room in session.scalars(select(MahjongRoomRecord).where(
-            MahjongRoomRecord.created_at >= day_start,
-            MahjongRoomRecord.created_at < day_end,
-        )):
-            state = room.state or {}
-            completed_hands = max(0, int(state.get("round_wind", 27)) - 27) * 4
-            completed_hands += max(0, int(state.get("hand_number", 1)) - 1)
-            if raw_id in room.seats and completed_hands >= 5:
-                return True
-        return False
+        return player.id in cls._club_five_round_player_ids(
+            session, day_start, day_end
+        )
 
     def _club_task_eligibility(
         self,

@@ -637,7 +637,7 @@ function renderTexasHoldemSettings(settings) {
 const clubEconomyGameNames = {
   mahjong: "摸鱼麻将", chess: "群聊象棋", doudizhu: "斗地主",
   drawguess: "你画我猜", texas: "德州扑克", zhajinhua: "炸金花",
-  blackjack: "21 点",
+  blackjack: "21 点", niuniu: "斗牛",
 };
 
 function renderClubEconomySettings(items) {
@@ -1989,9 +1989,9 @@ function updateCustomCommandFields() {
   document.querySelector("#custom-command-content-label").hidden = image;
   document.querySelector("#custom-command-image-fields").hidden = !image;
   customCommandContent.placeholder = customCommandType.value === "group_invite"
-    ? "https://www.ivorune.xyz/invite/邀请码"
+    ? "https://www.aikda.com/invite/邀请码"
     : customCommandType.value === "novel"
-      ? "https://www.ivorune.xyz/novel/小说UUID"
+      ? "https://www.aikda.com/novel/小说UUID"
       : customCommandType.value === "character"
         ? "https://www.aikda.com/chat?card=游戏ID"
         : "固定回复内容";
@@ -2009,9 +2009,9 @@ function openCustomCommandModal(command = null) {
   customCommandEnabled.checked = command?.enabled ?? true;
   customCommandType.value = command?.reply_type || "text";
   customCommandContent.value = command?.reply_type === "group_invite"
-    ? `https://www.ivorune.xyz/invite/${command.reply_value}`
+    ? `https://www.aikda.com/invite/${command.reply_value}`
     : command?.reply_type === "novel"
-      ? `https://www.ivorune.xyz/novel/${command.reply_value}`
+      ? `https://www.aikda.com/novel/${command.reply_value}`
       : command?.reply_type === "character"
         ? `https://www.aikda.com/chat?card=${command.reply_value}`
         : command?.reply_type === "text" ? command.reply_value : "";

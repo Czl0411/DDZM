@@ -8,7 +8,8 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
-from .mahjong_state import action_options, apply_action, apply_timeout, new_match
+from .mahjong_hints import hand_hints
+from .mahjong_state import action_options, advance_after_result, apply_action, apply_timeout, is_current_reaction, new_match
 from .schema import (
     ClubPlayerRecord,
     GroupChatRecord,
@@ -19,6 +20,12 @@ from .schema import (
     OutboundRecord,
     UserRecord,
 )
+
+
+def mahjong_coins(points: int, stake: int) -> int:
+    """Round each positive payment up, without floating-point currency."""
+    return (points * stake + 1999) // 2000
+
 
 class MahjongRateLimitError(ValueError):
     pass
@@ -200,7 +207,8 @@ class MahjongRepositoryMixin:
             "room_type": room.room_type,
             "match_mode": room.match_mode,
             "buy_in": room.stake,
-            "prizes": [room.stake * 4, 0, 0, 0] if room.room_type == "coin" else [0, 0, 0, 0],
+            "prizes": [0, 0, 0, 0],
+            "coin_rate": {"points": 2000, "coins": room.stake, "rounding": "ceil"},
             "phase": room.phase,
             "version": room.version,
             "seat": seat,
@@ -227,17 +235,22 @@ class MahjongRepositoryMixin:
         }
         public.update(
             remaining=len(state["wall"]) - state.get("live_trim", 0),
-            dora_indicators=[state["dead_wall"][index] for index in (4, 6, 8, 10, 12)[: state["kan_count"] + 1]],
+            dora_indicators=[state["dead_wall"][index] for index in (4, 6, 8, 10, 12)[: state["kan_count"] + 1] if index < len(state["dead_wall"])],
             hand=list(state["hands"][seat]) if seat is not None else [],
             hand_counts=[len(hand) for hand in state["hands"]],
             actions=action_options(state, seat) if seat is not None else {},
         )
+        public["hints"] = hand_hints(state, seat, public["actions"])
+        if state["phase"] == "reaction":
+            pending = state.get("pending") or {}
+            public["reaction_version"] = pending.get("version")
+            public["reaction_action"] = pending.get("decisions", {}).get(str(seat), {}).get("action")
         if state["phase"] in {"hand_finished", "match_finished"}:
             last_result = state.get("history", [])[-1] if state.get("history") else state.get("result")
             public["last_hand_result"] = last_result
             public["winning_hands"] = {
                 str(winner): list(state["hands"][winner])
-                for winner in (last_result or {}).get("winners", [])
+                for winner in (last_result or {}).get("winners", []) if not (last_result or {}).get("tiles_unavailable")
             }
         view["game"] = public
         return view
@@ -249,7 +262,10 @@ class MahjongRepositoryMixin:
             room.deadline = None
             room.version += 1
             return
-        if room.state is None or room.phase not in {"playing", "reaction", "hand_finished"}:
+        if room.state is None or room.phase not in {"playing", "reaction", "hand_finished", "match_finished"}:
+            return
+        if room.phase in {"hand_finished", "match_finished"}:
+            self._settle_mahjong_match(session, room, now)
             return
         updated = apply_timeout(room.state, now, self._mahjong_wall)
         if updated != room.state:
@@ -257,7 +273,7 @@ class MahjongRepositoryMixin:
             room.version = updated["version"]
             room.phase = updated["phase"]
             room.deadline = datetime.fromisoformat(updated["deadline"]) if updated.get("deadline") else None
-            if room.phase == "match_finished":
+            if room.phase in {"hand_finished", "match_finished"}:
                 self._settle_mahjong_match(session, room, now)
 
     def mahjong_view(self, room_id: UUID, platform_id: str, now: datetime) -> dict:
@@ -274,7 +290,7 @@ class MahjongRepositoryMixin:
                 user = self._club_player(session, platform_id, now)
                 rooms = session.scalars(
                     select(Room)
-                    .where(Room.phase.in_(("waiting", "playing", "reaction", "hand_finished")))
+                    .where(Room.phase.in_(("waiting", "playing", "reaction")))
                     .order_by(Room.created_at.desc())
                     .limit(100)
                     .with_for_update()
@@ -282,7 +298,7 @@ class MahjongRepositoryMixin:
                 result = []
                 for room in rooms:
                     self._settle_mahjong_deadline(session, room, now)
-                    if room.phase not in {"waiting", "playing", "reaction", "hand_finished"} or not self._mahjong_announced(session, room):
+                    if room.phase not in {"waiting", "playing", "reaction"} or not self._mahjong_announced(session, room):
                         continue
                     players = self._mahjong_names(session, room.seats)
                     creator = session.get(ClubPlayerRecord, room.creator_id)
@@ -334,11 +350,12 @@ class MahjongRepositoryMixin:
                 previous = self._receipt(session, room, user, request_id, digest)
                 if previous is not None:
                     return self._mahjong_view(session, room, user, now)
-                if version != room.version:
+                state_payload = {**payload, "version": version}
+                if version != room.version and not is_current_reaction(room.state or {}, state_payload):
                     raise ValueError("房间已更新，请刷新")
                 if room.phase == "waiting":
                     self._mahjong_waiting_action(session, room, user, action, payload, now)
-                elif room.phase == "match_finished":
+                elif room.phase in {"hand_finished", "match_finished"}:
                     raw_user = str(user.id)
                     if raw_user not in room.seats:
                         raise ValueError("观众不能操作席位")
@@ -347,12 +364,35 @@ class MahjongRepositoryMixin:
                         ready = list(room.ready)
                         ready[seat] = action == "ready"
                         room.ready = ready
+                        if action == "ready":
+                            self._ensure_club_player_available(session, user.id, now, exclude=("mahjong", room.id))
+                            room.state = {
+                                **room.state,
+                                "left_seats": [value for value in room.state.get("left_seats", []) if value != raw_user],
+                            }
+                        room.version += 1
+                    elif action == "leave":
+                        ready = list(room.ready)
+                        ready[seat] = False
+                        room.ready = ready
+                        room.state = {
+                            **room.state,
+                            "left_seats": list(set([*room.state.get("left_seats", []), raw_user])),
+                        }
+                        room.phase = "cancelled"
+                        room.deadline = None
                         room.version += 1
                     elif action == "start":
                         if seat != 0:
                             raise ValueError("只有房主可以开始下一场")
-                        if not all(room.ready):
+                        if not all(room.ready) or room.state.get("left_seats"):
                             raise ValueError("请等待所有玩家准备")
+                        if any(
+                            not room.presence.get(str(index))
+                            or (now - datetime.fromisoformat(room.presence[str(index)])).total_seconds() >= 30
+                            for index in range(4)
+                        ):
+                            raise ValueError("请等待四位玩家全部在线后开始")
                         if room.room_type == "coin":
                             accounts = []
                             for raw_player_id in room.seats:
@@ -366,7 +406,9 @@ class MahjongRepositoryMixin:
                                     account, -room.stake, "mahjong_buy_in", now,
                                     memo=f"麻将房间 {room.short_id} 续场托管",
                                 )
-                        state = new_match(self._mahjong_wall(), now, mode=room.match_mode)
+                        state = advance_after_result(room.state, self._mahjong_wall(), now) if room.phase == "hand_finished" else room.state
+                        if state["phase"] == "match_finished":
+                            state = new_match(self._mahjong_wall(), now, mode=room.match_mode)
                         state["version"] = room.version + 1
                         state["rake_percent"] = (
                             self.get_club_game_economy_settings("mahjong").rake_percent
@@ -381,17 +423,38 @@ class MahjongRepositoryMixin:
                         room.settled, room.settlement = False, None
                     else:
                         raise ValueError("终局结算不支持该操作")
-                elif room.phase in {"playing", "reaction", "hand_finished"}:
+                elif room.phase in {"playing", "reaction"}:
                     if action == "leave":
                         raise ValueError("牌局进行中不能离席，断线后将自动摸切")
                     if room.state is None:
                         raise RuntimeError("麻将状态缺失")
-                    state_payload = {**payload, "version": version}
-                    room.state = apply_action(room.state, room.seats.index(str(user.id)), action, state_payload, now)
+                    previous = room.state
+                    room.state = apply_action(previous, room.seats.index(str(user.id)), action, state_payload, now)
+                    if room.room_type == "coin":
+                        for index in range(4):
+                            if room.state["riichi"][index] and not previous["riichi"][index]:
+                                player = session.get(ClubPlayerRecord, UUID(room.seats[index]))
+                                account = self._mahjong_account(session, player, lock=True)
+                                coins = mahjong_coins(1000, room.stake)
+                                self._apply_balance_change(
+                                    account,
+                                    -coins,
+                                    "mahjong_riichi",
+                                    now,
+                                    memo=f"麻将房间 {room.short_id} 立直棒 1000点",
+                                )
+                                state = deepcopy_value(room.state)
+                                state["coin_riichi_deposits"] = [
+                                    *state.get("coin_riichi_deposits", []),
+                                    {"seat": index, "coins": coins},
+                                ]
+                                paid = state.setdefault("hand_riichi_paid", [0, 0, 0, 0])
+                                paid[index] += coins
+                                room.state = state
                     room.version = room.state["version"]
                     room.phase = room.state["phase"]
                     room.deadline = datetime.fromisoformat(room.state["deadline"]) if room.state.get("deadline") else None
-                    if room.phase == "match_finished":
+                    if room.phase in {"hand_finished", "match_finished"}:
                         self._settle_mahjong_match(session, room, now)
                 else:
                     raise ValueError("房间已经结束")
@@ -483,51 +546,133 @@ class MahjongRepositoryMixin:
         room.ready = [False, False, False, False]
 
     def _settle_mahjong_match(self, session, room: Room, now: datetime) -> None:
-        if room.settled or room.state is None or room.state["phase"] != "match_finished":
+        if room.settled or room.state is None or room.state["phase"] not in {"hand_finished", "match_finished"}:
             return
-        order = room.state["result"]["order"]
-        payouts = [0, 0, 0, 0]
-        gross_payouts = [0, 0, 0, 0]
-        rake_percent = 0
+        state = deepcopy_value(room.state)
+        last = state.get("history", [])[-1] if state.get("history") else state["result"]
+        winners = list(last.get("winners", []))
+        payments = deepcopy_value(last.get("payments", []))
+        # Older saved single-winner hands have deltas but no payment breakdown.
+        if "payments" not in last and len(winners) == 1:
+            payments = [
+                {"from": seat, "to": winners[0], "points": -amount}
+                for seat, amount in enumerate(last.get("deltas", []))
+                if amount < 0
+            ]
+        elif "payments" not in last and last.get("tenpai") and len(last["tenpai"]) < 4:
+            tenpai = last["tenpai"]
+            payments = [
+                {
+                    "from": seat,
+                    "to": winner,
+                    "points": 3000 // (4 - len(tenpai)) // len(tenpai),
+                }
+                for seat in range(4)
+                if seat not in tenpai
+                for winner in tenpai
+            ]
+        transfers = []
+        transfer_net = [0, 0, 0, 0]
+        refunded = [0, 0, 0, 0]
+        riichi_paid = list(state.get("hand_riichi_paid", [0, 0, 0, 0]))
+        riichi_award = 0
+        riichi_recipient = (
+            winners[0]
+            if winners and state["riichi_sticks"] == 0
+            else state["result"].get("riichi_recipient")
+        )
+        rake_percent = int(state.get("rake_percent", 0)) if room.room_type == "coin" else 0
         rake_amount = 0
-        top_score = max(room.state["points"])
-        winner_seats = [seat for seat in order if room.state["points"][seat] == top_score]
+        rake_deductions = [0, 0, 0, 0]
         if room.room_type == "coin":
             if not all(room.escrowed):
-                raise RuntimeError("麻将奖池托管不完整")
-            pot = room.stake * 4
-            rake_percent = int(room.state.get("rake_percent", 0))
-            rake_amount = pot * rake_percent // 100
-            net_pot = pot - rake_amount
-            for winner_index, seat in enumerate(winner_seats):
+                raise RuntimeError("麻将入场托管不完整")
+            for payment in payments:
+                coins = mahjong_coins(payment["points"], room.stake)
+                transfers.append({**payment, "coins": coins})
+                transfer_net[payment["from"]] -= coins
+                transfer_net[payment["to"]] += coins
+            # Award the coins actually deposited, not a newly rounded aggregate.
+            if riichi_recipient is not None:
+                riichi_award = sum(item["coins"] for item in state.get("coin_riichi_deposits", []))
+                transfer_net[riichi_recipient] += riichi_award
+                state["coin_riichi_deposits"] = []
+
+            gross_net = [transfer_net[seat] - riichi_paid[seat] for seat in range(4)]
+            positive_net = [max(0, amount) for amount in gross_net]
+            total_positive = sum(positive_net)
+            rake_amount = total_positive * rake_percent // 100
+            if rake_amount and total_positive:
+                rake_deductions = [rake_amount * amount // total_positive for amount in positive_net]
+                remaining = rake_amount - sum(rake_deductions)
+                order = sorted(
+                    range(4),
+                    key=lambda seat: (
+                        -(rake_amount * positive_net[seat] % total_positive),
+                        seat,
+                    ),
+                )
+                for seat in order[:remaining]:
+                    rake_deductions[seat] += 1
+
+            settlement_net = [
+                transfer_net[seat] - rake_deductions[seat]
+                for seat in range(4)
+            ]
+            for seat in range(4):
                 player = session.get(ClubPlayerRecord, UUID(room.seats[seat]))
-                user = session.get(UserRecord, player.user_id, with_for_update=True) if player and player.user_id else None
-                if user is None:
-                    raise RuntimeError("麻将结算玩家不存在")
-                gross_payouts[seat] = pot // len(winner_seats) + (
-                    1 if winner_index < pot % len(winner_seats) else 0
-                )
-                payout = net_pot // len(winner_seats) + (
-                    1 if winner_index < net_pot % len(winner_seats) else 0
-                )
-                payouts[seat] = payout
+                user = self._mahjong_account(session, player, lock=True)
                 self._apply_balance_change(
-                    user, payout, "mahjong_settlement", now,
-                    memo=f"麻将房间 {room.short_id} 胜方结算",
+                    user,
+                    room.stake,
+                    "mahjong_refund",
+                    now,
+                    memo=f"麻将房间 {room.short_id} 本局托管退回",
                 )
+                refunded[seat] = room.stake
+                self._apply_balance_change(
+                    user,
+                    settlement_net[seat],
+                    "mahjong_settlement",
+                    now,
+                    memo=(
+                        f"麻将房间 {room.short_id} 第{len(state.get('history', [])) or 1}局 "
+                        f"{last['kind']} 每2000点={room.stake}币，逐笔向上取整，抽水{rake_percent}%"
+                    ),
+                )
+        else:
+            gross_net = [0, 0, 0, 0]
+
+        hand_net = [gross_net[seat] - rake_deductions[seat] for seat in range(4)]
         room.escrowed = [False, False, False, False]
+        room.ready = [False, False, False, False]
         room.settled = True
         room.settlement = {
-            "order": order,
-            "payouts": payouts,
-            "gross_payouts": gross_payouts,
+            "order": sorted(range(4), key=lambda seat: (-state["points"][seat], seat)),
+            "points": list(state["points"]),
+            "winner_seats": winners,
+            "outcomes": [
+                "win" if seat in winners else "loss" if hand_net[seat] < 0 else "draw"
+                for seat in range(4)
+            ],
+            "kind": last["kind"],
+            "buy_in": room.stake,
+            "gross_net": gross_net,
+            "net": hand_net,
+            "refunds": refunded,
+            "transfers": transfers,
+            "riichi_paid": riichi_paid,
+            "riichi_award": riichi_award,
+            "riichi_recipient": riichi_recipient if riichi_award else None,
+            "riichi_carried": sum(item["coins"] for item in state.get("coin_riichi_deposits", [])),
             "rake_percent": rake_percent,
             "rake_amount": rake_amount,
-            "points": room.state["points"],
-            "winner_seats": winner_seats,
-            "outcomes": ["win" if seat in winner_seats else "loss" for seat in range(4)],
+            "settled_at": now.isoformat(),
+            "hand_result": deepcopy_value(last),
         }
-        room.phase = "match_finished"
+        state["deadline"] = None
+        room.state = state
+        room.phase = state["phase"]
         room.deadline = None
 
     def mahjong_chat(self, room_id: UUID, platform_id: str, request_id: UUID, content: str, now: datetime) -> dict:

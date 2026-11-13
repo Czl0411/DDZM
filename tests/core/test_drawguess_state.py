@@ -94,6 +94,21 @@ def test_selection_and_drawing_timeouts_do_not_pause():
     assert state["deadline_ms"] == 111_000
 
 
+def test_completed_turn_records_its_deadline_timestamp():
+    state = ready_lobby(3)
+    state = act(state, "p0", "start", now=1_000, candidates=IDS[:3])
+    state = act(
+        state, "p0", "choose", {"word_id": IDS[0]}, now=2_000,
+        candidates=IDS[:3],
+    )
+    state = advance(state, state["deadline_ms"], IDS[3:6])
+    completed_at = state["deadline_ms"]
+    state = advance(state, completed_at + 30_000, IDS[3:6])
+
+    assert state["turn_index"] == 1
+    assert state["completed_turns_ms"] == [completed_at]
+
+
 def test_guess_permissions_scoring_and_early_reveal():
     state = ready_lobby(3)
     state = act(state, "p0", "start", now=0, candidates=IDS[:3])

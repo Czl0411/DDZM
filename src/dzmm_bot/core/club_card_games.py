@@ -9,8 +9,8 @@ from random import Random
 from .texas_holdem import Card, evaluate_best_five
 
 
-GAMES = {"texas", "zhajinhua", "blackjack"}
-PLAYER_LIMITS = {"texas": (2, 8), "zhajinhua": (2, 6), "blackjack": (2, 5)}
+GAMES = {"texas", "zhajinhua", "blackjack", "niuniu"}
+PLAYER_LIMITS = {"texas": (2, 8), "zhajinhua": (2, 6), "blackjack": (2, 5), "niuniu": (2, 6)}
 SUITS = ("clubs", "diamonds", "hearts", "spades")
 
 
@@ -46,7 +46,7 @@ def _award_single(state: dict, winner: str, label: str) -> dict:
     return state
 
 
-def new_hand(game: str, players: list[str], stake: int, rng: Random) -> dict:
+def new_hand(game: str, players: list[str], stake: int, rng: Random, *, banker: str | None = None) -> dict:
     if game not in GAMES:
         raise ValueError("不支持的游戏")
     minimum, maximum = PLAYER_LIMITS[game]
@@ -56,21 +56,42 @@ def new_hand(game: str, players: list[str], stake: int, rng: Random) -> dict:
         return _new_texas(players, stake, rng)
     if game == "zhajinhua":
         return _new_zhajinhua(players, stake, rng)
+    if game == "niuniu":
+        return _new_niuniu(players, stake, rng, banker)
     return _new_blackjack(players, stake, rng)
 
 
 def apply_action(game: str, state: dict, player: str, action: str, payload: dict) -> dict:
     if state.get("phase") != "playing":
         raise ValueError("当前牌局不能操作")
-    if player != state.get("turn"):
+    if player not in state.get("players", []):
+        raise ValueError("你不在这个牌桌")
+    if game != "niuniu" and player != state.get("turn"):
         raise ValueError("还没轮到你")
+    contribution = state.get("contributions", {}).get(player, 0)
     if game == "texas":
-        return _texas_action(state, player, action, payload)
-    if game == "zhajinhua":
-        return _zhajinhua_action(state, player, action, payload)
-    if game == "blackjack":
-        return _blackjack_action(state, player, action)
-    raise ValueError("不支持的游戏")
+        value = _texas_action(state, player, action, payload)
+    elif game == "zhajinhua":
+        value = _zhajinhua_action(state, player, action, payload)
+    elif game == "niuniu":
+        value = _niuniu_action(state, player, action, payload)
+    elif game == "blackjack":
+        value = _blackjack_action(state, player, action)
+    else:
+        raise ValueError("不支持的游戏")
+    history = value.get("action_history", [])
+    event = {
+        "sequence": history[-1]["sequence"] + 1 if history else 1,
+        "player": player,
+        "action": action,
+        "paid": value.get("contributions", {}).get(player, 0) - contribution,
+    }
+    if game == "texas" and action == "raise":
+        event["amount"] = int(payload["amount"])
+    if action == "compare":
+        event["target"] = str(payload["target"])
+    value["action_history"] = [*history[-49:], event]
+    return value
 
 
 def public_view(game: str, state: dict, viewer: str) -> dict:
@@ -83,10 +104,15 @@ def public_view(game: str, state: dict, viewer: str) -> dict:
         }
     else:
         reveal = set(hands) if state.get("phase") == "hand_finished" else set()
+        if game == "niuniu":
+            reveal.update(state.get("revealed", []))
+        can_see_own = game != "zhajinhua" or viewer in state.get("seen", [])
         value["hands"] = {
-            player: cards if player == viewer or player in reveal else [None] * len(cards)
+            player: cards if (player == viewer and can_see_own) or player in reveal else [None] * len(cards)
             for player, cards in hands.items()
         }
+    if game == "niuniu" and viewer in hands:
+        value["own_evaluation"] = evaluate_niuniu(hands[viewer])
     return value
 
 
@@ -348,4 +374,79 @@ def _finish_blackjack(state: dict) -> dict:
         label = f"最高 {best} 点"
     state.update(phase="hand_finished", turn=None, payouts=payouts, results=results,
                  winners=winners, totals=totals, result_label=label)
+    return state
+
+
+# A counts as one in both the bull sum and classic single-card comparison.
+def evaluate_niuniu(cards: list) -> dict:
+    if len(cards) != 5 or len({tuple(card) for card in cards}) != 5:
+        raise ValueError("斗牛必须为五张不同的牌")
+    if any(suit not in SUITS or type(rank) is not int or not 2 <= rank <= 14 for suit, rank in cards):
+        raise ValueError("无效扑克牌")
+    points = [1 if rank == 14 else min(rank, 10) for _, rank in cards]
+    group = next((list(indices) for indices in combinations(range(5), 3)
+                  if sum(points[i] for i in indices) % 10 == 0), [])
+    bull = (sum(points) % 10 or 10) if group else 0
+    high = max((1 if rank == 14 else rank, ("diamonds", "clubs", "hearts", "spades").index(suit))
+               for suit, rank in cards)
+    return {"bull": bull, "label": "无牛" if not bull else "牛牛" if bull == 10 else f"牛{'一二三四五六七八九'[bull - 1]}",
+            "multiplier": 3 if bull == 10 else 2 if bull >= 7 else 1,
+            "group": group, "rank": [bull, *high]}
+
+
+def niuniu_reserves(players: list[str], stake: int, banker: str) -> dict:
+    return {player: stake * 3 * (len(players) - 1 if player == banker else 1) for player in players}
+
+
+def _new_niuniu(players: list[str], stake: int, rng: Random, banker: str | None) -> dict:
+    banker = banker if banker in players else rng.choice(players)
+    cards = deck(rng)
+    return {"phase": "playing", "game": "niuniu", "players": players,
+            "hands": {player: [cards.pop() for _ in range(5)] for player in players},
+            "deck": cards, "turn": None, "banker": banker, "base": stake or 1,
+            "buy_ins": niuniu_reserves(players, stake, banker), "revealed": [],
+            "evaluations": {}, "last_action": "同时配牛，30秒后自动亮牌"}
+
+
+def _niuniu_action(state: dict, player: str, action: str, payload: dict) -> dict:
+    if action != "reveal":
+        raise ValueError("请选择配牛并亮牌")
+    if player in state["revealed"]:
+        raise ValueError("你已亮牌")
+    evaluation = evaluate_niuniu(state["hands"][player])
+    group = payload.get("cards")
+    if group is not None:
+        if (not isinstance(group, list) or len(group) != 3
+                or any(type(i) is not int or not 0 <= i < 5 for i in group) or len(set(group)) != 3):
+            raise ValueError("请选择三张不同的手牌")
+        points = [1 if state["hands"][player][i][1] == 14 else min(state["hands"][player][i][1], 10) for i in group]
+        if sum(points) % 10:
+            raise ValueError("三张牌点数之和须为10的倍数，可使用自动配牛")
+        evaluation["group"] = group
+    state["revealed"].append(player)
+    state["evaluations"][player] = evaluation
+    state["last_action"] = "玩家已亮牌"
+    if len(state["revealed"]) != len(state["players"]):
+        return state
+    banker = state["banker"]
+    ranks = state["evaluations"]
+    net = {p: 0 for p in state["players"]}
+    payments, successors = [], []
+    for other in state["players"]:
+        if other == banker:
+            continue
+        winner, loser = (other, banker) if ranks[other]["rank"] > ranks[banker]["rank"] else (banker, other)
+        multiplier = ranks[winner]["multiplier"]
+        amount = state["base"] * multiplier
+        net[winner] += amount
+        net[loser] -= amount
+        payments.append({"payer": loser, "payee": winner, "base": state["base"], "multiplier": multiplier, "amount": amount})
+        if winner == other and ranks[other]["bull"] == 10:
+            successors.append(other)
+    state.update(phase="hand_finished", net=net, payments=payments,
+                 next_banker=max(successors, key=lambda p: ranks[p]["rank"]) if successors else banker,
+                 winners=[p for p in net if net[p] > 0],
+                 hand_ranks={p: value["label"] for p, value in ranks.items()},
+                 payouts={p: state["buy_ins"][p] + net[p] if state["buy_ins"][p] else 0 for p in net},
+                 result_label="庄闲比牌 · 本局已结算")
     return state

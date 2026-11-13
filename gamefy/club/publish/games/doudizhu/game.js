@@ -30,7 +30,10 @@ function player(i){
   const name=document.createElement('strong');name.textContent=p?p.name:'等待入座';el.append(name);
   const info=document.createElement('small');
   info.textContent=!p?'空席位':state.phase==='waiting'?(p.ready?'已准备':'未准备'):`${state.landlord===null?'待定':state.landlord===i?'地主':'农民'} · 剩 ${p.count} 张${p.count<=2?'！':''}${p.trustee?' · 托管':''}${p.online?' · 在线':' · 离线'}`;
-  el.append(info);return el;
+  el.append(info);
+  const event=state.events?.findLast(item=>item.seat===i);
+  if(event){const action=document.createElement('span');action.className='play-action';action.textContent=event.play?kinds[event.play.kind]||'出牌':event.kind==='pass'?'不出':event.kind==='bid'?`叫分 ${event.score??''}`:'';if(action.textContent)el.append(action);}
+  return el;
 }
 function paintHand(){
   const key=JSON.stringify([state.hand,[...selected]]);if(key===handKey)return;handKey=key;
@@ -46,9 +49,9 @@ function render(next,error){
   if(!next||next.id!==roomId)return;
   if(state?.round_id!==next.round_id){selected.clear();hintIndex=0;}
   if(state&&next.round_id===state.round_id&&next.version<state.version)return;
-  state=next;clockOffset=Date.parse(next.server_time)-Date.now();
+  const previous=state; state=next;clockOffset=Date.parse(next.server_time)-Date.now();
   const rakeText=state.room_type==='coin'?`抽水 ${state.settlement?.rake_percent??state.rake_percent??0}%`:'休闲局不抽水';
-  window.MoyuClubRuntime?.setRoomContext?.({game:'doudizhu',roomId,host:state.creator_name||state.players[0]?.name||'玩家'});
+  window.MoyuClubRuntime?.setRoomContext?.({game:'doudizhu',phase:state.phase,roomId,host:state.creator_name||state.players[0]?.name||'玩家'});
   selected=new Set([...selected].filter(c=>state.hand.includes(c)));
   document.body.classList.add('table-open');$('lobby').hidden=true;$('table').hidden=false;
   text('room-label',`${state.creator_name||'玩家'}的房间`);text('multiplier',`× ${state.multiplier}`);
@@ -56,7 +59,10 @@ function render(next,error){
   $('opponents').replaceChildren(...others.map(player));$('self').replaceChildren(...(self===null?[]:[player(self)]));
   $('bottom').replaceChildren(...(state.bottom.length?state.bottom.map(id=>cardElement(id,true)):Array.from({length:3},()=>{const el=document.createElement('span');el.className='card small back';el.setAttribute('aria-label','未公开底牌');return el;})));
   text('phase-label',`${phases[state.phase]}${['bidding','playing'].includes(state.phase)?` · ${rakeText}`:''}`);tick();
-  $('plays').replaceChildren(...state.table.map((p,i)=>{const el=document.createElement('div');el.className='play';const name=document.createElement('small');name.textContent=state.players[i]?.name||'';el.append(name);if(!p)return el;if(p.kind==='pass'){const value=document.createElement('span');value.className='play-pass';value.textContent='不出';el.append(value);return el;}const cards=document.createElement('div');cards.className='played-cards';cards.style.setProperty('--played-count',String(p.cards.length));cards.setAttribute('aria-label',kinds[p.kind]);cards.replaceChildren(...p.cards.map(id=>cardElement(id,true)));el.append(cards);return el;}));
+  $('plays').replaceChildren(...state.table.map((p,i)=>{const el=document.createElement('div');el.className='play';if(state.events?.at(-1)?.seat===i)el.classList.add('latest-play');const name=document.createElement('small');name.textContent=state.players[i]?.name||'';el.append(name);if(!p)return el;if(p.kind==='pass'){const value=document.createElement('span');value.className='play-pass';value.textContent='不出';el.append(value);return el;}const cards=document.createElement('div');cards.className='played-cards';cards.style.setProperty('--played-count',String(p.cards.length));cards.setAttribute('aria-label',kinds[p.kind]);cards.replaceChildren(...p.cards.map(id=>cardElement(id,true)));el.append(cards);return el;}));
+  if(previous?.round_id===state.round_id && next.version===previous.version+1 && !matchMedia('(prefers-reduced-motion: reduce)').matches){
+    state.table.forEach((play,index)=>{if(JSON.stringify(play)!==JSON.stringify(previous.table[index])&&play){$('plays').children[index]?.animate([{opacity:.3,transform:'translateY(-8px)'},{opacity:1,transform:'translateY(0)'}],{duration:280});}});
+  }
   const key=JSON.stringify([state.phase,state.seat,state.version]);
   if(key!==controlsKey){
     controlsKey=key;hintIndex=0;$('actions').replaceChildren();
@@ -67,12 +73,12 @@ function render(next,error){
     if(self!==null&&state.phase==='finished'){
       const ready=state.players[self].ready;
       $('actions').append(button(ready?'取消准备':'准备下一局',ready?'unready':'ready'));
-      const leave=document.createElement('button');leave.textContent='退出房间';leave.className='quiet';leave.onclick=()=>lobby();$('actions').append(leave);
+      const leave=document.createElement('button');leave.textContent='退出房间';leave.className='quiet';leave.onclick=leaveFinishedRoom;$('actions').append(leave);
       if(state.is_host){const start=button('开始下一局','start');const readyCount=state.players.filter(player=>player?.ready).length;start.disabled=readyCount!==3;start.textContent=start.disabled?`等待准备 ${readyCount}/3`:'开始下一局';$('actions').append(start);}
     }
   }
   const myTurn=self!==null&&state.phase==='playing'&&state.turn===self;
-  $('play-actions').hidden=!myTurn;$('pass').disabled=!state.previous;$('pass').title=state.previous?'':'首家必须出牌';
+  $('play-actions').hidden=!myTurn;$('pass').disabled=!state.previous;$('pass').title=state.previous?'':'首家必须出牌';$('pass').textContent=state.previous?'不出':'首家须出牌';
   paintHand();
   $('messages').replaceChildren(...state.messages.map(m=>{const el=document.createElement('p');el.textContent=`${m.name}：${m.text}`;return el;}));
   const canChat=['waiting','bidding','playing','finished'].includes(state.phase);$('chat-input').disabled=!canChat;$('chat-send').disabled=!canChat;
@@ -91,6 +97,13 @@ async function perform(action,payload={}){
   if(busy||!state)return;busy=true;
   const id=roomId,envelope={round_id:state.round_id,version:state.version,request_id:crypto.randomUUID(),action,payload};
   try{const next=await client.action(id,envelope);selected.clear();feedback('');render(next);}
+  catch(error){feedback(error.message);try{render(await client.snapshot(id));}catch{}}
+  finally{busy=false;}
+}
+async function leaveFinishedRoom(){
+  if(busy||!state||state.phase!=='finished')return;busy=true;
+  const id=roomId,envelope={round_id:state.round_id,version:state.version,request_id:crypto.randomUUID(),action:'leave',payload:{}};
+  try{await client.action(id,envelope);await lobby();}
   catch(error){feedback(error.message);try{render(await client.snapshot(id));}catch{}}
   finally{busy=false;}
 }
@@ -128,7 +141,10 @@ async function lobby(restore=false,preferredRoom=null){
   await client.identity(true);if(generation!==navigation)return;
   startupStage('rooms','正在连接游戏服务器…');
   const rooms=await client.rooms();if(generation!==navigation)return;
-  if(typeof preferredRoom==='string'&&/^[a-f0-9-]{36}$/i.test(preferredRoom)&&rooms.some(room=>room.id===preferredRoom)){await enter(preferredRoom);return;}
+  if(typeof preferredRoom==='string'&&/^[a-f0-9-]{36}$/i.test(preferredRoom)){
+    try{await enter(preferredRoom);return;}
+    catch(error){if(![403,404,409].includes(error.status))throw error;await lobby(restore,null);return;}
+  }
   if(!restore)rememberRoom(null);
   if(restore){
     startupStage('storage','正在读取上次牌局…');
@@ -150,7 +166,7 @@ $('hand').addEventListener('click',e=>{const card=e.target.closest('.card');if(c
 let chatBusy=false;
 async function sendChat(){if(chatBusy||!state)return;const value=$('chat-input').value.trim();if(!value)return;chatBusy=true;try{await client.chat(roomId,{round_id:state.round_id,request_id:crypto.randomUUID(),text:value});$('chat-input').value='';render(await client.snapshot(roomId));}catch(e){feedback(e.message);}finally{chatBusy=false;}}
 $('chat-send').onclick=sendChat;$('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();sendChat();}});
-$('back').onclick=async()=>{if(['bidding','playing'].includes(state?.phase)&&!confirm('本局尚未结束。返回后将立即进入托管，重新进入 Club 会回到本桌。确定返回吗？'))return;try{if(state?.seat!==null&&['waiting','bidding','playing'].includes(state.phase))await client.action(roomId,{round_id:state.round_id,version:state.version,request_id:crypto.randomUUID(),action:'leave',payload:{}});}catch(e){feedback(e.message);}finally{lobby().catch(e=>feedback(e.message));}};
+$('back').onclick=async()=>{if(['bidding','playing'].includes(state?.phase)&&!confirm('本局尚未结束。返回后将立即进入托管，重新进入 Club 会回到本桌。确定返回吗？'))return;try{if(state?.seat!==null&&['waiting','bidding','playing','finished'].includes(state.phase))await client.action(roomId,{round_id:state.round_id,version:state.version,request_id:crypto.randomUUID(),action:'leave',payload:{}});await lobby();}catch(e){feedback(e.message);}};
 $('refresh').onclick=()=>boot();
 async function boot(){
   if(booting)return;

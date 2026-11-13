@@ -6,7 +6,7 @@ from urllib.parse import quote
 from playwright.sync_api import sync_playwright
 
 chatroom_id = sys.argv[1]
-origin = sys.argv[2] if len(sys.argv) > 2 else "https://www.ivorune.xyz"
+origin = sys.argv[2] if len(sys.argv) > 2 else "https://www.aikda.com"
 input_json = quote(json.dumps({"json": {"chatroomId": chatroom_id, "limit": 1000}}))
 url = f"{origin}/api/trpc/chatroom.getMembers?input={input_json}"
 

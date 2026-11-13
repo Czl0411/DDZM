@@ -139,11 +139,15 @@ def test_three_players_six_turns_and_restart(game):
 
     final = snapshot("host")
     assert final["state"]["phase"] == "finished"
-    assert final["state"]["ranking"] == [
+    assert [
+        {key: value for key, value in item.items() if key != "id"}
+        for item in final["state"]["ranking"]
+    ] == [
         {"name": "p2", "score": 436, "rank": 1},
         {"name": "host", "score": 377, "rank": 2},
         {"name": "p1", "score": 376, "rank": 3},
     ]
+    assert all(item["id"] for item in final["state"]["ranking"])
     assert "这不是答案" in [message["text"] for message in final["messages"]]
 
     with factory() as session:

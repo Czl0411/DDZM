@@ -143,7 +143,7 @@ class FakeCore:
                 {"game": game, "coin_stakes": [5, 10, 20], "rake_percent": 20}
                 for game in (
                     "mahjong", "chess", "doudizhu", "drawguess",
-                    "texas", "zhajinhua", "blackjack",
+                    "texas", "zhajinhua", "blackjack", "niuniu",
                 )
             ]
         }
@@ -4178,7 +4178,7 @@ def test_admin_rejects_invalid_texas_holdem_settings_before_relay(client, header
 def test_admin_proxies_versioned_club_economy_settings(client, headers, core):
     initial = client.get("/api/game/club/economy-settings", headers=headers)
     assert initial.status_code == 200
-    assert len(initial.json()["items"]) == 7
+    assert len(initial.json()["items"]) == 8
     payload = {"game": "mahjong", "coin_stakes": [10, 50, 100], "rake_percent": 15}
 
     updated = client.patch(
@@ -4575,7 +4575,10 @@ def test_club_economy_admin_surface_has_all_game_controls():
     assert 'id="club-economy-stakes"' in page
     assert 'id="club-economy-rake"' in page
     assert "/api/game/club/economy-settings" in script
-    for label in ("摸鱼麻将", "群聊象棋", "斗地主", "你画我猜", "德州扑克", "炸金花", "21 点"):
+    for label in (
+        "摸鱼麻将", "群聊象棋", "斗地主", "你画我猜", "德州扑克",
+        "炸金花", "21 点", "斗牛",
+    ):
         assert label in script
 
 

@@ -95,9 +95,15 @@ def test_claim_ready_start_host_transfer_and_rematch(game):
           "color": "#222222", "width": 0.008, "tool": "pen"}], NOW + timedelta(seconds=2),
     )
 
+    completed_turns_ms = [int(NOW.timestamp() * 1000)]
     with factory.begin() as session:
         row = session.get(DrawguessRoomRecord, UUID(room["room_id"]))
-        row.state = {**row.state, "phase": "finished", "ranking": []}
+        row.state = {
+            **row.state,
+            "phase": "finished",
+            "ranking": [],
+            "completed_turns_ms": completed_turns_ms,
+        }
         row.phase = "finished"
         row.deadline = None
     assert all(
@@ -112,6 +118,36 @@ def test_claim_ready_start_host_transfer_and_rematch(game):
     room = action(repo, room, "p1", "start")
     assert room["state"]["phase"] == "selecting"
     assert room["canvas"] == []
+    with factory() as session:
+        row = session.get(DrawguessRoomRecord, UUID(room["room_id"]))
+        assert row.state["completed_turns_ms"] == completed_turns_ms
+
+
+def test_finished_leave_closes_table_and_releases_players(game):
+    repo, factory, _ = game
+    room = started(game)
+    with factory.begin() as session:
+        row = session.get(DrawguessRoomRecord, UUID(room["room_id"]))
+        row.state = {
+            **row.state,
+            "phase": "finished",
+            "ranking": [
+                {"player": player["id"], "score": 0, "rank": 1}
+                for player in room["state"]["players"]
+            ],
+        }
+        row.phase = "finished"
+        row.deadline = None
+    room = repo.drawguess_view(UUID(room["room_id"]), "host", NOW)
+    assert room["settlement"]["settled_at"] == NOW.isoformat()
+    assert repo.club_active_room("p1", NOW)["room_id"] == room["room_id"]
+
+    room = action(repo, room, "host", "leave")
+
+    assert room["state"]["phase"] == "closed"
+    assert repo.club_active_room("p1", NOW) is None
+    assert repo.list_drawguess_rooms("viewer", NOW) == []
+    assert repo.create_drawguess_room("p1", now=NOW)["state"]["phase"] == "waiting"
 
 
 def test_expired_code_and_guest_spectators(game):

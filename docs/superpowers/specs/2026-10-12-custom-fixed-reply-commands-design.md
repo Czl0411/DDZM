@@ -23,7 +23,7 @@
 | 分享群聊 | 当前 DZMM 站点的 `/invite/<邀请码>` 链接 | 邀请码 | `type=share, shareType=group_invite` |
 | 分享小说 | 当前 DZMM 站点的 `/novel/<UUID>` 链接 | 小说 UUID | `type=share, shareType=novel` |
 
-群聊的普通 `/chat?c=...` 链接不是邀请卡，保存时拒绝；当前平台前端将 `/invite/<邀请码>` 识别为 `group_invite`（[平台资源](https://www.ivorune.xyz/assets/04LafygP.js)）。小说链接沿用「公司的故事集」已有的解析与验证。未知域名、空内容、无效邀请码/UUID 或与回复类型不匹配的字段都不能保存。分享卡的 `resourceId` 只存提取后的标识，不把完整链接作为待发载荷。
+群聊的普通 `/chat?c=...` 链接不是邀请卡，保存时拒绝；当前平台前端将 `/invite/<邀请码>` 识别为 `group_invite`。小说链接沿用「公司的故事集」已有的解析与验证。未知域名、空内容、无效邀请码/UUID 或与回复类型不匹配的字段都不能保存。分享卡的 `resourceId` 只存提取后的标识，不把完整链接作为待发载荷。
 
 ## 图片上传与生效
 

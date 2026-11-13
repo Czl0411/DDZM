@@ -426,6 +426,8 @@ def test_king_game_group_command_flow():
     assert "报名已开启" in _latest_reply(factory)
     _group_receive(service, "join-2", "u2", "/加入", now, "king-game")
     _group_receive(service, "join-3", "u3", "/加入", now, "king-game")
+    _group_receive(service, "current", "host", "/当前游戏", now, "king-game")
+    assert "状态：报名中（当前 3 人）" in _latest_reply(factory)
     _group_receive(service, "begin", "host", "/开始", now, "king-game")
     assert "本轮国王" in _latest_reply(factory)
     summary = repository.active_gameplay_summary("host", now, None)

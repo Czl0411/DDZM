@@ -75,11 +75,18 @@ def resolve_people(
     for employee in employees:
         normalized_name = _normalize(employee.display_name)
         for match in re.finditer(re.escape(normalized_name), normalized_content):
-            matched_platform_ids.add(employee.platform_id)
             exact_spans.append(match.span())
+            if not _is_first_person_self_name(normalized_content, match.span()):
+                matched_platform_ids.add(employee.platform_id)
         employee_number = f"#{employee.employee_number:04d}"
-        if re.search(
-            rf"(?<!\d){re.escape(employee_number)}(?!\d)", normalized_content
+        number_matches = tuple(
+            re.finditer(
+                rf"(?<!\d){re.escape(employee_number)}(?!\d)", normalized_content
+            )
+        )
+        if any(
+            not _is_first_person_self_name(normalized_content, match.span())
+            for match in number_matches
         ):
             matched_platform_ids.add(employee.platform_id)
 
@@ -96,6 +103,7 @@ def resolve_people(
             match
             for match in occurrences
             if not _inside_exact_span(match.span(), protected_spans)
+            and not _is_first_person_self_name(normalized_content, match.span())
         )
         if not unmatched_occurrences:
             continue
@@ -213,6 +221,10 @@ def _inside_exact_span(
     candidate: tuple[int, int], exact_spans: Sequence[tuple[int, int]]
 ) -> bool:
     return any(start <= candidate[0] and candidate[1] <= end for start, end in exact_spans)
+
+
+def _is_first_person_self_name(content: str, candidate: tuple[int, int]) -> bool:
+    return re.search(r"(?:我是|我叫|叫我)\s*$", content[: candidate[0]]) is not None
 
 
 def _beijing_text(value: datetime) -> str:

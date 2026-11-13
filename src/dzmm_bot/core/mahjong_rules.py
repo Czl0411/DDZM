@@ -241,8 +241,10 @@ def hand_value(
         kyoutaku_number=0,
         options=options,
     )
+    # The scoring library expects all physical tiles, including declared melds.
+    all_tiles = [*concealed, *(tile for meld in melds for tile in meld["tiles"])]
     response = HandCalculator.estimate_hand_value(
-        concealed,
+        all_tiles,
         win_tile,
         melds=[_meld(value) for value in melds],
         dora_indicators=context.dora_indicators,

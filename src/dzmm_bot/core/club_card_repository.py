@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta
 from hashlib import sha256
 import json
@@ -10,7 +11,14 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
-from .club_card_games import GAMES, PLAYER_LIMITS, apply_action, new_hand, public_view
+from .club_card_games import (
+    GAMES,
+    PLAYER_LIMITS,
+    apply_action,
+    new_hand,
+    niuniu_reserves,
+    public_view,
+)
 from .texas_holdem import split_matched_pot
 from .schema import (
     ClubCardMessageRecord as Message,
@@ -65,21 +73,34 @@ class ClubCardRepositoryMixin:
     def _ensure_club_card_player_free(self, session, player_id: UUID, now: datetime, *, exclude: UUID | None = None) -> None:
         active = self._club_card_active_room(session, player_id, now, exclude=exclude)
         if active is not None:
-            labels = {"texas": "德州扑克", "zhajinhua": "炸金花", "blackjack": "21 点"}
+            labels = {"texas": "德州扑克", "zhajinhua": "炸金花", "blackjack": "21 点", "niuniu": "斗牛"}
             raise ValueError(f"你已经在{labels.get(active.game, '其他')}牌桌，请先离开当前房间")
         self._ensure_club_player_available(session, player_id, now)
 
     @staticmethod
+    def _next_club_card_banker(room: Room) -> str | None:
+        if not room.seats:
+            return None
+        winner = room.state.get("next_banker")
+        if winner in room.seats:
+            return winner
+        # The server-generated room UUID draws the first banker consistently before ready/start.
+        draw = sha256(f"{room.id}:{','.join(room.seats)}".encode()).digest()
+        return room.seats[int.from_bytes(draw[:8], "big") % len(room.seats)]
+
+    @staticmethod
     def _set_club_card_turn_deadline(state: dict, now: datetime) -> dict:
         value = dict(state)
-        if value.get("phase") == "playing" and value.get("turn"):
+        if value.get("phase") == "playing" and value.get("game") == "niuniu":
+            value.setdefault("turn_deadline", (now + timedelta(seconds=TURN_TIMEOUT_SECONDS)).isoformat())
+        elif value.get("phase") == "playing" and value.get("turn"):
             value["turn_deadline"] = (now + timedelta(seconds=TURN_TIMEOUT_SECONDS)).isoformat()
         else:
             value.pop("turn_deadline", None)
         return value
 
     def _expire_club_card_turn(self, session, room: Room, now: datetime) -> bool:
-        if room.phase != "playing" or not room.state.get("turn"):
+        if room.phase != "playing" or (room.game != "niuniu" and not room.state.get("turn")):
             return False
         raw_deadline = room.state.get("turn_deadline")
         if not raw_deadline:
@@ -93,18 +114,26 @@ class ClubCardRepositoryMixin:
             deadline = now
         if now < deadline:
             return False
-        state = room.state
-        turn = state["turn"]
-        if room.game == "texas":
-            to_call = max(0, state["current_bet"] - state["street_bets"].get(turn, 0))
-            action = "fold" if to_call else "check"
-        elif room.game == "zhajinhua":
-            action = "fold"
+        state = deepcopy(room.state)
+        if room.game == "niuniu":
+            for raw in state["players"]:
+                if raw not in state["revealed"]:
+                    state = apply_action(room.game, state, raw, "reveal", {})
+                    state["action_history"][-1]["automatic"] = True
+            state["last_action"] = "配牛时间结束，自动亮牌结算"
         else:
-            action = "stand"
-        state = apply_action(room.game, state, turn, action, {})
-        labels = {"fold": "弃牌", "check": "过牌", "stand": "停牌"}
-        state["last_action"] = f"玩家超时，自动{labels[action]}"
+            turn = state["turn"]
+            if room.game == "texas":
+                to_call = max(0, state["current_bet"] - state["street_bets"].get(turn, 0))
+                action = "fold" if to_call else "check"
+            elif room.game == "zhajinhua":
+                action = "fold"
+            else:
+                action = "stand"
+            state = apply_action(room.game, state, turn, action, {})
+            state["action_history"][-1]["automatic"] = True
+            labels = {"fold": "弃牌", "check": "过牌", "stand": "停牌"}
+            state["last_action"] = f"玩家超时，自动{labels[action]}"
         room.state = self._set_club_card_turn_deadline(state, now)
         room.phase = room.state["phase"]
         room.version += 1
@@ -197,6 +226,7 @@ class ClubCardRepositoryMixin:
             "stake": room.stake, "players": players, "ready": room.ready,
             "me": self._club_player_view(session, viewer), "state": state,
             "version": room.version, "hand_number": room.hand_number,
+            **({"scheduled_banker": self._next_club_card_banker(room)} if room.game == "niuniu" else {}),
             "messages": [{"id": str(message.id), "player": self._club_player_view(session, player),
                           "text": message.content, "at": message.created_at.isoformat()}
                          for message, player in reversed(messages)],
@@ -218,7 +248,10 @@ class ClubCardRepositoryMixin:
                     if receipt.digest != digest: raise ValueError("重复请求内容不一致")
                     return self._club_card_view(session, room, player)
                 timed_out = self._expire_club_card_turn(session, room, now)
-                if version != room.version:
+                simultaneous = (game == "niuniu" and action == "reveal" and room.phase == "playing"
+                                and payload.get("hand_number") == room.hand_number
+                                and room.state.get("started_version", room.version) <= version <= room.version)
+                if version != room.version and not simultaneous:
                     if timed_out:
                         return self._club_card_view(session, room, player)
                     raise ValueError("牌桌状态已更新，请重试")
@@ -237,6 +270,7 @@ class ClubCardRepositoryMixin:
             if len(room.seats) >= PLAYER_LIMITS[room.game][1]: raise ValueError("牌桌已满")
             if room.room_type == "coin": self._club_card_account(session, player)
             room.seats = [*room.seats, raw]
+            if room.game == "niuniu": room.ready = []
             return
         if action in {"ready", "unready"}:
             if room.phase not in {"waiting", "hand_finished"} or raw not in room.seats: raise ValueError("当前不能准备")
@@ -249,7 +283,7 @@ class ClubCardRepositoryMixin:
             if room.phase not in {"waiting", "hand_finished"}: raise ValueError("牌局中请先完成本手")
             if raw not in room.seats: return
             room.seats = [item for item in room.seats if item != raw]
-            room.ready = [item for item in room.ready if item != raw]
+            room.ready = [] if room.game == "niuniu" else [item for item in room.ready if item != raw]
             if not room.seats: room.phase = "closed"
             elif player.id == room.creator_id: room.creator_id = UUID(room.seats[0])
             return
@@ -262,23 +296,34 @@ class ClubCardRepositoryMixin:
             if room.phase not in {"waiting", "hand_finished"} or player.id != room.creator_id: raise ValueError("只有房主可以开始")
             if len(room.seats) < minimum: raise ValueError(f"至少需要 {minimum} 人")
             if set(room.ready) != set(room.seats): raise ValueError("请等待所有玩家准备")
+            banker = self._next_club_card_banker(room) if room.game == "niuniu" else None
+            reserves = (niuniu_reserves(room.seats, room.stake, banker) if room.game == "niuniu"
+                        else {raw: room.stake for raw in room.seats})
             if room.room_type == "coin":
                 for player_id in room.seats:
                     seated = session.get(ClubPlayerRecord, UUID(player_id))
                     account = self._club_card_account(session, seated, lock=True)
-                    if account.balance < room.stake: raise ValueError(f"{seated.display_name} 摸鱼币不足")
+                    if account.balance < reserves[player_id]: raise ValueError(f"{seated.display_name} 摸鱼币不足，需托管 {reserves[player_id]} 币")
                 for player_id in room.seats:
                     seated = session.get(ClubPlayerRecord, UUID(player_id))
                     account = self._club_card_account(session, seated, lock=True)
-                    self._apply_balance_change(account, -room.stake, f"{room.game}_buy_in", now,
+                    self._apply_balance_change(account, -reserves[player_id], f"{room.game}_buy_in", now,
                                                memo=f"{room.game} 第 {room.hand_number + 1} 手入场")
-            state = new_hand(room.game, list(room.seats), room.stake, self._club_card_random)
+            state = new_hand(
+                room.game,
+                list(room.seats),
+                room.stake,
+                self._club_card_random,
+                banker=banker,
+            )
             state["rake_percent"] = (
                 self.get_club_game_economy_settings(room.game).rake_percent
                 if room.room_type == "coin"
                 else 0
             )
             room.state = self._set_club_card_turn_deadline(state, now)
+            if room.game == "niuniu":
+                room.state = {**room.state, "started_version": room.version + 1}
             room.ready = []; room.escrowed = list(room.seats); room.hand_settled = False
             room.phase = "playing"; room.hand_number += 1
             return
@@ -286,8 +331,10 @@ class ClubCardRepositoryMixin:
             raise ValueError("你不在这个牌桌")
         if room.phase != "playing":
             raise ValueError("当前牌局不能操作")
+        if room.game == "niuniu" and payload.get("hand_number") != room.hand_number:
+            raise ValueError("牌局已更换，请刷新后亮牌")
         room.state = self._set_club_card_turn_deadline(
-            apply_action(room.game, room.state, raw, action, payload),
+            apply_action(room.game, deepcopy(room.state), raw, action, payload),
             now,
         )
         room.phase = room.state["phase"]
@@ -295,6 +342,10 @@ class ClubCardRepositoryMixin:
 
     def _settle_club_card_hand(self, session, room, now):
         if room.hand_settled: return
+        gross_net = {
+            raw: int(amount)
+            for raw, amount in room.state.get("net", {}).items()
+        }
         gross_payouts = {
             raw: int(amount) for raw, amount in room.state.get("payouts", {}).items()
         }
@@ -309,24 +360,38 @@ class ClubCardRepositoryMixin:
             any(amount > room.stake for amount in gross_payouts.values())
             and any(amount < room.stake for amount in gross_payouts.values())
         )
-        rakeable_result = room.game in {"texas", "zhajinhua"} or has_winner_and_loser
+        rakeable_result = (
+            room.game in {"texas", "zhajinhua", "niuniu"}
+            or has_winner_and_loser
+        )
         if rake_percent > 0 and rakeable_result:
-            chips = room.state.get("chips", {}) if room.game != "blackjack" else {}
-            pot = int(room.state.get("pot", 0))
-            uncalled_returns = {}
-            rakeable_pot = pot
-            contributions = room.state.get("contributions", {})
-            if room.game == "texas" and sum(contributions.values()) == pot:
-                rakeable_pot, uncalled_returns = split_matched_pot(contributions)
-            gross_winnings = {
-                raw: max(
-                    0,
-                    amount
-                    - int(chips.get(raw, 0))
-                    - int(uncalled_returns.get(raw, 0)),
+            if room.game == "niuniu":
+                gross_winnings = {
+                    raw: max(0, int(amount))
+                    for raw, amount in gross_net.items()
+                }
+                rakeable_pot = sum(gross_winnings.values())
+            else:
+                chips = (
+                    room.state.get("chips", {})
+                    if room.game != "blackjack"
+                    else {}
                 )
-                for raw, amount in gross_payouts.items()
-            }
+                pot = int(room.state.get("pot", 0))
+                uncalled_returns = {}
+                rakeable_pot = pot
+                contributions = room.state.get("contributions", {})
+                if room.game == "texas" and sum(contributions.values()) == pot:
+                    rakeable_pot, uncalled_returns = split_matched_pot(contributions)
+                gross_winnings = {
+                    raw: max(
+                        0,
+                        amount
+                        - int(chips.get(raw, 0))
+                        - int(uncalled_returns.get(raw, 0)),
+                    )
+                    for raw, amount in gross_payouts.items()
+                }
             total_winnings = sum(gross_winnings.values())
             requested_rake = min(
                 rakeable_pot,
@@ -351,8 +416,17 @@ class ClubCardRepositoryMixin:
                 raw: amount - deductions.get(raw, 0)
                 for raw, amount in gross_payouts.items()
             }
+        net = gross_net
+        if room.game == "niuniu" and room.room_type == "coin":
+            net = {
+                raw: payouts.get(raw, 0)
+                - int(room.state.get("buy_ins", {}).get(raw, 0))
+                for raw in gross_net
+            }
         room.state = {
             **room.state,
+            **({"gross_net": gross_net, "net": net}
+               if room.game == "niuniu" else {}),
             "gross_payouts": gross_payouts,
             "rake_percent": rake_percent,
             "rake_amount": rake_amount,
@@ -365,7 +439,12 @@ class ClubCardRepositoryMixin:
                 account = self._club_card_account(session, player, lock=True)
                 self._apply_balance_change(account, int(amount), f"{room.game}_settlement", now,
                                            memo=f"{room.game} 第 {room.hand_number} 手结算")
-        if room.game == "blackjack":
+        if room.game == "niuniu":
+            outcomes = {
+                raw: "win" if amount > 0 else "loss" if amount < 0 else "draw"
+                for raw, amount in gross_net.items()
+            }
+        elif room.game == "blackjack":
             outcomes = {
                 raw: "win" if result in {"胜", "并列胜"} else "draw" if "退还" in result else "loss"
                 for raw, result in room.state.get("results", {}).items()

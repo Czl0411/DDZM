@@ -1,0 +1,15 @@
+/* Common interaction cues across Club's embedded games. */
+button,input{touch-action:manipulation}
+button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:3px solid #e8c46c;outline-offset:3px}
+button{transition:background-color .16s,border-color .16s;cursor:pointer}
+button:disabled{opacity:.55;cursor:not-allowed}
+input:not([type=range]):not([type=radio]){font-size:16px}
+.player.active,.seat.active,.player-card.active{outline:2px solid #e8c46c;outline-offset:2px}
+.local-feedback{padding:10px 12px;border-radius:10px;border:1px solid #cf7768;color:#fff1eb;background:#713b31;font-size:13px;line-height:1.5}
+.local-feedback:empty{display:none}
+.cell.last-from{box-shadow:inset 0 0 0 3px #b88e3890}
+.cell.last-to{box-shadow:inset 0 0 0 3px #ce9b38;background:#e8c46c30}
+.play.latest-play{border-color:#dfbf75;box-shadow:0 0 0 2px #e8c46c50;border-radius:12px}
+.play-action{display:block;margin:5px 0;color:#f3d78a;font-size:13px;font-weight:700}
+.seat-meta .guessed-label{color:#248447}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}

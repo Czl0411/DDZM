@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlsplit
 import pytest
 from playwright.sync_api import sync_playwright, expect
 
@@ -189,4 +190,92 @@ def test_slow_previous_room_does_not_override_new_navigation():
         expect(page).to_have_url('https://ddz.test/index.html')
         assert saved['doudizhu:last-room:viewer']==b
         assert streams and all('/'+b+'/events' in url for url in streams)
+        browser.close()
+
+
+def test_linked_finished_room_bypasses_public_list_and_exit_posts_leave():
+    publish = Path(__file__).resolve().parents[2] / 'club' / 'publish'
+    room = '11111111-1111-4111-8111-111111111111'
+    now = datetime.now(timezone.utc)
+    actions = []
+    state = dict(
+        id=room, short_id='ABC123', creator_name='房主', round_id=room,
+        version=7, phase='finished', seat=0, room_type='casual', stake=0,
+        players=[dict(name=name, ready=False, count=count, trustee=False, online=True)
+                 for name, count in (('房主', 0), ('牌友甲', 4), ('牌友乙', 6))],
+        hand=[], bottom=[1, 2, 3], turn=None, landlord=0, bid=3, multiplier=3,
+        previous=None, table=[None] * 3,
+        result={'winner': 'landlord', 'winners': [0], 'spring': None},
+        final_hands=[[], [4, 5, 6, 7], [8, 9, 10, 11, 12, 13]],
+        settlement=None, events=[], messages=[], server_time=now.isoformat(), deadline=None,
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel='chrome', headless=True)
+        context = browser.new_context()
+        context.add_init_script("window.dzmm={user:{info:async()=>({id:'host'})},kv:{get:async()=>({value:null}),put:async()=>{}},loading:{progress(){},ready(){},error(){}},log:{info(){},error(){}}};")
+
+        def route(request):
+            url = request.request.url
+            path = urlsplit(url).path
+            headers = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*'}
+            if request.request.method == 'OPTIONS':
+                request.fulfill(status=204, headers=headers)
+            elif url.endswith('/config.js'):
+                request.fulfill(body="window.DOUDIZHU_CONFIG={apiBase:'https://ddz.test'};", content_type='text/javascript', headers=headers)
+            elif url.endswith('/api/club/economy-settings'):
+                request.fulfill(json=[{'game': 'doudizhu', 'coin_stakes': [5, 10, 20], 'rake_percent': 20}], headers=headers)
+            elif url.endswith('/api/doudizhu/rooms'):
+                request.fulfill(json=[], headers=headers)
+            elif url.endswith('/events'):
+                request.fulfill(body='', content_type='text/event-stream', headers=headers)
+            elif url.endswith('/actions'):
+                actions.append(request.request.post_data_json)
+                request.fulfill(json={**state, 'phase': 'cancelled', 'version': 8}, headers=headers)
+            elif f'/api/doudizhu/rooms/{room}' in url:
+                request.fulfill(json=state, headers=headers)
+            else:
+                request.fulfill(path=str(publish / path.lstrip('/')), headers=headers)
+
+        context.route('**/*', route)
+        page = context.new_page()
+        page.goto(f'https://ddz.test/games/doudizhu/index.html?club=1&room={room}')
+        expect(page.locator('#table')).to_be_visible()
+        expect(page.locator('#phase-label')).to_contain_text('本局结束')
+        page.get_by_role('button', name='退出房间', exact=True).click()
+        expect(page.locator('#lobby')).to_be_visible()
+        assert actions[-1]['action'] == 'leave'
+        browser.close()
+
+
+def test_stale_linked_room_falls_back_to_public_lobby():
+    publish = Path(__file__).resolve().parents[2] / 'club' / 'publish'
+    room = '11111111-1111-4111-8111-111111111111'
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel='chrome', headless=True)
+        context = browser.new_context()
+        context.add_init_script("window.dzmm={user:{info:async()=>({id:'host'})},kv:{get:async()=>({value:null}),put:async()=>{}},loading:{progress(){},ready(){},error(){}},log:{info(){},error(){}}};")
+
+        def route(request):
+            url = request.request.url
+            path = urlsplit(url).path
+            headers = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*'}
+            if request.request.method == 'OPTIONS':
+                request.fulfill(status=204, headers=headers)
+            elif url.endswith('/config.js'):
+                request.fulfill(body="window.DOUDIZHU_CONFIG={apiBase:'https://ddz.test'};", content_type='text/javascript', headers=headers)
+            elif url.endswith('/api/club/economy-settings'):
+                request.fulfill(json=[{'game': 'doudizhu', 'coin_stakes': [5, 10, 20], 'rake_percent': 20}], headers=headers)
+            elif url.endswith('/api/doudizhu/rooms'):
+                request.fulfill(json=[], headers=headers)
+            elif f'/api/doudizhu/rooms/{room}' in url:
+                request.fulfill(status=404, json={'detail': '房间不存在'}, headers=headers)
+            else:
+                request.fulfill(path=str(publish / path.lstrip('/')), headers=headers)
+
+        context.route('**/*', route)
+        page = context.new_page()
+        page.goto(f'https://ddz.test/games/doudizhu/index.html?club=1&room={room}')
+        expect(page.locator('#lobby')).to_be_visible()
+        expect(page.locator('#rooms')).to_contain_text('暂无牌局')
+        expect(page.locator('#feedback')).to_have_text('')
         browser.close()

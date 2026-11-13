@@ -17,6 +17,7 @@ CLUB_ECONOMY_GAMES = (
     "texas",
     "zhajinhua",
     "blackjack",
+    "niuniu",
 )
 DEFAULT_CLUB_COIN_STAKES = (5, 10, 20)
 DEFAULT_CLUB_RAKE_PERCENT = 20

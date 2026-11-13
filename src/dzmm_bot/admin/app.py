@@ -1643,7 +1643,7 @@ def create_app(
     ) -> JSONResponse:
         games = {
             "mahjong", "chess", "doudizhu", "drawguess",
-            "texas", "zhajinhua", "blackjack",
+            "texas", "zhajinhua", "blackjack", "niuniu",
         }
         if set(request) != {"game", "coin_stakes", "rake_percent"}:
             raise HTTPException(

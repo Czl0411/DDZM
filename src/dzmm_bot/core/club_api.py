@@ -71,7 +71,7 @@ class CardActionPayload(BaseModel):
     action: Literal[
         "claim", "ready", "unready", "leave", "start", "next",
         "check", "call", "raise", "all_in", "fold",
-        "look", "compare", "hit", "stand",
+        "look", "compare", "hit", "stand", "reveal",
     ]
     payload: dict = Field(default_factory=dict)
 
@@ -200,7 +200,7 @@ def club_router(repository, clock):
     def room_status(
         game: Literal[
             "mahjong", "chess", "doudizhu", "drawguess",
-            "texas", "zhajinhua", "blackjack",
+            "texas", "zhajinhua", "blackjack", "niuniu",
         ],
         room_id: UUID,
         authorization: str | None = Header(None),
@@ -307,21 +307,21 @@ def club_router(repository, clock):
         return _call(repository.club_active_room, _uid(authorization), clock())
 
     @router.get("/cards/{game}/rooms")
-    def card_rooms(game: Literal["texas", "zhajinhua", "blackjack"], authorization: str | None = Header(None)):
+    def card_rooms(game: Literal["texas", "zhajinhua", "blackjack", "niuniu"], authorization: str | None = Header(None)):
         return _call(repository.list_club_card_rooms, game, _uid(authorization), clock())
 
     @router.post("/cards/{game}/rooms")
-    def create_card_room(game: Literal["texas", "zhajinhua", "blackjack"], body: CardRoomPayload, authorization: str | None = Header(None)):
+    def create_card_room(game: Literal["texas", "zhajinhua", "blackjack", "niuniu"], body: CardRoomPayload, authorization: str | None = Header(None)):
         return _call(repository.create_club_card_room, game, _uid(authorization), clock(),
                      room_type=body.room_type, stake=body.stake, request_id=body.request_id)
 
     @router.get("/cards/{game}/rooms/{room_id}")
-    def card_snapshot(game: Literal["texas", "zhajinhua", "blackjack"], room_id: UUID, authorization: str | None = Header(None)):
+    def card_snapshot(game: Literal["texas", "zhajinhua", "blackjack", "niuniu"], room_id: UUID, authorization: str | None = Header(None)):
         return _call(repository.club_card_view, game, room_id, _uid(authorization), clock())
 
     @router.get("/cards/{game}/rooms/{room_id}/events")
     async def card_events(
-        game: Literal["texas", "zhajinhua", "blackjack"],
+        game: Literal["texas", "zhajinhua", "blackjack", "niuniu"],
         room_id: UUID,
         request: Request,
         authorization: str | None = Header(None),
@@ -335,15 +335,19 @@ def club_router(repository, clock):
         )
 
     @router.post("/cards/{game}/rooms/{room_id}/actions")
-    def card_action(game: Literal["texas", "zhajinhua", "blackjack"], room_id: UUID, body: CardActionPayload, authorization: str | None = Header(None)):
-        expected = {"raise": {"amount"}, "compare": {"target"}}.get(body.action, set())
+    def card_action(game: Literal["texas", "zhajinhua", "blackjack", "niuniu"], room_id: UUID, body: CardActionPayload, authorization: str | None = Header(None)):
+        expected = {("texas", "raise"): {"amount"}, ("zhajinhua", "compare"): {"target"}, ("niuniu", "reveal"): {"hand_number", "cards"}}.get((game, body.action), set())
         if set(body.payload) != expected:
             raise HTTPException(422, "操作参数不正确")
+        if game == "niuniu" and body.action == "reveal" and (
+            type(body.payload["hand_number"]) is not int or body.payload["hand_number"] < 1
+        ):
+            raise HTTPException(422, "牌局编号不正确")
         return _call(repository.club_card_action, game, room_id, _uid(authorization), body.version,
                      body.request_id, body.action, body.payload, clock())
 
     @router.post("/cards/{game}/rooms/{room_id}/chat")
-    def card_chat(game: Literal["texas", "zhajinhua", "blackjack"], room_id: UUID, body: ChatPayload, authorization: str | None = Header(None)):
+    def card_chat(game: Literal["texas", "zhajinhua", "blackjack", "niuniu"], room_id: UUID, body: ChatPayload, authorization: str | None = Header(None)):
         if not body.text.strip():
             raise HTTPException(422, "请输入消息")
         return _call(repository.club_card_chat, game, room_id, _uid(authorization), body.request_id, body.text, clock())
@@ -364,7 +368,16 @@ def club_router(repository, clock):
             "ankan": {"tile_type"},
             "kakan": {"meld_index"},
         }.get(body.action, set())
-        if set(body.payload) != expected:
+        payload_keys = set(body.payload)
+        valid_keys = (expected,)
+        if body.action in {"ron", "pass", "chi", "pon", "kan"}:
+            valid_keys = (*valid_keys, expected | {"reaction_version"})
+        if payload_keys not in valid_keys:
+            raise HTTPException(422, "操作参数不正确")
+        if "reaction_version" in body.payload and (
+            type(body.payload["reaction_version"]) is not int
+            or body.payload["reaction_version"] < 0
+        ):
             raise HTTPException(422, "操作参数不正确")
         return _call(
             repository.mahjong_action,

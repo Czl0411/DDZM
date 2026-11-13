@@ -6,6 +6,7 @@ export const CONFIG = {
     {id: "drawguess", name: "你画我猜", path: "./games/drawguess/index.html?club=1", icon: "画", image: "./assets/game-drawguess.webp", description: "3～8 人 · 轮流作画"},
     {id: "texas", name: "德州扑克", path: "./games/card-table/index.html?club=1&game=texas", icon: "德", image: "./assets/game-texas-table-v1.webp", description: "2～8 人 · 连续牌桌"},
     {id: "zhajinhua", name: "炸金花", path: "./games/card-table/index.html?club=1&game=zhajinhua", icon: "金", image: "./assets/game-zhajinhua-table-v1.webp", description: "2～6 人 · 看牌比牌"},
+    {id: "niuniu", name: "斗牛", path: "./games/card-table/index.html?club=1&game=niuniu", icon: "牛", image: "./assets/game-zhajinhua-table-v1.webp", description: "2～6 人 · 牛牛赢庄接庄"},
     {id: "blackjack", name: "21 点", path: "./games/card-table/index.html?club=1&game=blackjack", icon: "21", image: "./assets/game-blackjack-table-v1.webp", description: "2～5 人 · PvP 点数对决"},
   ],
 };

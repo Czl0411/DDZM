@@ -1513,6 +1513,8 @@ class GroupCommandHandler:
             "calling": "叫牌中",
             "round_end": "回合结束",
         }.get(summary.state, "进行中")
+        if summary.game_type == "king_game":
+            state_name = f"{state_name}（当前 {len(summary.participant_names)} 人）"
         if (
             summary.game_type == "number_bomb"
             and summary.mode == "points_tournament"

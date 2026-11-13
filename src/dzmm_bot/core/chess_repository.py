@@ -460,7 +460,7 @@ class ChessRepositoryMixin:
             return self._chess_view(session, row)
 
     def chess_action(self, game_id: UUID, platform_id: str, action: str, now: datetime, expected_version: int) -> ChessGameView:
-        valid = {"offer_undo", "accept_undo", "decline_undo", "offer_draw", "accept_draw", "decline_draw", "resign", "ready", "unready", "start"}
+        valid = {"offer_undo", "accept_undo", "decline_undo", "offer_draw", "accept_draw", "decline_draw", "resign", "ready", "unready", "start", "leave"}
         if action not in valid:
             raise ValueError("未知的象棋操作")
         with self.transaction(), self._session() as session:
@@ -475,6 +475,11 @@ class ChessRepositoryMixin:
             color = "red" if user.id == row.red_user_id else "black"
             if row.status == "finished":
                 ready = set(self._chess_rematch_ready(row))
+                if action == "leave":
+                    self._chess_event(row, "close", now, color=color)
+                    row.status = "cancelled"
+                    row.version += 1
+                    return self._chess_view(session, row)
                 if action in {"ready", "unready"}:
                     self._chess_event(row, f"rematch_{action}", now, color=color)
                     row.version += 1

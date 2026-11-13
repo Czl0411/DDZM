@@ -20,7 +20,7 @@ def new_state(host: str, now_ms: int) -> dict:
         "candidates": [], "word_id": None, "answer": None, "guessed": [],
         "used_words": [], "deadline_ms": int(now_ms) + 600_000, "version": 0,
         "chat_version": 0,
-        "ranking": [], "turn_points": {},
+        "ranking": [], "turn_points": {}, "completed_turns_ms": [],
     }
 
 
@@ -148,6 +148,9 @@ def advance(state: dict, now_ms: int, candidates: list[str]) -> dict:
         result["phase"] = "revealing"
         result["deadline_ms"] += 5_000
     elif result["phase"] == "revealing" and now_ms >= result["deadline_ms"]:
+        result["completed_turns_ms"] = [
+            *result.get("completed_turns_ms", []), result["deadline_ms"],
+        ][-5:]
         result["turn_index"] += 1
         if result["turn_index"] >= len(result["seats"]) * 2:
             result["phase"] = "finished"

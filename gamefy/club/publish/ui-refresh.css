@@ -1,0 +1,100 @@
+/* Club's shared shell: compact discovery, readable conversation, clear recovery. */
+:root{--muted:#64766e;--line:#dce4dd}
+button,input{touch-action:manipulation}
+button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:3px solid #d8ad4b;outline-offset:3px}
+button{transition:background-color .16s,border-color .16s,box-shadow .16s}
+button:disabled{opacity:.58}
+.topbar{min-height:64px;padding-inline:clamp(14px,3vw,40px)}
+.brand small{font-size:11px}.identity{font-size:12px}.icon-button{width:44px;height:44px}
+.club-home-screen{padding:16px clamp(14px,3vw,40px) 20px}
+.club-home-layout{max-width:1400px;gap:18px}
+.club-home-layout .hero{min-height:164px;padding:23px 28px;border-radius:22px;justify-content:center;background-position:center 57%}
+.club-home-layout .hero h1{max-width:none;margin-top:8px;font-size:32px;line-height:1.25}
+.club-home-layout .hero p{font-size:13px;max-width:28em}
+.hero-label{font-size:10px}
+.channel-peek{left:auto;right:24px;bottom:24px;width:34%;min-height:66px;padding:12px 15px;border-radius:14px}
+.channel-peek span,.channel-peek b,.channel-peek em{font-size:12px}
+.club-home-layout .game-panel .section-head{margin:0 2px 12px}
+.club-home-layout .game-panel .section-head h2{font-size:22px}
+.club-home-layout .game-grid{gap:14px}
+.club-home-layout .game-card{min-height:162px;border-radius:18px;border:1px solid #d8e2da;box-shadow:0 5px 16px #102f2112}
+.club-home-layout .game-card:before{height:100%;background:linear-gradient(180deg,transparent 20%,#051b1570 48%,#051b15f5 100%)}
+.club-home-layout .game-card>div{width:100%;padding:15px 40px 15px 16px}
+.club-home-layout .game-card strong{font-size:18px;letter-spacing:.02em}
+.club-home-layout .game-card small{font-size:12px;color:#dfebe5;line-height:1.5;white-space:normal}
+.club-home-layout .game-card>b{right:12px;bottom:19px;background:#ffffff1a;color:#f0d58a}
+@media(hover:hover){.game-card:hover{box-shadow:0 8px 25px #143b3428;border-color:#c8aa64}.room-card:hover{border-color:#c8aa64}}
+.club-bottom-nav{grid-template-columns:repeat(5,1fr);min-height:65px}
+.club-bottom-nav button{font-size:11px;min-height:48px;gap:3px}.club-bottom-nav b{font-size:17px}
+.resume-room{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;border:1px solid #c4d9cb;border-radius:15px;background:#e4eee6;color:#174435;text-align:left}
+.resume-room span{display:grid;gap:4px}.resume-room small{color:#526c5e;line-height:1.5}.resume-room>strong{white-space:nowrap;font-size:13px}
+.club-presence span{font-size:12px}
+.room-card strong{font-size:15px}.room-card small,.room-card>b{font-size:12px}
+.waiting-guidance{flex:0 0 auto;margin:0;text-align:center;font-size:13px;line-height:1.5;color:#356152}
+.waiting-card .action-row button{min-height:42px;font-size:12px}.waiting-meta strong{font-size:16px}
+.club-drawer{width:min(480px,100%);padding:20px;background:#102f28;box-shadow:-12px 0 45px #061c2440}
+.club-drawer-head strong{font:700 22px/1.3 inherit}.club-drawer-head span{font-size:10px}
+.club-drawer-tabs{margin:16px 0 12px;border:0;background:#071e1980;padding:4px;border-radius:12px}
+.club-drawer-tabs button{height:42px;font-size:13px;border-radius:9px}
+.club-message-list{padding:10px 0;scrollbar-width:thin;scrollbar-color:#657d70 transparent}
+.club-message{margin:0 0 18px;padding:0;border:0;background:transparent;gap:7px;border-radius:0}
+.message-identity{display:flex;align-items:center;gap:8px;min-width:0}
+.club-message b{font-size:12px;color:#b9cfc4;overflow:hidden;text-overflow:ellipsis}
+.message-identity time{margin-left:auto;flex-shrink:0;color:#8ea89c;font-size:11px;font-variant-numeric:tabular-nums}
+.club-message p{justify-self:start;max-width:90%;margin:0 0 0 40px;padding:10px 13px;border:1px solid #ffffff0b;border-radius:3px 14px 14px 14px;background:#ffffff0c;color:#f0f5f1;font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.club-message.mine{margin-left:0;background:transparent}
+.club-message.mine p{justify-self:end;margin-left:40px;border-radius:14px 3px 14px 14px;color:#eaffef;background:#245d49}
+.club-message.mine .message-identity b{color:#e6d292}
+.room-share-message{padding:12px;border:1px solid #c8b36b50;border-radius:15px;background:#ffffff05}
+.room-share-message>strong{font-size:15px}.room-share-meta{font-size:12px}
+.club-compose input,.friend-add input,.chat-compose input{font-size:16px;min-height:44px}
+.club-compose button{min-height:44px;font-size:13px}
+.new-messages{align-self:center;margin:4px 0 10px;padding:9px 14px;min-height:40px;border:1px solid #d8bd70;border-radius:24px;color:#f4dd97;background:#234b3e;font-size:12px}
+.local-feedback{flex:0 0 auto;padding:10px 12px;margin:4px 0 10px;border:1px solid #cf766b;border-radius:10px;background:#702b24;color:#fff0ec;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.local-feedback:empty{display:none}
+.local-feedback[data-kind=info]{background:#1c4e40;border-color:#518c70;color:#f1f8f3}
+.feedback{z-index:90;pointer-events:none}
+body.drawer-open .app-shell>.feedback{display:none}
+.profile-back{align-self:start;padding:8px 12px;margin:0 0 8px;min-height:40px;border:1px solid #ffffff26;border-radius:10px;background:transparent;color:#e4d295;font-size:13px}
+.club-profile{display:flex;flex-direction:column;align-items:stretch;padding:10px 0 22px;text-align:left}
+.profile-summary{display:grid;grid-template-columns:56px minmax(0,1fr);gap:4px 14px;align-items:center}
+.club-profile .profile-avatar{grid-row:1/3;width:56px;height:56px;font-size:22px}
+.club-profile h2{margin:0;align-self:end;font:700 21px/1.4 inherit;overflow-wrap:anywhere}
+.club-profile p{margin:0;align-self:start;font-size:12px}
+.club-profile>strong{margin-top:18px;justify-content:flex-start!important;font-size:17px}
+.profile-stats{margin-top:14px;border:0;background:#ffffff06;gap:10px}
+.profile-stats b{font-size:14px}.profile-stats small{font-size:12px;line-height:1.5;color:#c0d2c7}
+.profile-ledger{width:100%;margin-top:16px}.profile-ledger header{font-size:14px}.profile-ledger small{font-size:11px}
+.profile-actions{margin-top:15px}.friend-card b{font-size:14px}.friend-card small{font-size:11px}.friend-card .secondary{min-height:42px;font-size:12px}
+.direct-chat{background:#102f28}.direct-chat>header{min-height:50px}.direct-chat>header button{width:42px;height:42px}
+.task-card{padding:14px 10px}.task-card b{font-size:14px}.task-card small{font-size:12px}
+.club-module-loading{align-content:center;justify-content:center;gap:16px;padding:24px;text-align:center}.club-module-loading button{min-width:180px}
+.river .tile.latest-discard{outline:2px solid #f4ca69;outline-offset:2px;filter:drop-shadow(0 0 5px #f4ca6970)}
+.player.active{border:1px solid #e8ca7a;box-shadow:0 0 0 2px #e8ca7a55}
+@media(max-width:699px){
+  .club-home-screen{padding:12px}.club-home-layout{gap:16px}
+  .club-home-layout .hero{min-height:176px;padding:18px 20px 74px;border-radius:18px}
+  .club-home-layout .hero h1{font-size:27px;margin-top:6px}.club-home-layout .hero p{display:none}
+  .channel-peek{right:14px;left:14px;bottom:13px;width:auto;min-height:48px;padding:8px 11px}
+  .club-home-layout .game-grid{gap:10px}.club-home-layout .game-card{min-height:142px;border-radius:15px}
+  .club-home-layout .game-card>div{padding:12px 26px 12px 12px}.club-home-layout .game-card strong{font-size:16px}.club-home-layout .game-card small{font-size:11px}
+  .club-home-layout .game-card>b{right:6px;bottom:15px;width:20px;height:20px}
+  .club-drawer{width:100%;padding:max(14px,env(safe-area-inset-top)) 14px max(12px,env(safe-area-inset-bottom))}
+  .resume-room{padding:12px;font-size:12px}.resume-room small{font-size:11px}.resume-room>strong{font-size:12px}
+  .club-presence span{font-size:10px}.waiting-card .action-row{grid-template-columns:repeat(3,1fr)}
+}
+@media(min-width:700px) and (max-height:500px){
+  .topbar{min-height:54px;padding-top:5px;padding-bottom:5px}.club-home-screen{padding-top:10px}
+  .club-home-layout{display:grid;grid-template-columns:210px minmax(0,1fr);gap:14px;min-height:0}
+  .club-home-layout .hero{min-height:230px;height:100%;padding:18px;justify-content:flex-start}
+  .club-home-layout .hero h1{font-size:25px;max-width:6em}.club-home-layout .hero p{font-size:12px}
+  .channel-peek{right:12px;left:12px;bottom:12px;width:auto}.channel-peek em{display:none}
+  .club-home-layout .game-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .club-home-layout .game-card{min-height:105px}.club-home-layout .game-card strong{font-size:14px}.club-home-layout .game-card small{font-size:10px}
+  .resume-room{grid-column:1/-1;grid-row:1}.club-bottom-nav{min-height:54px;padding:3px 10px}.club-bottom-nav button{min-height:44px;display:flex;justify-content:center;gap:8px}
+  .club-drawer{padding-top:12px}.club-drawer-tabs{margin:8px 0}.club-profile{padding-top:4px}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+.club-bottom-nav svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.mahjong-cue{max-width:240px;text-align:center;color:#f1d68f;font-size:11px;line-height:1.5}.mahjong-cue:empty{display:none}
+@media(min-width:1100px) and (min-height:650px){.club-home-layout .hero{min-height:148px}.club-home-layout .game-card{min-height:142px}}

@@ -245,6 +245,7 @@ class DoudizhuRepositoryMixin:
             'rake_percent': rake_percent,
             'rake_amount': rake_amount,
             'outcomes': ['win' if seat in winners else 'loss' for seat in range(3)],
+            'settled_at': now.isoformat(),
         }
 
     def doudizhu_action(self, room_id, platform_id, round_id, version, request_id, action, payload, now):
@@ -321,7 +322,11 @@ class DoudizhuRepositoryMixin:
                 row = session.get(Round, room.round_id)
                 if row.state['phase'] == 'finished' and room.phase != 'finished':
                     self._ddz_sync(session, room, row, now)
-                if row.state['phase'] == 'finished' and action in ('ready', 'unready'):
+                if row.state['phase'] == 'finished' and action == 'leave':
+                    room.phase = 'cancelled'
+                    room.deadline = None
+                    room.ready = [False] * 3
+                elif row.state['phase'] == 'finished' and action in ('ready', 'unready'):
                     ready = list(room.ready)
                     ready[seat] = action == 'ready'
                     room.ready = ready

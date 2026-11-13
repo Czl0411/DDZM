@@ -228,6 +228,7 @@ class DrawguessRepositoryMixin:
             "rake_percent": rake_percent,
             "rake_amount": rake_amount,
             "outcomes": ["win" if seat in winners else "loss" for seat in range(len(state["seats"]))],
+            "settled_at": now.isoformat(),
         }
 
     @staticmethod
@@ -363,7 +364,16 @@ class DrawguessRepositoryMixin:
                 if state["turn_id"] != turn_id or state["version"] != version:
                     raise ValueError("房间已更新，请刷新")
                 user_id = str(user.id)
-                if state["phase"] == "finished" and action in {"ready", "unready"}:
+                if state["phase"] == "finished" and action == "leave":
+                    if user_id not in state["seats"]:
+                        raise ValueError("观众不能离开牌桌")
+                    changed = deepcopy(state)
+                    changed["phase"] = "closed"
+                    changed["ready"] = [False] * len(state["seats"])
+                    changed["deadline_ms"] = None
+                    changed["version"] += 1
+                    self._dg_sync_room(room, changed)
+                elif state["phase"] == "finished" and action in {"ready", "unready"}:
                     if user_id not in state["seats"]:
                         raise ValueError("观众不能准备")
                     changed = deepcopy(state)
@@ -392,6 +402,7 @@ class DrawguessRepositoryMixin:
                     fresh.update(
                         seats=list(state["seats"]), ready=[True] * len(state["seats"]),
                         scores={uid: 0 for uid in state["seats"]}, match_id=state["match_id"],
+                        completed_turns_ms=list(state.get("completed_turns_ms", []))[-5:],
                         version=state["version"],
                     )
                     fresh = apply_action(

@@ -39,6 +39,9 @@ def install_routes(context, publish, state, actions, saved=None, room_count=1):
         if request.request.method == "OPTIONS":
             request.fulfill(status=204, headers=headers)
             return
+        if path.endswith("/api/club/economy-settings"):
+            request.fulfill(json=[{"game": "drawguess", "coin_stakes": [5, 10, 20], "rake_percent": 20}], headers=headers)
+            return
         if "/api/drawguess/" in url:
             if path.endswith("/events"):
                 request.fulfill(body="", content_type="text/event-stream", headers=headers)
@@ -414,4 +417,27 @@ def test_reconnect_clear_and_next_turn_replaces_canvas():
         page.locator("#room-refresh").click()
         expect(page.locator("#draw-canvas")).to_have_attribute("data-turn-id", "2")
         expect(page.locator("#feedback")).not_to_contain_text("加载中")
+        browser.close()
+
+
+def test_linked_finished_room_bypasses_public_list_and_exit_posts_leave():
+    publish = Path(__file__).resolve().parents[2] / "club" / "publish"
+    state, actions = snapshot("finished", 0), []
+    state["state"].update(deadline_ms=None, ranking=[
+        {"name": "小画家", "score": 200, "rank": 1},
+        {"name": "猜猜", "score": 100, "rank": 2},
+        {"name": "阿圆", "score": 80, "rank": 3},
+    ])
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        context = browser.new_context()
+        context.add_init_script("window.dzmm={user:{info:async()=>({id:'host'})},kv:{get:async()=>({value:null}),put:async()=>{}},loading:{progress(){},ready(){},error(){}},log:{info(){},error(){}}};")
+        install_routes(context, publish, state, actions, room_count=0)
+        page = context.new_page()
+        page.goto(f"https://draw.test/games/drawguess/index.html?club=1&room={ROOM}")
+        expect(page.locator("#room-view")).to_be_visible()
+        expect(page.locator("#ranking")).to_contain_text("本局结算")
+        page.get_by_role("button", name="退出房间", exact=True).click()
+        expect(page.locator("#lobby")).to_be_visible()
+        assert actions[-1]["action"] == "leave"
         browser.close()

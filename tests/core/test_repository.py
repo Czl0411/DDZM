@@ -5110,6 +5110,37 @@ def test_ai_social_context_loads_latest_thirty_eligible_messages_and_paired_repl
     )
 
 
+def test_ai_social_context_does_not_replace_requester_with_claimed_alias(
+    repository, session_factory, now
+):
+    from dzmm_bot.core.schema import AIAssistantSettingsRecord
+
+    requester, _ = repository.create_user("alias-requester", "墨莲", now, 19)
+    repository.create_user("alias-target", "卡密撒嘛", now, 57)
+    repository.get_ai_assistant_settings()
+    with session_factory.begin() as session:
+        session.get(AIAssistantSettingsRecord, 1).enabled = True
+    inbound, _ = repository.accept_inbound(
+        InboundMessage(
+            "alias-current",
+            requester.platform_id,
+            "@总监事 我是卡密记住了吗",
+            now,
+            chatroom_id="alias-room",
+        )
+    )
+    assert repository.try_enqueue_ai_request(
+        inbound.id, requester.platform_id, inbound.content, now
+    ).state == "queued"
+
+    claim = repository.claim_ai_request("ai-worker", now, 90)
+
+    assert claim is not None
+    assert "昵称：墨莲" in claim.system_prompt
+    assert "员工：墨莲" in claim.system_prompt
+    assert "员工：卡密撒嘛" not in claim.system_prompt
+
+
 def test_ai_social_context_includes_employee_live_state(
     repository, session_factory, now
 ):

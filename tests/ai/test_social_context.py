@@ -58,6 +58,25 @@ def test_resolve_people_can_return_multiple_referenced_employees():
     ]
 
 
+def test_resolve_people_does_not_treat_first_person_alias_as_another_employee():
+    employees = (
+        SocialEmployee(UUID(int=1), "speaker", "墨莲", 241),
+        SocialEmployee(UUID(int=2), "kami", "卡密撒嘛", 301),
+    )
+
+    for content in (
+        "我是卡密记住了吗",
+        "我叫卡密",
+        "叫我卡密撒嘛",
+        "记住我叫卡密",
+    ):
+        result = resolve_people(content, employees, "speaker")
+        assert [item.platform_id for item in result.people] == ["speaker"]
+
+    reference = resolve_people("你认识卡密吗", employees, "speaker")
+    assert [item.platform_id for item in reference.people] == ["speaker", "kami"]
+
+
 def test_resolve_people_normalizes_width_but_preserves_name_case():
     normalized = resolve_people("＃００１５ 怎么样", EMPLOYEES, "speaker")
     english_name = SocialEmployee(UUID(int=4), "english", "ALPHABETA", 17)

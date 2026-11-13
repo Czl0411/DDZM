@@ -1,3 +1,5 @@
+import pytest
+
 from mahjong.tile import TilesConverter
 
 from dzmm_bot.core.mahjong_rules import (
@@ -63,7 +65,7 @@ def test_hand_value_uses_standard_riichi_scoring_and_chinese_yaku_names():
 
 
 def test_open_hand_without_yaku_cannot_win():
-    concealed = tiles(man="456", pin="12355", sou="123")
+    concealed = tiles(man="456", pin="12355", sou="789")
     meld = {
         "kind": "chi",
         "tiles": tiles(man="123"),
@@ -78,4 +80,37 @@ def test_open_hand_without_yaku_cannot_win():
         [meld],
         HandContext(player_wind=28, round_wind=27),
     )
-    assert value.error is not None
+    assert value.error == "no_yaku"
+
+
+def test_two_open_pons_are_included_in_winning_hand_and_scoring():
+    # 4567788索 + 碰六索 + 碰六筒, 荣和八索。
+    concealed = [84, 88, 92, 96, 97, 100, 101, 102]
+    melds = [
+        {"kind": "pon", "tiles": [93, 94, 95], "open": True, "called_tile": 95, "from": 3},
+        {"kind": "pon", "tiles": [56, 57, 58], "open": True, "called_tile": 58, "from": 3},
+    ]
+    value = hand_value(concealed, 102, melds, HandContext())
+    assert value.error is None
+    assert "断幺九" in value.yaku
+    assert value.total > 0
+
+
+def test_chi_meld_is_included_when_scoring_open_tanyao():
+    concealed = tiles(man="456", pin="23455", sou="678")
+    meld = {"kind": "chi", "tiles": tiles(sou="234"), "open": True, "called_tile": 84, "from": 3}
+    value = hand_value(concealed, concealed[-1], [meld], HandContext())
+    assert value.error is None
+    assert "断幺九" in value.yaku
+
+
+@pytest.mark.parametrize("kind", ["kan", "ankan", "kakan"])
+def test_quad_meld_keeps_all_four_tiles_for_scoring(kind):
+    concealed = [84, 88, 92, 96, 97, 100, 101, 102]
+    melds = [
+        {"kind": kind, "tiles": [4, 5, 6, 7], "open": kind != "ankan", "called_tile": 7, "from": 3},
+        {"kind": "pon", "tiles": [56, 57, 58], "open": True, "called_tile": 58, "from": 3},
+    ]
+    value = hand_value(concealed, 102, melds, HandContext())
+    assert value.error is None
+    assert "断幺九" in value.yaku

@@ -64,7 +64,7 @@ def test_texas_coin_hand_uses_floor_rake_and_requests_are_idempotent(mahjong):
     assert balance(factory, "alice") == 1001
 
 
-@pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack"])
+@pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack", "niuniu"])
 def test_coin_room_uses_each_games_configured_stakes(mahjong, game):
     repo, _ = mahjong
     repo.set_club_game_economy_settings(
@@ -126,7 +126,7 @@ def test_texas_rake_percent_is_snapshotted_when_hand_starts(mahjong):
     assert room["state"]["rake_amount"] == 0
 
 
-@pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack"])
+@pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack", "niuniu"])
 def test_each_card_game_snapshots_its_rake_when_the_hand_starts(mahjong, game):
     repo, _ = mahjong
     repo.set_club_game_economy_settings(
@@ -140,7 +140,7 @@ def test_each_card_game_snapshots_its_rake_when_the_hand_starts(mahjong, game):
     assert room["state"]["rake_percent"] == 35
 
 
-@pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack"])
+@pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack", "niuniu"])
 def test_casual_card_game_never_snapshots_rake(mahjong, game):
     repo, _ = mahjong
     repo.set_club_game_economy_settings(
@@ -453,7 +453,7 @@ def test_finished_hand_stays_on_settlement_until_everyone_readies(mahjong):
     assert room["ready"] == []
 
 
-@pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack"])
+@pytest.mark.parametrize("game", ["texas", "zhajinhua", "blackjack", "niuniu"])
 def test_spectator_can_join_after_a_hand_for_the_next_hand(mahjong, game):
     repo, factory = mahjong
     room = repo.create_club_card_room(

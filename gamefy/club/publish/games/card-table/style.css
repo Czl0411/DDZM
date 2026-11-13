@@ -13,3 +13,75 @@ body[data-layout=landscape][data-compact=true] .game-bar{min-height:50px;padding
 .result{top:58px;right:12px;bottom:12px;display:flex;width:min(560px,calc(100% - 24px));padding:18px;flex-direction:column;overflow:auto;border-radius:22px;background:linear-gradient(150deg,#fffdf8,#f2eadb)}
 .result>header{display:flex;align-items:center;justify-content:space-between}.result>header span{color:#9b7628;font-size:9px;font-weight:900;letter-spacing:.14em}.result>header>b{display:grid;width:48px;height:48px;place-items:center;border-radius:15px;color:#f4d47c;background:#134b3f;font:900 22px/1 serif}.result h3{margin:4px 0 10px;font:900 24px/1.2 "Songti SC","STSong",serif}.showdown-list{display:grid;gap:7px}.showdown-row{display:grid;min-height:60px;padding:8px;grid-template-columns:auto minmax(82px,1fr) auto auto;gap:8px;align-items:center;border:1px solid #e4dac6;border-radius:14px;background:rgb(255 255 255/68%)}.showdown-row.winner{border-color:#d7ad43;background:#fff7dc}.showdown-row>button{position:relative;width:36px;height:36px;padding:0;overflow:hidden;border:1px solid #d2b35a;border-radius:50%;background:#ead590}.showdown-row>button img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.showdown-row strong,.showdown-row small{display:block}.showdown-row small{margin-top:3px;color:#6e7772;font-size:10px}.showdown-cards{display:flex;gap:3px}.showdown-cards .card{width:28px;border-radius:5px;font-size:9px}.settle-amount{color:#916b18;font-size:11px;font-weight:900;white-space:nowrap}.next-ready{display:flex;margin-top:10px;gap:6px;flex-wrap:wrap}.next-ready span{padding:5px 8px;border-radius:999px;color:#7b827e;background:#e8e5dd;font-size:9px}.next-ready span.ready{color:#fff;background:#1c6655}.result footer{margin-top:auto;padding-top:15px;flex-wrap:wrap}
 @media(max-width:600px){.result{top:54px;right:8px;bottom:8px;width:calc(100% - 16px);padding:13px}.showdown-row{grid-template-columns:auto minmax(68px,1fr) auto}.showdown-row .settle-amount{grid-column:2/-1}.showdown-cards .card{width:25px}.result footer button{flex:1}}
+
+/* Action-first table presentation. Seat state survives the brief animation. */
+.seat{min-width:116px;max-width:170px;border-radius:12px;padding:8px;gap:8px}
+.seat b{max-width:100px;font-size:12px}.seat small{font-size:10px;line-height:1.4}
+.seat-action{display:block;margin-top:4px;color:#e4cb85;font:700 11px/1.4 "PingFang SC",sans-serif;white-space:normal;overflow-wrap:anywhere}
+.seat.folded{background:#182b28;border-color:#64736c;opacity:.68}.seat.folded .seat-action{color:#c7d0ca}
+.seat.mine{border-left:3px solid #90c9b0}.my-cards.folded{opacity:.32;filter:grayscale(1)}
+.activity-bar{position:absolute;z-index:4;top:54%;left:50%;width:min(420px,55%);display:flex;align-items:center;justify-content:center;gap:8px;transform:translateX(-50%);color:#e3ecdf;font-size:12px;text-align:center}
+.activity-bar>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:270px}
+.activity-bar button{min-height:36px;padding:0 10px;flex-shrink:0}
+.history-panel{position:absolute;z-index:15;top:58px;right:12px;bottom:12px;width:min(360px,calc(100% - 24px));padding:16px;border:1px solid #e8c46c50;border-radius:16px;background:#0d3029;box-shadow:0 15px 40px #0018;display:flex;flex-direction:column}
+.history-panel header{display:flex;justify-content:space-between;align-items:center;font-size:14px}.history-panel header button{flex:0 0 42px}
+#action-history{overflow:auto;margin-top:10px;min-height:0;flex:1}#action-history p{margin:0;padding:12px 0;border-bottom:1px solid #ffffff12;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.moving-chip{position:absolute;z-index:7;pointer-events:none;padding:7px 10px;border:2px dashed #fff1b5;border-radius:50%;color:#192b20;background:#dfb658;font-size:12px;font-weight:800}
+.turn-countdown.your-turn{color:#f5e2a0;border-color:#e8c46c;background:#405133}.turn-countdown.urgent{color:#ffe2ce;border-color:#e49266;background:#653c2e}
+.actions button{font-size:13px}.actions .primary{box-shadow:none}.actions button:active{filter:brightness(1.12)}
+.game-intro{min-height:118px;padding:20px}.game-intro b{font-size:24px}.game-intro p{font-size:13px}
+.waiting>p{line-height:1.7;font-size:14px;white-space:pre-line}.waiting-seat small{font-size:12px}.waiting{overflow:auto}
+.room-card{min-height:74px}.room-card small{font-size:12px}.room-card b{font-size:12px}
+.result>header{flex-shrink:0}.result footer{position:sticky;bottom:-18px;background:#f7f1e5;padding-bottom:10px}
+.result .secondary{color:#17382f;background:white;border-color:#bfcfc4}
+.compose input{min-height:44px}.message{background:none;border-bottom:1px solid #ffffff0c;border-radius:0;padding:10px 0}.message p{font-size:14px;overflow-wrap:anywhere}.message b{font-size:12px}
+@media(max-width:600px){.seat{min-width:90px;max-width:115px;padding:5px;gap:5px}.seat b{font-size:11px;max-width:70px}.seat small{font-size:9px}.seat-action{font-size:10px}.activity-bar{top:50%;width:90%}.activity-bar>span{max-width:230px}body[data-layout=portrait] .actions button{min-height:40px;font-size:12px}body[data-layout=portrait] .my-cards{bottom:155px}}
+@media(orientation:landscape) and (max-height:500px){.seat{min-width:92px;padding:4px;gap:5px}.seat button{width:24px;height:24px}.seat b{font-size:10px}.seat small{font-size:9px}.seat-action{margin-top:1px;font-size:10px}.activity-bar{top:49%;width:46%;font-size:11px}.pot{top:40%}.activity-bar button{min-height:32px}.seat:nth-child(3),.seat:nth-child(5){top:18%}.seat:nth-child(4){top:17%}.my-cards{z-index:3}.result{top:48px}.waiting{padding:12px}.waiting-seat{padding:7px}.game-intro{min-height:90px;padding:12px}.game-intro p{margin-top:4px}}
+@media(min-width:700px) and (max-height:500px){
+  body[data-layout=landscape][data-compact=true] .actions{grid-template-columns:110px repeat(3,minmax(64px,1fr)) minmax(180px,1.5fr);padding:5px;gap:6px}
+  body[data-layout=landscape][data-compact=true] .raise-control{grid-column:auto;grid-template-columns:minmax(50px,1fr) 84px}
+  body[data-layout=landscape][data-compact=true] .my-cards{bottom:64px}
+  .pot{top:46%}.activity-bar{top:57%}
+}
+/* Keep every seat outside the central cards, including eight-player tables. */
+.seats{inset:64px 12px 160px;display:grid;grid-template-columns:repeat(2,150px);grid-template-rows:repeat(4,minmax(0,1fr));justify-content:space-between;gap:6px;pointer-events:none}
+.seats .seat{position:relative;inset:auto;transform:none;width:100%;min-width:0;max-width:none;align-self:center;pointer-events:auto}
+.seats .seat:nth-child(1){grid-column:1;grid-row:4}.seats .seat:nth-child(2){grid-column:1;grid-row:3}.seats .seat:nth-child(3){grid-column:1;grid-row:2}.seats .seat:nth-child(4){grid-column:1;grid-row:1}.seats .seat:nth-child(5){grid-column:2;grid-row:1}.seats .seat:nth-child(6){grid-column:2;grid-row:2}.seats .seat:nth-child(7){grid-column:2;grid-row:3}.seats .seat:nth-child(8){grid-column:2;grid-row:4}
+@media(max-width:699px){
+  .seats{inset:70px 7px 218px;grid-template-columns:repeat(2,clamp(80px,26vw,106px));gap:4px}
+  body[data-layout=portrait] .seats .seat{inset:auto;transform:none;display:block;min-height:57px;padding:5px}
+  .seat button{float:left;margin:0 5px 3px 0;width:24px;height:24px}.seat b{font-size:10px;max-width:none}.seat small{font-size:9px}.seat-action{clear:both;font-size:10px}
+  .board{gap:3px}.board .card{width:clamp(22px,6.5vw,32px);font-size:11px}
+  .activity-bar{top:54%;width:calc(100% - 24px);background:#082e25e0;border-radius:12px;padding:3px}
+}
+@media(min-width:700px) and (max-height:500px){.seats{inset:52px 10px 64px;grid-template-columns:repeat(2,125px);gap:3px}.seats .seat{min-height:44px}.board{top:34%}.pot{top:46%}.activity-bar{top:57%}}
+.seat small{overflow:hidden;text-overflow:ellipsis}
+@media(min-width:700px) and (max-height:500px){.pot{top:49%}}
+.compare-targets{display:grid;gap:8px;margin-top:16px}.compare-targets button{text-align:left;min-height:44px}
+body[data-layout=landscape][data-compact=true] .actions:has(.raise-control){grid-template-columns:110px repeat(3,minmax(64px,1fr)) minmax(180px,1.5fr)}
+body[data-layout=landscape][data-compact=true] .actions:not(:has(.raise-control)){grid-template-columns:repeat(6,minmax(0,1fr))}
+
+/* Bull selection and banker settlement use the shared card-table shell. */
+body[data-game=niuniu] .seats{grid-template-rows:repeat(3,minmax(0,1fr));inset:68px 14px 220px;grid-template-columns:repeat(2,170px)}
+body[data-game=niuniu] .seats .seat{grid-row:auto;grid-column:auto;align-self:start}
+.niu-seat-cards{display:flex;gap:2px;grid-column:1/-1;clear:both;padding-top:4px}.niu-seat-cards .card{width:24px;font-size:10px;box-shadow:none}
+body[data-game=niuniu] .dealer-area{top:19%;width:42%;justify-content:center;color:#f3d184;text-align:center;font-size:16px;font-weight:800}
+body[data-game=niuniu] .pot{top:38%;white-space:nowrap}body[data-game=niuniu] .activity-bar{top:48%;width:40%}
+body[data-game=niuniu] .my-cards{bottom:130px;gap:8px}body[data-game=niuniu] .my-cards .card{width:clamp(45px,8vw,78px);font-size:23px}
+.niu-card-button{border:0;padding:0;background:none;cursor:pointer;border-radius:8px;transition:transform .15s}.niu-card-button[aria-pressed=true]{transform:translateY(-15px);outline:3px solid #f4d47c;box-shadow:0 0 22px #e8c46c60}.niu-card-button:focus-visible{outline:3px solid white}
+.niu-hint{grid-column:1/-1;text-align:center;color:#eedca8;font-size:13px}
+body[data-game=niuniu] .actions{grid-template-columns:repeat(2,minmax(0,1fr));max-width:460px}body[data-game=niuniu] .actions .turn-countdown{grid-column:1/-1}
+.niu-payments{font-size:12px;line-height:1.7;border-top:1px solid #d9cbaa;padding:10px 0;margin-top:10px}.niu-payments b{display:block;color:#856015}
+body[data-game=niuniu] .result{width:min(680px,calc(100% - 24px))}
+@media(max-width:699px){body[data-game=niuniu] .seats{grid-template-columns:repeat(2,123px);inset:74px 8px 248px;gap:6px}body[data-game=niuniu] .seat{min-height:90px}body[data-game=niuniu] .niu-seat-cards .card{width:19px;font-size:9px}body[data-game=niuniu] .dealer-area{top:auto;bottom:235px;width:90%;font-size:13px}body[data-game=niuniu] .pot{top:auto;bottom:208px}body[data-game=niuniu] .activity-bar{top:auto;bottom:176px;width:90%;font-size:11px}body[data-game=niuniu] .my-cards{bottom:123px;gap:6px}body[data-game=niuniu] .my-cards .card{width:47px;font-size:18px}}
+@media(min-width:700px) and (max-height:500px){body[data-game=niuniu] .seats{inset:52px 10px 12px;grid-template-columns:repeat(2,140px)}body[data-game=niuniu] .seat{min-height:60px}body[data-game=niuniu] .niu-seat-cards{padding-top:0}body[data-game=niuniu] .niu-seat-cards .card{width:18px;font-size:8px}body[data-game=niuniu] .dealer-area{top:21%;font-size:13px}body[data-game=niuniu] .pot{top:34%;font-size:10px}body[data-game=niuniu] .activity-bar{top:43%;font-size:10px}body[data-game=niuniu] .my-cards{bottom:91px}body[data-game=niuniu] .my-cards .card{width:38px;font-size:17px}body[data-game=niuniu] .actions{width:calc(100% - 320px);padding:4px;gap:3px}body[data-game=niuniu] .actions .turn-countdown{font-size:10px;padding:3px}body[data-game=niuniu] .niu-hint{font-size:11px}body[data-game=niuniu] .actions button{min-height:30px}}
+
+@media(max-width:699px){body[data-game=niuniu] .dealer-area{bottom:288px}body[data-game=niuniu] .pot{bottom:252px;transform:translateX(-50%)}body[data-game=niuniu] .activity-bar{bottom:210px}}
+body[data-game=niuniu][data-layout=landscape][data-compact=true] .actions:not(:has(.raise-control)){grid-template-columns:repeat(2,minmax(0,1fr))}
+body[data-game=niuniu][data-layout=landscape][data-compact=true] .my-cards{bottom:105px}
+body[data-game=niuniu][data-layout=landscape][data-compact=true] .pot{top:30%}
+body[data-game=niuniu][data-layout=landscape][data-compact=true] .activity-bar{top:35%}
+
+.showdown-cards .niu-group-end{margin-right:7px}
+
+body[data-game=niuniu] .game-bar>div:nth-child(2){display:grid;grid-template-columns:max-content max-content;gap:0 12px;align-items:center}body[data-game=niuniu] .game-bar #game-kicker{grid-column:1/-1}body[data-game=niuniu] #niu-rules{min-height:27px;padding:0 9px;font-size:12px}

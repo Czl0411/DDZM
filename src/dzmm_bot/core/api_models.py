@@ -1168,6 +1168,7 @@ ClubEconomyGame = Literal[
     "texas",
     "zhajinhua",
     "blackjack",
+    "niuniu",
 ]
 
 

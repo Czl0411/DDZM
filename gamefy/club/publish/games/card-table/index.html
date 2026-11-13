@@ -6,12 +6,13 @@
   <meta name="theme-color" content="#07352d">
   <title>Club 牌桌</title>
   <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="../ui-refresh.css">
 </head>
 <body>
   <main id="app" class="card-app">
     <header class="game-bar">
       <button id="back" class="icon" type="button" aria-label="返回">←</button>
-      <div><span id="game-kicker">MOYU CLUB</span><h1 id="game-title">牌桌</h1></div>
+      <div><span id="game-kicker">MOYU CLUB</span><h1 id="game-title">牌桌</h1><button id="niu-rules" class="text-button" type="button" hidden>规则</button></div>
       <div class="bar-actions"><button id="public-channel" class="text-button" type="button">公屏</button><button id="refresh" class="icon" type="button" aria-label="刷新">↻</button></div>
     </header>
     <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
@@ -28,6 +29,8 @@
         <div id="dealer" class="dealer-area"></div>
         <div id="board" class="board"></div>
         <div id="pot" class="pot"></div>
+        <div class="activity-bar"><span id="last-action" role="status" aria-live="polite">等待行动</span><button id="history-toggle" class="hud-button" type="button" aria-expanded="false">记录</button></div>
+        <aside id="history-panel" class="history-panel" hidden><header><b>本手最近50次行动</b><button id="history-close" class="icon" aria-label="关闭行动记录" type="button">×</button></header><div id="action-history"></div></aside>
         <div id="seats" class="seats"></div>
         <div id="my-cards" class="my-cards"></div>
         <div id="actions" class="actions"></div>
@@ -38,11 +41,13 @@
         <div id="waiting-actions" class="waiting-actions"></div>
       </div>
       <section id="result" class="result" hidden></section>
-      <aside id="chat" class="chat" hidden><header><div><span>ROOM CHAT</span><b>房间频道</b></div><button id="chat-close" class="icon" type="button">×</button></header><div id="messages" class="messages"></div><div class="compose"><input id="chat-input" maxlength="300" placeholder="和牌桌上的玩家聊聊…"><button id="chat-send" class="primary" type="button">发送</button></div></aside>
+      <aside id="chat" class="chat" hidden><header><div><span>ROOM CHAT</span><b>房间频道</b></div><button id="chat-close" class="icon" type="button">×</button></header><div id="messages" class="messages"></div><p id="chat-feedback" class="local-feedback" role="status"></p><div class="compose"><input id="chat-input" maxlength="300" placeholder="和牌桌上的玩家聊聊…"><button id="chat-send" class="primary" type="button">发送</button></div></aside>
     </section>
   </main>
 
-  <dialog id="create-dialog"><form method="dialog" class="dialog-card"><header><span>CREATE TABLE</span><h2 id="create-title">新建牌桌</h2><p>连续牌桌，一手结束后可以继续，也可以在牌局间离桌。</p></header><fieldset><legend>房间类型</legend><div class="segmented"><label><input name="room-type" value="casual" type="radio"><span>休闲场</span></label><label><input name="room-type" value="coin" type="radio" checked><span>摸鱼币场</span></label></div></fieldset><fieldset id="stake-field"><legend>每手带入</legend><div class="segmented stakes"><label><input name="stake" value="5" type="radio"><span>5 币</span></label><label><input name="stake" value="10" type="radio" checked><span>10 币</span></label><label><input name="stake" value="20" type="radio"><span>20 币</span></label></div></fieldset><p class="economy-note">虚拟摸鱼币仅用于游戏，不涉及兑换或现金交易。</p><footer><button id="cancel-create" class="secondary" type="button">取消</button><button id="confirm-create" class="primary" type="button">创建牌桌</button></footer></form></dialog>
+  <dialog id="create-dialog"><form method="dialog" class="dialog-card"><header><span>CREATE TABLE</span><h2 id="create-title">新建牌桌</h2><p>连续牌桌，一手结束后可以继续，也可以在牌局间离桌。</p></header><fieldset><legend>房间类型</legend><div class="segmented"><label><input name="room-type" value="casual" type="radio"><span>休闲场</span></label><label><input name="room-type" value="coin" type="radio" checked><span>摸鱼币场</span></label></div></fieldset><fieldset id="stake-field"><legend>每手带入</legend><div class="segmented stakes"><label><input name="stake" value="5" type="radio"><span>5 币</span></label><label><input name="stake" value="10" type="radio" checked><span>10 币</span></label><label><input name="stake" value="20" type="radio"><span>20 币</span></label></div></fieldset><p class="economy-note">虚拟摸鱼币仅用于游戏，不涉及兑换或现金交易。</p><p class="local-feedback" role="status"></p><footer><button id="cancel-create" class="secondary" type="button">取消</button><button id="confirm-create" class="primary" type="button">创建牌桌</button></footer></form></dialog>
+  <dialog id="compare-dialog"><section class="dialog-card"><header><span>选择比牌对象</span><h2>与谁比牌？</h2><p id="compare-cost"></p></header><div id="compare-targets" class="compare-targets"></div><p class="local-feedback" role="status"></p><footer><button id="compare-cancel" class="secondary" type="button">取消</button></footer></section></dialog>
+  <dialog id="niu-rules-dialog"><section class="dialog-card"><h2>斗牛 · 庄闲对决</h2><p>2～6人，每人5张。首局随机选庄，闲家各自和庄家比牌，闲家之间不结算。</p><p>A算1点，J/Q/K算10点。任选3张点数之和为10的倍数，余下2张的个位数为牛数；整十为牛牛，否则不能凑牛即无牛。</p><p>牛牛＞牛九＞…＞牛一＞无牛。同牛型比最大单张：K＞Q＞J＞10…＞A；同点数比黑桃＞红桃＞梅花＞方块。不含五小牛、炸弹牛等特殊牌型。</p><p>赢家无牛～牛六：1倍；牛七～牛九：2倍；牛牛：3倍。输家支付底注×赢家倍率。</p><p>闲家牛牛且赢庄才接庄，多人符合由牌最大的接庄。无人符合则原庄继续；庄家离桌后重新随机定庄。</p><p>闲家托管底注×3；庄家托管底注×3×闲家人数。结算退回剩余托管，不透支。休闲场仅计分。</p><p>全员同时配牛30秒，超时自动配牛亮牌。下一局需重新准备、房主开始。</p><button id="niu-rules-close" class="primary" type="button">知道了</button></section></dialog>
   <script src="../runtime-bootstrap.js"></script>
   <script type="module" src="./game.js"></script>
 </body>

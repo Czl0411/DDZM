@@ -94,6 +94,22 @@ def test_finished_game_stays_in_room_until_both_players_ready(chess_repo):
     assert [message["text"] for message in repo.chess_messages(game.id)] == ["下一盘继续"]
 
 
+def test_finished_leave_dissolves_table_and_releases_players(chess_repo):
+    repo, factory, inbound_id = chess_repo
+    game = repo.create_chess_game("creator", PRIMARY_GROUP_CHAT_ID, inbound_id, NOW)
+    mark_sent(factory, inbound_id)
+    game = repo.claim_chess_seat(game.id, "alice", game.code, NOW).game
+    game = repo.chess_action(game.id, "creator", "resign", NOW, game.version)
+    assert repo.club_active_room("alice", NOW)["room_id"] == str(game.id)
+
+    game = repo.chess_action(game.id, "creator", "leave", NOW, game.version)
+
+    assert game.status == "cancelled"
+    assert repo.club_active_room("alice", NOW) is None
+    assert repo.list_chess_rooms(NOW) == []
+    assert repo.create_chess_game("alice", now=NOW).status == "waiting"
+
+
 def test_coin_game_uses_configured_stake_and_locked_rake(chess_repo, monkeypatch):
     repo, factory, _ = chess_repo
     with factory.begin() as session:

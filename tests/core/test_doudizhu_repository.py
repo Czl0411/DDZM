@@ -98,6 +98,31 @@ def test_ready_leave_and_rematch(ddz):
     assert room['phase'] == 'bidding'
 
 
+def test_finished_leave_dissolves_table_and_releases_players(ddz):
+    from dzmm_bot.core.schema import DoudizhuRoundRecord
+
+    repo, factory, _ = ddz
+    room = dealt(ddz)
+    with factory.begin() as session:
+        row = session.get(DoudizhuRoundRecord, UUID(room['round_id']))
+        row.state = {
+            **row.state,
+            'phase': 'finished',
+            'result': {'winner': 'farmers', 'winners': [1, 2], 'spring': None},
+        }
+    room = act(repo, room, 'host', 'ready')
+    assert room['phase'] == 'finished'
+    assert room['settlement']['settled_at'] == NOW.isoformat()
+    assert repo.club_active_room('alice', NOW)['room_id'] == room['id']
+
+    room = act(repo, room, 'host', 'leave')
+
+    assert room['phase'] == 'cancelled'
+    assert repo.club_active_room('alice', NOW) is None
+    assert repo.list_doudizhu_rooms('viewer', NOW) == []
+    assert repo.create_doudizhu_room('alice', now=NOW)['phase'] == 'waiting'
+
+
 def test_request_id_payload_conflict(ddz):
     repo = ddz[0]
     room = start(ddz)

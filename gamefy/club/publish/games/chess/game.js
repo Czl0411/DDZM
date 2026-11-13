@@ -230,8 +230,20 @@ async function boot() {
   location.hash = `room=${roomId}`;
   try { await sdk.kv.put(lastRoomKey, roomId, { flush: true }); }
   catch { document.querySelector('#feedback').textContent = '未能保存最近棋局，下次请从列表进入。'; }
-  document.querySelector('#back-to-rooms').addEventListener('click', () => {
+  document.querySelector('#back-to-rooms').addEventListener('click', async () => {
     if (state?.game?.status === 'playing' && !confirm('棋局尚未结束。返回后棋钟继续，超时会判负；重新进入 Club 会回到本局。确定返回吗？')) return;
+    if (state?.game?.status === 'finished') {
+      try { await client.action('leave', state.game.version); }
+      catch (error) { document.querySelector('#feedback').textContent = error.message; return; }
+    }
+    if (window.MoyuClubRuntime?.embedded && typeof window.MoyuClubRuntime.openGameLobby === 'function') {
+      window.MoyuClubRuntime.openGameLobby('chess');
+      return;
+    }
+    if (window.MoyuClubRuntime?.embedded && typeof window.MoyuClubRuntime.close === 'function') {
+      window.MoyuClubRuntime.close();
+      return;
+    }
     location.hash = 'lobby';
     location.reload();
   });
@@ -264,6 +276,8 @@ async function boot() {
     board.replaceChildren();
     const rows = state.game.position?.board || ['rheakaehr', '.........', '.c.....c.', 'p.p.p.p.p', '.........', '.........', 'P.P.P.P.P', '.C.....C.', '.........', 'RHEAKAEHR'];
     const flip = state.role === 'black';
+    const undone = new Set((state.game.events || []).filter(event => event.kind === 'accept_undo').map(event => event.undone_seq));
+    const lastMove = (state.game.events || []).findLast(event => event.kind === 'move' && !undone.has(event.seq));
     for (let row = 0; row < 10; row++) for (let col = 0; col < 9; col++) {
       const x = flip ? 8 - col : col;
       const y = flip ? 9 - row : row;
@@ -271,6 +285,8 @@ async function boot() {
       const cell = document.createElement('button');
       cell.type = 'button';
       cell.className = `cell${row === 4 ? ' river' : ''}${selected?.[0] === x && selected?.[1] === y ? ' selected' : ''}`;
+      if (lastMove?.from_xy?.[0] === x && lastMove.from_xy[1] === y) cell.classList.add('last-from');
+      if (lastMove?.to_xy?.[0] === x && lastMove.to_xy[1] === y) cell.classList.add('last-to');
       cell.setAttribute('aria-label', `${x},${y}${PIECE[piece] || ''}`);
       cell.setAttribute('aria-pressed', String(selected?.[0] === x && selected?.[1] === y));
       if (state.game.check_square?.[0] === x && state.game.check_square?.[1] === y) cell.classList.add('in-check');
@@ -299,7 +315,7 @@ async function boot() {
     serverOffset = Date.now() - Date.parse(next.server_time || new Date().toISOString());
     const game = next.game;
     const rakeText = game.room_type === 'coin' ? `抽水 ${game.settlement?.rake_percent ?? game.position?.rake_percent ?? 0}%` : '休闲局不抽水';
-    window.MoyuClubRuntime?.setRoomContext?.({ game: 'chess', roomId, host: game.red_name || '玩家' });
+    window.MoyuClubRuntime?.setRoomContext?.({ game: 'chess', phase: game.status, roomId, host: game.red_name || '玩家' });
     const events = game.events || [];
     const notice = document.querySelector('#move-notice');
     const message = moveNotice(lastEventSeq, events);

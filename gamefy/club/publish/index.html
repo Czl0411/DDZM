@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#173f37">
   <title>摸鱼 Club</title>
   <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./ui-refresh.css">
+  <link rel="stylesheet" href="./mahjong-table.css">
   <style>[hidden]{display:none!important}@media(max-width:420px){.hand{justify-content:flex-start}}</style>
 </head>
 <body>
@@ -19,6 +21,7 @@
     <section id="club-home" class="screen club-home-screen">
       <div class="club-home-layout">
         <div class="hero"><span class="hero-label">TONIGHT'S CLUB</span><h1>今晚，开哪一桌？</h1><p>和群友下一盘、打一局，或者开桌麻将。</p><button id="channel-peek" class="channel-peek" type="button"><span><i></i>Club 公共频道</span><b id="channel-peek-text">正在连接群友…</b><em>展开 ›</em></button></div>
+        <button id="resume-room" class="resume-room" type="button" hidden><span><b>你有一场未离开的牌局</b><small id="resume-room-label"></small></span><strong>返回牌局 →</strong></button>
         <div class="game-panel">
           <div class="section-head"><div><span>CLUB GAMES</span><h2>游戏大厅</h2></div><div id="club-presence" class="club-presence" aria-label="Club 实时人数" aria-live="polite"><span><i></i><b id="club-online-count">--</b> 在线</span><span><b id="club-playing-count">--</b> 游戏中</span></div></div>
           <div id="game-grid" class="game-grid"></div>
@@ -42,20 +45,28 @@
       <div id="waiting" class="waiting-card" hidden>
         <div class="waiting-meta"><div><span>WAITING TABLE</span><strong id="room-kind">休闲房</strong></div><b id="room-code">等待入座</b></div>
         <div class="waiting-stage"><div class="waiting-table-mark" aria-hidden="true"><span>雀</span><small>四人到齐即可开局</small></div><div id="seats" class="waiting-seats"></div></div>
-        <div id="claim-controls" class="claim-panel" hidden><div><b>牌桌还有空位</b><span>点击即可，先到先得</span></div><button id="claim" class="primary gold">立即入座</button></div>
+        <p id="waiting-guidance" class="waiting-guidance" role="status"></p><div id="claim-controls" class="claim-panel" hidden><div><b>牌桌还有空位</b><span>点击即可，先到先得</span></div><button id="claim" class="primary gold">立即入座</button></div>
         <div id="waiting-actions" class="action-row" hidden><button id="share-room-channel" class="secondary">公屏分享</button><button id="share-room" class="secondary">好友邀请</button><button id="leave" class="secondary">离开</button><button id="ready" class="secondary">准备</button><button id="start" class="primary">开始</button></div>
       </div>
       <div id="mahjong-table" class="mahjong-table" hidden>
         <div id="opponent-top" class="player player-top"></div><div id="opponent-left" class="player player-left"></div><div id="opponent-right" class="player player-right"></div>
-        <div class="board-center"><div id="rivers" class="rivers"></div><div class="table-console"><div class="table-meta"><strong id="center-round">东1局</strong><span id="remaining-count">余 -- 张</span></div><div id="dora" class="dora"></div><div id="turn-status" class="turn-status"></div></div></div>
+        <div id="concealed-hands" class="concealed-hands" aria-label="其他玩家的手牌数量"></div>
+        <aside class="dora-rack"><span>宝牌指示</span><div id="dora" class="dora"></div><small id="table-sticks"></small></aside>
+        <div class="board-center"><div id="rivers" class="rivers"></div><div class="table-console"><div id="center-scores"></div><div class="table-meta"><strong id="center-round">东1局</strong><span id="remaining-count">余 -- 张</span></div></div></div>
+        <div class="table-decision"><span id="turn-status" class="turn-status"></span><strong id="decision-timer" aria-label="行动剩余时间"></strong></div>
+        <div id="mahjong-cue" class="mahjong-cue" role="status" aria-live="polite"></div>
+        <div id="table-callout" class="table-callout" aria-hidden="true" hidden></div>
         <div id="melds" class="melds"></div>
+        <div id="meld-choices" class="meld-choices" role="group" aria-label="吃牌组合" hidden></div>
         <div id="action-bar" class="action-bar"></div>
+        <button id="wait-preview" class="wait-preview" type="button" aria-haspopup="dialog" hidden></button>
         <div id="hand" class="hand" aria-label="我的手牌"></div>
+        <div class="hand-toolbar"><p id="hand-guidance" class="hand-guidance"></p><button id="hand-hints-button" type="button" aria-haspopup="dialog">听牌与规则</button></div>
         <div id="self-player" class="player self-player"></div>
         <button id="chat-preview" class="chat-preview" type="button"><span class="chat-preview-head"><b>牌桌聊天</b><i id="chat-preview-unread" hidden>0</i><em>展开 ›</em></span><span id="chat-preview-lines" class="chat-preview-lines">还没有聊天消息</span></button>
       </div>
       <div id="result" class="result-sheet" hidden></div>
-      <aside id="chat-drawer" class="chat-drawer" hidden><div class="chat-head"><div><span>TABLE CHAT</span><strong>牌桌聊天</strong><small>玩家与观众都可以发言</small></div><div class="chat-head-actions"><button id="chat-channel" class="hud-button" type="button">切到公屏</button><button id="chat-close" class="hud-button" type="button">收起</button></div></div><div id="messages" class="messages"></div><div class="quick-chat" aria-label="快捷发言"><button type="button" data-quick-chat="好牌！">好牌！</button><button type="button" data-quick-chat="快点出牌～">快点出牌～</button><button type="button" data-quick-chat="承让了">承让了</button><button type="button" data-quick-chat="再来一局">再来一局</button></div><div class="chat-compose"><input id="chat-input" maxlength="300" placeholder="说点什么…"><button id="chat-send" class="primary">发送</button></div></aside>
+      <aside id="chat-drawer" class="chat-drawer" hidden><div class="chat-head"><div><span>TABLE CHAT</span><strong>牌桌聊天</strong><small>玩家与观众都可以发言</small></div><div class="chat-head-actions"><button id="chat-channel" class="hud-button" type="button">切到公屏</button><button id="chat-close" class="hud-button" type="button">收起</button></div></div><div id="messages" class="messages"></div><div class="quick-chat" aria-label="快捷发言"><button type="button" data-quick-chat="好牌！">好牌！</button><button type="button" data-quick-chat="快点出牌～">快点出牌～</button><button type="button" data-quick-chat="承让了">承让了</button><button type="button" data-quick-chat="再来一局">再来一局</button></div><p id="room-chat-feedback" class="local-feedback" role="status"></p><div class="chat-compose"><input id="chat-input" maxlength="300" placeholder="说点什么…"><button id="chat-send" class="primary">发送</button></div></aside>
     </section>
 
     <section id="club-game" class="screen club-game-screen" hidden>
@@ -70,15 +81,18 @@
     <nav class="club-bottom-nav" aria-label="Club 主导航">
       <button id="home-nav" class="active" type="button"><b>⌂</b><span>大厅</span></button>
       <button id="channel-toggle" type="button"><b>聊</b><span>公屏</span></button>
+      <button id="friends-toggle" type="button"><b>♧</b><span>好友</span></button>
       <button id="tasks-toggle" type="button"><b>✓</b><span>任务</span></button>
       <button id="profile-toggle" type="button"><b>我</b><span>我的</span></button>
     </nav>
 
-    <aside id="club-drawer" class="club-drawer" hidden>
+    <aside id="club-drawer" class="club-drawer" role="dialog" aria-modal="true" aria-labelledby="club-drawer-title" hidden>
       <header class="club-drawer-head"><div><span>MOYU CLUB</span><strong id="club-drawer-title">公共频道</strong></div><button id="club-drawer-close" class="icon-button" type="button" aria-label="关闭">×</button></header>
       <nav class="club-drawer-tabs" aria-label="Club 功能"><button type="button" data-club-tab="channel" class="active">公屏</button><button type="button" data-club-tab="friends">好友</button><button type="button" data-club-tab="tasks">任务</button><button type="button" data-club-tab="profile">我的</button></nav>
-      <section id="club-panel-channel" class="club-panel"><div id="club-channel-messages" class="club-message-list"></div><div class="club-compose"><input id="club-channel-input" maxlength="300" placeholder="和大厅里的群友聊聊…"><button id="club-channel-send" class="primary" type="button">发送</button></div></section>
-      <section id="club-panel-friends" class="club-panel" hidden><div class="friend-add"><input id="friend-player-id" placeholder="输入玩家 ID"><button id="friend-add" class="secondary" type="button">添加</button></div><div id="friend-list" class="friend-list"></div><div id="direct-chat" class="direct-chat" hidden><header><button id="direct-back" type="button">←</button><b id="direct-name">私聊</b></header><div id="direct-messages" class="club-message-list"></div><div class="club-compose"><input id="direct-input" maxlength="300" placeholder="发消息…"><button id="direct-send" class="primary" type="button">发送</button></div></div></section>
+      <p id="drawer-feedback" class="local-feedback" role="status" aria-live="polite"></p>
+      <button id="profile-back" class="profile-back" type="button" hidden>← 返回聊天</button>
+      <section id="club-panel-channel" class="club-panel"><div id="club-channel-messages" class="club-message-list"></div><button id="channel-new" class="new-messages" type="button" hidden>有新消息 · 查看 ↓</button><div class="club-compose"><input id="club-channel-input" maxlength="300" placeholder="和大厅里的群友聊聊…"><button id="club-channel-send" class="primary" type="button">发送</button></div></section>
+      <section id="club-panel-friends" class="club-panel" hidden><div class="friend-add"><input id="friend-player-id" placeholder="输入玩家 ID"><button id="friend-add" class="secondary" type="button">添加</button></div><div id="friend-list" class="friend-list"></div><div id="direct-chat" class="direct-chat" hidden><header><button id="direct-back" type="button">←</button><b id="direct-name">私聊</b></header><div id="direct-messages" class="club-message-list"></div><button id="direct-new" class="new-messages" type="button" hidden>有新消息 · 查看 ↓</button><div class="club-compose"><input id="direct-input" maxlength="300" placeholder="发消息…"><button id="direct-send" class="primary" type="button">发送</button></div></div></section>
       <section id="club-panel-tasks" class="club-panel" hidden><div class="task-summary"><span>TASK CENTER</span><b>完成任务领取摸鱼币</b><small>每日任务于北京时间 00:00 重置</small></div><div id="task-list" class="task-list"></div></section>
       <section id="club-panel-profile" class="club-panel" hidden><div id="club-profile" class="club-profile"></div></section>
     </aside>
@@ -92,16 +106,37 @@
         <span class="dialog-mark" aria-hidden="true">雀</span>
       </header>
       <div class="create-fields">
-        <div class="create-field"><span id="room-type-label"><b>房间类型</b><small>决定是否结算摸鱼币</small></span><div class="custom-select" data-select-for="room-type"><select id="room-type" tabindex="-1" aria-hidden="true"><option value="coin">摸鱼币房</option><option value="casual">休闲房 · 免费</option></select><button class="custom-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="room-type-label room-type-value"><span id="room-type-value"></span><i aria-hidden="true"></i></button><div class="custom-select-menu" role="listbox" aria-labelledby="room-type-label" hidden><button type="button" role="option" data-value="coin"><span><b>摸鱼币房</b><small>四人入场 · 胜者拿奖池</small></span><em>竞技</em></button><button type="button" role="option" data-value="casual"><span><b>休闲房</b><small>免费入场 · 只记胜负</small></span></button></div></div></div>
-        <div id="stake-field" class="create-field"><span id="stake-label"><b>每人入场</b><small>四人共同组成奖池</small></span><div class="custom-select" data-select-for="stake"><select id="stake" tabindex="-1" aria-hidden="true"><option value="5">5 摸鱼币</option><option value="10" selected>10 摸鱼币</option><option value="20">20 摸鱼币</option></select><button class="custom-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="stake-label stake-value"><span id="stake-value"></span><i aria-hidden="true"></i></button><div class="custom-select-menu" role="listbox" aria-labelledby="stake-label" hidden><button type="button" role="option" data-value="5"><span><b>5 摸鱼币</b><small>奖池共 20 币</small></span></button><button type="button" role="option" data-value="10"><span><b>10 摸鱼币</b><small>奖池共 40 币</small></span><em>推荐</em></button><button type="button" role="option" data-value="20"><span><b>20 摸鱼币</b><small>奖池共 80 币</small></span></button></div></div></div>
-        <div class="create-field"><span id="match-mode-label"><b>对局场次</b><small>选择一场牌局的长度</small></span><div class="custom-select" data-select-for="match-mode"><select id="match-mode" tabindex="-1" aria-hidden="true"><option value="east">东风战 · 快速一局</option><option value="south">半庄战 · 完整对局</option></select><button class="custom-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="match-mode-label match-mode-value"><span id="match-mode-value"></span><i aria-hidden="true"></i></button><div class="custom-select-menu" role="listbox" aria-labelledby="match-mode-label" hidden><button type="button" role="option" data-value="east"><span><b>东风战</b><small>约 20～35 分钟</small></span><em>快速</em></button><button type="button" role="option" data-value="south"><span><b>半庄战</b><small>约 40～70 分钟</small></span></button></div></div></div>
+        <div class="create-field"><span id="room-type-label"><b>房间类型</b><small>决定是否结算摸鱼币</small></span><div class="custom-select" data-select-for="room-type"><select id="room-type" tabindex="-1" aria-hidden="true"><option value="coin">摸鱼币房</option><option value="casual">休闲房 · 免费</option></select><button class="custom-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="room-type-label room-type-value"><span id="room-type-value"></span><i aria-hidden="true"></i></button><div class="custom-select-menu" role="listbox" aria-labelledby="room-type-label" hidden><button type="button" role="option" data-value="coin"><span><b>摸鱼币房</b><small>按日麻得点 · 每局结算</small></span><em>竞技</em></button><button type="button" role="option" data-value="casual"><span><b>休闲房</b><small>免费入场 · 只记胜负</small></span></button></div></div></div>
+        <div id="stake-field" class="create-field"><span id="stake-label"><b>结算档位</b><small>每2000点对应的摸鱼币</small></span><div class="custom-select" data-select-for="stake"><select id="stake" tabindex="-1" aria-hidden="true"><option value="5">5 摸鱼币</option><option value="10" selected>10 摸鱼币</option><option value="20">20 摸鱼币</option></select><button class="custom-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="stake-label stake-value"><span id="stake-value"></span><i aria-hidden="true"></i></button><div class="custom-select-menu" role="listbox" aria-labelledby="stake-label" hidden><button type="button" role="option" data-value="5"><span><b>5 摸鱼币</b><small>每2000点＝5币</small></span></button><button type="button" role="option" data-value="10"><span><b>10 摸鱼币</b><small>每2000点＝10币</small></span><em>推荐</em></button><button type="button" role="option" data-value="20"><span><b>20 摸鱼币</b><small>每2000点＝20币</small></span></button></div></div></div>
+        <div class="create-field"><span id="match-mode-label"><b>对局场次</b><small>选择一场牌局的长度</small></span><div class="custom-select" data-select-for="match-mode"><select id="match-mode" tabindex="-1" aria-hidden="true"><option value="east">东风战</option><option value="south">半庄战 · 完整对局</option></select><button class="custom-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="match-mode-label match-mode-value"><span id="match-mode-value"></span><i aria-hidden="true"></i></button><div class="custom-select-menu" role="listbox" aria-labelledby="match-mode-label" hidden><button type="button" role="option" data-value="east"><span><b>东风战</b><small>约 20～35 分钟</small></span><em>快速</em></button><button type="button" role="option" data-value="south"><span><b>半庄战</b><small>约 40～70 分钟</small></span></button></div></div></div>
       </div>
       <section class="prize-panel" aria-label="摸鱼币房奖励">
-        <div class="prize-heading"><span>零和奖池</span><small>不会凭空增发摸鱼币</small></div>
-        <p id="prize-copy" class="prize-copy">每人 10 币，共 40 币；最终第一名获得奖池，同分则平分。</p>
+        <div class="prize-heading"><span>逐局结算</span><small>不会凭空增发摸鱼币</small></div>
+        <p id="prize-copy" class="prize-copy">每2000点＝10币，每笔向上取整；托管结算退回，再按得点收付。</p>
       </section>
-      <footer class="dialog-actions"><button id="cancel-create" type="button" class="secondary">暂不创建</button><button id="confirm-create" type="button" class="primary gold">创建牌桌</button></footer>
+      <p id="create-feedback" class="local-feedback" role="status"></p><footer class="dialog-actions"><button id="cancel-create" type="button" class="secondary">暂不创建</button><button id="confirm-create" type="button" class="primary gold">创建牌桌</button></footer>
     </form>
+  </dialog>
+  <dialog id="hand-hints-dialog" class="mahjong-help" aria-labelledby="hand-hints-title">
+    <header><h2 id="hand-hints-title">听牌与规则</h2><button id="close-hand-hints" type="button" class="secondary" aria-label="关闭听牌提示">关闭</button></header>
+    <div class="mahjong-help-scroll">
+      <h3 id="hand-hints-heading"></h3><p id="hand-hints-note"></p><div id="hand-hints-list" class="wait-tiles"></div>
+      <p class="hint-footnote">“未见”＝4张减去你的手牌、各家明牌与宝牌指示牌；可能在他人手里或王牌中，不代表牌墙还能摸到的张数。以下按常规和牌条件提示，抢杠、海底等以当前和牌按钮为准。</p>
+      <details id="mahjong-rules"><summary>玩法与操作说明</summary>
+        <p>本桌为四人日式麻将。通常需要4组顺子或刻子＋1对将，七对子、国士无双也可和牌；此外必须至少有1役，宝牌只能加番，不能单独作为役。</p>
+        <p>手牌上的“听”表示打出后有常规荣和机会；“无役”“振听”“听!”表示打出后存在和牌限制，点选可逐张查看。点选手牌查看听什么，再点“打出”；手机也可向上拖动出牌。摸牌后即使已听牌，仍需先选择要打出的牌。</p>
+        <p>门前清、至少1000点且出牌后听牌时，可选“立直打出”，支付1000点。立直后只能摸切、和牌或进行不改变听牌的暗杠。</p>
+        <p>只能吃上家的顺子，可以碰或杠其他玩家的牌。吃碰明杠会失去门前清；断幺九、役牌等仍可提供役。按“过”放弃本次回应。</p>
+        <p>听的牌中包含自己曾打过的牌，会形成弃牌振听：整组听牌都不能荣和，仍可自摸。放过可荣和的牌会暂时振听，直到自己下次摸牌；立直后放过则持续到本局结束。</p>
+        <p>轮到自己时有15秒基础时间及本局共60秒延长时间；回应吃碰杠或荣和有15秒。多人同时回应时，荣和优先于碰杠，碰杠优先于吃。所有人回应后立即结算，无需等满倒计时。倒计时结束会自动打牌或跳过回应，查看说明不会暂停计时。</p>
+        <p>宝牌指示牌的下一张才是宝牌：9回到1，北回到东，中回到白。红五也算宝牌。流局按听牌情况结算；小局结算展示役种和得失点，每局结束须四人重新准备、房主开始才进入下一局。摸鱼币按每笔应付点数÷2000×档位向上取整，收款与扣款一致；立直棒单独扣入桌面并由胡牌者领取，流局听牌罚符也按此换算。</p>
+      </details>
+    </div>
+  </dialog>
+  <dialog id="pass-win-dialog" class="mahjong-help" aria-labelledby="pass-win-title">
+    <header><h2 id="pass-win-title">放弃这次胡牌？</h2></header>
+    <p id="pass-win-note"></p><p id="pass-win-timer" role="timer"></p>
+    <footer><button id="cancel-pass-win" type="button" class="primary gold">返回和牌</button><button id="confirm-pass-win" type="button" class="secondary">确认放弃</button></footer>
   </dialog>
   <script type="module" src="./game.js"></script>
 </body>

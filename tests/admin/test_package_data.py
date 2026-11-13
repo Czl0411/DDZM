@@ -35,6 +35,18 @@ def test_packaged_admin_assets_include_multi_group_surface():
     assert 'id="employee-group-message-filter"' in page
 
 
+def test_admin_share_links_use_the_aikda_node():
+    root = Path(__file__).resolve().parents[2]
+    page = (root / "src/dzmm_bot/admin/templates/index.html").read_text()
+    script = (root / "src/dzmm_bot/admin/static/admin.js").read_text()
+
+    assert "https://www.aikda.com/invite/" in script
+    assert "https://www.aikda.com/novel/" in script
+    assert "https://www.aikda.com/novel/" in page
+    assert "ivorune.xyz" not in script
+    assert "ivorune.xyz" not in page
+
+
 def test_admin_bundle_contains_dark_market_controls():
     root = Path(__file__).resolve().parents[2]
     page = (root / "src/dzmm_bot/admin/templates/index.html").read_text()

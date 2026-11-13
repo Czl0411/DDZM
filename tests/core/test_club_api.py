@@ -1,19 +1,26 @@
 import asyncio
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from dzmm_bot.core.app import create_app
 from dzmm_bot.core.club_api import club_card_events, club_social_events, mahjong_events
 from dzmm_bot.core.schema import (
+    ClubCardHandRecord,
     ClubCardRoomRecord,
     ClubPlayerRecord,
     DoudizhuRoomRecord,
+    DoudizhuRoundRecord,
     DrawguessRoomRecord,
+    GameParticipationRecord,
+    KingGameRecord,
+    KingGameRoundRecord,
     MahjongRoomRecord,
+    UserRecord,
 )
 from tests.core.test_mahjong_repository import NOW, mahjong, seated
 
@@ -33,7 +40,7 @@ def test_public_club_economy_settings(mahjong):
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert len(response.json()) == 7
+    assert len(response.json()) == 8
     assert response.json()[0] == {
         "game": "mahjong", "coin_stakes": [10, 50], "rake_percent": 15,
     }
@@ -67,6 +74,49 @@ def test_create_list_claim_and_payload_validation(mahjong):
         "payload": {},
     })
     assert claimed.status_code == 200 and claimed.json()["seat"] == 1
+
+
+def test_reaction_version_passes_through_real_action_api(mahjong):
+    repo, factory = mahjong
+    room = seated(mahjong)
+    with factory.begin() as session:
+        record = session.get(MahjongRoomRecord, UUID(room["id"]))
+        record.state = {
+            **record.state,
+            "hands": [[8], [0, 4, 12, 16], [9, 10], []],
+        }
+    client = TestClient(create_app(repo, "internal", clock=lambda: NOW, club_game_id="club"))
+    path = f"/api/club/mahjong/rooms/{room['id']}/actions"
+    discarded = client.post(path, headers=headers("host"), json={
+        "version": room["version"],
+        "request_id": str(uuid4()),
+        "action": "discard",
+        "payload": {"tile": 8},
+    }).json()
+    reaction_version = discarded["game"]["reaction_version"]
+    invalid = client.post(path, headers=headers("alice"), json={
+        "version": discarded["version"],
+        "request_id": str(uuid4()),
+        "action": "chi",
+        "payload": {"tiles": [4, 12], "reaction_version": True},
+    })
+    assert invalid.status_code == 422
+    answered = client.post(path, headers=headers("alice"), json={
+        "version": discarded["version"],
+        "request_id": str(uuid4()),
+        "action": "chi",
+        "payload": {"tiles": [4, 12], "reaction_version": reaction_version},
+    })
+    assert answered.status_code == 200
+    resolved = client.post(path, headers=headers("bob"), json={
+        "version": discarded["version"],
+        "request_id": str(uuid4()),
+        "action": "pass",
+        "payload": {"reaction_version": reaction_version},
+    })
+    assert resolved.status_code == 200
+    assert resolved.json()["phase"] == "playing"
+    assert resolved.json()["game"]["melds"][1][0]["tiles"] == [4, 8, 12]
 
 
 def test_uid_auth_and_chat_limits(mahjong):
@@ -233,7 +283,7 @@ def test_guest_channel_friendship_and_direct_messages(mahjong):
 def test_card_modules_create_join_start_and_reconnect(mahjong):
     repo, _ = mahjong
     client = TestClient(create_app(repo, "internal", clock=lambda: NOW, club_game_id="club"))
-    for game in ("texas", "zhajinhua", "blackjack"):
+    for game in ("texas", "zhajinhua", "blackjack", "niuniu"):
         host = f"host-{game}"
         guest = f"alice-{game}"
         created = client.post(
@@ -306,49 +356,104 @@ def test_active_room_endpoint_covers_every_club_module(mahjong):
         assert active.json()["room_id"] == room_id
 
 
-def test_active_room_endpoint_ignores_finished_rooms(mahjong):
+def test_active_room_endpoint_recovers_only_recent_finished_seated_rooms(mahjong):
     repo, factory = mahjong
     client = TestClient(create_app(repo, "internal", clock=lambda: NOW, club_game_id="club"))
     doudizhu = repo.create_doudizhu_room("doudizhu-host", now=NOW)
     drawguess = repo.create_drawguess_room("drawguess-host", now=NOW)
 
     with factory.begin() as session:
-        session.get(DoudizhuRoomRecord, UUID(doudizhu["id"])).phase = "finished"
-        session.get(DrawguessRoomRecord, UUID(drawguess["room_id"])).phase = "finished"
+        ddz = session.get(DoudizhuRoomRecord, UUID(doudizhu["id"]))
+        ddz.phase = "finished"
+        ddz.settlement = {"settled_at": NOW.isoformat()}
+        draw = session.get(DrawguessRoomRecord, UUID(drawguess["room_id"]))
+        draw.phase = "finished"
+        draw.state = {**draw.state, "phase": "finished"}
+        draw.settlement = {"settled_at": NOW.isoformat()}
 
     assert client.get(
         "/api/club/active-room", headers=headers("doudizhu-host"),
-    ).json() is None
+    ).json() == {
+        "game": "doudizhu", "room_id": doudizhu["id"], "phase": "finished",
+    }
     assert client.get(
         "/api/club/active-room", headers=headers("drawguess-host"),
+    ).json() == {
+        "game": "drawguess", "room_id": drawguess["room_id"], "phase": "finished",
+    }
+    assert client.get(
+        "/api/club/active-room", headers=headers("viewer"),
     ).json() is None
 
 
-def test_active_room_endpoint_advances_finished_mahjong_hand(mahjong):
+def test_active_room_endpoint_does_not_revive_old_or_unstamped_finished_rooms(mahjong):
+    repo, factory = mahjong
+    client = TestClient(create_app(repo, "internal", clock=lambda: NOW, club_game_id="club"))
+    old_doudizhu = repo.create_doudizhu_room("old-ddz-host", now=NOW)
+    legacy_drawguess = repo.create_drawguess_room("legacy-draw-host", now=NOW)
+
+    with factory.begin() as session:
+        ddz = session.get(DoudizhuRoomRecord, UUID(old_doudizhu["id"]))
+        ddz.phase = "finished"
+        ddz.settlement = {"settled_at": (NOW - timedelta(hours=6, seconds=1)).isoformat()}
+        draw = session.get(DrawguessRoomRecord, UUID(legacy_drawguess["room_id"]))
+        draw.phase = "finished"
+        draw.state = {**draw.state, "phase": "finished"}
+        draw.settlement = {"winner_seats": [0]}
+
+    assert client.get(
+        "/api/club/active-room", headers=headers("old-ddz-host"),
+    ).json() is None
+    assert client.get(
+        "/api/club/active-room", headers=headers("legacy-draw-host"),
+    ).json() is None
+
+
+@pytest.mark.parametrize("terminal_phase", ["hand_finished", "match_finished"])
+def test_active_room_endpoint_preserves_recent_finished_mahjong(mahjong, terminal_phase):
     repo, factory = mahjong
     room = seated(mahjong)
     with factory.begin() as session:
         record = session.get(MahjongRoomRecord, UUID(room["id"]))
         state = dict(record.state)
         state.update(
-            phase="hand_finished",
-            points=[42_000, 28_000, 19_000, 11_000],
+            phase=terminal_phase,
+            points=[25_000, 23_000, 27_000, 25_000],
             round_wind=27,
-            hand_number=4,
+            hand_number=1,
             deadline=(NOW - timedelta(seconds=1)).isoformat(),
             next={"dealer_continues": False},
-            result={"kind": "ron", "dealer_continues": False},
+            result={
+                "kind": "ron", "winners": [2], "loser": 1,
+                "deltas": [0, -2000, 2000, 0],
+                "dealer_continues": False,
+            },
         )
         record.state = state
-        record.phase = "hand_finished"
+        record.phase = terminal_phase
         record.deadline = NOW - timedelta(seconds=1)
 
     client = TestClient(create_app(repo, "internal", clock=lambda: NOW, club_game_id="club"))
     assert client.get(
         "/api/club/active-room", headers=headers("host"),
-    ).json() is None
+    ).json() == {
+        "game": "mahjong", "room_id": room["id"], "phase": terminal_phase,
+    }
+    assert all(
+        item["id"] != room["id"]
+        for item in client.get(
+            "/api/club/mahjong/rooms", headers=headers("viewer"),
+        ).json()
+    )
+    assert client.get(
+        f"/api/club/room-status/mahjong/{room['id']}",
+        headers=headers("viewer"),
+    ).json()["enterable"] is False
     with factory() as session:
-        assert session.get(MahjongRoomRecord, UUID(room["id"])).phase == "match_finished"
+        record = session.get(MahjongRoomRecord, UUID(room["id"]))
+        assert record.phase == terminal_phase
+        assert record.deadline is None and record.settled
+        assert record.ready == [False] * 4
 
 
 def test_shared_room_status_covers_every_club_game_and_rejects_card_cross_game(mahjong):
@@ -362,14 +467,14 @@ def test_shared_room_status_covers_every_club_game_and_rejects_card_cross_game(m
         "doudizhu": repo.create_doudizhu_room("doudizhu-host", now=NOW)["id"],
         "drawguess": repo.create_drawguess_room("drawguess-host", now=NOW)["room_id"],
     }
-    for game in ("texas", "zhajinhua", "blackjack"):
+    for game in ("texas", "zhajinhua", "blackjack", "niuniu"):
         rooms[game] = repo.create_club_card_room(
             game, f"card-host-{game}", NOW, room_type="casual", stake=0, request_id=uuid4(),
         )["id"]
 
     expected_capacities = {
         "mahjong": 4, "chess": 2, "doudizhu": 3, "drawguess": 8,
-        "texas": 8, "zhajinhua": 6, "blackjack": 5,
+        "texas": 8, "zhajinhua": 6, "blackjack": 5, "niuniu": 6,
     }
     for game, room_id in rooms.items():
         response = client.get(
@@ -531,7 +636,7 @@ def test_employment_is_once_and_other_task_triggers_are_daily(mahjong):
             DoudizhuRoundRecord(
                 room_id=room_id,
                 number=number,
-                state={"phase": "finished"},
+                state={"phase": "finished", "events": [{"at": NOW.isoformat()}]},
             )
             for number in range(1, 5)
         ]
@@ -584,7 +689,9 @@ def test_employment_is_once_and_other_task_triggers_are_daily(mahjong):
     before_completion = client.get("/api/club/tasks", headers=headers("host")).json()
     assert next(item for item in before_completion if item["key"] == "five_rounds")["eligible"] is False
     with factory.begin() as session:
-        session.get(DoudizhuRoundRecord, unfinished_round_id).state = {"phase": "finished"}
+        session.get(DoudizhuRoundRecord, unfinished_round_id).state = {
+            "phase": "finished", "events": [{"at": NOW.isoformat()}],
+        }
     tasks = client.get("/api/club/tasks", headers=headers("host")).json()
     assert {item["key"] for item in tasks if item["eligible"]} == {
         "employment", "checkin", "random_event", "five_rounds", "activity", "dark_market",
@@ -609,3 +716,186 @@ def test_employment_is_once_and_other_task_triggers_are_daily(mahjong):
     tomorrow = repo.club_tasks("host", NOW + timedelta(days=1))
     assert next(item for item in tomorrow if item["key"] == "employment")["claimed"] is True
     assert all(item["claimed"] is False for item in tomorrow if item["key"] != "employment")
+
+
+def test_five_round_task_combines_card_hands_from_different_tables(mahjong):
+    repo, factory = mahjong
+    first = repo.create_club_card_room(
+        "blackjack", "host", NOW, room_type="casual", stake=0,
+        request_id=uuid4(),
+    )
+    second = repo.create_club_card_room(
+        "blackjack", "alice", NOW, room_type="casual", stake=0,
+        request_id=uuid4(),
+    )
+    with factory.begin() as session:
+        host = session.scalar(select(ClubPlayerRecord).where(
+            ClubPlayerRecord.platform_id == "host"
+        ))
+        for room_id, count in ((first["id"], 4), (second["id"], 1)):
+            session.add_all(ClubCardHandRecord(
+                room_id=UUID(room_id), game="blackjack", hand_number=number,
+                players=[str(host.id)], outcomes={}, payouts={}, created_at=NOW,
+            ) for number in range(1, count + 1))
+
+    task = next(
+        item for item in repo.club_tasks("host", NOW)
+        if item["key"] == "five_rounds"
+    )
+    assert task["eligible"] is True
+
+
+def test_five_round_task_counts_doudizhu_by_completion_day_across_midnight(mahjong):
+    repo, factory = mahjong
+    created_at = datetime(2026, 10, 20, 15, 59, tzinfo=timezone.utc)
+    completed_at = datetime(2026, 10, 20, 16, 1, tzinfo=timezone.utc)
+    room = repo.create_doudizhu_room("host", now=created_at)
+    with factory.begin() as session:
+        session.add_all(
+            DoudizhuRoundRecord(
+                room_id=UUID(room["id"]),
+                number=number,
+                state={
+                    "phase": "finished",
+                    "events": [{"at": completed_at.isoformat()}],
+                },
+            )
+            for number in range(1, 6)
+        )
+
+    previous_day = next(
+        item for item in repo.club_tasks("host", created_at)
+        if item["key"] == "five_rounds"
+    )
+    completion_day = next(
+        item for item in repo.club_tasks("host", completed_at)
+        if item["key"] == "five_rounds"
+    )
+    assert previous_day["eligible"] is False
+    assert completion_day["eligible"] is True
+
+
+def test_five_round_task_counts_old_drawguess_room_turns_on_actual_day(mahjong):
+    repo, factory = mahjong
+    created_at = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+    day_start = datetime(2026, 10, 20, 16, 0, tzinfo=timezone.utc)
+    player = repo.ensure_club_player("host", created_at)
+    old_turns = [created_at + timedelta(minutes=index) for index in range(5)]
+    today_turns = [day_start + timedelta(minutes=index + 1) for index in range(4)]
+    room_id = uuid4()
+    with factory.begin() as session:
+        session.add(DrawguessRoomRecord(
+            id=room_id,
+            creator_id=UUID(player["id"]),
+            short_id="old-draw-room",
+            active_code=None,
+            room_type="casual",
+            stake=0,
+            escrowed=[],
+            settled=False,
+            settlement=None,
+            state={
+                "phase": "drawing",
+                "seats": [player["id"]],
+                "turn_index": 9,
+                "completed_turns_ms": [
+                    int(value.timestamp() * 1000)
+                    for value in [*old_turns, *today_turns]
+                ],
+            },
+            cursor=0,
+            phase="drawing",
+            created_at=created_at,
+            deadline=None,
+        ))
+
+    before_fifth = next(
+        item for item in repo.club_tasks("host", today_turns[-1])
+        if item["key"] == "five_rounds"
+    )
+    assert before_fifth["eligible"] is False
+
+    fifth_turn = day_start + timedelta(minutes=5)
+    with factory.begin() as session:
+        row = session.get(DrawguessRoomRecord, room_id)
+        row.state = {
+            **row.state,
+            "turn_index": 10,
+            "completed_turns_ms": [
+                *row.state["completed_turns_ms"],
+                int(fifth_turn.timestamp() * 1000),
+            ],
+        }
+    after_fifth = next(
+        item for item in repo.club_tasks("host", fifth_turn)
+        if item["key"] == "five_rounds"
+    )
+    assert after_fifth["eligible"] is True
+
+
+def test_five_round_task_combines_club_and_king_game_rounds(mahjong):
+    repo, factory = mahjong
+    group = repo.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=club-task", NOW
+    )
+    room = repo.create_club_card_room(
+        "blackjack", "host", NOW, room_type="casual", stake=0,
+        request_id=uuid4(),
+    )
+    with factory.begin() as session:
+        host_player = session.scalar(select(ClubPlayerRecord).where(
+            ClubPlayerRecord.platform_id == "host"
+        ))
+        host_user = session.scalar(select(UserRecord).where(
+            UserRecord.platform_id == "host"
+        ))
+        session.add_all(ClubCardHandRecord(
+            room_id=UUID(room["id"]), game="blackjack", hand_number=number,
+            players=[str(host_player.id)], outcomes={}, payouts={},
+            created_at=NOW,
+        ) for number in range(1, 4))
+        game = KingGameRecord(
+            group_chat_id=group.id, host_user_id=host_user.id, active_key=None,
+            state="completed", round_number=2, current_king_user_id=None,
+            signup_deadline=None, king_phase_deadline=None,
+            end_after_round=False, created_at=NOW, started_at=NOW,
+            finished_at=NOW, finish_reason="participant_ended",
+        )
+        session.add(game)
+        session.flush()
+        session.add_all(KingGameRoundRecord(
+            game_id=game.id, sequence=sequence, king_user_id=host_user.id,
+            number_map={str(host_user.id): 1}, revealed_numbers=[1],
+            state="revealed", started_at=NOW, revealed_at=NOW,
+        ) for sequence in (1, 2))
+
+    task = next(
+        item for item in repo.club_tasks("host", NOW)
+        if item["key"] == "five_rounds"
+    )
+    assert task["eligible"] is True
+
+
+def test_five_round_task_counts_completed_group_game_sessions(mahjong):
+    repo, factory = mahjong
+    group = repo.bootstrap_primary_group(
+        "https://www.aikda.com/chat?c=club-task", NOW
+    )
+    repo.ensure_club_player("host", NOW)
+    with factory.begin() as session:
+        host = session.scalar(select(UserRecord).where(
+            UserRecord.platform_id == "host"
+        ))
+        session.add_all(GameParticipationRecord(
+            game_type=game_type, game_id=uuid4(), user_id=host.id,
+            group_chat_id=group.id, completed_at=NOW,
+        ) for game_type in (
+            "hide_and_seek", "undercover", "blame_bomb", "texas_holdem",
+            "hide_and_seek",
+        ))
+
+    task = next(
+        item for item in repo.club_tasks("host", NOW)
+        if item["key"] == "five_rounds"
+    )
+    assert task["eligible"] is True

@@ -2,6 +2,7 @@
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 import pytest
 
 from playwright.sync_api import sync_playwright, expect
@@ -104,4 +105,63 @@ def test_claim_chat_and_reopen_in_platform_sandbox(width, role):
         saved["chess:last-room:player"] = "22222222-2222-4222-8222-222222222222"
         page.reload()
         expect(frame.locator("#lobby")).to_be_visible()
+        browser.close()
+
+
+def test_embedded_finished_exit_posts_leave_and_closes_module_without_reload():
+    publish = Path(__file__).resolve().parents[2] / "club" / "publish"
+    room = "11111111-1111-4111-8111-111111111111"
+    actions = []
+    state = {
+        "role": "red", "is_host": True, "server_time": "2026-10-13T00:00:00Z",
+        "messages": [],
+        "game": {
+            "id": room, "status": "finished", "version": 4, "result": "red:checkmate",
+            "red_name": "我", "black_name": "对手", "room_type": "casual", "stake": 0,
+            "red_remaining_ms": 800000, "black_remaining_ms": 790000,
+            "position": {"turn": "red", "board": ["rheakaehr", ".........", ".c.....c.", "p.p.p.p.p", ".........", ".........", "P.P.P.P.P", ".C.....C.", ".........", "RHEAKAEHR"]},
+            "events": [], "rematch_ready": [], "settlement": None,
+        },
+    }
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        context = browser.new_context()
+        context.add_init_script("""
+          const sdk={getLaunchParams:async()=>({}),user:{info:async()=>({id:'player'})},kv:{get:async()=>({value:null}),put:async()=>{}},loading:{progress(){},ready(){},error(){}}};
+          window.dzmm=sdk;
+          window.MoyuClubRuntime={embedded:true,sdk,close:()=>{window.moduleClosed=true},openGameLobby:game=>{window.moduleLobby=game}};
+        """)
+
+        def route(request):
+            url = request.request.url
+            path = urlsplit(url).path
+            headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
+            if request.request.method == "OPTIONS":
+                request.fulfill(status=204, headers=headers)
+            elif path.endswith("/runtime-bootstrap.js"):
+                request.fulfill(body="", content_type="text/javascript", headers=headers)
+            elif url.endswith("/config.js"):
+                request.fulfill(body="window.CHESS_API_BASE='https://chess.test';", content_type="text/javascript", headers=headers)
+            elif url.endswith("/api/club/economy-settings"):
+                request.fulfill(json=[{"game": "chess", "coin_stakes": [5, 10, 20], "rake_percent": 20}], headers=headers)
+            elif url.endswith("/events"):
+                request.fulfill(body="", content_type="text/event-stream", headers=headers)
+            elif url.endswith("/actions"):
+                actions.append(request.request.post_data_json)
+                request.fulfill(json={**state, "game": {**state["game"], "status": "cancelled", "version": 5}}, headers=headers)
+            elif f"/api/chess/{room}" in url:
+                request.fulfill(json=state, headers=headers)
+            else:
+                request.fulfill(path=str(publish / path.lstrip("/")), headers=headers)
+
+        context.route("**/*", route)
+        page = context.new_page()
+        page.goto(f"https://chess.test/games/chess/index.html?club=1&room={room}")
+        expect(page.locator("#result")).to_be_visible()
+        room_url = page.url
+        page.locator("#result-exit").click()
+        page.wait_for_function("window.moduleLobby === 'chess'")
+        assert page.evaluate("window.moduleClosed") is None
+        assert actions[-1] == {"action": "leave", "version": 4}
+        assert page.url == room_url
         browser.close()

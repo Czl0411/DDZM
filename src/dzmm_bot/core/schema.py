@@ -1344,7 +1344,7 @@ class ClubGameEconomySettingRecord(Base):
     __table_args__ = (
         CheckConstraint(
             "game IN ('mahjong', 'chess', 'doudizhu', 'drawguess', "
-            "'texas', 'zhajinhua', 'blackjack')",
+            "'texas', 'zhajinhua', 'blackjack', 'niuniu')",
             name="ck_club_game_economy_settings_game",
         ),
         CheckConstraint(
@@ -2854,7 +2854,7 @@ class ClubTaskClaimRecord(Base):
 
 
 class ClubCardRoomRecord(Base):
-    """Shared room envelope for the three Club card-table modules."""
+    """Shared room envelope for the Club card-table modules."""
 
     __tablename__ = "club_card_rooms"
     __table_args__ = (

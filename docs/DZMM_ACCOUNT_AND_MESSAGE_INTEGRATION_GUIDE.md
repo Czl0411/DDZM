@@ -116,8 +116,8 @@ DZMM_ADMIN_TOKEN=<random-secret>
 
 # 普通账号浏览器通道
 DZMM_BROWSER_PROFILE=/var/lib/dzmm-browser/profile
-DZMM_LOGIN_URL=https://www.ivorune.xyz/sign-in
-DZMM_CHAT_URL=https://www.ivorune.xyz/chat?c=<INITIAL_GROUP_CHATROOM_ID>
+DZMM_LOGIN_URL=https://www.aikda.com/sign-in
+DZMM_CHAT_URL=https://www.aikda.com/chat?c=<INITIAL_GROUP_CHATROOM_ID>
 DZMM_BROWSER_CDP_PORT=19222
 
 # 可选：官方 Bot 群消息通道
@@ -323,7 +323,7 @@ message:join-room({ chatroomId })
 当前客户端请求：
 
 ```http
-POST https://www.ivorune.xyz/api/bot/send-message
+POST https://www.aikda.com/api/bot/send-message
 X-Bot-Token: <DZMM_BOT_API_TOKEN>
 Content-Type: application/json
 

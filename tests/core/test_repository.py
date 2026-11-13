@@ -18,6 +18,7 @@ from dzmm_bot.core.bot_accounts import BOT_PLATFORM_IDS
 from dzmm_bot.core.schema import (
     AIActivityEventRecord,
     BEIJING,
+    CommandDefinitionRecord,
     DirectChatRecord,
     NumberBombGameRecord,
     NumberBombMemberRecord,
@@ -115,6 +116,31 @@ def test_command_registry_exposes_exact_enabled_syntax(repository):
     assert commands["/蹦蹦数字炸弹"] == (
         "/蹦蹦数字炸弹；/蹦蹦数字炸弹 积分赛"
     )
+
+
+def test_command_registry_retires_legacy_season_title_rows(repository, now):
+    with repository._session() as session:
+        session.add_all(
+            [
+                CommandDefinitionRecord(
+                    command=command,
+                    syntax=command,
+                    description="旧赛季称号入口",
+                    enabled=True,
+                    is_custom=False,
+                    created_at=now,
+                )
+                for command in ("/赛季称号", "/修改赛季称号")
+            ]
+        )
+
+    repository.ensure_command_definitions()
+
+    commands = {
+        row.command: row.syntax for row in repository.list_command_definitions()
+    }
+    assert commands["/定义赛季称号"] == "/定义赛季称号 称号"
+    assert {"/赛季称号", "/修改赛季称号"}.isdisjoint(commands)
 
 
 def test_custom_command_repository_keeps_builtin_rows_and_supports_lifecycle(repository):
@@ -628,6 +654,38 @@ def _confirm_outbound(repository, delivery_key: str, now, index: int) -> None:
         f"texas-sent-{index}",
         now,
     )
+
+
+def test_texas_holdem_settings_roll_back_when_rake_update_fails(
+    texas_repository, monkeypatch
+):
+    initial = texas_repository.get_texas_holdem_settings()
+
+    def fail_rake_update(*args, **kwargs):
+        raise RuntimeError("injected rake update failure")
+
+    monkeypatch.setattr(
+        texas_repository,
+        "set_club_game_economy_settings",
+        fail_rake_update,
+    )
+
+    with pytest.raises(RuntimeError, match="injected rake update failure"):
+        texas_repository.set_texas_holdem_settings(
+            enabled=False,
+            minimum_players=3,
+            maximum_players=8,
+            minimum_buy_in=30,
+            maximum_buy_in=300,
+            daily_start_limit=2,
+            signup_timeout_seconds=180,
+            action_timeout_seconds=90,
+            small_blind_percent=4,
+            big_blind_percent=8,
+            rake_percent=35,
+        )
+
+    assert texas_repository.get_texas_holdem_settings() == initial
 
 
 def test_texas_holdem_signup_debits_buy_in_and_waiting_exit_refunds(
@@ -1175,6 +1233,56 @@ def test_texas_holdem_tied_winners_split_rake_deterministically_without_touching
         assert game.rake_amount == 1
         assert [player.stack for player in players] == [19, 20, 20]
         assert all(player.stack >= 18 for player in players)
+
+
+def test_texas_holdem_rake_excludes_uncalled_excess(
+    texas_repository, now, monkeypatch
+):
+    from dzmm_bot.core.texas_holdem import HandRank
+
+    started = _start_two_player_texas_hand(texas_repository, now)
+    ranks = iter((HandRank(0, (2,)), HandRank(1, (14, 13, 12, 11))))
+
+    def ordered_ranks(cards):
+        return next(ranks), tuple(cards[:5])
+
+    monkeypatch.setattr(
+        "dzmm_bot.core.repository.evaluate_best_five", ordered_ranks
+    )
+    with texas_repository.transaction():
+        with texas_repository._session() as session:
+            game = session.get(TexasHoldemGameRecord, started.game_id)
+            rows = texas_repository._texas_players(session, game.id, lock=True)
+            (overbettor, overbettor_user), (short_stack, short_stack_user) = rows
+            overbettor_platform = overbettor_user.platform_id
+            short_stack_platform = short_stack_user.platform_id
+            overbettor.stack = 5
+            overbettor.street_contribution = 15
+            overbettor.total_contribution = 15
+            overbettor.state = "active"
+            short_stack.stack = 15
+            short_stack.street_contribution = 5
+            short_stack.total_contribution = 5
+            short_stack.state = "all_in"
+
+            result = texas_repository._settle_texas_holdem(
+                session, game, rows, now, reason="showdown"
+            )
+
+    assert "系统抽水：2（20%）" in result.public_message
+    assert texas_repository.find_user(overbettor_platform).balance == 95
+    assert texas_repository.find_user(short_stack_platform).balance == 103
+    with texas_repository._session() as session:
+        game = session.get(TexasHoldemGameRecord, started.game_id)
+        players = list(
+            session.scalars(
+                select(TexasHoldemPlayerRecord)
+                .where(TexasHoldemPlayerRecord.game_id == started.game_id)
+                .order_by(TexasHoldemPlayerRecord.seat_number)
+            )
+        )
+        assert game.rake_amount == 2
+        assert [player.stack for player in players] == [15, 23]
 
 
 def test_texas_holdem_timeout_folds_when_facing_blind(texas_repository, now):

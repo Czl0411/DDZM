@@ -244,9 +244,6 @@ from .honors import (
     HonorCorrectionRequest,
     HonorGrantRequest,
     HonorRevokeRequest,
-    HonorSeasonIssueRequest,
-    HonorSeasonPreviewInput,
-    SeasonHonorSettingsRequest,
     HonorSettleRequest,
 )
 from .commands import GroupCommandHandler, is_reserved_command_name
@@ -1813,22 +1810,6 @@ def create_app(
     @app.post("/internal/game/honors/permanent/{award_id}/revoke")
     def honor_revoke(award_id: UUID, request: HonorRevokeRequest, _: Annotated[None, Depends(authorize)]) -> dict:
         return honor_call(lambda: repository.revoke_permanent_honor(award_id, request.reason, request.actor, clock()))
-
-    @app.post("/internal/game/honors/seasons/s1/preview")
-    def honor_season_preview(request: HonorSeasonPreviewInput, _: Annotated[None, Depends(authorize)]) -> dict:
-        return honor_call(lambda: repository.preview_s1_honors(request.roster, clock()))
-
-    @app.get("/internal/game/honors/seasons/s1/settings")
-    def season_honor_settings(_: Annotated[None, Depends(authorize)]) -> dict:
-        return repository.season_honor_settings(clock())
-
-    @app.patch("/internal/game/honors/seasons/s1/settings")
-    def update_season_honor_settings(request: SeasonHonorSettingsRequest, _: Annotated[None, Depends(authorize)]) -> dict:
-        return honor_call(lambda: repository.update_season_honor_settings(request, request.actor, clock()))
-
-    @app.post("/internal/game/honors/seasons/s1/issue")
-    def honor_season_issue(request: HonorSeasonIssueRequest, _: Annotated[None, Depends(authorize)]) -> dict:
-        return honor_call(lambda: repository.issue_s1_honors(request.roster, request.preview_digest, request.actor, clock()))
 
     @app.get("/internal/game/users/{platform_id}/honors")
     def employee_honors(platform_id: str, _: Annotated[None, Depends(authorize)]) -> dict:

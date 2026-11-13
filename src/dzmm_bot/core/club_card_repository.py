@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 
 from .club_card_games import GAMES, PLAYER_LIMITS, apply_action, new_hand, public_view
+from .texas_holdem import split_matched_pot
 from .schema import (
     ClubCardMessageRecord as Message,
     ClubCardHandRecord as Hand,
@@ -311,14 +312,25 @@ class ClubCardRepositoryMixin:
         rakeable_result = room.game in {"texas", "zhajinhua"} or has_winner_and_loser
         if rake_percent > 0 and rakeable_result:
             chips = room.state.get("chips", {}) if room.game != "blackjack" else {}
+            pot = int(room.state.get("pot", 0))
+            uncalled_returns = {}
+            rakeable_pot = pot
+            contributions = room.state.get("contributions", {})
+            if room.game == "texas" and sum(contributions.values()) == pot:
+                rakeable_pot, uncalled_returns = split_matched_pot(contributions)
             gross_winnings = {
-                raw: max(0, amount - int(chips.get(raw, 0)))
+                raw: max(
+                    0,
+                    amount
+                    - int(chips.get(raw, 0))
+                    - int(uncalled_returns.get(raw, 0)),
+                )
                 for raw, amount in gross_payouts.items()
             }
             total_winnings = sum(gross_winnings.values())
             requested_rake = min(
-                int(room.state.get("pot", 0)),
-                int(room.state.get("pot", 0)) * rake_percent // 100,
+                rakeable_pot,
+                rakeable_pot * rake_percent // 100,
             )
             rake_amount = min(requested_rake, total_winnings)
             deductions = {

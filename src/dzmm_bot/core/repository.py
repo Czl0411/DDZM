@@ -194,6 +194,7 @@ from .texas_holdem import (
     format_card,
     postflop_first_seat,
     preflop_first_seat,
+    split_matched_pot,
 )
 from .reply_templates import (
     TEMPLATE_DEFINITIONS,
@@ -2725,8 +2726,6 @@ class GroupBanInProgressError(RuntimeError):
 _COMMAND_DEFINITIONS = (
     *EQUIPMENT_COMMAND_DEFINITIONS,
     ("/我的称号", "/我的称号", "查看当前可佩戴称号和历史获得次数"),
-    ("/赛季称号", "/赛季称号", "查看S1赛季永久称号及一次修改资格，按结季职级判断"),
-    ("/修改赛季称号", "/修改赛季称号 新称号", "S1结季职级达到后台门槛可自定义一次赛季永久称号"),
     ("/定义赛季称号", "/定义赛季称号 称号", "达到上赛季结季职位门槛后，定义当前赛季专属称号与每日权益"),
     ("/佩戴称号", "/佩戴称号 序号", "选择佩戴称号（/装备称号、/编辑称号 等效），序号 0 取消佩戴"),
     ("/荣誉榜", "/荣誉榜", "查看当前周期的荣誉称号获得者"),
@@ -2888,6 +2887,8 @@ _COMMAND_DEFINITIONS = (
     ("/取消彩票", "/取消彩票", "放弃逐注填写的购票草稿"),
     ("/彩票验证", "/彩票验证 期号", "核验指定期次的开奖号码与哈希"),
 )
+
+_RETIRED_SEASON_TITLE_COMMANDS = ("/赛季称号", "/修改赛季称号")
 
 
 @dataclass(frozen=True)
@@ -4004,6 +4005,14 @@ class CoreRepository(ClubRepositoryMixin, ClubEconomyMixin, ClubCardRepositoryMi
 
     def ensure_command_definitions(self) -> None:
         with self._session() as session:
+            session.execute(
+                delete(CommandDefinitionRecord).where(
+                    CommandDefinitionRecord.command.in_(
+                        _RETIRED_SEASON_TITLE_COMMANDS
+                    ),
+                    CommandDefinitionRecord.is_custom.is_(False),
+                )
+            )
             dialect_name = session.get_bind().dialect.name
             for command, syntax, description in _COMMAND_DEFINITIONS:
                 values = {"command": command, "syntax": syntax, "description": description}
@@ -11251,30 +11260,31 @@ class CoreRepository(ClubRepositoryMixin, ClubEconomyMixin, ClubCardRepositoryMi
             raise ValueError("行动时限无效")
         if not 1 <= small_blind_percent < big_blind_percent <= 100:
             raise ValueError("盲注比例无效")
-        if not 0 <= rake_percent <= 100:
+        if type(rake_percent) is not int or not 0 <= rake_percent <= 100:
             raise ValueError("德州扑克抽水比例无效")
-        self.get_texas_holdem_settings()
-        texas_economy = self.get_club_game_economy_settings("texas")
-        with self._session() as session:
-            record = session.get(TexasHoldemSettingsRecord, 1)
-            if record is None:
-                raise RuntimeError("德州扑克设置消失")
-            record.enabled = enabled
-            record.minimum_players = minimum_players
-            record.maximum_players = maximum_players
-            record.minimum_buy_in = minimum_buy_in
-            record.maximum_buy_in = maximum_buy_in
-            record.daily_start_limit = daily_start_limit
-            record.signup_timeout_seconds = signup_timeout_seconds
-            record.action_timeout_seconds = action_timeout_seconds
-            record.small_blind_percent = small_blind_percent
-            record.big_blind_percent = big_blind_percent
-            session.flush()
-        self.set_club_game_economy_settings(
-            "texas",
-            coin_stakes=texas_economy.coin_stakes,
-            rake_percent=rake_percent,
-        )
+        with self.transaction():
+            self.get_texas_holdem_settings()
+            texas_economy = self.get_club_game_economy_settings("texas")
+            with self._session() as session:
+                record = session.get(TexasHoldemSettingsRecord, 1)
+                if record is None:
+                    raise RuntimeError("德州扑克设置消失")
+                record.enabled = enabled
+                record.minimum_players = minimum_players
+                record.maximum_players = maximum_players
+                record.minimum_buy_in = minimum_buy_in
+                record.maximum_buy_in = maximum_buy_in
+                record.daily_start_limit = daily_start_limit
+                record.signup_timeout_seconds = signup_timeout_seconds
+                record.action_timeout_seconds = action_timeout_seconds
+                record.small_blind_percent = small_blind_percent
+                record.big_blind_percent = big_blind_percent
+                session.flush()
+            self.set_club_game_economy_settings(
+                "texas",
+                coin_stakes=texas_economy.coin_stakes,
+                rake_percent=rake_percent,
+            )
         return self.get_texas_holdem_settings()
 
     @staticmethod
@@ -11930,20 +11940,28 @@ class CoreRepository(ClubRepositoryMixin, ClubEconomyMixin, ClubCardRepositoryMi
         ):
             raise RuntimeError("德州扑克筹码不守恒")
         rake_percent = int(game.rake_percent_snapshot or 0)
-        total_pot = sum(winnings.values())
-        rake_amount = min(total_pot, total_pot * rake_percent // 100)
-        rake_deductions = {
-            seat: rake_amount * amount // total_pot
+        matched_pot, uncalled_returns = split_matched_pot(contributions)
+        rakeable_winnings = {
+            seat: max(0, amount - uncalled_returns.get(seat, 0))
             for seat, amount in winnings.items()
-        } if total_pot else {}
+        }
+        total_rakeable_winnings = sum(rakeable_winnings.values())
+        rake_amount = min(
+            total_rakeable_winnings,
+            matched_pot * rake_percent // 100,
+        )
+        rake_deductions = {
+            seat: rake_amount * amount // total_rakeable_winnings
+            for seat, amount in rakeable_winnings.items()
+        } if total_rakeable_winnings else {}
         remaining_rake = rake_amount - sum(rake_deductions.values())
         rake_order = sorted(
-            winnings,
+            rakeable_winnings,
             key=lambda seat: (
-                -(rake_amount * winnings[seat] % total_pot),
+                -(rake_amount * rakeable_winnings[seat] % total_rakeable_winnings),
                 seat,
             ),
-        ) if total_pot else []
+        ) if total_rakeable_winnings else []
         for seat in rake_order[:remaining_rake]:
             rake_deductions[seat] += 1
         net_winnings = {

@@ -268,6 +268,39 @@ def test_texas_split_pot_uses_same_rake_rule_as_group_game(mahjong):
     assert balance(factory, "alice") == 998
 
 
+def test_texas_rake_excludes_uncalled_excess(mahjong):
+    repo, factory = mahjong
+    room = started_coin_room(repo, "texas")
+    player_ids = {player["uid"]: player["id"] for player in room["players"]}
+    host = player_ids["host"]
+    alice = player_ids["alice"]
+
+    with repo.transaction(), repo._session() as session:
+        record = session.get(ClubCardRoomRecord, UUID(room["id"]))
+        record.state = {
+            **record.state,
+            "phase": "hand_finished",
+            "turn": None,
+            "pot": 14,
+            "contributions": {host: 10, alice: 4},
+            "chips": {host: 0, alice: 6},
+            "payouts": {host: 6, alice: 14},
+            "winners": [alice],
+        }
+        record.phase = "hand_finished"
+        repo._settle_club_card_hand(session, record, NOW)
+
+    with factory() as session:
+        record = session.get(ClubCardRoomRecord, UUID(room["id"]))
+        hand = session.scalar(select(ClubCardHandRecord))
+        assert record.state["gross_payouts"] == {host: 6, alice: 14}
+        assert record.state["payouts"] == {host: 6, alice: 13}
+        assert record.state["rake_amount"] == 1
+        assert hand.rake_amount == 1
+    assert balance(factory, "host") == 996
+    assert balance(factory, "alice") == 1003
+
+
 def test_zhajinhua_rake_only_comes_from_the_winners_pot_award(mahjong):
     repo, factory = mahjong
     room = started_coin_room(repo, "zhajinhua")

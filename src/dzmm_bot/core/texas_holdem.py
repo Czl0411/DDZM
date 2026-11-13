@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from functools import total_ordering
 from itertools import combinations
-from typing import Mapping, Sequence
+from typing import Hashable, Mapping, Sequence, TypeVar
 
 
 _SUIT_SYMBOLS = {
@@ -23,6 +23,7 @@ _CATEGORY_NAMES = (
     "四条",
     "同花顺",
 )
+_Seat = TypeVar("_Seat", bound=Hashable)
 
 
 class TexasHoldemRuleError(ValueError):
@@ -216,6 +217,24 @@ def build_side_pots(contributions: Mapping[int, int], folded_seats: set[int]) ->
             pots.append(Pot(amount=amount, eligible_seats=eligible))
         previous = threshold
     return tuple(pots)
+
+
+def split_matched_pot(
+    contributions: Mapping[_Seat, int],
+) -> tuple[int, dict[_Seat, int]]:
+    if any(amount < 0 for amount in contributions.values()):
+        raise TexasHoldemRuleError("invalid_contribution")
+    ranked = sorted(
+        ((amount, seat) for seat, amount in contributions.items() if amount > 0),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    if not ranked:
+        return 0, {}
+    highest, seat = ranked[0]
+    matched_cap = ranked[1][0] if len(ranked) > 1 else 0
+    uncalled = highest - matched_cap
+    return sum(contributions.values()) - uncalled, ({seat: uncalled} if uncalled else {})
 
 
 def _next_from(seats: Sequence[int], after: int) -> int:

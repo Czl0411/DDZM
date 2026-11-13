@@ -53,8 +53,7 @@ from .workstation import install_workstation_routes
 from .workstation_management import install_workstation_management
 from dzmm_bot.core.honors import (
     HonorConfigInput, HonorSettleInput, HonorCorrectionInput, HonorGrantInput,
-    HonorRevokeInput, HonorSeasonIssueInput, HonorSeasonPreviewInput,
-    SeasonHonorSettingsInput,
+    HonorRevokeInput,
 )
 
 
@@ -1113,29 +1112,6 @@ def create_app(
     def honor_revoke(award_id: UUID, request: HonorRevokeInput,
                      identity: Annotated[AdminIdentity, Depends(require_super_admin)]) -> dict:
         return forward_integration(lambda: core.honor_mutate(f"permanent/{award_id}/revoke", {
-            **request.model_dump(), "actor": identity.username,
-        }))
-
-    @app.post("/api/game/honors/seasons/s1/preview")
-    def honor_season_preview(request: HonorSeasonPreviewInput,
-                             _: Annotated[AdminIdentity, Depends(require_super_admin)]) -> dict:
-        return forward_integration(lambda: core.honor_mutate("seasons/s1/preview", request.model_dump()))
-
-    @app.get("/api/game/honors/seasons/s1/settings")
-    def season_honor_settings(_: Annotated[AdminIdentity, Depends(authorize)]) -> dict:
-        return forward_integration(lambda: core.honor_get("seasons/s1/settings"))
-
-    @app.patch("/api/game/honors/seasons/s1/settings")
-    def update_season_honor_settings(request: SeasonHonorSettingsInput,
-                                     identity: Annotated[AdminIdentity, Depends(require_super_admin)]) -> dict:
-        return forward_integration(lambda: core.honor_mutate("seasons/s1/settings", {
-            **request.model_dump(), "actor": identity.username,
-        }, "PATCH"))
-
-    @app.post("/api/game/honors/seasons/s1/issue")
-    def honor_season_issue(request: HonorSeasonIssueInput,
-                           identity: Annotated[AdminIdentity, Depends(require_super_admin)]) -> dict:
-        return forward_integration(lambda: core.honor_mutate("seasons/s1/issue", {
             **request.model_dump(), "actor": identity.username,
         }))
 

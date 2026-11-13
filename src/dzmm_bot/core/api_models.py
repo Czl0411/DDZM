@@ -1147,7 +1147,7 @@ class SetTexasHoldemSettingsRequest(ApiModel):
     action_timeout_seconds: int = Field(ge=10, le=3600)
     small_blind_percent: int = Field(ge=1, le=99)
     big_blind_percent: int = Field(ge=2, le=100)
-    rake_percent: int | None = Field(default=None, ge=0, le=100)
+    rake_percent: StrictInt | None = Field(default=None, ge=0, le=100)
 
     @model_validator(mode="after")
     def validate_ranges(self):

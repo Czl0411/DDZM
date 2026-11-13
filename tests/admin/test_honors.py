@@ -13,9 +13,9 @@ from dzmm_bot.admin.app import create_app
 from dzmm_bot.admin.core_client import CoreClient
 from dzmm_bot.admin.repository import AdminRepository
 from dzmm_bot.core.app import create_app as create_core_app
-from dzmm_bot.core.honors import midnight
+from dzmm_bot.core.honors import HonorSeasonMember, midnight
 from dzmm_bot.core.repository import CoreRepository
-from dzmm_bot.core.schema import AuditEventRecord, Base, DepartmentRecord, RankRecord, UserRecord, beijing_now
+from dzmm_bot.core.schema import AuditEventRecord, Base, beijing_now
 
 
 @pytest.fixture
@@ -177,69 +177,38 @@ def test_manual_permanent_honor_grant_wear_and_revoke(context):
     assert sorted(events) == ["honor_permanent_grant", "honor_permanent_revoke"]
 
 
-def test_season_threshold_permissions_validation_and_conflicts(context):
-    client, repository, viewer = context
-    path = '/api/game/honors/seasons/s1/settings'
-    super_admin = {"X-Admin-Token": "admin-secret"}
-    assert client.get(path).status_code == 401
-    settings = client.get(path, headers=viewer).json()
-    assert settings['minimum_rank_order'] == 8 and settings['ranks']
-    body = {'minimum_rank_order': 9, 'expected_version': settings['version']}
-    assert client.patch(path, headers=viewer, json=body).status_code == 403
-    saved = client.patch(path, headers=super_admin, json=body)
-    assert saved.status_code == 200, saved.text
-    assert saved.json()['minimum_rank_order'] == 9
-    assert client.patch(path, headers=super_admin, json=body).status_code == 409
-    for value in [True, 0, 999, '8']:
-        invalid = client.patch(path, headers=super_admin,
-            json={'minimum_rank_order': value, 'expected_version': saved.json()['version']})
-        assert invalid.status_code == 422, invalid.text
-
-
-def test_s1_previews_current_and_historical_rosters_and_issues_once(context):
-    client, repository, viewer = context
+def test_s1_admin_issuance_routes_are_removed_but_history_is_preserved(context):
+    client, repository, _ = context
     base = "/api/game/honors/seasons/s1"
     super_admin = {"X-Admin-Token": "admin-secret"}
     now = midnight(date(2026, 10, 5))
-    repository.create_user("user-2", "未分配员工", now, 0)
-    with repository.transaction(), repository._session() as session:
-        department = DepartmentRecord(name="研发部", created_at=now)
-        rank = session.scalar(select(RankRecord).where(RankRecord.name == "部门总监"))
-        session.add(department)
-        session.flush()
-        employee = session.scalar(select(UserRecord).where(UserRecord.platform_id == "user-1"))
-        employee.department_id, employee.rank_id = department.id, rank.id
-        number, department_id = employee.employee_number, department.id
-    assert client.post(f"{base}/preview", headers=viewer, json={}).status_code == 403
-    assert client.post(f"{base}/issue", headers=viewer, json={"preview_digest": "0" * 64}).status_code == 403
-    assert client.post(f"{base}/preview", headers=super_admin, json={}).status_code == 422
-    assert client.post(f"{base}/preview", headers=super_admin, json={"roster": []}).status_code == 422
-    assert client.post(f"{base}/issue", headers=super_admin, json={"preview_digest": "0" * 64}).status_code == 422
-    draft = [{"employee_number": number, "department": "研发部", "rank": "部门总监"}]
-    current = client.post(f"{base}/preview", headers=super_admin, json={"roster": draft}).json()
-    assert current["rows"][0]["title"] == "S1赛季 · 部门总监"
-    assert repository.my_honors("user-1", now)["items"] == []
-    with repository.transaction(), repository._session() as session:
-        session.get(DepartmentRecord, department_id).name = "平台部"
-    response = client.post(f"{base}/issue", headers=super_admin, json={"roster": [{**draft[0], "rank": "部门副总监"}], "preview_digest": current["preview_digest"]})
-    assert response.status_code == 409
+    routes = [
+        ("GET", f"{base}/settings", None),
+        ("PATCH", f"{base}/settings", {"minimum_rank_order": 8, "expected_version": 0}),
+        ("POST", f"{base}/preview", {"roster": []}),
+        ("POST", f"{base}/issue", {"roster": [], "preview_digest": "0" * 64}),
+    ]
+    for method, path, body in routes:
+        assert client.request(method, path, headers=super_admin, json=body).status_code == 404
 
-    roster = [{"employee_number": number, "department": "结季技术部", "rank": "技术总监"},
-              {"employee_number": 9876, "department": "历史部门", "rank": "职员"}]
-    assert client.post(f"{base}/preview", headers=super_admin, json={"roster": roster + roster}).status_code == 422
-    historical = client.post(f"{base}/preview", headers=super_admin, json={"roster": roster}).json()
-    assert historical["skipped"][0]["reason"] == "找不到该工号"
-    issue = {"roster": roster, "preview_digest": historical["preview_digest"]}
-    response = client.post(f"{base}/issue", headers=super_admin, json=issue)
-    assert response.status_code == 200, response.text
-    batch = response.json()
-    assert batch["code"] == "S1" and batch["count"] == 1
-    assert client.post(f"{base}/issue", headers=super_admin, json=issue).json() == batch
-    assert client.post(f"{base}/issue", headers=super_admin, json={"preview_digest": current["preview_digest"]}).status_code == 409
-    assert client.post(f"{base}/preview", headers=super_admin, json={}).json() == {"issued": batch}
-    award, = repository.my_honors("user-1", now + timedelta(days=400))["items"]
-    assert award["source"] == "season" and award["name"] == "S1赛季 · 技术总监"
-    assert repository.honor_board(now)["items"] == []
+    with TestClient(create_core_app(repository, "core-secret", clock=lambda: now)) as core:
+        for method, path, body in routes:
+            internal_path = path.replace("/api/", "/internal/")
+            assert core.request(
+                method,
+                internal_path,
+                headers={"X-Core-Token": "core-secret"},
+                json=body,
+            ).status_code == 404
+
+    employee = repository.find_user("user-1")
+    roster = [HonorSeasonMember(
+        employee_number=employee.employee_number,
+        department="结季技术部",
+        rank="技术总监",
+    )]
+    preview = repository.preview_s1_honors(roster, now)
+    repository.issue_s1_honors(roster, preview["preview_digest"], "legacy-admin", now)
     history, = client.get("/api/game/honors/history?source=season", headers=super_admin).json()["items"]
     assert history["source_details"]["department"] == "结季技术部"
     assert history["season_info"]["closing_rank"] == "技术总监"

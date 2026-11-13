@@ -4554,9 +4554,12 @@ def test_texas_holdem_admin_surface_has_settings_and_public_table_state():
     assert 'id="texas-holdem-session-card"' in page
     assert 'id="edit-texas-holdem-settings"' in page
     assert 'id="texas-holdem-enabled"' in page
+    assert 'id="texas-holdem-rake"' in page
     assert 'id="save-texas-holdem-settings"' in page
     assert "底牌不会出现在管理端" in page
     assert "/api/game/texas-holdem/settings" in script
+    assert 'document.querySelector("#texas-holdem-rake").value = settings.rake_percent' in script
+    assert 'rake_percent: Number(document.querySelector("#texas-holdem-rake").value)' in script
     assert '.filter((item) => item.game_type === "texas_holdem")' in script
     assert "games.map((game) =>" in script
     assert "hole_cards" not in script

@@ -2,9 +2,17 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from dzmm_bot.core.schema import BalanceTransactionRecord, RankRecord, UserRecord
+from dzmm_bot.core.commands import is_reserved_command_name
+from dzmm_bot.core.schema import (
+    BalanceTransactionRecord,
+    CompanySeasonTitleRecord,
+    OutboundRecord,
+    RankRecord,
+    UserRecord,
+)
+from dzmm_bot.runtime.contracts import InboundMessage
 from dzmm_bot.core.season_titles import (
     COMPANY_SEASONS,
     COMPANY_SEASON_SETTLEMENTS,
@@ -110,3 +118,56 @@ def test_define_season_title_uses_exact_ineligible_reply():
     assert _latest_reply(factory) == (
         "上个赛季你的职位等级不允许你有赛季称号，这个赛季努努力吧"
     )
+
+
+def test_only_define_season_title_is_player_entry():
+    service, _, factory = _season_context(8)
+
+    retired = (
+        ("legacy-group", "/赛季称号", "group", None),
+        ("legacy-direct", "/修改赛季称号 旧入口", "direct", "dm"),
+    )
+    for message_id, content, source_type, chatroom_id in retired:
+        result = service.receive_inbound(
+            InboundMessage(
+                message_id,
+                "season-player",
+                content,
+                NOW,
+                source_type=source_type,
+                chatroom_id=chatroom_id,
+            )
+        )
+        with factory() as session:
+            assert session.scalar(
+                select(func.count())
+                .select_from(OutboundRecord)
+                .where(OutboundRecord.inbound_message_id == result.message_id)
+            ) == 0
+            assert session.scalar(
+                select(func.count()).select_from(CompanySeasonTitleRecord)
+            ) == 0
+
+    _receive(
+        service,
+        "define-current-season",
+        "season-player",
+        "/定义赛季称号 玩家自定",
+        NOW,
+    )
+    with factory() as session:
+        assert session.scalar(select(CompanySeasonTitleRecord)).title_name == "玩家自定"
+
+    assert is_reserved_command_name("/赛季称号")
+    assert is_reserved_command_name("/修改赛季称号")
+
+
+def test_basic_help_only_lists_current_season_title_command():
+    service, _, factory = _season_context(8)
+
+    _receive(service, "season-help", "season-player", "/帮助 基础", NOW)
+    lines = _latest_reply(factory).splitlines()
+
+    assert any(line.startswith("/定义赛季称号 ") for line in lines)
+    assert not any(line.startswith("/赛季称号：") for line in lines)
+    assert not any(line.startswith("/修改赛季称号 ") for line in lines)

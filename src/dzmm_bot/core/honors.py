@@ -307,8 +307,9 @@ def _season_minimum_name(session):
     return session.scalar(select(RankRecord.name).where(RankRecord.sort_order == minimum)) or f"Lv{minimum}"
 
 
-def _season_eligible(session, award):
-    return award.source != "season" or _season_rank_order(session, award.source_details or {}) >= _season_minimum(session)
+def _season_eligible(_session, _award):
+    """Issued season awards keep the qualification decided at issuance."""
+    return True
 
 
 def _honor_title_name(award):
@@ -1132,14 +1133,13 @@ class HonorsMixin:
     def _season_admin_view(session, award, now):
         details = award.source_details or {}
         rank_order = _season_rank_order(session, details)
-        eligible = rank_order >= _season_minimum(session)
-        status = ("revoked" if award.revoked_at else "not_qualified" if not eligible
-                  else "pending" if award.valid_from > now else "available")
+        eligible = _season_eligible(session, award)
+        status = ("revoked" if award.revoked_at else "pending" if award.valid_from > now else "available")
         return {"closing_rank": details.get("rank", ""), "closing_department": details.get("department", ""),
                 "rank_order": rank_order, "eligible": eligible, "status": status,
                 "customized": bool(details.get("customized_at")), "customized_at": details.get("customized_at"),
                 "original_name": details.get("original_title", award.title_name),
-                "qualification_note": "符合资格" if eligible else f"结季职级未达到{_season_minimum_name(session)}" if rank_order else "结季职级无法识别，需核对历史名单"}
+                "qualification_note": "历史已发放，保留资格"}
 
     def honor_periods(self, page=1, page_size=20):
         if not 1 <= page or not 1 <= page_size <= 100:

@@ -169,10 +169,34 @@ def test_custom_command_core_api_rejects_bad_share_and_builtin_delete(client, he
         },
     )
     assert bad_share.status_code == 422
+    bad_game = client.post(
+        "/internal/game/custom-commands", headers=headers,
+        json={
+            "command": "/游戏", "description": "游戏入口", "enabled": True,
+            "reply_type": "character",
+            "content": "https://example.com/chat?card=3799452",
+        },
+    )
+    assert bad_game.status_code == 422
     assert client.request(
         "DELETE", "/internal/game/custom-commands", headers=headers,
         json={"old_command": "/打卡"},
     ).status_code == 404
+
+
+def test_custom_command_core_api_normalizes_aikda_game_card_url(client, headers):
+    created = client.post(
+        "/internal/game/custom-commands", headers=headers,
+        json={
+            "command": "/游戏", "description": "游戏入口", "enabled": True,
+            "reply_type": "character",
+            "content": "https://www.aikda.com/chat?card=3799452",
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json()["reply_type"] == "character"
+    assert created.json()["reply_value"] == "3799452"
 
 
 def test_custom_command_image_internal_upload_lifecycle(client, headers, app_context):

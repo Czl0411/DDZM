@@ -765,7 +765,7 @@ def _group_receive(service, message_id, sender, content, now, chatroom_id):
     )
 
 
-def test_custom_command_replies_with_four_types_in_monitored_groups():
+def test_custom_command_replies_with_five_types_in_monitored_groups():
     from dzmm_bot.core.schema import OutboundRecord
 
     service, repository, factory = _service()
@@ -784,6 +784,10 @@ def test_custom_command_replies_with_four_types_in_monitored_groups():
         "/小说", "小说", "novel",
         "https://www.ivorune.xyz/novel/66408bb3-60a0-40e1-a434-ee40efee4d27", None, True,
     )
+    repository.create_custom_command(
+        "/游戏", "游戏", "character",
+        "https://www.aikda.com/chat?card=3799452", None, True,
+    )
     task = repository.create_custom_command_image_upload(
         "/tmp/custom.png", "custom.png", "image/png", now,
     )
@@ -796,6 +800,7 @@ def test_custom_command_replies_with_four_types_in_monitored_groups():
         ("/公告", "text", "今天开会", None),
         ("/群入口", "group_invite", "group-code", None),
         ("/小说", "novel", "66408bb3-60a0-40e1-a434-ee40efee4d27", None),
+        ("/游戏", "character", "3799452", None),
         ("/图片", "image", "", "https://cdn.example.com/custom.png"),
     ]
     for index, (command, kind, text, image_url) in enumerate(expected):

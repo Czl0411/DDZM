@@ -406,7 +406,7 @@ class CustomCommandRequest(ApiModel):
     command: str = Field(min_length=2, max_length=32)
     description: str = Field(min_length=1, max_length=200)
     enabled: bool = True
-    reply_type: Literal["text", "image", "group_invite", "novel"]
+    reply_type: Literal["text", "image", "group_invite", "novel", "character"]
     content: str | None = None
     upload_task_id: UUID | None = None
 

@@ -1937,7 +1937,9 @@ function updateCustomCommandFields() {
     ? "https://www.ivorune.xyz/invite/邀请码"
     : customCommandType.value === "novel"
       ? "https://www.ivorune.xyz/novel/小说UUID"
-      : "固定回复内容";
+      : customCommandType.value === "character"
+        ? "https://www.aikda.com/chat?card=游戏ID"
+        : "固定回复内容";
   document.querySelector("#save-custom-command").disabled =
     customCommandModal.dataset.uploading === "true" || (image && !customCommandImageUrl);
 }
@@ -1955,7 +1957,9 @@ function openCustomCommandModal(command = null) {
     ? `https://www.ivorune.xyz/invite/${command.reply_value}`
     : command?.reply_type === "novel"
       ? `https://www.ivorune.xyz/novel/${command.reply_value}`
-      : command?.reply_type === "text" ? command.reply_value : "";
+      : command?.reply_type === "character"
+        ? `https://www.aikda.com/chat?card=${command.reply_value}`
+        : command?.reply_type === "text" ? command.reply_value : "";
   customCommandImageTaskId = null;
   customCommandImageUrl = command?.reply_type === "image" ? command.reply_value : null;
   customCommandImageFile.value = "";
@@ -2594,7 +2598,7 @@ function renderCommands(commands) {
   commandPage = pageData.page;
   document.querySelector("#command-list").innerHTML = pageData.items.map((command) => `
     <article class="command-card">
-      <div class="command-heading"><div><b>${escapeHtml(commandLabel(command.command))}</b><small>${statusBadge(command.enabled ? "已启用" : "已停用", command.enabled ? "success" : "warning")}</small><small>${escapeHtml(command.description)}</small>${command.is_custom ? `<small>${escapeHtml(({text: "文本", image: "图片", group_invite: "分享群聊", novel: "分享小说"})[command.reply_type] || command.reply_type)} · ${escapeHtml((command.reply_value || "").slice(0, 100))}</small>` : ""}</div>
+      <div class="command-heading"><div><b>${escapeHtml(commandLabel(command.command))}</b><small>${statusBadge(command.enabled ? "已启用" : "已停用", command.enabled ? "success" : "warning")}</small><small>${escapeHtml(command.description)}</small>${command.is_custom ? `<small>${escapeHtml(({text: "文本", image: "图片", group_invite: "分享群聊", novel: "分享小说", character: "分享游戏卡"})[command.reply_type] || command.reply_type)} · ${escapeHtml((command.reply_value || "").slice(0, 100))}</small>` : ""}</div>
       <div class="command-actions">${command.is_custom ? `<button class="secondary" data-custom-command-action="edit" data-command="${escapeHtml(command.command)}" type="button">编辑</button><button class="danger-button" data-custom-command-action="delete" data-command="${escapeHtml(command.command)}" type="button">删除</button>` : `<button class="secondary" data-command-templates="${escapeHtml(JSON.stringify(command.templates))}" data-command="${escapeHtml(command.command)}" data-command-description="${escapeHtml(command.description)}" type="button">配置回复</button>`}
       <button class="${command.enabled ? "secondary" : "primary"}" data-command="${escapeHtml(command.command)}" data-enabled="${!command.enabled}" type="button">${command.enabled ? "停用" : "启用"}</button></div></div>
     </article>`).join("") || "<p class=\"muted\">暂无指令。</p>";
